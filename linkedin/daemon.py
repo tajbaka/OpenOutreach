@@ -16,6 +16,8 @@ from linkedin.conf import (
     ACTIVE_START_HOUR,
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
+    ENABLE_AUTO_DISCOVERY,
+    ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
     ENABLE_ACTIVE_HOURS,
     REST_DAYS,
@@ -204,10 +206,32 @@ def heal_tasks(session):
             if disabled_tasks:
                 logger.info("Disabled %d pending freemium tasks", disabled_tasks)
 
-    # 2. Seed connect tasks per campaign (regular first, freemium deferred)
+    # When auto-discovery is disabled, the qualifier never promotes leads,
+    # so any seed import that landed in QUALIFIED would sit there forever.
+    # Force them all up to READY_TO_CONNECT so the connect lane can pick
+    # them up directly.
+    if not ENABLE_AUTO_DISCOVERY:
+        from crm.models import Deal
+        promoted = Deal.objects.filter(
+            state=ProfileState.QUALIFIED,
+            campaign__in=session.campaigns,
+        ).update(state=ProfileState.READY_TO_CONNECT)
+        if promoted:
+            logger.info(
+                "ENABLE_AUTO_DISCOVERY=false — bulk-promoted %d QUALIFIED → READY_TO_CONNECT",
+                promoted,
+            )
+
+    # 2. Seed connect tasks per campaign. Bring any existing pending task
+    # forward to now so a stale long-delayed task from a prior run doesn't
+    # leave the daemon idle right after startup. Subsequent connects self-pace
+    # via recommended_action_delay() in handle_connect's reschedule path.
     for campaign in session.campaigns:
-        delay = recommended_action_delay(session.linkedin_profile, ActionLog.ActionType.CONNECT)
-        enqueue_connect(campaign.pk, delay_seconds=delay)
+        _bring_task_forward(
+            Task.TaskType.CONNECT,
+            {"campaign_id": campaign.pk},
+            timezone.now(),
+        )
 
     # 3. Cancel any legacy per-profile check_pending tasks — superseded by the
     # bulk sweep_connections sweep.
@@ -217,6 +241,22 @@ def heal_tasks(session):
     ).update(status=Task.Status.COMPLETED)
     if legacy:
         logger.info("Retired %d legacy check_pending tasks", legacy)
+
+    if not ENABLE_FOLLOW_UP:
+        # Drain any leftover follow-up + sweep tasks from a previous run so the
+        # queue worker doesn't keep waking up to fire no-ops.
+        cancelled = Task.objects.filter(
+            task_type__in=[Task.TaskType.SWEEP_CONNECTIONS, Task.TaskType.FOLLOW_UP],
+            status=Task.Status.PENDING,
+        ).update(status=Task.Status.COMPLETED)
+        logger.info(
+            "Follow-up disabled (ENABLE_FOLLOW_UP=false) — cancelled %d "
+            "pending sweep/follow-up tasks; not seeding new ones",
+            cancelled,
+        )
+        pending_count = Task.objects.pending().count()
+        logger.info("Task queue healed: %d pending tasks", pending_count)
+        return
 
     # Seed / bring forward one sweep_connections task so it runs first on
     # startup, regardless of whether a future-scheduled sweep is already

@@ -13,7 +13,7 @@ from django.utils import timezone
 from termcolor import colored
 
 from linkedin.actions.connections import scrape_connections
-from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS
+from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS, ENABLE_FOLLOW_UP
 from linkedin.db.deals import set_profile_state
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 def handle_sweep_connections(task, session, qualifiers):
+    if not ENABLE_FOLLOW_UP:
+        # Defense in depth: should never fire, since daemon cancels these on
+        # startup and enqueue_sweep_connections is gated.
+        logger.debug("sweep_connections disabled \u2014 skipping task %s", task.pk)
+        return
+
     from crm.models import Deal
     from linkedin.tasks.connect import enqueue_follow_up, recommended_action_delay
 
@@ -91,6 +97,8 @@ def handle_sweep_connections(task, session, qualifiers):
 
 def enqueue_sweep_connections(delay_seconds: float | None = None):
     """Ensure one pending sweep_connections task exists; do not duplicate."""
+    if not ENABLE_FOLLOW_UP:
+        return
     if delay_seconds is None:
         delay_seconds = CONNECTION_SWEEP_INTERVAL_HOURS * 3600
 

@@ -48,13 +48,15 @@ def _deal_to_profile_dict(deal) -> dict:
 
 
 def _deals_at_state(session, state: ProfileState) -> list:
-    """Return profile dicts for all Deals at the given state in this campaign."""
+    """Return profile dicts for all Deals at the given state in this campaign,
+    ordered by Deal.id ASC — i.e. insertion order, so seed imports run in
+    the order they were added to the CSV."""
     from crm.models import Deal
 
     qs = Deal.objects.filter(
         state=state,
         campaign=session.campaign,
-    ).select_related("lead")
+    ).select_related("lead").order_by("id")
     return [_deal_to_profile_dict(d) for d in qs]
 
 

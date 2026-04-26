@@ -8,7 +8,18 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 
-from linkedin.conf import MAX_TOTAL_DAILY_ACTIONS
+from linkedin.conf import (
+    CONNECT_DAILY_LIMIT,
+    CONNECT_WEEKLY_LIMIT,
+    FOLLOW_UP_DAILY_LIMIT,
+    MAX_TOTAL_DAILY_ACTIONS,
+)
+
+_LIMIT_OVERRIDES = {
+    "connect_daily_limit": CONNECT_DAILY_LIMIT,
+    "connect_weekly_limit": CONNECT_WEEKLY_LIMIT,
+    "follow_up_daily_limit": FOLLOW_UP_DAILY_LIMIT,
+}
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +85,12 @@ class LinkedInProfile(models.Model):
         if MAX_TOTAL_DAILY_ACTIONS and self._total_daily_count() >= MAX_TOTAL_DAILY_ACTIONS:
             return False
 
-        daily_limit = getattr(self, daily_field)
+        daily_limit = _LIMIT_OVERRIDES.get(daily_field) or getattr(self, daily_field)
         if daily_limit is not None and self._daily_count(action_type) >= daily_limit:
             return False
 
         if weekly_field:
-            weekly_limit = getattr(self, weekly_field)
+            weekly_limit = _LIMIT_OVERRIDES.get(weekly_field) or getattr(self, weekly_field)
             if weekly_limit is not None and self._weekly_count(action_type) >= weekly_limit:
                 return False
 

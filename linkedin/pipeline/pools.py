@@ -22,7 +22,7 @@ from typing import Generator
 
 import numpy as np
 
-from linkedin.conf import CAMPAIGN_CONFIG
+from linkedin.conf import CAMPAIGN_CONFIG, ENABLE_AUTO_DISCOVERY
 from linkedin.ml.qualifier import BayesianQualifier
 from linkedin.pipeline.qualify import fetch_qualification_candidates, run_qualification
 from linkedin.pipeline.ready_pool import find_ready_candidate, promote_to_ready
@@ -157,5 +157,15 @@ def find_candidate(session, qualifier: BayesianQualifier) -> dict | None:
 
     Only used by regular campaigns. Freemium campaigns use
     find_freemium_candidate() from pipeline.freemium_pool instead.
+
+    When ENABLE_AUTO_DISCOVERY=false, returns the next RTC profile in
+    arbitrary DB order without ranking — the connect handler only needs
+    URL + first_name, both already populated from the seed import. This
+    skips qualifier.rank_profiles() and its lazy-enrich/embed work, which
+    is wasted effort for curated seed lists.
     """
+    if not ENABLE_AUTO_DISCOVERY:
+        from linkedin.db.deals import get_ready_to_connect_profiles
+        profiles = get_ready_to_connect_profiles(session)
+        return profiles[0] if profiles else None
     return next(ready_source(session, qualifier), None)

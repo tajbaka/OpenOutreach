@@ -45,6 +45,14 @@ DEFAULT_CONNECT_DAILY_LIMIT = 20
 DEFAULT_CONNECT_WEEKLY_LIMIT = 100
 DEFAULT_FOLLOW_UP_DAILY_LIMIT = 30
 MAX_TOTAL_DAILY_ACTIONS = int(os.getenv("MAX_TOTAL_DAILY_ACTIONS", "200"))
+
+# Per-action rate-limit env overrides. When set to a positive integer these
+# take precedence over the LinkedInProfile DB columns at runtime, so you can
+# tune limits without touching Django Admin. Leave unset (or set to 0) to
+# fall back to whatever each profile has saved in the DB.
+CONNECT_DAILY_LIMIT = int(os.getenv("CONNECT_DAILY_LIMIT") or 0) or None
+CONNECT_WEEKLY_LIMIT = int(os.getenv("CONNECT_WEEKLY_LIMIT") or 0) or None
+FOLLOW_UP_DAILY_LIMIT = int(os.getenv("FOLLOW_UP_DAILY_LIMIT") or 0) or None
 ENABLE_FREEMIUM_CAMPAIGN = os.getenv("ENABLE_FREEMIUM_CAMPAIGN", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
@@ -75,6 +83,23 @@ CONNECTION_SWEEP_INTERVAL_HOURS = float(os.getenv("CONNECTION_SWEEP_INTERVAL_HOU
 # ----------------------------------------------------------------------
 CONNECTION_NOTE_PERSONALIZED = os.getenv("CONNECTION_NOTE_PERSONALIZED", "").replace("\\n", "\n")
 CONNECTION_NOTE_FALLBACK = os.getenv("CONNECTION_NOTE_FALLBACK", "").replace("\\n", "\n")
+
+# Master kill-switch for all follow-up messaging. When false, the daemon
+# stops at the connect step: connection invites still go out, but no
+# post-accept message and no follow-up agent ever runs. Existing pending
+# follow_up tasks become no-ops.
+ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+# Kill-switch for the connect lane's auto-discovery + LLM qualification
+# fallback. When false, the daemon only connects to leads already in
+# READY_TO_CONNECT — no LinkedIn search, no LLM qualifier, no auto-
+# promotion of QUALIFIED leads. Set when working from a curated seed
+# list and you don't want the bot finding/messaging anyone else.
+ENABLE_AUTO_DISCOVERY = os.getenv("ENABLE_AUTO_DISCOVERY", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 # Path to GIF/image to attach to follow-up messages (empty = disabled).
 # Relative paths are resolved from the repo root so the same .env works

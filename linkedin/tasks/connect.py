@@ -105,10 +105,12 @@ def _seconds_until_tomorrow() -> float:
 
 def recommended_action_delay(profile, action_type: str) -> float:
     """Spread actions across the active window instead of firing in bursts."""
+    from linkedin.conf import CONNECT_DAILY_LIMIT, FOLLOW_UP_DAILY_LIMIT
+
     if action_type == ActionLog.ActionType.CONNECT:
-        daily_limit = max(profile.connect_daily_limit or 1, 1)
+        daily_limit = max(CONNECT_DAILY_LIMIT or profile.connect_daily_limit or 1, 1)
     else:
-        daily_limit = max(profile.follow_up_daily_limit or 1, 1)
+        daily_limit = max(FOLLOW_UP_DAILY_LIMIT or profile.follow_up_daily_limit or 1, 1)
 
     active_hours = ACTIVE_END_HOUR - ACTIVE_START_HOUR if ENABLE_ACTIVE_HOURS else 24
     window_seconds = max(active_hours, 1) * 3600
@@ -274,6 +276,10 @@ def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
 
 
 def enqueue_follow_up(campaign_id: int, public_id: str, delay_seconds: float = 10):
+    from linkedin.conf import ENABLE_FOLLOW_UP
+
+    if not ENABLE_FOLLOW_UP:
+        return
     _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,
         payload={"campaign_id": campaign_id, "public_id": public_id},

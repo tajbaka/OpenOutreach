@@ -6,7 +6,12 @@ import logging
 
 from termcolor import colored
 
-from linkedin.conf import FOLLOW_UP_MEDIA_PATH, POST_ACCEPT_MESSAGE_TEMPLATE, POST_ACCEPT_VIDEO_LINK
+from linkedin.conf import (
+    ENABLE_FOLLOW_UP,
+    FOLLOW_UP_MEDIA_PATH,
+    POST_ACCEPT_MESSAGE_TEMPLATE,
+    POST_ACCEPT_VIDEO_LINK,
+)
 from linkedin.db.deals import get_profile_dict_for_public_id
 from linkedin.models import ActionLog
 
@@ -93,6 +98,12 @@ def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campa
 
 
 def handle_follow_up(task, session, qualifiers):
+    if not ENABLE_FOLLOW_UP:
+        # Defense in depth: should never fire, since daemon cancels these on
+        # startup and enqueue_follow_up is also gated.
+        logger.debug("follow_up disabled \u2014 skipping task %s", task.pk)
+        return
+
     from linkedin.agents.follow_up import run_follow_up_agent
     from linkedin.tasks.connect import _seconds_until_tomorrow, enqueue_follow_up
 
