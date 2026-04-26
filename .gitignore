@@ -13,3 +13,5 @@ data/
 /linkedin/management/commands/export_model.py
 /db.sqlite3
 /media/
+.playwright-mcp/
+leasebreak_*.json
