@@ -20,6 +20,7 @@ from linkedin.conf import (
     ENABLE_AUTO_DISCOVERY,
     ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
+    ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
     REST_DAYS,
 )
@@ -243,33 +244,42 @@ def heal_tasks(session):
     if legacy:
         logger.info("Retired %d legacy check_pending tasks", legacy)
 
-    if not ENABLE_FOLLOW_UP:
-        # Drain any leftover follow-up + sweep tasks from a previous run so the
-        # queue worker doesn't keep waking up to fire no-ops.
-        cancelled = Task.objects.filter(
-            task_type__in=[Task.TaskType.SWEEP_CONNECTIONS, Task.TaskType.FOLLOW_UP],
+    # 4. Sweep tasks (acceptance detection — independent of follow-up DMs).
+    if ENABLE_SWEEP_CONNECTIONS:
+        # Bring forward one sweep_connections task so it runs first on startup.
+        _bring_task_forward(
+            Task.TaskType.SWEEP_CONNECTIONS,
+            {},
+            timezone.now(),
+            dedup_keys=[],
+        )
+    else:
+        cancelled_sweep = Task.objects.filter(
+            task_type=Task.TaskType.SWEEP_CONNECTIONS,
             status=Task.Status.PENDING,
         ).update(status=Task.Status.COMPLETED)
-        logger.info(
-            "Follow-up disabled (ENABLE_FOLLOW_UP=false) — cancelled %d "
-            "pending sweep/follow-up tasks; not seeding new ones",
-            cancelled,
-        )
+        if cancelled_sweep:
+            logger.info(
+                "ENABLE_SWEEP_CONNECTIONS=false — cancelled %d pending sweep tasks",
+                cancelled_sweep,
+            )
+
+    # 5. Follow-up tasks (post-accept DMs — gated separately).
+    if not ENABLE_FOLLOW_UP:
+        cancelled_fu = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+        ).update(status=Task.Status.COMPLETED)
+        if cancelled_fu:
+            logger.info(
+                "ENABLE_FOLLOW_UP=false — cancelled %d pending follow-up tasks",
+                cancelled_fu,
+            )
         pending_count = Task.objects.pending().count()
         logger.info("Task queue healed: %d pending tasks", pending_count)
         return
 
-    # Seed / bring forward one sweep_connections task so it runs first on
-    # startup, regardless of whether a future-scheduled sweep is already
-    # pending from a prior run.
-    _bring_task_forward(
-        Task.TaskType.SWEEP_CONNECTIONS,
-        {},
-        timezone.now(),
-        dedup_keys=[],
-    )
-
-    # 4. Follow_up tasks for CONNECTED profiles. If the worker was down when a
+    # Follow_up tasks for CONNECTED profiles. If the worker was down when a
     # lead accepted, make sure those follow-ups get a prompt retry on startup.
     for campaign in session.campaigns:
         session.campaign = campaign

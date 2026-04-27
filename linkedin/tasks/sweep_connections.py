@@ -12,18 +12,22 @@ from datetime import timedelta
 from django.utils import timezone
 from termcolor import colored
 
+from datetime import datetime
+
 from linkedin.actions.connections import scrape_connections
-from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS, ENABLE_FOLLOW_UP
+from linkedin.actions.conversations import get_conversation
+from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS, ENABLE_SWEEP_CONNECTIONS
 from linkedin.db.deals import set_profile_state
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
 from linkedin.models import ActionLog, Task
+from linkedin.notifications.slack import latest_reply_from_lead, notify_connection_accepted
 
 logger = logging.getLogger(__name__)
 
 
 def handle_sweep_connections(task, session, qualifiers):
-    if not ENABLE_FOLLOW_UP:
+    if not ENABLE_SWEEP_CONNECTIONS:
         # Defense in depth: should never fire, since daemon cancels these on
         # startup and enqueue_sweep_connections is gated.
         logger.debug("sweep_connections disabled \u2014 skipping task %s", task.pk)
@@ -70,6 +74,47 @@ def handle_sweep_connections(task, session, qualifiers):
         session.campaign = deal.campaign
         set_profile_state(session, public_id, ProfileState.CONNECTED.value)
 
+        # Pull conversation history so we can persist last_reply_at on the Deal
+        # (drives Attio's Prospecting → Qualification stage transition) and
+        # surface any reply text in the Slack notification. One extra LinkedIn
+        # API call per match — cheap because matches are rare.
+        full_name = (
+            f"{deal.lead.first_name or ''} {deal.lead.last_name or ''}".strip()
+            or public_id
+        )
+        try:
+            messages = get_conversation(session, public_id)
+        except Exception as e:
+            logger.warning("Could not fetch conversation for %s: %s", full_name, e)
+            messages = None
+        reply = latest_reply_from_lead(messages, full_name)
+        reply_text = reply.get("text") if reply else None
+
+        if reply:
+            ts_str = (reply.get("timestamp") or "").strip()
+            if ts_str:
+                try:
+                    naive = datetime.strptime(ts_str, "%Y-%m-%d %H:%M")
+                    deal.last_reply_at = timezone.make_aware(
+                        naive, timezone.get_current_timezone(),
+                    )
+                    deal.save(update_fields=["last_reply_at"])
+                except ValueError:
+                    pass
+
+        try:
+            notify_connection_accepted(
+                full_name=full_name,
+                title="",
+                company=deal.lead.company_name or "",
+                profile_url=deal.lead.linkedin_url
+                or f"https://www.linkedin.com/in/{public_id}/",
+                campaign_name=deal.campaign.name,
+                reply_text=reply_text,
+            )
+        except Exception as e:
+            logger.warning("Slack notify failed for %s: %s", full_name, e)
+
         delay_seconds = recommended_action_delay(
             session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
         )
@@ -97,7 +142,7 @@ def handle_sweep_connections(task, session, qualifiers):
 
 def enqueue_sweep_connections(delay_seconds: float | None = None):
     """Ensure one pending sweep_connections task exists; do not duplicate."""
-    if not ENABLE_FOLLOW_UP:
+    if not ENABLE_SWEEP_CONNECTIONS:
         return
     if delay_seconds is None:
         delay_seconds = CONNECTION_SWEEP_INTERVAL_HOURS * 3600

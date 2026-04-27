@@ -92,6 +92,18 @@ ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
+# Independent kill-switch for the connection sweep (acceptance detection).
+# When true, the daemon visits the Connections page every
+# CONNECTION_SWEEP_INTERVAL_HOURS and transitions PENDING → CONNECTED for
+# leads who accepted. Decoupled from ENABLE_FOLLOW_UP so you can detect
+# accepts (and get them mirrored to Attio + Slack) WITHOUT auto-sending
+# follow-up DMs. The sweep still calls enqueue_follow_up after a match,
+# but that call is itself gated on ENABLE_FOLLOW_UP — so when follow-up
+# is off, it's a no-op and no DM fires.
+ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 # Slack incoming-webhook URL. When set, a notification is posted whenever
 # the standalone `manage.py check_connections` command detects a newly
 # accepted invite. Empty disables Slack entirely. Get one at:
