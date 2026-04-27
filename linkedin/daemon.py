@@ -7,6 +7,7 @@ import traceback
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
+from django.db import connections
 from django.utils import timezone
 
 from termcolor import colored
@@ -355,6 +356,7 @@ def run_daemon(session):
         if pause > 0:
             h, m = int(pause // 3600), int(pause % 3600 // 60)
             logger.info("Outside active hours — sleeping %dh%02dm", h, m)
+            connections.close_all()
             time.sleep(pause)
             continue
 
@@ -367,6 +369,7 @@ def run_daemon(session):
             if wait > 0:
                 h, m = int(wait // 3600), int(wait % 3600 // 60)
                 logger.info("Next task in %dh%02dm — sleeping", h, m)
+                connections.close_all()
                 time.sleep(wait)
             continue
 
