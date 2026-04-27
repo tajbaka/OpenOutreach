@@ -16,3 +16,8 @@ class SkipProfile(Exception):
 class ReachedConnectionLimit(Exception):
     """ Weekly connection limit reached. """
     pass
+
+
+class AttioError(Exception):
+    """Attio REST call failed (non-2xx response, network error, malformed JSON)."""
+    pass

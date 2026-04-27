@@ -6,11 +6,16 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Playwright's sync API runs inside an async event loop, which triggers
 # Django's async-safety check. We only use the ORM synchronously, so this is safe.
 os.environ.setdefault("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env early so DATABASE_URL is available when DATABASES is computed below.
+load_dotenv(ROOT_DIR / ".env")
 
 BASE_DIR = ROOT_DIR
 
@@ -62,12 +67,33 @@ TEMPLATES = [
     },
 ]
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": str(ROOT_DIR / "db.sqlite3"),
+# Database: Postgres via DATABASE_URL (Neon). DATABASE_URL is required for
+# every non-test runtime — no SQLite fallback. The daemon and dev tooling
+# must point at the same DATABASE_URL to avoid split-brain.
+# Tests get an in-memory SQLite (detected via pytest in sys.modules).
+_database_url = os.environ.get("DATABASE_URL", "").strip()
+if _database_url:
+    import dj_database_url
+    DATABASES = {
+        "default": dj_database_url.parse(
+            _database_url,
+            conn_max_age=600,
+            ssl_require=True,
+        ),
     }
-}
+elif "pytest" in sys.modules:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        }
+    }
+else:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Set it in .env to a Postgres connection "
+        "string (e.g. from Neon). The SQLite fallback was removed to "
+        "prevent silent split-brain — see linkedin/django_settings.py."
+    )
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

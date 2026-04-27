@@ -38,6 +38,7 @@ class Deal(models.Model):
     sent_note = models.TextField(blank=True, default="")
     connect_attempts = models.IntegerField(default=0)
     backoff_hours = models.IntegerField(default=0)
+    last_reply_at = models.DateTimeField(null=True, blank=True)
     creation_date = models.DateTimeField(default=timezone.now)
     update_date = models.DateTimeField(auto_now=True)
 

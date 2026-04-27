@@ -92,6 +92,19 @@ ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
+# Slack incoming-webhook URL. When set, a notification is posted whenever
+# the standalone `manage.py check_connections` command detects a newly
+# accepted invite. Empty disables Slack entirely. Get one at:
+#   https://api.slack.com/messaging/webhooks
+SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+
+# Attio CRM sync. ATTIO_API_KEY scopes need record:read+write, list:read+write,
+# object_configuration:read. ATTIO_SALES_LIST_ID is the UUID of the Sales list
+# (parent object: companies). manage.py sync_attio mirrors Deal state into the
+# Sales list's Stage column. Empty disables the sync (safe no-op).
+ATTIO_API_KEY = os.getenv("ATTIO_API_KEY", "").strip()
+ATTIO_SALES_LIST_ID = os.getenv("ATTIO_SALES_LIST_ID", "").strip()
+
 # Kill-switch for the connect lane's auto-discovery + LLM qualification
 # fallback. When false, the daemon only connects to leads already in
 # READY_TO_CONNECT — no LinkedIn search, no LLM qualifier, no auto-
