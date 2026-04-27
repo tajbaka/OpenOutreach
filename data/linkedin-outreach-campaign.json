@@ -1,8 +1,0 @@
-{
-  "name": "LinkedIn Outreach",
-  "product_docs": "AI-powered pre-screening system that replaces resume-based filtering with real engineering skill \n  assessment using system design interviews (instead of leetcode-style). It automatically filters thousands of\n   candidates into a targeted shortlist based on actual engineering ability.",
-  "campaign_objective": "Sell an AI pre-screening system to engineering hiring managers and TA leaders that replaces leetcode-style\n   interviews with system design assessments, cutting cost-per-hire and reducing bad hires.",
-  "booking_link": "https://calendly.com/antonio-coppe/30min",
-  "is_freemium": false,
-  "action_fraction": 0.2
-}
