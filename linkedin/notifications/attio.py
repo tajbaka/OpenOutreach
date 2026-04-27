@@ -283,20 +283,37 @@ def create_sales_entry(*, company_id: str, person_id: str, stage: str) -> str:
     return _extract_id(resp, "entry_id")
 
 
-def get_sales_entry_stage(entry_id: str) -> str:
-    """Fetch the current Stage title for a Sales list entry, or '' if unset."""
+def get_sales_entry_state(entry_id: str) -> dict:
+    """Fetch a Sales list entry's current Stage + Main point of contact.
+
+    Returns {"stage": str, "mpoc_id": str} — empty strings when unset.
+    Used by sync_attio to decide whether to PATCH stage and/or MPOC.
+    """
     list_id = _require_list_id()
     resp = _request("GET", f"/lists/{list_id}/entries/{entry_id}")
     values = ((resp.get("data") or {}).get("entry_values") or {})
+
     stage_values = values.get("stage") or []
-    if not stage_values:
-        return ""
-    # status fields return [{"status": {"id": ..., "title": "Prospecting"}}]
-    first = stage_values[0] if isinstance(stage_values, list) else stage_values
-    status = first.get("status") if isinstance(first, dict) else None
-    if isinstance(status, dict):
-        return status.get("title") or ""
-    return ""
+    stage = ""
+    if stage_values:
+        first = stage_values[0] if isinstance(stage_values, list) else stage_values
+        status = first.get("status") if isinstance(first, dict) else None
+        if isinstance(status, dict):
+            stage = status.get("title") or ""
+
+    mpoc_values = values.get("main_point_of_contact") or []
+    mpoc_id = ""
+    if mpoc_values:
+        first = mpoc_values[0] if isinstance(mpoc_values, list) else mpoc_values
+        target = first.get("target_record") if isinstance(first, dict) else None
+        if isinstance(target, dict):
+            mpoc_id = target.get("record_id") or ""
+        else:
+            # Some Attio responses inline target_record_id directly on the value
+            mpoc_id = first.get("target_record_id") if isinstance(first, dict) else ""
+            mpoc_id = mpoc_id or ""
+
+    return {"stage": stage, "mpoc_id": mpoc_id}
 
 
 def patch_sales_entry_stage(entry_id: str, stage: str) -> None:
@@ -304,6 +321,43 @@ def patch_sales_entry_stage(entry_id: str, stage: str) -> None:
     list_id = _require_list_id()
     body = {"data": {"entry_values": {"stage": stage}}}
     _request("PATCH", f"/lists/{list_id}/entries/{entry_id}", body)
+
+
+def patch_sales_entry_mpoc(entry_id: str, person_id: str) -> None:
+    """Update Main point of contact on an existing Sales list entry."""
+    list_id = _require_list_id()
+    body = {
+        "data": {
+            "entry_values": {
+                "main_point_of_contact": [{
+                    "target_object": "people",
+                    "target_record_id": person_id,
+                }],
+            },
+        },
+    }
+    _request("PATCH", f"/lists/{list_id}/entries/{entry_id}", body)
+
+
+def set_person_outreach_status(person_id: str, status: str) -> None:
+    """Set the per-person Outreach status (custom select field on People)."""
+    body = {"data": {"values": {"outreach_status": status}}}
+    _request("PATCH", f"/objects/people/records/{person_id}", body)
+
+
+def get_person_outreach_status(person_id: str) -> str:
+    """Fetch the current Outreach status title, or '' if unset."""
+    resp = _request("GET", f"/objects/people/records/{person_id}")
+    values = ((resp.get("data") or {}).get("values") or {})
+    sel = values.get("outreach_status") or []
+    if not sel:
+        return ""
+    first = sel[0] if isinstance(sel, list) else sel
+    if isinstance(first, dict):
+        opt = first.get("option")
+        if isinstance(opt, dict):
+            return opt.get("title") or ""
+    return ""
 
 
 def patch_person_company(person_id: str, company_id: str) -> None:
@@ -323,6 +377,10 @@ def patch_person_company(person_id: str, company_id: str) -> None:
 
 def delete_company(record_id: str) -> None:
     _request("DELETE", f"/objects/companies/records/{record_id}")
+
+
+def delete_person(record_id: str) -> None:
+    _request("DELETE", f"/objects/people/records/{record_id}")
 
 
 def delete_sales_entry(entry_id: str) -> None:
