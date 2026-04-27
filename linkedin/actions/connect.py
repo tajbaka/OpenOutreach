@@ -24,9 +24,34 @@ SELECTORS = {
     ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "add_note": 'button:has-text("Add a note")',
-    "note_textarea": 'textarea[name="message"], textarea#custom-message, textarea[id*="custom-message"]',
+    "note_textarea": (
+        'textarea[name="message"], '
+        'textarea[id*="custom-message"], '
+        'div[role="dialog"] textarea, '
+        'textarea[aria-label*="message" i], '
+        'textarea[placeholder*="note" i], '
+        'textarea[placeholder*="message" i]'
+    ),
     "send_invitation": 'button[aria-label*="Send invitation"], button:has-text("Send invitation"), button:has-text("Send")',
 }
+
+
+def _dump_page_state(session, tag: str) -> None:
+    """Capture screenshot + HTML of the current page for post-mortem debugging."""
+    import os
+    import time as _t
+    out_dir = "/tmp/connect-debug"
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        url_slug = (session.page.url.rsplit("/", 1)[-1] or "page")[:60]
+        stamp = _t.strftime("%Y%m%d-%H%M%S")
+        base = f"{out_dir}/{stamp}-{tag}-{url_slug}"
+        session.page.screenshot(path=f"{base}.png", full_page=True)
+        with open(f"{base}.html", "w", encoding="utf-8") as f:
+            f.write(session.page.content())
+        logger.info("Saved debug artifacts: %s.{png,html}", base)
+    except Exception as e:
+        logger.debug("Could not dump page state for %s: %s", tag, e)
 
 
 def _first_visible(locator):
@@ -129,14 +154,16 @@ def _click_with_note(session, note_text: str) -> bool:
     if textarea.count() == 0:
         add_note_btn = session.page.locator(SELECTORS["add_note"])
         if add_note_btn.count() == 0:
-            logger.debug("'Add a note' button not found — falling back to no-note")
+            _dump_page_state(session, "no-add-note-no-textarea")
+            logger.warning("'Add a note' button + textarea both missing — aborting (artifacts in /tmp/connect-debug/)")
             return False
         add_note_btn.first.click()
         session.wait()
         textarea = session.page.locator(SELECTORS["note_textarea"])
 
     if textarea.count() == 0:
-        logger.debug("Note textarea not found — falling back to no-note")
+        _dump_page_state(session, "no-textarea-after-add-note")
+        logger.warning("Note textarea not found after Add-a-note click — aborting (artifacts in /tmp/connect-debug/)")
         return False
 
     textarea.first.fill(note_text)
