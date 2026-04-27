@@ -34,18 +34,22 @@ MAX_CONNECT_ATTEMPTS = 3
 
 
 def build_connection_note(lead_id: int | None) -> str:
-    """Build a personalized connection note from Lead data."""
-    if not lead_id:
-        return CONNECTION_NOTE_FALLBACK
+    """Build a personalized connection note from Lead data.
 
+    Both CONNECTION_NOTE_PERSONALIZED and CONNECTION_NOTE_FALLBACK are lists
+    of variants (parsed from `|||`-delimited env vars). Each call picks one
+    at random to defeat templated-text detection.
+    """
     from crm.models import Lead
 
-    lead = Lead.objects.filter(pk=lead_id).first()
+    lead = Lead.objects.filter(pk=lead_id).first() if lead_id else None
     first_name = lead.first_name.strip() if lead and lead.first_name else ""
 
-    if first_name:
-        return CONNECTION_NOTE_PERSONALIZED.format(first_name=first_name)
-    return CONNECTION_NOTE_FALLBACK
+    if first_name and CONNECTION_NOTE_PERSONALIZED:
+        return random.choice(CONNECTION_NOTE_PERSONALIZED).format(first_name=first_name)
+    if CONNECTION_NOTE_FALLBACK:
+        return random.choice(CONNECTION_NOTE_FALLBACK)
+    return ""
 
 
 @dataclass
