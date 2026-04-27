@@ -21,7 +21,6 @@ from linkedin.conf import (
     CAMPAIGN_CONFIG,
     CONNECTION_NOTE_FALLBACK,
     CONNECTION_NOTE_PERSONALIZED,
-    ENABLE_ACTIVE_HOURS,
 )
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
 from linkedin.db.leads import disqualify_lead
@@ -104,7 +103,13 @@ def _seconds_until_tomorrow() -> float:
 
 
 def recommended_action_delay(profile, action_type: str) -> float:
-    """Spread actions across the active window instead of firing in bursts."""
+    """Spread actions across the (notional) active window instead of firing in bursts.
+
+    Uses ACTIVE_END_HOUR - ACTIVE_START_HOUR as the window even when
+    ENABLE_ACTIVE_HOURS is False — the flag only controls whether the
+    daemon SLEEPS outside hours, not the per-action pacing math. With a
+    9-21 window and CONNECT_DAILY_LIMIT=50 we get ~14 min between connects.
+    """
     from linkedin.conf import CONNECT_DAILY_LIMIT, FOLLOW_UP_DAILY_LIMIT
 
     if action_type == ActionLog.ActionType.CONNECT:
@@ -112,8 +117,8 @@ def recommended_action_delay(profile, action_type: str) -> float:
     else:
         daily_limit = max(FOLLOW_UP_DAILY_LIMIT or profile.follow_up_daily_limit or 1, 1)
 
-    active_hours = ACTIVE_END_HOUR - ACTIVE_START_HOUR if ENABLE_ACTIVE_HOURS else 24
-    window_seconds = max(active_hours, 1) * 3600
+    active_hours = max(ACTIVE_END_HOUR - ACTIVE_START_HOUR, 1)
+    window_seconds = active_hours * 3600
     base_delay = window_seconds / daily_limit
     return max(
         CAMPAIGN_CONFIG["min_action_interval"],

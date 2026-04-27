@@ -136,7 +136,6 @@ POST_ACCEPT_MESSAGE_TEMPLATE = os.getenv(
 )
 
 CAMPAIGN_CONFIG = {
-    "enrich_min_interval": 1,
     "min_action_interval": 120,
     "qualification_n_mc_samples": 100,
     "min_ready_to_connect_prob": 0.9,
