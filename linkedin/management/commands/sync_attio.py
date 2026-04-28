@@ -185,6 +185,17 @@ class Command(BaseCommand):
                     if not dry_run:
                         lead.save(update_fields=["attio_person_id", "attio_company_id"])
 
+                    # ---- Phase D synthesis: D1 email extract + D2 Wants Meeting.
+                    # Best-effort; any failure stays inside synthesize_for_deal.
+                    if not dry_run:
+                        try:
+                            from linkedin.notifications.synthesis import synthesize_for_deal
+                            synthesize_for_deal(deal_in_group)
+                        except Exception as e:
+                            self.stdout.write(self.style.WARNING(
+                                f"    ! synthesis failed for {full}: {e}"
+                            ))
+
                 # ---- 3. Sales list entry: one per company. Reuse from any
                 #         peer Lead, or create. Stage + MPOC kept in sync with
                 #         the group's leader on every run.

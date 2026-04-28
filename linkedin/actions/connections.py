@@ -47,38 +47,97 @@ def _oldest_connected_on(session) -> date | None:
     return min(dates) if dates else None
 
 
+def _card_count(session) -> int:
+    """Cheap proxy for 'is the list still growing?' — count of date-anchor <p>s."""
+    return session.page.locator("p", has_text="Connected on").count()
+
+
+def _scroll_one_step(session) -> None:
+    """One scroll step that actually triggers LinkedIn's lazy-load.
+
+    `window.scrollTo` doesn't reliably scroll LinkedIn's Connections page
+    because the cards live inside an internal scrollable container, not the
+    document body. Instead:
+      1. Move into the list area + use mouse-wheel events (fire real scroll
+         events that virtualized lists respond to).
+      2. Also scroll the last rendered card into view as a robustness hook —
+         that triggers any IntersectionObserver-based lazy-load.
+      3. Send PageDown via keyboard as a final fallback.
+    """
+    page = session.page
+
+    # Anchor the cursor over the cards area so wheel events land on the right
+    # scroll container.
+    try:
+        page.mouse.move(640, 500)
+    except Exception:
+        pass
+
+    try:
+        page.mouse.wheel(0, 3000)
+    except Exception:
+        pass
+
+    try:
+        cards = page.locator("p", has_text="Connected on").all()
+        if cards:
+            cards[-1].scroll_into_view_if_needed(timeout=2000)
+    except Exception:
+        pass
+
+    try:
+        page.keyboard.press("PageDown")
+    except Exception:
+        pass
+
+
 def _scroll_to_bottom(
     session,
     stop_before: date | None = None,
     max_idle_rounds: int = 3,
-    pause_ms: int = 800,
+    pause_ms: int = 1500,
 ) -> None:
-    """Scroll until either the page stops growing or we pass *stop_before*.
+    """Scroll until either the card count stops growing or we pass *stop_before*.
 
-    *stop_before*: the earliest connected_on date we still care about. The
-    connections list is sorted newest-first, so once the oldest rendered card
-    is older than this cutoff, no further scrolling can surface a match.
+    Pace is now per-step — pause_ms after each scroll attempt for LinkedIn to
+    paint new cards. We track *card count* rather than scrollHeight because the
+    container's scrollHeight can stay constant even as a virtualized list
+    swaps cards in and out of the DOM.
+
+    *stop_before*: earliest connected_on date we still care about. The
+    Connections list is sorted newest-first, so once the oldest rendered card
+    is older than this cutoff, further scrolling can't surface a match.
     """
     page = session.page
     idle = 0
-    last_height = 0
+    last_count = -1
+    rounds = 0
     while idle < max_idle_rounds:
+        rounds += 1
         if stop_before is not None:
             oldest = _oldest_connected_on(session)
             if oldest is not None and oldest < stop_before:
-                logger.debug(
-                    "Early-stop scroll: oldest rendered %s < cutoff %s", oldest, stop_before,
+                logger.info(
+                    "Early-stop scroll after %d rounds: oldest rendered %s < cutoff %s "
+                    "(%d cards loaded)",
+                    rounds, oldest, stop_before, _card_count(session),
                 )
                 return
 
-        height = page.evaluate("document.body.scrollHeight")
-        if height == last_height:
+        count = _card_count(session)
+        if count == last_count:
             idle += 1
         else:
             idle = 0
-            last_height = height
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            last_count = count
+
+        _scroll_one_step(session)
         page.wait_for_timeout(pause_ms)
+
+    logger.info(
+        "Scroll idle after %d rounds — %d cards loaded.",
+        rounds, _card_count(session),
+    )
 
 
 def _iter_cards(session) -> Iterator[ConnectionEntry]:

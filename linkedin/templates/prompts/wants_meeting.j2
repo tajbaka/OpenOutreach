@@ -1,0 +1,15 @@
+You are reading a LinkedIn conversation thread between us and a sales prospect.
+
+Determine whether the **prospect** has expressed they want to have a meeting, call, demo, or live conversation. Implicit signals count (e.g., "send me a calendar link", "happy to chat", "let's set something up", "what does your calendar look like") — they don't have to use the literal word "meeting".
+
+Do NOT flag yes based on our outbound messages — only on what the prospect said.
+
+Conversation (sorted oldest → newest):
+
+{% for m in messages -%}
+[{{ m.timestamp }}] {{ "PROSPECT" if m.direction == "inbound" else "US" }}: {{ m.body }}
+{% endfor %}
+
+Return:
+- wants_meeting: true if the prospect expressed meeting intent, else false
+- reason: if true, quote the line. If false, "no clear signal".

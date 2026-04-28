@@ -55,11 +55,19 @@ def find_conversation_urn_via_navigation(session, target_urn: str) -> str | None
 
 
 def parse_messages(raw: dict) -> list[dict]:
-    """Parse raw messages response into a list of {sender, text, timestamp} dicts."""
+    """Parse raw messages response into a list of {entity_urn, sender, text, timestamp} dicts.
+
+    Messages without an entityUrn are skipped — without it we have no
+    stable per-message identity for idempotent persistence into crm.Message.
+    """
     elements = raw.get("data", {}).get("messengerMessagesBySyncToken", {}).get("elements", [])
 
     messages = []
     for msg in elements:
+        entity_urn = msg.get("entityUrn") or ""
+        if not entity_urn:
+            continue
+
         body = msg.get("body", {})
         text = body.get("text", "") if isinstance(body, dict) else str(body)
         if not text:
@@ -73,7 +81,12 @@ def parse_messages(raw: dict) -> list[dict]:
         delivered_at = msg.get("deliveredAt")
         ts = datetime.fromtimestamp(delivered_at / 1000).strftime("%Y-%m-%d %H:%M") if delivered_at else ""
 
-        messages.append({"sender": sender_name or "unknown", "text": text, "timestamp": ts})
+        messages.append({
+            "entity_urn": entity_urn,
+            "sender": sender_name or "unknown",
+            "text": text,
+            "timestamp": ts,
+        })
 
     messages.sort(key=lambda m: m["timestamp"])
     return messages
@@ -82,9 +95,14 @@ def parse_messages(raw: dict) -> list[dict]:
 def get_conversation(session, public_identifier: str) -> list[dict] | None:
     """Retrieve past messages with a profile.
 
-    Returns a list of {sender, text, timestamp} dicts, or None if no conversation exists.
+    Returns a list of {entity_urn, sender, text, timestamp} dicts, or None if
+    no conversation exists. Side effect: any messages found are upserted into
+    crm.Message via persist_thread when a matching Lead row exists in our DB.
     """
     from linkedin.db.leads import resolve_urn
+    from linkedin.db.messages import persist_thread
+    from linkedin.db.urls import public_id_to_url
+    from crm.models import Lead
 
     session.ensure_browser()
     api = PlaywrightLinkedinAPI(session=session)
@@ -103,7 +121,24 @@ def get_conversation(session, public_identifier: str) -> list[dict] | None:
         return None
 
     raw = fetch_messages(api, conversation_urn)
-    return parse_messages(raw)
+    parsed = parse_messages(raw)
+
+    # Side-effect persistence — only if we have a matching Lead row.
+    lead = Lead.objects.filter(
+        linkedin_url=public_id_to_url(public_identifier),
+    ).first()
+    if lead and parsed:
+        try:
+            persist_thread(
+                lead=lead,
+                parsed=parsed,
+                thread_external_id=conversation_urn,
+            )
+        except Exception as e:
+            # Persistence is best-effort; never break the caller's flow.
+            logger.warning("persist_thread failed for %s: %s", public_identifier, e)
+
+    return parsed
 
 
 if __name__ == "__main__":

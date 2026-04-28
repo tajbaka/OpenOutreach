@@ -13,6 +13,7 @@ class Lead(models.Model):
     last_name = models.CharField(max_length=100, blank=True, default="")
     company_name = models.CharField(max_length=200, blank=True, default="")
     linkedin_url = models.URLField(max_length=200, blank=True, default="", unique=True)
+    email = models.EmailField(max_length=200, blank=True, default="", db_index=True)
     public_identifier = models.CharField(max_length=200, blank=True, default="")
     description = models.TextField(blank=True, default="")
     embedding = models.BinaryField(null=True, blank=True)

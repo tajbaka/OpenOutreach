@@ -70,7 +70,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from linkedin.actions.sales_nav_list import discover_list_url_template
-        from linkedin.actions.sales_nav_session import SalesNavSession
+        from linkedin.actions.standalone_session import StandaloneLinkedInSession
         from linkedin.api.client import PlaywrightLinkedinAPI
         from linkedin.conf import ROOT_DIR
 
@@ -83,7 +83,7 @@ class Command(BaseCommand):
         output_path = Path(options["output"]) if options["output"] else default_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with SalesNavSession() as session:
+        with StandaloneLinkedInSession(label="Sales Nav") as session:
             api = PlaywrightLinkedinAPI(session)
 
             if url_template_override:

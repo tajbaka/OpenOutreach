@@ -30,13 +30,14 @@ API_BASE = "https://api.attio.com/v2"
 
 
 # ----------------------------------------------------------------------
-# Stage names + ranking. Stages above Meeting are human-managed; sync_attio
-# uses STAGE_RANK to avoid pushing entries backwards once a human moves
-# them to Proposal+.
+# Stage names + ranking. Stages at Meeting and above are human-managed;
+# sync_attio uses PROGRESSION_RANK to avoid pushing entries backwards once
+# a human moves them to Meeting / Closing.
 # ----------------------------------------------------------------------
 STAGE_PROSPECTING = "Prospecting"
 STAGE_QUALIFICATION = "Qualification"
 STAGE_MEETING = "Meeting"
+STAGE_CLOSING = "Closing"
 STAGE_WON = "Won"
 STAGE_LOST = "Lost"
 
@@ -47,7 +48,8 @@ PROGRESSION_RANK = {
     STAGE_PROSPECTING: 1,
     STAGE_QUALIFICATION: 2,
     STAGE_MEETING: 3,
-    STAGE_WON: 4,
+    STAGE_CLOSING: 4,
+    STAGE_WON: 5,
 }
 
 
@@ -114,7 +116,10 @@ def should_patch_stage(current: str, target: str) -> bool:
 STATUS_INVITE_SENT = "Invite Sent"
 STATUS_CONNECTED = "Connected"
 STATUS_REPLIED = "Replied"
+STATUS_WANTS_MEETING = "Wants Meeting"
 STATUS_MEETING_BOOKED = "Meeting Booked"
+STATUS_HAD_MEETING = "Had Meeting"
+STATUS_PROSPECTING_TO_CLOSE = "Prospecting to close"
 STATUS_WON = "Won"
 STATUS_LOST = "Lost"
 
@@ -122,9 +127,9 @@ STATUS_LOST = "Lost"
 def deal_to_outreach_status(deal) -> str:
     """Compute Person.outreach_status from a Deal.
 
-    Meeting Booked is human-driven (we don't know about meetings without
-    Calendar integration); the script leaves it alone if a human has set
-    it via `should_patch_outreach_status`.
+    Only the auto-managed states map here — Wants Meeting / Meeting Booked /
+    Had Meeting / Prospecting to close are human- or LLM-driven and the
+    don't-downgrade rule preserves them via `should_patch_outreach_status`.
     """
     from linkedin.enums import ProfileState
 
@@ -141,11 +146,14 @@ def deal_to_outreach_status(deal) -> str:
 # Outreach-status progression: Won wins; otherwise furthest-along beats
 # earlier. Lost is terminal-negative, never "more progress" than active.
 OUTREACH_RANK = {
-    STATUS_INVITE_SENT: 1,
-    STATUS_CONNECTED: 2,
-    STATUS_REPLIED: 3,
-    STATUS_MEETING_BOOKED: 4,
-    STATUS_WON: 5,
+    STATUS_INVITE_SENT:          1,
+    STATUS_CONNECTED:            2,
+    STATUS_REPLIED:              3,
+    STATUS_WANTS_MEETING:        4,
+    STATUS_MEETING_BOOKED:       5,
+    STATUS_HAD_MEETING:          6,
+    STATUS_PROSPECTING_TO_CLOSE: 7,
+    STATUS_WON:                  8,
 }
 
 
@@ -215,7 +223,14 @@ def _extract_id(resp: dict, key: str) -> str:
 
 
 def create_company(name: str) -> str:
-    """Create a Company record. Returns record_id."""
+    """Create a Company record. Returns record_id.
+
+    NOTE: This always POSTs (creates fresh) — Attio's assert pattern requires
+    the matching attribute (`name`) to be marked `is_unique=true` in the
+    workspace, which it isn't (multiple legitimate companies can share a
+    name). If you want dedupe, mark `domains` unique and start populating
+    company domains, then switch this to PUT ?matching_attribute=domains.
+    """
     body = {"data": {"values": {"name": name}}}
     resp = _request("POST", "/objects/companies/records", body)
     return _extract_id(resp, "record_id")
@@ -248,6 +263,13 @@ def create_person(
             "target_record_id": company_id,
         }]
     body = {"data": {"values": values}}
+
+    # NOTE: Always POSTs (creates fresh). The assert pattern with
+    # `matching_attribute=linkedin` would dedupe against manual Attio inserts
+    # with the same LinkedIn URL, but Attio requires the matching attribute
+    # to be marked `is_unique=true`, which `linkedin` isn't by default.
+    # If you mark it unique in your Attio workspace settings, swap this back
+    # to: _request("PUT", "/objects/people/records?matching_attribute=linkedin", body)
     resp = _request("POST", "/objects/people/records", body)
     return _extract_id(resp, "record_id")
 
@@ -386,3 +408,47 @@ def delete_person(record_id: str) -> None:
 def delete_sales_entry(entry_id: str) -> None:
     list_id = _require_list_id()
     _request("DELETE", f"/lists/{list_id}/entries/{entry_id}")
+
+
+# ----------------------------------------------------------------------
+# Phase D helpers — email-append + Person notes.
+# ----------------------------------------------------------------------
+
+
+def add_person_email(person_id: str, email: str) -> None:
+    """Append `email` to the Person's email_addresses list (no-op if already present).
+
+    Attio's email_addresses is multiselect+unique; PATCH replaces the field,
+    so we GET the current list, dedupe-append, and PATCH back. Re-running
+    with the same email is a no-op (saves the second round-trip).
+    """
+    if not email:
+        return
+    resp = _request("GET", f"/objects/people/records/{person_id}", None)
+    values = ((resp.get("data") or {}).get("values") or {})
+    existing = [
+        (e or {}).get("email_address") or ""
+        for e in (values.get("email_addresses") or [])
+    ]
+    if email in existing:
+        return
+
+    new_list = [{"email_address": e} for e in existing if e]
+    new_list.append({"email_address": email})
+    body = {"data": {"values": {"email_addresses": new_list}}}
+    _request("PATCH", f"/objects/people/records/{person_id}", body)
+
+
+def create_person_note(*, person_id: str, title: str, content: str) -> str:
+    """POST a note to a Person record. Returns note_id."""
+    body = {
+        "data": {
+            "parent_object": "people",
+            "parent_record_id": person_id,
+            "title": title,
+            "format": "plaintext",
+            "content": content,
+        },
+    }
+    resp = _request("POST", "/notes", body)
+    return _extract_id(resp, "note_id")
