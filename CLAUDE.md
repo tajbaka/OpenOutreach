@@ -38,7 +38,15 @@ pytest -k test_name                # single test
 # Slack notifications for accepted invites (separate from sync_attio)
 .venv/bin/python manage.py check_connections
 
-# Backfill crm.Message for already-CONNECTED Leads whose threads were never persisted
+# Resync crm.Message from LinkedIn DM threads. Standalone runner — auto-runs one pass per
+# env-configured LinkedIn account. Each pass logs in via StandaloneLinkedInSession (cookies
+# cached per account at data/<label>_cookies.json so subsequent runs skip re-auth), asks
+# LinkedIn who it is, then filters Leads to threads with that sender.
+# Configure in .env:
+#   LINKEDIN_USERNAME + LINKEDIN_PASSWORD                    (primary account)
+#   BACKFILL_LINKEDIN_USERNAME + BACKFILL_LINKEDIN_PASSWORD  (backfill account)
+# Set both pairs to sync both accounts; either pair alone is fine if you only have one.
+# Run periodically (cron) since the daemon stops watching threads after the initial accept.
 .venv/bin/python manage.py backfill_messages [--campaign 1] [--limit 50] [--dry-run]
 
 # Backfill from CSV using a separate LinkedIn account (does not touch the daemon)
