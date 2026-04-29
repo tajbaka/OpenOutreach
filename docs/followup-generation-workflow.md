@@ -4,79 +4,136 @@ Reusable runbook for producing tailored LinkedIn DM follow-ups from `crm.Lead` +
 
 ## When to run
 
-- Weekly or bi-weekly, depending on outreach volume
-- After a batch of new connections or replies has accumulated
-- Whenever you want to clean up open threads and figure out what to send next
+Safe to run **daily**. The ball-on-court classifier (Phase 1) routes fresh outbounds to a visibility-only ACTIVE-IN-FLIGHT bucket so daily runs don't generate drafts that step on yesterday's nudge. Weekly is fine if outreach volume is low; daily is appropriate once volume picks up and same-day inbound replies need to surface fast.
 
 ## Output location
 
 ```
 followups/YYYY-MM-DD/
-  replied_chuka.txt
-  replied_arian.txt
-  connected_no_reply_chuka.txt
-  connected_no_reply_arian.txt
+  replied_chuka.txt              # ball_on_us + cold_thread for Chuka
+  replied_arian.txt              # same, for Arian
+  connected_no_reply_chuka.txt   # accepted invite, never replied (Chuka)
+  connected_no_reply_arian.txt   # same, for Arian
+  met_chuka.txt                  # post-meeting follow-ups for Chuka
+  met_arian.txt                  # same, for Arian
 ```
 
 One directory per generation run, named with today's date. Old runs stay around for reference and to compare drafts vs. what actually got sent.
 
 ## Cohorts
 
-Three buckets the workflow generates files for. Each bucket gets one file per active sender (Chuka, Arian, etc.).
+Five buckets the workflow generates files / sections for. The drafted ones are split per active sender (Chuka, Arian, etc.). Active-in-flight is a section inside the relevant draft file, not a separate file.
 
-| Cohort | Filter | Why follow up |
-|---|---|---|
-| **Replied, no meeting** | `Deal.state=Connected` AND `Deal.last_reply_at IS NOT NULL` AND has at least one inbound `Message` AND not in already-met set AND not disqualified | They engaged. Most actionable cohort. |
-| **Connected, no reply** | `Deal.state=Connected` AND `Deal.last_reply_at IS NULL` AND not disqualified AND ICP-relevant title | Cold lead, but they accepted the invite. Try a different angle than the original. |
-| **Replied, polite no** | Same as "replied" but inbound message contains decline phrases | Don't follow up. Disqualify the Lead. |
+| Cohort | Filter | Output | Why follow up |
+|---|---|---|---|
+| **Replied, ball on us** | `Deal.state=Connected` AND latest message is **inbound** AND not in already-met set AND not disqualified | Draft in `replied_<sender>.txt` | They replied last, we owe a response. Most time-sensitive cohort — these need same-day or next-day attention. |
+| **Replied, cold thread (ball on us to nudge)** | `Deal.state=Connected` AND has ≥1 inbound AND latest message is outbound ≥ `NUDGE_AFTER_DAYS` (default 5) old AND not in already-met set AND not disqualified | Draft in `replied_<sender>.txt` | They engaged once and went quiet. Re-engagement nudge needed. |
+| **Active / in-flight** | Latest message is outbound, < `NUDGE_AFTER_DAYS` old | Visibility line in `replied_<sender>.txt` SUMMARY area, no draft | They've had a recent reach-out from us; sending again today would step on it. Listed for visibility so they don't disappear from daily runs. |
+| **Connected, no reply** | `Deal.state=Connected` AND zero inbound messages AND not disqualified AND ICP-relevant title | Draft in `connected_no_reply_<sender>.txt` | Cold lead, but they accepted the invite. Try a different angle than the original. |
+| **Met (post-meeting)** | `Deal.state=Connected` AND lead has had a Google Meet (per `cal_meetings.json` / Drive Gemini notes) | Draft in `met_<sender>.txt` | Post-meeting follow-up; ball-on-court derived from the merged LinkedIn + Gmail + meeting timeline. |
+| **Replied, polite no** | Same filter as Replied cohorts but inbound message contains a `NO_PHRASES` decline phrase | Listed in SUMMARY of `replied_<sender>.txt` as polite-no candidates → recommend `Lead.disqualified=True` | Don't follow up. Disqualify the Lead. |
 
 ## Step-by-step
 
-### Phase 1 — Pull cohort data
+### Phase 1 — Pull cohort data (ball-on-court classifier)
+
+The classifier is **ball-on-court**, not freshness-based. The right question for a daily run is "whose move is it?" — not "how recent was the last message?" A 24-hour-old outbound shouldn't trigger a re-nudge (the prospect hasn't had time), but a 24-hour-old *inbound* absolutely should surface (we owe a reply). This was a deliberate fix on 2026-04-28 after the previous freshness filter silently hid Mark Milton (calendar-invite-just-sent) and similarly classified active threads as "too fresh."
 
 ```bash
 .venv/bin/python manage.py shell <<'EOF'
 import json
+from datetime import datetime, timedelta, timezone
 from crm.models import Lead, Deal, Message
 
 ALREADY_MET_ATTIO_IDS = {  # update each run
     "55fe2a6d-...","6fa371ad-...",  # the 14 (or however many) we already met
 }
 
-# Cohort A: replied, no meeting
-deals_replied = (Deal.objects
-    .filter(state="Connected", last_reply_at__isnull=False, lead__disqualified=False)
-    .select_related("lead").order_by("-last_reply_at"))
+NUDGE_AFTER_DAYS = 5  # how long to wait before nudging an unanswered outbound
+now = datetime.now(timezone.utc)
+nudge_cutoff = now - timedelta(days=NUDGE_AFTER_DAYS)
 
+def classify(lead):
+    """
+    Returns one of:
+      - 'ball_on_us'        : latest msg is inbound, we owe a reply         → DRAFT
+      - 'cold_thread'       : latest is outbound, ≥ NUDGE_AFTER_DAYS old    → DRAFT (nudge)
+      - 'active_in_flight'  : latest is outbound, < NUDGE_AFTER_DAYS old    → VISIBILITY ONLY
+      - 'no_reply_yet'      : zero inbound messages                         → connected-no-reply cohort
+      - 'no_messages'       : edge case, skip
+    """
+    msgs = list(Message.objects.filter(lead=lead).order_by("sent_at"))
+    if not msgs:
+        return ('no_messages', None, [])
+    has_inbound = any(m.direction == 'inbound' for m in msgs)
+    if not has_inbound:
+        return ('no_reply_yet', None, msgs)
+    latest = msgs[-1]
+    if latest.direction == 'inbound':
+        return ('ball_on_us', latest, msgs)
+    # latest is outbound
+    if latest.sent_at < nudge_cutoff:
+        return ('cold_thread', latest, msgs)
+    return ('active_in_flight', latest, msgs)
+
+# Cohort A: replied, no meeting (ball_on_us OR cold_thread → DRAFT)
+# Cohort A-active: latest outbound < NUDGE_AFTER_DAYS old → VISIBILITY only
 # Cohort B: connected, no reply
-deals_no_reply = (Deal.objects
-    .filter(state="Connected", last_reply_at__isnull=True, lead__disqualified=False)
+
+cohort_drafts = []          # ball_on_us + cold_thread
+cohort_active_in_flight = [] # active_in_flight (visibility only)
+cohort_no_reply = []         # no_reply_yet
+
+deals = (Deal.objects
+    .filter(state="Connected", lead__disqualified=False)
     .select_related("lead"))
 
-# For each candidate gather: lead profile (from Lead.description JSON), full message thread, primary outbound sender
-candidates = []
-for d in deals_replied:
+for d in deals:
     lead = d.lead
-    if lead.attio_person_id in ALREADY_MET_ATTIO_IDS: continue
-    msgs = list(Message.objects.filter(lead=lead).order_by("sent_at").values("source","direction","sent_at","body","sender"))
-    if not any(m["direction"]=="inbound" for m in msgs): continue
+    if lead.attio_person_id in ALREADY_MET_ATTIO_IDS:
+        continue
+    klass, latest, msgs = classify(lead)
+    if klass == 'no_messages':
+        continue
     try: prof = json.loads(lead.description) if lead.description else {}
     except Exception: prof = {}
-    candidates.append({
-        "lead_id": lead.id, "first_name": lead.first_name, "last_name": lead.last_name,
-        "company_name": lead.company_name, "headline": prof.get("headline",""),
+    base = {
+        "lead_id": lead.id, "deal_id": d.id, "attio_person_id": lead.attio_person_id,
+        "first_name": lead.first_name, "last_name": lead.last_name,
+        "company_name": lead.company_name, "linkedin_url": lead.linkedin_url, "email": lead.email or "",
+        "headline": prof.get("headline",""),
         "summary": (prof.get("summary","") or "")[:1500],
-        "primary_sender": next(iter([m["sender"] for m in msgs if m["direction"]=="outbound"]), ""),
-        "messages": [{"d": m["direction"], "t": str(m["sent_at"])[:19], "b": (m["body"] or "")[:600], "s": m["sender"]} for m in msgs],
-    })
+        "primary_sender": next(iter([m.sender for m in msgs if m.direction=="outbound"]), ""),
+        "classification": klass,
+        "latest_direction": (latest.direction if latest else None),
+        "latest_at": (str(latest.sent_at)[:19] if latest else None),
+        "messages": [{"d": m.direction, "t": str(m.sent_at)[:19], "b": (m.body or "")[:600], "s": m.sender} for m in msgs],
+    }
+    if klass == 'no_reply_yet':
+        cohort_no_reply.append(base)
+    elif klass == 'active_in_flight':
+        cohort_active_in_flight.append(base)
+    else:  # ball_on_us or cold_thread
+        cohort_drafts.append(base)
 
-with open("/tmp/replied_candidates.json","w") as f: json.dump(candidates, f, indent=2)
+with open("/tmp/followup_drafts.json","w") as f: json.dump(cohort_drafts, f, indent=2)
+with open("/tmp/followup_active_in_flight.json","w") as f: json.dump(cohort_active_in_flight, f, indent=2)
+with open("/tmp/followup_no_reply.json","w") as f: json.dump(cohort_no_reply, f, indent=2)
+print(f"drafts: {len(cohort_drafts)}, active-in-flight: {len(cohort_active_in_flight)}, no-reply: {len(cohort_no_reply)}")
 EOF
 ```
 
-### Phase 2 — Classify replies into buckets
+The output splits into three files instead of two:
 
-For the replied cohort, scan inbound message text for decline phrases and active-scheduling indicators:
+- `/tmp/followup_drafts.json` — leads that need a draft. Mix of "ball on us, draft a reply" and "cold thread, draft a nudge." The `latest_direction` field tells you which kind.
+- `/tmp/followup_active_in_flight.json` — visibility only. Listed in the SUMMARY/ACTIVE section of the output file with a one-line state, no draft. These are the leads that under the old freshness filter would have silently disappeared.
+- `/tmp/followup_no_reply.json` — the connected-no-reply cohort, unchanged from before.
+
+`NUDGE_AFTER_DAYS = 5` is the threshold for "cold thread" — tunable. Five days catches the bulk of normal B2B reply cadence.
+
+### Phase 2 — Classify replies into sub-buckets
+
+For the **drafts** cohort, scan inbound message text for decline phrases (these are polite-no candidates):
 
 ```python
 NO_PHRASES = [
@@ -90,10 +147,12 @@ NO_PHRASES = [
     "our client is hiring",  # recruiter spam
 ]
 
-# A lead replied + last outbound was within 5 days = ACTIVE (skip, too fresh)
-# A lead's inbound contains a NO_PHRASE = disqualify
-# Otherwise = follow-up candidate
+# Any inbound containing a NO_PHRASE = disqualify candidate (write to /tmp/polite_no_candidates.json,
+# don't draft a follow-up, recommend Lead.disqualified=True in the SUMMARY).
+# Everything else in /tmp/followup_drafts.json proceeds to Phase 3+ for drafting.
 ```
+
+The old "last outbound within 5 days = ACTIVE, skip" rule is gone — the ball-on-court classifier in Phase 1 already handled freshness correctly by routing fresh outbounds to `followup_active_in_flight.json`.
 
 For the connected-no-reply cohort, apply ICP filter on `Lead.description` (Voyager scrape headline + summary):
 
@@ -109,6 +168,23 @@ EXCLUDE = ["recruit","talent","marketing","sales rep","customer success"]
 `Message.sender` field holds who sent each outbound (e.g., "chukwuka agu", "Arian Taj"). For each candidate, the primary sender = the most-frequent outbound sender on that thread. One follow-up file per sender.
 
 If a sender has zero candidates in a cohort, still create the file with a short "no leads to follow up here yet" note. Easier to scan than missing files.
+
+### Phase 3b — Merge Gmail threads with LinkedIn DMs
+
+For each candidate, pull Gmail threads via MCP and merge into a single timeline sorted by `sent_at`. This determines the **reply venue** (LinkedIn DM vs email) — whichever source the latest message is from is where the follow-up should land.
+
+```
+mcp__claude_ai_Gmail__search_threads
+  query: "from:<lead.email> OR to:<lead.email>"
+  pageSize: 5
+```
+
+Build a merged timeline:
+- LinkedIn DMs from `crm.Message` (source=linkedin)
+- Gmail messages from MCP (treat as source=gmail in the merge)
+- Sort by timestamp; latest source determines reply venue
+
+Cost-bounded: only the cohort size of follow-up candidates triggers Gmail calls (~25-30 per run, not the whole DB). No persistence layer; always-fresh data including manual replies sent minutes ago.
 
 ### Phase 4 — Tier classification (connected-no-reply only)
 
@@ -142,7 +218,15 @@ Tier-1 companies are CSPs the FedRAMP universe revolves around (AWS, Salesforce,
 - Our ball, gone cold: "Name, my fault on the gap. [acknowledge what we owed them]."
 - Cold lead, never replied: "Name, no rush, figured I'd send one more note since I never heard back."
 
-**Priority labels** in the file are internal-only metadata (never appear in the actual message). Format: `PRIORITY: HIGH/MEDIUM-HIGH/MEDIUM/LOW (reasoning in plain language)`.
+**Reply venue inference (from Phase 3b merged timeline):**
+- Latest message source = `linkedin` → draft a LinkedIn DM (concise, casual, no signature)
+- Latest message source = `gmail` → draft an email (slightly longer is acceptable, can include signature, subject line if it's a fresh thread vs. reply-in-thread)
+- No prior messages on either → default to LinkedIn DM (matches the original cold outreach venue)
+
+**Priority labels** in the file are internal-only metadata (never appear in the actual message). Format:
+- `PRIORITY: HIGH/MEDIUM-HIGH/MEDIUM/LOW/HOLD (reasoning in plain language)` — `HOLD` is for leads that should have a draft but the freshness window hasn't opened yet (e.g., we already nudged in the last few days on another channel).
+- `MEDIUM: linkedin | gmail` (the channel to send the reply on, per Phase 3b)
+- `CONVO: <one-or-two-sentence summary of the thread to date>` — required, so the draft makes sense in isolation without re-reading messages.
 
 ### Phase 6 — File output
 
@@ -162,8 +246,10 @@ HIGH PRIORITY (N)
 
 --- [Name], [Title], [Company] ---
 PRIORITY: HIGH ([reasoning])
+MEDIUM: linkedin | gmail
+CONVO: [one or two sentences summarizing the thread to date]
 
-[Draft message in user's voice]
+[Draft message in user's voice — formatted for the chosen medium]
 
 
 --- [next person] ---
@@ -171,10 +257,18 @@ PRIORITY: HIGH ([reasoning])
 
 
 =================================================
+ACTIVE / IN-FLIGHT (no draft this run, ball is on them)
+=================================================
+[Visibility-only list of leads from /tmp/followup_active_in_flight.json. One bullet per lead, with current state and when to revisit. No drafts.]
+
+
+=================================================
 SUMMARY
 =================================================
-[counts, recommended order, dedupe alerts, action items]
+[counts, recommended order, dedupe alerts, action items, polite-no candidates]
 ```
+
+The **ACTIVE / IN-FLIGHT** section is required even when the list is empty (write "No active in-flight threads this run" in that case). This is the section that makes daily runs safe — it shows the user that mid-scheduling threads, calendar invites just sent, etc., are accounted for and don't need action today. Without this section, leads silently disappear and the user can't tell the difference between "filtered out" and "never existed."
 
 ### Phase 7 — Surface decisions to user
 

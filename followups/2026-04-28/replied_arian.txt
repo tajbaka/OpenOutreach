@@ -1,9 +1,0 @@
-=================================================
-FEDRAMPGPT FOLLOW-UPS, REPLIED NO MEETING YET (ARIAN)
-=================================================
-
-No leads to follow up on here yet.
-
-Arian has sent 4 outbound LinkedIn DMs total. None have replied. All 4 are in the "connected, no reply" cohort instead. See followups_connected_no_reply_arian.txt for those.
-
-Once Arian's reply rate accumulates, this file will populate from the same workflow that produced followups_replied_chuka.txt.
