@@ -118,8 +118,8 @@ ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip()
 }
 
 # Slack incoming-webhook URL. When set, a notification is posted whenever
-# the standalone `manage.py check_connections` command detects a newly
-# accepted invite. Empty disables Slack entirely. Get one at:
+# the daemon's sweep_connections task detects a newly accepted invite.
+# Empty disables Slack entirely. Get one at:
 #   https://api.slack.com/messaging/webhooks
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 

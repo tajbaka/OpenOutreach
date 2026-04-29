@@ -1,0 +1,153 @@
+================================================================================
+OPENOUTREACH SYSTEM FLOW
+================================================================================
+Snapshot: 2026-04-29
+Reflects current .env feature flags. Update when flags change.
+
+Active flags (.env):
+  ENABLE_FOLLOW_UP=false               ← daemon does NOT auto-DM after accept
+  ENABLE_SWEEP_CONNECTIONS=true
+  CONNECTION_SWEEP_INTERVAL_HOURS=6    ← sweep every 6h
+  ENABLE_ACTIVE_HOURS=true
+  ACTIVE_START_HOUR=9, ACTIVE_END_HOUR=21, ACTIVE_TIMEZONE=America/Toronto
+  ENABLE_FREEMIUM_CAMPAIGN=false
+  ENABLE_AUTO_DISCOVERY=false
+  AI_MODEL=gemini-2.5-flash
+  FOLLOW_UP_DAILY_LIMIT=30             ← unused while FOLLOW_UP=false
+
+
+================================================================================
+1. DAEMON  (manage.py with no args)
+================================================================================
+Long-running process. Runs only during ACTIVE_START_HOUR..ACTIVE_END_HOUR
+in ACTIVE_TIMEZONE.
+
+On startup:
+  • ENABLE_FOLLOW_UP=false  → cancels all pending follow_up tasks
+                              (daemon.py:268-275)
+  • ENABLE_SWEEP_CONNECTIONS=true  → schedules sweep tasks
+
+Active task types:
+
+  CONNECT  (linkedin/tasks/connect.py)
+    - Sends LinkedIn connection request + initial note.
+    - Persists outbound note to crm.Message.
+    - At end: enqueue_follow_up() puts a task in queue. Daemon's next
+      loop iteration cancels it because ENABLE_FOLLOW_UP=false.
+    - Net: connection invite goes out. That's it.
+
+  SWEEP_CONNECTIONS  (linkedin/tasks/sweep_connections.py, every 6h)
+    - Visits LinkedIn connections page in bulk.
+    - Cross-references PENDING deals → newly accepted invites flip to
+      CONNECTED.
+    - For each newly-accepted lead:
+        → calls get_conversation()
+        → persist_thread() writes inbound + outbound to crm.Message
+        → captures Deal.last_reply_at if they replied with the accept
+        → posts Slack notification (if SLACK_WEBHOOK_URL set)
+        → tries to enqueue_follow_up() — gets cancelled at next loop
+    - Self-reschedules every CONNECTION_SWEEP_INTERVAL_HOURS.
+
+BLIND SPOT
+  Once a Lead is CONNECTED, the daemon never visits that thread again.
+  Sweep only iterates PENDING deals. So with FOLLOW_UP=false:
+    • ONE message-history snapshot when the invite is accepted
+      (whatever they said in the accept reply).
+    • Anything they send AFTER that is invisible to the system unless
+      backfill_messages runs.
+
+
+================================================================================
+2. crm.Message  (the database table)
+================================================================================
+Single source of truth for LinkedIn DM history.
+
+Populated by:
+  • Daemon's sweep_connections — once per lead, at acceptance.
+  • backfill_messages — must run on cron to keep things fresh.
+  • import_connections — for CSV-imported leads (outbound from CSV +
+    inbound via the get_conversation hook).
+  • Manual debugging (rare).
+
+Idempotent on (source, external_id). Source is "linkedin", "gmail", or
+"calendar". Direction is "inbound" or "outbound".
+
+
+
+
+================================================================================
+3. EXTERNAL / MANUAL COMMANDS  (no scheduler in repo but need to run this once a day or so)
+================================================================================
+
+  manage.py backfill_messages
+    THIS is what keeps message history fresh after the first accept.
+    Without it on cron, every reply that arrives more than a few minutes
+    after the invite-accept never makes it to crm.Message — and that
+    starves sync_attio's Stage D synthesis.
+      - Logs in via StandaloneLinkedInSession (cookies cached at
+        data/<label>_cookies.json — separate from daemon cookies).
+      - Pulls all DM threads for env-configured account(s):
+          LINKEDIN_USERNAME + LINKEDIN_PASSWORD            (primary)
+          BACKFILL_LINKEDIN_USERNAME + ...PASSWORD          (backfill)
+      - Persists new messages to crm.Message.
+      - Runs once per env-configured account.
+      - Args: --campaign N, --limit N, --dry-run
+
+================================================================================
+4. ATTIO SYNC  (manage.py sync_attio — no scheduler in repo)
+================================================================================
+Run externally on cron / manually. CLAUDE.md mentions hourly cadence.
+
+For each Deal at state >= PENDING, group by company. Per group:
+
+  STAGE A/B/C — mirror to Attio Sales list
+    • Create/update Attio Company
+    • Create/update Attio People (one per Lead)
+    • Create/update Sales list Entry
+    • Patch Stage:
+        Prospecting → Qualification → Meeting → Closing → Won
+        (Lost terminates)
+    • Patch Outreach status:
+        Invite Sent → Connected → Replied → Wants Meeting →
+        Meeting Booked → Had Meeting → Prospecting to close → Won
+    • should_patch_stage / should_patch_outreach_status block
+      downgrades — manual Attio status changes are never clobbered.
+
+  STAGE D — synthesis pass
+    (linkedin/notifications/synthesis.py, per-Deal, best-effort)
+
+    D1: extract_email_from_messages
+      - Regex over inbound crm.Message bodies.
+      - Writes email to Lead.email + Attio Person.email_addresses.
+      - Idempotent (skipped if Lead.email already set).
+
+    D2: detect_wants_meeting
+      - Cheap LLM (gemini-2.5-flash) over the unified thread with
+        Pydantic-structured output.
+      - If meeting intent: patches Outreach status to "Wants Meeting"
+        and POSTs a "Wants Meeting (auto-detected)" note to the Person.
+      - Gates: Deal.wants_meeting_detected_at lock-in,
+               Deal.last_synthesized_at vs latest Message.sent_at,
+               skip when status already past Wants Meeting.
+
+  Failures in Stage D are logged but never block Stage A/B/C.
+
+DATA DEPENDENCY
+  Stage D reads only crm.Message — not LinkedIn directly. So D1 (email
+  extract) and D2 (wants-meeting LLM) are only as good as the last
+  backfill_messages run. If backfill isn't on cron, Attio's email/status
+  signals lag.
+
+
+
+
+================================================================================
+  ONE OFF COMMAND IF SOMEONE ISN"T USING DAEMON
+================================================================================  
+    manage.py import_connections --csv <file> --handle <profile>
+    CSV-based bulk import via "backfill" account. Reads
+    LinkedIn URL,First Name,Message; creates Lead+Deal at state=CONNECTED
+    for each URL also present in the scraped Connections page.
+    Outbound msgs from CSV → crm.Message. Inbound msgs flow through the
+    get_conversation hook. Skips URLs already in non-backfill campaigns
+    so daemon outreach state is never disturbed.

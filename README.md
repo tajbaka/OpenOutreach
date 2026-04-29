@@ -1,13 +1,10 @@
 ![OpenOutreach Logo](docs/logo.png)
 
-> **Describe your product. Define your target market. The AI finds the leads for you.**
+> Self-hosted LinkedIn outreach automation with first-class Attio CRM sync. Send connection requests, capture replies, mirror state to Attio, and use companion Claude workflows for follow-up drafting and post-meeting enrichment.
 
 <div align="center">
 
-[![GitHub stars](https://img.shields.io/github/stars/eracle/OpenOutreach.svg?style=flat-square&logo=github)](https://github.com/eracle/OpenOutreach/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/eracle/OpenOutreach.svg?style=flat-square&logo=github)](https://github.com/eracle/OpenOutreach/network/members)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
-[![Open Issues](https://img.shields.io/github/issues/eracle/OpenOutreach.svg?style=flat-square&logo=github)](https://github.com/eracle/OpenOutreach/issues)
 
 <br/>
 
@@ -19,244 +16,251 @@
 
 ---
 
-### 🚀 What is OpenOutreach?
+## What this is
 
-OpenOutreach is a **self-hosted, open-source LinkedIn automation tool** for B2B lead generation. Unlike other tools, **you don't need a list of profiles to contact** — you describe your product and your target market, and the system autonomously discovers, qualifies, and contacts the right people.
+A long-running daemon that runs LinkedIn outreach inside a stealth Playwright browser, plus a Postgres-backed CRM that mirrors deal state to Attio's Sales list. Built on top of the upstream `eracle/OpenOutreach` ML pipeline (Bayesian active learning for lead qualification), with the surface area extended for real B2B sales workflows: multi-account outreach, message-thread persistence, hourly Attio sync with don't-clobber stage logic, LLM-driven email extraction and meeting-intent detection, and Claude-driven runbooks for human-in-the-loop follow-up drafting.
 
-**How it works:**
+**Core loop:**
 
-1. **You provide** a product description and a campaign objective (e.g. "SaaS analytics platform" targeting "VP of Engineering at Series B startups")
-2. **The AI generates** LinkedIn search queries to discover candidate profiles
-3. **A Bayesian ML model** (Gaussian Process Regressor on profile embeddings) learns which profiles match your ideal customer — using an explore/exploit strategy to balance finding the best leads now vs. learning what makes a good lead
-4. **An LLM classifies** each profile selected by the model; the GP learns from every decision to select better candidates over time
-5. **Qualified leads** are automatically contacted, and an AI agent manages multi-turn follow-up conversations
+1. **Daemon** connects to qualified leads (Voyager API + Playwright)
+2. **Sweep** runs every 6h, detects accepted invites in bulk, captures the first DM reply
+3. **`crm.Message`** persists every LinkedIn DM thread (idempotent on `external_id`)
+4. **`sync_attio`** (cron'd hourly) mirrors Deals → Attio Sales list, with stage and outreach-status patching that won't downgrade manual changes
+5. **Synthesis pass** (inside `sync_attio`) extracts email addresses from inbound messages and runs a cheap LLM to flag "wants meeting" intent
+6. **Backfill** (`backfill_messages` on cron) keeps `crm.Message` fresh after the daemon stops watching threads
+7. **Companion Claude workflows** (interactive, MCP-driven) generate follow-up drafts and enrich Attio with cross-source meeting context
 
-The system gets smarter with every decision. It starts by exploring broadly, then progressively focuses on the highest-value profiles as it learns your ideal customer profile from its own classification history.
-
-**Why choose OpenOutreach?**
-
-- 🧠 **Autonomous lead discovery** — No contact lists needed; AI finds your ideal customers
-- 🛡️ **Undetectable** — Playwright + stealth plugins mimic real user behavior
-- 💾 **Self-hosted + full data ownership** — Everything runs locally, browse your CRM in a web UI
-- 🐳 **One-command setup** — Dockerized deployment, interactive onboarding
-- ✨ **AI-powered messaging** — LLM-generated personalized outreach (bring your own model)
-
-Perfect for founders, sales teams, and agencies who want powerful automation **without account bans or subscription lock-in**.
+The Bayesian ML qualifier is still there for autonomous lead discovery, but most teams running this will already have a lead list — the bulk of value is now in the Attio sync, message store, and human workflows.
 
 ---
 
-## 📋 What You Need
+## What you need
 
 | # | What | Example |
 |---|------|---------|
-| 1 | **A LinkedIn account** | Your email + password |
-| 2 | **An LLM API key** | OpenAI, Anthropic, or any OpenAI-compatible endpoint |
-| 3 | **A product description + target market** | "We sell cloud cost optimization for DevOps teams at mid-market SaaS companies" |
-
-That's it. No spreadsheets, no lead databases, no scraping setup.
+| 1 | LinkedIn account(s) | Primary outreach account; optional separate "backfill" account for CSV imports |
+| 2 | LLM API key | Used for qualification + synthesis (cheap models work for synthesis, e.g., `gemini-2.5-flash`) |
+| 3 | Postgres | Neon recommended; SQLite fallback works for dev |
+| 4 | (Optional) Attio API key + Sales list ID | Required if you want CRM sync |
+| 5 | (Optional) Slack webhook | For accepted-invite notifications |
 
 ---
 
-## ⚡ Quick Start (Docker — Recommended)
+## Quick start (Docker)
 
-Pre-built images are published to GitHub Container Registry on every push to `master`.
+Pre-built images on GitHub Container Registry:
 
 ```bash
 docker run --pull always -it -p 5900:5900 -v openoutreach_db:/app ghcr.io/eracle/openoutreach:latest
 ```
 
-The interactive onboarding walks you through the three inputs above on first run. All data persists in the `openoutreach_db` Docker volume across restarts.
+Connect a VNC client to `localhost:5900` to watch the browser. The interactive onboarding walks you through credentials and campaign setup on first run.
 
-Connect a VNC client to `localhost:5900` to watch the browser live.
-
-For Docker Compose, build-from-source, and more options see the **[Docker Guide](./docs/docker.md)**.
+For Compose / build-from-source see [`docs/docker.md`](docs/docker.md).
 
 ---
 
-## ⚙️ Local Installation (Development)
-
-For contributors or if you prefer running directly on your machine.
+## Local installation (development)
 
 ### Prerequisites
 
-- [Git](https://git-scm.com/)
-- [Python](https://www.python.org/downloads/) (3.12+)
+- Git
+- Python 3.12+
 
-### 1. Clone & Set Up
+### Setup
+
 ```bash
-git clone https://github.com/eracle/OpenOutreach.git
+git clone https://github.com/tajbaka/OpenOutreach.git
 cd OpenOutreach
 
-# Install deps, Playwright browsers, run migrations, and bootstrap CRM
+# Install deps + Playwright browsers + migrations + CRM bootstrap
 make setup
-```
 
-### 2. Run the Daemon
-
-```bash
+# Run the daemon (interactive onboarding on first run)
 make run
-```
-The interactive onboarding will prompt for LinkedIn credentials, LLM API key, and campaign details on first run. Fully resumable — stop/restart anytime without losing progress.
 
-### 3. View Your Data (CRM Admin)
-
-OpenOutreach includes a full CRM web interface powered by DjangoCRM:
-```bash
-# Create an admin account (first time only)
+# Browse the CRM (Django Admin)
 python manage.py createsuperuser
-
-# Start the web server
 make admin
+# → http://localhost:8000/admin/
 ```
-Then open:
-- **Django Admin:** http://localhost:8000/admin/
-
----
-## ✨ Features
-
-| Feature                            | Description                                                                                                          |
-|------------------------------------|----------------------------------------------------------------------------------------------------------------------|
-| 🧠 **Autonomous Lead Discovery**   | No contact lists needed — LLM generates search queries from your product description and campaign objective.         |
-| 🎯 **Bayesian Active Learning**    | Gaussian Process model on profile embeddings learns your ideal customer via explore/exploit, selecting the most informative candidates for LLM qualification. |
-| 🤖 **Stealth Browser Automation**  | Playwright + stealth plugins mimic real user behavior for undetectable interactions.                                 |
-| 🛡️ **Voyager API Scraping**       | Uses LinkedIn's internal API for accurate, structured profile data (no fragile HTML parsing).                        |
-| 🔄 **Stateful Pipeline**          | Tracks profile states (`QUALIFIED` → `READY_TO_CONNECT` → `PENDING` → `CONNECTED` → `COMPLETED`) in a local DB — fully resumable. |
-| ⏱️ **Smart Rate Limiting**        | Configurable daily/weekly limits per action type, respects LinkedIn's own limits automatically.                      |
-| 💾 **Built-in CRM**               | Full data ownership via DjangoCRM with Django Admin UI — browse Leads, Contacts, Companies, and Deals.              |
-| 🐳 **One-Command Deployment**      | Dockerized setup with interactive onboarding and VNC browser view (`localhost:5900`).                                |
-| ✍️ **AI-Powered Messaging**        | Agentic multi-turn follow-up conversations — the AI agent reads history, sends messages, and schedules future follow-ups. |
 
 ---
 
-## 📖 How the ML Pipeline Works
+## Architecture (quick reference)
 
-The daemon runs a continuous **task queue** backed by a persistent `Task` model. Three task types self-schedule follow-on work:
+For module-level detail see [`CLAUDE.md`](CLAUDE.md) (kept current alongside code changes). For the live operational picture (what's running on your box right now given your `.env` flags) see [`docs/system-flow.txt`](docs/system-flow.txt).
 
-| Task Type | What it does |
-|-----------|-------------|
-| **Connect** | Ranks qualified profiles by GP model probability, sends connection requests (daily + weekly limits). Triggers qualification and search via composable generators when the pool is empty. |
-| **Check Pending** | Checks if a pending request was accepted (exponential backoff per profile) |
-| **Follow Up** | Runs an AI agent that manages multi-turn conversations with connected profiles |
+**Entry point:** `manage.py` — no args runs the daemon. With args, delegates to Django CLI. Auto-migrates and bootstraps CRM on startup.
 
-**The qualification loop in detail:**
+**State machine** (`enums.py:ProfileState`):
 
-Profiles discovered during navigation are automatically scraped and embedded (384-dim FastEmbed vectors). The connect task's backfill chain decides which profile to evaluate next using a balance-driven strategy:
+```
+QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
+```
 
-- **When negatives outnumber positives** → **exploit**: pick the profile with highest predicted qualification probability (seek likely positives to fill the pipeline)
-- **Otherwise** → **explore**: pick the profile with highest BALD (Bayesian Active Learning by Disagreement) score (seek the most informative label to improve the model)
+`Deal.state` is a CharField with these choices; `Deal.closing_reason` (COMPLETED / FAILED / DISQUALIFIED) closes out the lifecycle. `Lead.disqualified=True` is a permanent exclusion.
 
-All qualification decisions go through the LLM. The GP model selects which candidate to evaluate next and gates promotion from QUALIFIED to READY_TO_CONNECT (confidence threshold). Every LLM decision feeds back into the model, making candidate selection progressively smarter.
+**Task queue** (`linkedin/models.py:Task`):
 
-**Cold start:** With fewer than 2 labelled profiles, the model can't fit — candidates are selected in order and qualified via LLM. As labels accumulate, the GP becomes better at selecting high-value candidates.
+| Task type | What it does |
+|---|---|
+| **`connect`** | Sends invite + initial note; persists outbound to `crm.Message`. Gated by daily/weekly limits per profile. |
+| **`sweep_connections`** | Visits the connections page every 6h (configurable), bulk-detects accepts, transitions PENDING → CONNECTED, captures first reply, posts Slack. Replaces the legacy per-profile `check_pending`. |
+| **`follow_up`** | Runs the multi-turn LLM agent on connected leads. Gated by `ENABLE_FOLLOW_UP` — when off, queued tasks are cancelled at startup. |
+| **`check_pending`** | Legacy task type, retained for migration compatibility. New deployments should use `sweep_connections`. |
 
-Configure rate limits and behavior via Django Admin (LinkedInProfile + Campaign models).
+**Storage:**
+- **Postgres** (Neon recommended) when `DATABASE_URL` is set; SQLite fallback for offline dev. Daemon and dev box must share the same `DATABASE_URL` to avoid split-brain.
+- **`crm.Message`** is the canonical DM history store (FK to Lead, source enum {linkedin, gmail, calendar}, direction {inbound, outbound}, idempotent on `(source, external_id)`).
+- Per-campaign GP models live in `Campaign.model_blob` (binary BLOB, not files).
+
+**Attio sync** (`linkedin/notifications/attio.py`):
+- Standalone command: `manage.py sync_attio` (REST, not MCP).
+- Iterates Deals at `state >= PENDING`, groups by `company_name`, mirrors to the Sales list as one Company + one Sales entry + one Person per Lead, all linked.
+- Stage hierarchy: `Prospecting → Qualification → Meeting → Closing → Won` (Lost terminates).
+- Outreach status hierarchy: `Invite Sent → Connected → Replied → Wants Meeting → Meeting Booked → Had Meeting → Prospecting to close → Won`.
+- `should_patch_stage` and `should_patch_outreach_status` block downgrades, so manual Attio edits are never clobbered.
+- Decoupled from the daemon — Attio failures don't affect outreach.
+
+**Synthesis pass** (`linkedin/notifications/synthesis.py`, runs inside `sync_attio`):
+- **D1 email extract:** regex over inbound `crm.Message` rows, appends to `Lead.email` and the Attio Person's `email_addresses`.
+- **D2 wants-meeting LLM:** cheap LLM (configured via `AI_MODEL`) reads the thread; if meeting intent detected, patches Outreach status to "Wants Meeting" and POSTs an auto-detected note to the Person.
+- Gated by `Deal.wants_meeting_detected_at` (lock-in) and `Deal.last_synthesized_at` vs latest message timestamp (skip when no new signal).
 
 ---
 
-## 📂 Project Structure
+## Companion Claude workflows
+
+Two interactive runbooks driven by Claude that sit on top of the data the automation produces. See [`docs/human-workflows.md`](docs/human-workflows.md) for the full picture.
+
+| Workflow | Purpose |
+|---|---|
+| [`docs/followup-generation-workflow.md`](docs/followup-generation-workflow.md) | Generate per-prospect follow-up drafts from `crm.Message` + Gmail + Calendar + Drive. Output goes to `followups/YYYY-MM-DD/*.txt` for you to paste. Ball-on-court classifier supports daily runs. |
+| [`docs/attio-meeting-sync-workflow.md`](docs/attio-meeting-sync-workflow.md) | Enrich Attio People with cross-source meeting context (calendar + Gmail + Drive Gemini notes), update Outreach status and Entry stage, compose AI Notes. Preview-first; you approve before any Attio write. |
+
+These don't run on cron. You run them in conversation with Claude when you need them.
+
+---
+
+## Common commands
+
+```bash
+# Docker
+make build / make up / make stop / make attach / make up-view
+
+# Local dev
+make setup    # install deps + browsers + migrate + bootstrap CRM
+make run      # run daemon
+make admin    # Django Admin at localhost:8000/admin/
+
+# Testing
+make test / make docker-test
+pytest tests/api/test_voyager.py   # single file
+pytest -k test_name                # single test
+
+# Attio CRM sync (mirrors Deal state to the Sales list)
+.venv/bin/python manage.py sync_attio --campaign 1
+.venv/bin/python manage.py sync_attio
+.venv/bin/python manage.py sync_attio --dry-run
+
+# Resync crm.Message from LinkedIn DM threads (run on cron)
+.venv/bin/python manage.py backfill_messages [--campaign 1] [--limit 50] [--dry-run]
+
+# Bulk-import existing connections from CSV via a separate "backfill" account
+.venv/bin/python manage.py import_connections \
+  --csv leads/linkedin-batch4-messages.csv \
+  --handle backfill-account@example.com \
+  --since-days 90 \
+  [--dry-run]
+```
+
+---
+
+## Configuration
+
+Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin. See [`docs/configuration.md`](docs/configuration.md) for the full reference.
+
+**Key feature flags:**
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `ENABLE_SWEEP_CONNECTIONS` | `true` | Bulk accept-detection task |
+| `ENABLE_FOLLOW_UP` | `true` | Auto-DM after accept (set `false` if you want to write follow-ups by hand) |
+| `ENABLE_ACTIVE_HOURS` | `false` | Restrict daemon to a daily window |
+| `ENABLE_AUTO_DISCOVERY` | `false` | Autonomous lead-search via the ML pipeline |
+| `CONNECTION_SWEEP_INTERVAL_HOURS` | `2` | How often the sweep task fires |
+| `AI_MODEL` | `gpt-4o` | Used for both qualification and synthesis (cheap models work fine for synthesis) |
+| `DATABASE_URL` | (unset → SQLite) | Postgres connection string |
+| `ATTIO_API_KEY` + `ATTIO_SALES_LIST_ID` | (unset → no sync) | Required for Attio mirroring |
+| `SLACK_WEBHOOK_URL` | (unset → no Slack) | Notifications when sweep detects accepts |
+
+---
+
+## Project structure
 
 ```
 ├── docs/
-│   ├── architecture.md              # System architecture
-│   ├── configuration.md             # Configuration reference
-│   ├── docker.md                    # Docker setup guide
-│   ├── templating.md                # Follow-up messaging guide
-│   └── testing.md                   # Testing strategy
+│   ├── configuration.md                # Configuration reference
+│   ├── system-flow.txt                 # Operational state of your deployment
+│   ├── human-workflows.md              # Overview of the two Claude runbooks
+│   ├── followup-generation-workflow.md # Drafts: replied / connected-no-reply / met cohorts
+│   ├── attio-meeting-sync-workflow.md  # Attio enrichment from calendar + Gmail + Drive
+│   ├── docker.md                       # Docker setup
+│   ├── templating.md                   # Follow-up message templating
+│   ├── template-variables.md           # Available template variables
+│   └── testing.md                      # Test strategy
 ├── linkedin/
-│   ├── actions/                     # Browser actions (connect, message, status, search)
-│   ├── agents/                      # ReAct follow-up agent (multi-turn conversations)
-│   ├── api/                         # Voyager API client + parser + messaging package
-│   ├── browser/                     # Session management, login, navigation
-│   ├── conf.py                      # Configuration loading (.env + defaults)
-│   ├── daemon.py                    # Task queue worker loop
-│   ├── db/                          # CRM-backed CRUD (leads, deals, enrichment, chat)
-│   ├── django_settings.py           # Django/CRM settings (SQLite at db.sqlite3)
-│   ├── management/setup_crm.py      # Idempotent CRM bootstrap (Dept, Stages, Closing Reasons)
-│   ├── ml/                          # Bayesian qualifier (GPR), embeddings, profile text
-│   ├── models.py                    # Django models (Campaign, LinkedInProfile, Task, etc.)
-│   ├── onboarding.py                # Interactive onboarding (campaign, credentials, LLM config)
-│   ├── pipeline/                    # Candidate sourcing, qualification, pool management
-│   ├── setup/                       # GDPR, self-profile, freemium campaign setup
-│   └── tasks/                       # Task handlers (connect, check_pending, follow_up)
-├── manage.py                         # Entry point (no args = daemon, or Django commands)
-├── local.yml                        # Docker Compose
-└── Makefile                         # Shortcuts (setup, run, admin, test)
+│   ├── actions/                        # Browser actions (connect, message, status, search)
+│   ├── agents/                         # ReAct follow-up agent (multi-turn DM)
+│   ├── api/                            # Voyager API client + parser
+│   ├── browser/                        # Session, login, navigation
+│   ├── conf.py                         # .env loading + defaults
+│   ├── daemon.py                       # Task queue worker loop
+│   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
+│   ├── django_settings.py              # Django settings (Postgres or SQLite)
+│   ├── management/commands/            # backfill_messages, sync_attio, import_connections, ...
+│   ├── ml/                             # Bayesian qualifier (GPR), embeddings
+│   ├── models.py                       # Campaign, LinkedInProfile, Task, etc.
+│   ├── notifications/                  # attio.py, slack.py, synthesis.py
+│   ├── onboarding.py                   # First-run interactive setup
+│   ├── pipeline/                       # Candidate sourcing + qualification
+│   ├── setup/                          # GDPR, self-profile, freemium campaign
+│   └── tasks/                          # connect, sweep_connections, follow_up
+├── crm/                                # Django app: Lead, Deal, Message
+├── chat/                               # Django app: ChatMessage
+├── manage.py                           # Entry point (no args = daemon, else Django CLI)
+├── local.yml                           # Docker Compose
+└── Makefile                            # setup / run / admin / test shortcuts
 ```
 
 ---
 
-## 📚 Documentation
+## Documentation
 
-- [Architecture](./docs/architecture.md)
-- [Configuration](./docs/configuration.md)
-- [Profile Lifecycle](./docs/profile_lifecycle.md)
-- [Docker Installation](./docs/docker.md)
-- [Follow-up Messaging](./docs/templating.md)
-- [Template Variables](./docs/template-variables.md)
-- [Testing](./docs/testing.md)
-
----
-
-## 💬 Community
-
-Join for support and discussions:
-[Telegram Group](https://t.me/+Y5bh9Vg8UVg5ODU0)
+- [Module-level architecture (CLAUDE.md)](CLAUDE.md)
+- [Configuration](docs/configuration.md)
+- [System flow (operational)](docs/system-flow.txt)
+- [Human-in-the-loop workflows](docs/human-workflows.md)
+- [Follow-up generation runbook](docs/followup-generation-workflow.md)
+- [Attio meeting sync runbook](docs/attio-meeting-sync-workflow.md)
+- [Docker installation](docs/docker.md)
+- [Follow-up templating](docs/templating.md)
+- [Template variables](docs/template-variables.md)
+- [Testing](docs/testing.md)
 
 ---
 
-### 🗓️ Book a Free 15-Minute Call
+## License
 
-Got a specific use case, feature request, or questions about setup?
-
-Book a **free 15-minute call** — I'd love to hear your needs and improve the tool based on real feedback.
-
-<div align="center">
-
-[![Book a 15-min call](https://img.shields.io/badge/Book%20a%2015--min%20call-28A745?style=for-the-badge&logo=calendar)](https://calendly.com/eracle/new-meeting)
-
-</div>
+[GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0). See [`LICENCE.md`](LICENCE.md).
 
 ---
 
-### ❤️ Support OpenOutreach
+## Legal notice
 
-This project is built in spare time to provide powerful, **free** open-source growth tools. Your sponsorship funds faster updates and keeps it free for everyone.
+**Not affiliated with LinkedIn.** Built on top of the upstream [`eracle/OpenOutreach`](https://github.com/eracle/OpenOutreach) project (GPLv3).
 
-<div align="center">
+By using this software you accept the [Legal Notice](LEGAL_NOTICE.md). It covers LinkedIn ToS risks, automated browser behavior, and liability disclaimers.
 
-[![Sponsor with GitHub](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4?style=for-the-badge&logo=github)](https://github.com/sponsors/eracle)
-
-<br/>
-
-| Tier        | Monthly | Benefits                                                              |
-|-------------|---------|-----------------------------------------------------------------------|
-| ☕ Supporter | $5      | Huge thanks + name in README supporters list                          |
-| 🚀 Booster  | $25     | All above + priority feature requests + early access to new campaigns |
-| 🦸 Hero     | $100    | All above + personal 1-on-1 support + influence roadmap               |
-| 💎 Legend   | $500+   | All above + custom feature development + shoutout in releases         |
-
-</div>
-
----
-
-## ⚖️ License
-
-[GNU GPLv3](https://www.gnu.org/licenses/gpl-3.0) — see [LICENCE.md](LICENCE.md)
-
----
-
-## 📜 Legal Notice
-
-**Not affiliated with LinkedIn.**
-
-By using this software you accept the [Legal Notice](LEGAL_NOTICE.md). It covers LinkedIn ToS risks, built-in self-promotional actions, automatic newsletter subscription for non-GDPR accounts, and liability disclaimers.
-
-**Use at your own risk — no liability assumed.**
-
----
-
-<div align="center">
-
-**Made with ❤️**
-
-</div>
+**Use at your own risk. No liability assumed.**

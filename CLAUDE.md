@@ -35,9 +35,6 @@ pytest -k test_name                # single test
 .venv/bin/python manage.py sync_attio                # all campaigns
 .venv/bin/python manage.py sync_attio --dry-run      # show plan, no writes
 
-# Slack notifications for accepted invites (separate from sync_attio)
-.venv/bin/python manage.py check_connections
-
 # Resync crm.Message from LinkedIn DM threads. Standalone runner — auto-runs one pass per
 # env-configured LinkedIn account. Each pass logs in via StandaloneLinkedInSession (cookies
 # cached per account at data/<label>_cookies.json so subsequent runs skip re-auth), asks
