@@ -123,12 +123,13 @@ ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip()
 #   https://api.slack.com/messaging/webhooks
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 
-# Attio CRM sync. ATTIO_API_KEY scopes need record:read+write, list:read+write,
-# object_configuration:read. ATTIO_SALES_LIST_ID is the UUID of the Sales list
-# (parent object: companies). manage.py sync_attio mirrors Deal state into the
-# Sales list's Stage column. Empty disables the sync (safe no-op).
-ATTIO_API_KEY = os.getenv("ATTIO_API_KEY", "").strip()
-ATTIO_SALES_LIST_ID = os.getenv("ATTIO_SALES_LIST_ID", "").strip()
+# Google Sheets CRM sync. GOOGLE_SHEETS_ID is the spreadsheet id from the
+# URL (https://docs.google.com/spreadsheets/d/<id>/edit). CREDENTIALS_PATH
+# points at a service-account JSON key file with Editor access shared on
+# the sheet. Empty either disables the sync (safe no-op).
+GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "").strip()
+GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "").strip()
+GOOGLE_SHEETS_TAB_NAME = os.getenv("GOOGLE_SHEETS_TAB_NAME", "People").strip()
 
 # Kill-switch for the connect lane's auto-discovery + LLM qualification
 # fallback. When false, the daemon only connects to leads already in

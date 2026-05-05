@@ -6,6 +6,7 @@ __pycache__/
 data/
 .dockerignore
 .env
+secrets/
 /data
 /linkedin_state.json
 /.coverage

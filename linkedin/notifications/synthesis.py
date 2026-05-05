@@ -1,8 +1,18 @@
-"""Hourly synthesis pass: email extraction (D1) and Wants Meeting LLM (D2).
+"""Synthesis pass: email extraction (D1) and Wants Meeting LLM (D2).
 
-Designed to run inside the per-Deal loop of manage.py sync_attio. All
+Designed to run inside the per-Deal loop of manage.py sync_sheets. All
 operations are best-effort — failures must never block the existing
 Stage/Status sync from completing.
+
+Differences from the Airtable-era version:
+- Doesn't write to any external store directly. The caller (sync_sheets)
+  reads `current_outreach_status` off the live Sheet row and passes it in,
+  then takes the SynthResult back and folds the new status / Notes block
+  into the row payload it's about to write. One Sheet write per Lead
+  total — no separate PATCH for status, emails, notes.
+- D1 still mutates `lead.email` (Django field) directly because that's
+  where the truth lives; the Sheet's Email addresses column gets the
+  union when sync_sheets builds the row payload.
 """
 from __future__ import annotations
 
@@ -16,13 +26,9 @@ from django.utils import timezone
 from pydantic import BaseModel, Field
 
 from crm.models import Message
-from linkedin.notifications.attio import (
+from linkedin.notifications.sheets import (
     OUTREACH_RANK,
     STATUS_WANTS_MEETING,
-    add_person_email,
-    create_person_note,
-    get_person_outreach_status,
-    set_person_outreach_status,
     should_patch_outreach_status,
 )
 
@@ -78,7 +84,8 @@ def detect_wants_meeting(messages: Iterable[Message]) -> DetectionResult:
 
 def _build_llm():
     from langchain_openai import ChatOpenAI
-    from linkedin.conf import AI_MODEL, LLM_API_KEY, LLM_API_BASE
+
+    from linkedin.conf import AI_MODEL, LLM_API_BASE, LLM_API_KEY
 
     if not LLM_API_KEY:
         raise ValueError("LLM_API_KEY is not set")
@@ -109,7 +116,23 @@ def _render_prompt(messages: list[Message]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def synthesize_for_deal(deal) -> None:
+@dataclass
+class SynthResult:
+    """What sync_sheets needs to know after synthesis runs.
+
+    `wants_meeting_now` is True only on the first detection — once
+    `Deal.wants_meeting_detected_at` is set, subsequent calls return False
+    so the caller doesn't keep re-applying the status / re-prepending notes.
+    """
+    wants_meeting_now: bool = False
+    note_block: str = ""
+
+
+def synthesize_for_deal(
+    deal,
+    *,
+    current_outreach_status: str = "",
+) -> SynthResult | None:
     """Run D1 (email) and D2 (wants meeting) for a single Deal. Best-effort.
 
     Gates (any one true → skip the corresponding pass):
@@ -117,57 +140,56 @@ def synthesize_for_deal(deal) -> None:
       D2: deal.wants_meeting_detected_at is set, OR current Outreach status
           rank >= Wants Meeting rank.
     Outer gate: no new messages since last_synthesized_at.
+
+    Returns None when the outer gate trips (no new signal). Otherwise
+    returns a SynthResult that the caller folds into the Sheet row.
     """
     lead = deal.lead
     msgs = list(lead.messages.all())
     if not msgs:
-        return
+        return None
 
     last_msg_at = max(m.sent_at for m in msgs)
     if deal.last_synthesized_at and deal.last_synthesized_at >= last_msg_at:
-        return
+        return None
 
-    # D1: Email extraction.
+    result = SynthResult()
+
+    # D1: Email extraction → mutate Lead.email directly (caller folds into Sheet).
     if not lead.email:
         try:
             extracted = extract_email_from_messages(msgs)
             if extracted:
                 lead.email = extracted
                 lead.save(update_fields=["email"])
-                if lead.attio_person_id:
-                    add_person_email(lead.attio_person_id, extracted)
         except Exception as e:
             logger.warning("D1 email extraction failed for lead %s: %s", lead.pk, e)
 
-    # D2: Wants Meeting LLM.
-    should_run_d2 = (
-        deal.wants_meeting_detected_at is None
-        and lead.attio_person_id
-    )
+    # D2: Wants Meeting LLM. Only run when no prior detection AND the
+    # current status (read from the sheet by the caller) is rank-below
+    # Wants Meeting — humans manually advancing past it should win.
+    should_run_d2 = deal.wants_meeting_detected_at is None
     if should_run_d2:
         try:
-            current_status = get_person_outreach_status(lead.attio_person_id)
-            current_rank = OUTREACH_RANK.get(current_status, 0)
+            current_rank = OUTREACH_RANK.get(current_outreach_status, 0)
             if current_rank < OUTREACH_RANK[STATUS_WANTS_MEETING]:
                 decision = detect_wants_meeting(msgs)
                 if decision.wants_meeting:
-                    if should_patch_outreach_status(current_status, STATUS_WANTS_MEETING):
-                        set_person_outreach_status(lead.attio_person_id, STATUS_WANTS_MEETING)
-                        try:
-                            create_person_note(
-                                person_id=lead.attio_person_id,
-                                title="Wants Meeting (auto-detected)",
-                                content=(
-                                    f"Flagged based on message thread: {decision.reason}\n\n"
-                                    f"— Auto-flagged by sync_attio synthesis pass on "
-                                    f"{timezone.now().date().isoformat()}."
-                                ),
-                            )
-                        except Exception as e:
-                            logger.warning("Could not write Attio note: %s", e)
+                    if should_patch_outreach_status(
+                        current_outreach_status, STATUS_WANTS_MEETING,
+                    ):
+                        result.wants_meeting_now = True
+                        today = timezone.now().date().isoformat()
+                        result.note_block = (
+                            f"[{today}] Wants Meeting (auto-detected)\n"
+                            f"Flagged based on message thread: {decision.reason}\n"
+                            f"— Auto-flagged by sync_sheets synthesis pass."
+                        )
                     deal.wants_meeting_detected_at = timezone.now()
         except Exception as e:
             logger.warning("D2 wants-meeting detection failed for deal %s: %s", deal.pk, e)
 
     deal.last_synthesized_at = timezone.now()
     deal.save(update_fields=["last_synthesized_at", "wants_meeting_detected_at"])
+
+    return result

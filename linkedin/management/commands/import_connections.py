@@ -1,10 +1,10 @@
-"""Backfill Attio with already-accepted LinkedIn connections from a CSV.
+"""Backfill the CRM with already-accepted LinkedIn connections from a CSV.
 
 Logs into LinkedIn as a separate account (env-var-driven, decoupled from the
 daemon's LinkedInProfile DB rows), scrapes the Connections page back N days,
 and for each CSV row whose URL matches a connection card, creates a Lead +
-Deal at state=CONNECTED in our DB. The hourly sync_attio cron then mirrors
-these to Attio. Does NOT enqueue follow-ups or touch the daemon task queue.
+Deal at state=CONNECTED in our DB. The hourly sync_sheets cron then mirrors
+these to Google Sheets. Does NOT enqueue follow-ups or touch the daemon task queue.
 
 Required env vars (alternative LinkedIn account, distinct from the daemon's):
     BACKFILL_LINKEDIN_USERNAME
@@ -276,7 +276,7 @@ def make_backfill_session() -> StandaloneLinkedInSession:
 
 
 class Command(BaseCommand):
-    help = "Backfill Attio with already-accepted LinkedIn connections from a CSV."
+    help = "Backfill the CRM with already-accepted LinkedIn connections from a CSV."
 
     def add_arguments(self, parser):
         parser.add_argument("--csv", required=True, help="Path to the CSV file.")
@@ -437,5 +437,5 @@ class Command(BaseCommand):
             f"import_connections: created={created}, replaced={replaced}, "
             f"skipped_already_connected={skipped_already_connected}, "
             f"with_reply={with_reply} of {len(matched_rows)} matched; "
-            f"sync_attio will mirror these on its next run."
+            f"sync_sheets will mirror these on its next run."
         )

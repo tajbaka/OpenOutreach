@@ -1,16 +1,9 @@
-"""Tests for the sync_attio synthesis pass (D1 + D2).
+"""Tests for the sync_sheets synthesis pass (D1 + D2).
 
-Per the user's instructions during the autonomous run on 2026-04-27, these
-are written but NOT executed in the orchestration session — the user wants
-to verify the Attio cron synthesis flow manually before running these. Run
-with: `.venv/bin/pytest tests/test_synthesis.py -v`.
+Run with: `.venv/bin/pytest tests/test_synthesis.py -v`.
 """
 from datetime import datetime, timezone as _tz
-from io import StringIO
 from unittest.mock import MagicMock, patch
-
-import pytest
-from django.core.management import call_command
 
 from crm.models import Deal, Lead, Message
 from linkedin.enums import ProfileState
@@ -161,25 +154,17 @@ def test_detect_wants_meeting_false_when_no_signal(mock_build, db):
 
 
 # ---------------------------------------------------------------------------
-# D.5 — synthesize_for_deal orchestrator
+# D.5 — synthesize_for_deal orchestrator (Sheets-flavored: returns SynthResult)
 # ---------------------------------------------------------------------------
 
 
 @patch("linkedin.notifications.synthesis.detect_wants_meeting")
-@patch("linkedin.notifications.synthesis.add_person_email")
-@patch("linkedin.notifications.synthesis.create_person_note")
-@patch("linkedin.notifications.synthesis.set_person_outreach_status")
-@patch("linkedin.notifications.synthesis.get_person_outreach_status")
-def test_synthesize_extracts_email_and_flags_wants_meeting(
-    mock_get_status, mock_set_status, mock_create_note,
-    mock_add_email, mock_detect, fake_session,
-):
-    from linkedin.notifications import attio
+def test_synthesize_extracts_email_and_returns_wants_meeting_result(mock_detect, fake_session):
+    from linkedin.notifications import sheets
     from linkedin.notifications.synthesis import synthesize_for_deal
 
     lead = Lead.objects.create(
         first_name="A", linkedin_url="https://www.linkedin.com/in/a-syn-1/",
-        attio_person_id="rec_attio_1",
     )
     deal = Deal.objects.create(
         lead=lead, campaign=fake_session.campaign,
@@ -190,21 +175,48 @@ def test_synthesize_extracts_email_and_flags_wants_meeting(
          direction=Message.Direction.INBOUND,
          sent_at=datetime(2026, 4, 2, 10, 0, tzinfo=_tz.utc))
 
-    mock_get_status.return_value = attio.STATUS_REPLIED
     mock_detect.return_value = MagicMock(
         wants_meeting=True, reason='"happy to chat"',
     )
 
-    synthesize_for_deal(deal)
+    # Caller passes the current sheet-cell status. "Replied" is below
+    # Wants Meeting in rank, so the LLM should fire.
+    result = synthesize_for_deal(deal, current_outreach_status=sheets.STATUS_REPLIED)
 
     lead.refresh_from_db()
     deal.refresh_from_db()
-    assert lead.email == "jane@example.com"
-    mock_add_email.assert_called_once_with("rec_attio_1", "jane@example.com")
-    mock_set_status.assert_called_once_with("rec_attio_1", attio.STATUS_WANTS_MEETING)
-    mock_create_note.assert_called_once()
+    assert lead.email == "jane@example.com"  # D1 mutated Lead.email
+    assert result is not None
+    assert result.wants_meeting_now is True
+    assert "Wants Meeting (auto-detected)" in result.note_block
+    assert "happy to chat" in result.note_block
     assert deal.wants_meeting_detected_at is not None
     assert deal.last_synthesized_at is not None
+
+
+@patch("linkedin.notifications.synthesis.detect_wants_meeting")
+def test_synthesize_skips_d2_when_sheet_status_already_higher(mock_detect, fake_session):
+    """If the sheet says Meeting Booked, don't run the LLM."""
+    from linkedin.notifications import sheets
+    from linkedin.notifications.synthesis import synthesize_for_deal
+
+    lead = Lead.objects.create(
+        first_name="A", linkedin_url="https://www.linkedin.com/in/a-syn-skip-rank/",
+        email="x@y.com",
+    )
+    deal = Deal.objects.create(
+        lead=lead, campaign=fake_session.campaign,
+        state=ProfileState.CONNECTED,
+    )
+    _msg(lead, body="anything", direction=Message.Direction.INBOUND,
+         sent_at=datetime(2026, 4, 5, tzinfo=_tz.utc))
+
+    result = synthesize_for_deal(
+        deal, current_outreach_status=sheets.STATUS_MEETING_BOOKED,
+    )
+    mock_detect.assert_not_called()
+    assert result is not None
+    assert result.wants_meeting_now is False
 
 
 @patch("linkedin.notifications.synthesis.detect_wants_meeting")
@@ -223,12 +235,12 @@ def test_synthesize_skips_llm_when_already_detected(mock_detect, fake_session):
     _msg(lead, body="I want to meet", direction=Message.Direction.INBOUND,
          sent_at=datetime(2026, 4, 5, tzinfo=_tz.utc))
 
-    synthesize_for_deal(deal)
+    synthesize_for_deal(deal, current_outreach_status="")
     mock_detect.assert_not_called()
 
 
 @patch("linkedin.notifications.synthesis.detect_wants_meeting")
-def test_synthesize_skips_llm_when_no_new_messages_since_last_run(mock_detect, fake_session):
+def test_synthesize_returns_none_when_no_new_messages_since_last_run(mock_detect, fake_session):
     from linkedin.notifications.synthesis import synthesize_for_deal
 
     lead = Lead.objects.create(
@@ -242,36 +254,6 @@ def test_synthesize_skips_llm_when_no_new_messages_since_last_run(mock_detect, f
     _msg(lead, body="stale", direction=Message.Direction.INBOUND,
          sent_at=datetime(2026, 4, 1, tzinfo=_tz.utc))
 
-    synthesize_for_deal(deal)
+    result = synthesize_for_deal(deal, current_outreach_status="")
     mock_detect.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# D.6 — sync_attio integration
-# ---------------------------------------------------------------------------
-
-
-@patch("linkedin.notifications.synthesis.synthesize_for_deal")
-def test_sync_attio_calls_synthesize_for_deal_per_deal(mock_synth, fake_session, monkeypatch):
-    from linkedin.notifications import attio as attio_mod
-    monkeypatch.setattr(attio_mod, "create_company", lambda *a, **kw: "rec_co")
-    monkeypatch.setattr(attio_mod, "create_person", lambda *a, **kw: "rec_p")
-    monkeypatch.setattr(attio_mod, "set_person_outreach_status", lambda *a, **kw: None)
-    monkeypatch.setattr(attio_mod, "get_person_outreach_status", lambda *a, **kw: "")
-    monkeypatch.setattr(attio_mod, "create_sales_entry", lambda *a, **kw: "rec_e")
-    monkeypatch.setattr(attio_mod, "get_sales_entry_state", lambda *a, **kw: {"stage": "", "mpoc_id": ""})
-    monkeypatch.setattr(attio_mod, "patch_sales_entry_stage", lambda *a, **kw: None)
-    monkeypatch.setattr(attio_mod, "patch_sales_entry_mpoc", lambda *a, **kw: None)
-
-    lead = Lead.objects.create(
-        first_name="A", company_name="Acme",
-        linkedin_url="https://www.linkedin.com/in/a-syn-int-1/",
-    )
-    Deal.objects.create(
-        lead=lead, campaign=fake_session.campaign,
-        state=ProfileState.CONNECTED,
-    )
-
-    call_command("sync_attio", "--campaign", str(fake_session.campaign.pk), stdout=StringIO())
-
-    assert mock_synth.call_count >= 1
+    assert result is None

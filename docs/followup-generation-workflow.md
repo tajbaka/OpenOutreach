@@ -218,15 +218,94 @@ Tier-1 companies are CSPs the FedRAMP universe revolves around (AWS, Salesforce,
 - Our ball, gone cold: "Name, my fault on the gap. [acknowledge what we owed them]."
 - Cold lead, never replied: "Name, no rush, figured I'd send one more note since I never heard back."
 
+**Calibrate the ask to engagement temperature.** This is the single biggest unforced error in re-engagement: re-asking for a meeting when the lead barely engaged the first time. Sales hat on. Match the ask to where the relationship actually is, not where you wish it was.
+
+| Engagement signal | Right ask | Wrong ask |
+|---|---|---|
+| Cold reply ("Thanks", "Hey") or single-word acknowledgment | Low-friction conversational hook. Ask something interesting using their LinkedIn profile (background, prior roles, recent post). The goal is to get them talking again, not to get a calendar event. | "Want to jump on a 20-min call?" / "Want a Loom?" — they barely replied. Asking for time signals you haven't read the room. |
+| Substantive reply with a specific question, no answer yet | Answer their question, then a low-stakes follow-on ("happy to send a 2-min Loom that shows it" works here because they asked first). | Skipping the answer and pushing to a meeting. They want information, not your calendar. |
+| Said "yes / interested / absolutely" once, then went silent when asked for time | Re-engage with content or a question, NOT another time-ask. Their silence after the time-ask is the signal that the ask was wrong-shaped. Send something they can react to async. | A second "what's your availability?" — same trigger, same outcome. |
+| Active back-and-forth in last few exchanges | Loom or call ask is appropriate here. They're warm. | Yet another low-touch question — this is the moment to advance, not stall. |
+| Met once, ball on us | Send the deliverable you owed (Loom, doc, repo link, intro) and use that as the conversation. Don't ask for time until you've delivered. | Asking for "another quick chat" without the deliverable. |
+| Met once, ball on them | Light check-in, low-friction question, or a relevant new artifact. No time-ask. | Calendar follow-up before they've responded to whatever's open. |
+
+**Profile-derived hooks that work for low-engagement re-pings:**
+
+- Cross-functional background — "you've sat in three seats most people only sit in one of: [X, Y, Z]. What's the gap between [X-side expectation] and [Y-side reality]?"
+- Recent public post or talk — "saw your post on [X], curious how you'd apply that to [adjacent thing we both work on]"
+- Specific prior role — "you spent N years at [Company] doing [X] before [current role]. What's the thing about [topic] you wish more people on the [other side] understood?"
+- Niche they own — "your headline mentions [specific framework / cert / tool]. We're building toward [adjacent thing]. What's one thing about [niche] that's broken right now that nobody's talking about?"
+
+The principle: ask something they'd want to answer at a conference panel for free. Their answer becomes signal that they're back in the conversation, and that's when you escalate the ask.
+
+**Loom > call still applies for warm leads** (someone who replied substantively, asked a real question, or already booked a meeting). It's a lower-friction ask than 30 minutes on calendar. But for cold or barely-engaged leads, even Loom is too much — get a one-line reply first.
+
 **Reply venue inference (from Phase 3b merged timeline):**
 - Latest message source = `linkedin` → draft a LinkedIn DM (concise, casual, no signature)
 - Latest message source = `gmail` → draft an email (slightly longer is acceptable, can include signature, subject line if it's a fresh thread vs. reply-in-thread)
 - No prior messages on either → default to LinkedIn DM (matches the original cold outreach venue)
 
-**Priority labels** in the file are internal-only metadata (never appear in the actual message). Format:
+**Priority labels** in the file are internal-only metadata (never appear in the actual message). Format (in this order under each `--- Name, title, company ---` header):
+
+- `ROLE: CSP | 3PAO | Advisor | Assessor | Channel` — describes whose seat the lead is in. Drives draft framing; if the framing in the body copy contradicts the ROLE, that's a bug.
 - `PRIORITY: HIGH/MEDIUM-HIGH/MEDIUM/LOW/HOLD (reasoning in plain language)` — `HOLD` is for leads that should have a draft but the freshness window hasn't opened yet (e.g., we already nudged in the last few days on another channel).
 - `MEDIUM: linkedin | gmail` (the channel to send the reply on, per Phase 3b)
 - `CONVO: <one-or-two-sentence summary of the thread to date>` — required, so the draft makes sense in isolation without re-reading messages.
+
+**ROLE values explained:**
+
+| ROLE | Who it covers | Their pain | Right framing for the draft |
+|---|---|---|---|
+| **CSP** | Cloud service provider running their own system through FedRAMP authorization (HPE, AWS, Salesforce, Cisco, DigiCert, Motorola, Maximus subsidiaries that own systems, Abnormal AI, NGA911, Rackspace, Project Hosts, Cellebrite, etc.) — also covers federal agencies authoring their own SSPs (AmeriCorps, USDA) | Authoring SSPs from scratch, ConMon drift across their boundary, evidence collection during assessments, surviving the next audit | "Your team writes/maintains the SSP" / "Your ConMon cycles" / "Your boundary" |
+| **3PAO** | Person at a third-party assessment org (Coalfire, Schellman, Prescient, A-LIGN, BARR Advisory, etc.) | Reviewing CSP packages efficiently, pushing back on weak narratives, SRTM coverage, evidence quality | "What CSPs hand to your team during assessments" / "Holds up to assessor scrutiny" / "From the assessor lens" |
+| **Advisor** | Consultant, vCISO, advisory firm, federal services contractor, internal compliance lead at a non-CSP — anyone helping CSPs prepare or anyone with a multi-client portfolio (Compliance Counsel, ResilientTech, ComplySec360, Booz Allen, Maximus services side, ASM Research, DecisionPoint, KyberStorm, AvaCompliance, etc.) | Multi-client portfolio efficiency, repeating work across clients, helping clients pass | "Drop into one of your clients" / "Your delivery cycles" / "Multi-tenant authoring" |
+| **Assessor** | Independent assessor not at a 3PAO firm, OR agency-side authorizing official / authorizing-body staff (USDA AO, VITA running StateRAMP, FDIC) | "Trust but verify" — reading SSPs, deciding risk acceptance, deciding whether evidence is sufficient | "Pre-assessment doc review" / "Where define / identify language is or isn't satisfied" / "Risk acceptance scoping" |
+| **Channel** | Reseller, distributor, partner-sales seat at a fed-tech firm (Carahsoft, CDW•G, Canonical federal, Red River for the GTM side) | Co-sell motion, what to bundle, what to recommend | "Bundle into deals" / "Co-sell story" / "Belongs in your catalog" |
+
+If a lead spans two ROLEs (e.g., a 3PAO firm employee who also runs an advisory side hustle), pick the one that matches the role they had in your outreach thread. Don't try to encode both — the message should land with one persona.
+
+**ROLE-vs-framing sanity check:** before sending, read the draft and ask "does this message assume the right thing about whose seat they're in?" If the body copy says "your team's SSP" but ROLE is 3PAO, the framing is wrong — 3PAOs don't write SSPs, they review them. Fix the body, not the ROLE.
+
+### Phase 5b — Humanize the drafts
+
+After every draft is written, run the `humanizer` skill (installed at `~/.claude/skills/humanizer`, source: https://github.com/blader/humanizer) over the body copy. The skill targets ~29 AI-writing tells from Wikipedia's "Signs of AI writing" guide and is the canonical anti-slop pass for this workflow.
+
+**How to invoke:**
+
+```
+Use the humanizer skill on followups/YYYY-MM-DD/<file>.txt — only rewrite the
+draft message bodies, leave the structural metadata (=== headers, --- entries,
+PRIORITY / MEDIUM / CONVO lines, SUMMARY, ACTIVE-IN-FLIGHT) untouched.
+```
+
+**Top tells to watch for in this workflow's drafts specifically** (observed in past runs):
+
+- **Rule-of-three feature lists** — "AWS evidence scanning, AI-drafted SSP narratives, POA&M closure trails" repeated across drafts makes the file feel templated when read top-to-bottom. Trim to one or two specific items, or drop entirely when not adding info.
+- **"exactly the/where/journey/kind"** — single most overused phrasing across the cohort. Vary or cut.
+- **"The play of X is Y" / "the piece that lands hardest"** — persuasive-authority tropes (humanizer Pattern #27). Replace with plain assertions.
+- **Copula avoidance** — "DigiCert sits in...", "Okta sits in an interesting spot" — humanizer Pattern #8. Use "is" / "are".
+- **Negative parallelism** — "Less prompt-engineering, more deterministic" (Pattern #9). Rewrite as a real sentence.
+- **"Curious whether/if..." closer** — fine once or twice across the file, slop when it's the closer for half the drafts. Vary.
+
+**Voice exemplar to preserve** (don't let the humanizer strip these):
+
+- Openers: `"<Name>, no rush, figured I'd send one more note."`, `"<Name>, my fault on the gap."`
+- CTA: `"Want a 2-min Loom against a sample env?"` (the canonical ask — Loom > call when possible)
+- Closer: `"No pitch attached."` / `"No pitch."` (occasional, not on every draft)
+
+When invoking the skill, point it at the user's `followups.txt` exemplar at the FedRampGPT repo root as the voice-calibration sample so it doesn't over-formalize the tone:
+
+```
+Humanize this text. Use the writing style at
+/Users/admin/Desktop/Projects/FedRampGPT/followups.txt as a reference sample.
+```
+
+Outputs:
+- Draft v1 of each rewritten message
+- "What still makes this obviously AI-generated?" audit pass per the humanizer skill spec
+- Final v2 written back to the file via Edit
+
+Skip Phase 5b only if you're explicitly running with `--no-humanize` for speed; the default for any run intended to be sent is to humanize.
 
 ### Phase 6 — File output
 
@@ -245,11 +324,12 @@ HIGH PRIORITY (N)
 
 
 --- [Name], [Title], [Company] ---
+ROLE: CSP | 3PAO | Advisor | Assessor | Channel
 PRIORITY: HIGH ([reasoning])
 MEDIUM: linkedin | gmail
 CONVO: [one or two sentences summarizing the thread to date]
 
-[Draft message in user's voice — formatted for the chosen medium]
+[Draft message in user's voice — formatted for the chosen medium and matching the ROLE framing]
 
 
 --- [next person] ---

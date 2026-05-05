@@ -18,6 +18,6 @@ class ReachedConnectionLimit(Exception):
     pass
 
 
-class AttioError(Exception):
-    """Attio REST call failed (non-2xx response, network error, malformed JSON)."""
+class SheetsError(Exception):
+    """Google Sheets API call failed (network error, auth error, malformed response)."""
     pass

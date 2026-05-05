@@ -18,9 +18,6 @@ class Lead(models.Model):
     description = models.TextField(blank=True, default="")
     embedding = models.BinaryField(null=True, blank=True)
     disqualified = models.BooleanField(default=False)
-    attio_person_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
-    attio_company_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
-    attio_entry_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
     creation_date = models.DateTimeField(default=timezone.now)
     update_date = models.DateTimeField(auto_now=True)
 
