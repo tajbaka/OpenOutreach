@@ -362,6 +362,10 @@ def run_daemon(session):
     # Single-threaded: one task at a time, no concurrent enqueuing,
     # so sleeping until the next scheduled_at is safe.
     while True:
+        # Close stale DB connections at the top of every loop iteration.
+        # Neon's idle timeout can kill the SSL socket during any sleep.
+        connections.close_all()
+
         pause = seconds_until_active()
         if pause > 0:
             h, m = int(pause // 3600), int(pause % 3600 // 60)
@@ -407,6 +411,13 @@ def run_daemon(session):
         except Exception:
             task.mark_failed(traceback.format_exc())
             logger.exception("Task %s failed", task)
+            # Self-rescheduling tasks (connect) never reach their own
+            # reschedule path on crash.  Re-seed so the queue doesn't stall.
+            if task.task_type == Task.TaskType.CONNECT:
+                from linkedin.tasks.connect import enqueue_connect
+                cid = task.payload.get("campaign_id")
+                if cid:
+                    enqueue_connect(cid, delay_seconds=60)
             continue
 
         task.mark_completed()
