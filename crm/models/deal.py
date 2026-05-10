@@ -41,6 +41,10 @@ class Deal(models.Model):
     last_reply_at = models.DateTimeField(null=True, blank=True)
     last_synthesized_at = models.DateTimeField(null=True, blank=True)
     wants_meeting_detected_at = models.DateTimeField(null=True, blank=True)
+    # Stamped once when sweep_connections flips state PENDING → CONNECTED.
+    # Stable signal for "days since connection" — distinct from update_date
+    # which churns on every save. Null on legacy rows pre-dating this field.
+    connected_at = models.DateTimeField(null=True, blank=True, db_index=True)
     creation_date = models.DateTimeField(default=timezone.now)
     update_date = models.DateTimeField(auto_now=True)
 

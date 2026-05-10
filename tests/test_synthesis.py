@@ -188,8 +188,6 @@ def test_synthesize_extracts_email_and_returns_wants_meeting_result(mock_detect,
     assert lead.email == "jane@example.com"  # D1 mutated Lead.email
     assert result is not None
     assert result.wants_meeting_now is True
-    assert "Wants Meeting (auto-detected)" in result.note_block
-    assert "happy to chat" in result.note_block
     assert deal.wants_meeting_detected_at is not None
     assert deal.last_synthesized_at is not None
 

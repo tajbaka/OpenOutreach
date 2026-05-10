@@ -1,6 +1,6 @@
 ![OpenOutreach Logo](docs/logo.png)
 
-> Self-hosted LinkedIn outreach automation with first-class Attio CRM sync. Send connection requests, capture replies, mirror state to Attio, and use companion Claude workflows for follow-up drafting and post-meeting enrichment.
+> Self-hosted LinkedIn outreach automation with first-class Google Sheets CRM sync. Send connection requests, capture replies, mirror state to a Sheets People tab, and use companion Claude workflows for follow-up drafting and post-meeting enrichment.
 
 <div align="center">
 
@@ -18,19 +18,19 @@
 
 ## What this is
 
-A long-running daemon that runs LinkedIn outreach inside a stealth Playwright browser, plus a Postgres-backed CRM that mirrors deal state to Attio's Sales list. Built on top of the upstream `eracle/OpenOutreach` ML pipeline (Bayesian active learning for lead qualification), with the surface area extended for real B2B sales workflows: multi-account outreach, message-thread persistence, hourly Attio sync with don't-clobber stage logic, LLM-driven email extraction and meeting-intent detection, and Claude-driven runbooks for human-in-the-loop follow-up drafting.
+A long-running daemon that runs LinkedIn outreach inside a stealth Playwright browser, plus a Postgres-backed CRM that mirrors deal state to a Google Sheets People tab. Built on top of the upstream `eracle/OpenOutreach` ML pipeline (Bayesian active learning for lead qualification), with the surface area extended for real B2B sales workflows: multi-account outreach, message-thread persistence, hourly Sheets sync with don't-clobber stage logic, LLM-driven email extraction and meeting-intent detection, and Claude-driven runbooks for human-in-the-loop follow-up drafting.
 
 **Core loop:**
 
 1. **Daemon** connects to qualified leads (Voyager API + Playwright)
 2. **Sweep** runs every 6h, detects accepted invites in bulk, captures the first DM reply
 3. **`crm.Message`** persists every LinkedIn DM thread (idempotent on `external_id`)
-4. **`sync_attio`** (cron'd hourly) mirrors Deals → Attio Sales list, with stage and outreach-status patching that won't downgrade manual changes
-5. **Synthesis pass** (inside `sync_attio`) extracts email addresses from inbound messages and runs a cheap LLM to flag "wants meeting" intent
+4. **`sync_sheets`** (cron'd hourly) mirrors Deals → Google Sheets People tab, with stage and outreach-status patching that won't downgrade manual changes
+5. **Synthesis pass** (inside `sync_sheets`) extracts email addresses from inbound messages and runs a cheap LLM to flag "wants meeting" intent
 6. **Backfill** (`backfill_messages` on cron) keeps `crm.Message` fresh after the daemon stops watching threads
-7. **Companion Claude workflows** (interactive, MCP-driven) generate follow-up drafts and enrich Attio with cross-source meeting context
+7. **Companion Claude workflows** (interactive, MCP-driven) generate follow-up drafts (output to per-operator Followups tabs) and enrich the Sheets People tab with cross-source meeting context
 
-The Bayesian ML qualifier is still there for autonomous lead discovery, but most teams running this will already have a lead list — the bulk of value is now in the Attio sync, message store, and human workflows.
+The Bayesian ML qualifier is still there for autonomous lead discovery, but most teams running this will already have a lead list — the bulk of value is now in the Sheets sync, message store, and human workflows.
 
 ---
 
@@ -41,7 +41,7 @@ The Bayesian ML qualifier is still there for autonomous lead discovery, but most
 | 1 | LinkedIn account(s) | Primary outreach account; optional separate "backfill" account for CSV imports |
 | 2 | LLM API key | Used for qualification + synthesis (cheap models work for synthesis, e.g., `gemini-2.5-flash`) |
 | 3 | Postgres | Neon recommended; SQLite fallback works for dev |
-| 4 | (Optional) Attio API key + Sales list ID | Required if you want CRM sync |
+| 4 | (Optional) Google Sheets ID + service-account JSON | Required if you want CRM sync |
 | 5 | (Optional) Slack webhook | For accepted-invite notifications |
 
 ---
@@ -115,17 +115,17 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 - **`crm.Message`** is the canonical DM history store (FK to Lead, source enum {linkedin, gmail, calendar}, direction {inbound, outbound}, idempotent on `(source, external_id)`).
 - Per-campaign GP models live in `Campaign.model_blob` (binary BLOB, not files).
 
-**Attio sync** (`linkedin/notifications/attio.py`):
-- Standalone command: `manage.py sync_attio` (REST, not MCP).
-- Iterates Deals at `state >= PENDING`, groups by `company_name`, mirrors to the Sales list as one Company + one Sales entry + one Person per Lead, all linked.
-- Stage hierarchy: `Prospecting → Qualification → Meeting → Closing → Won` (Lost terminates).
-- Outreach status hierarchy: `Invite Sent → Connected → Replied → Wants Meeting → Meeting Booked → Had Meeting → Prospecting to close → Won`.
-- `should_patch_stage` and `should_patch_outreach_status` block downgrades, so manual Attio edits are never clobbered.
-- Decoupled from the daemon — Attio failures don't affect outreach.
+**Sheets sync** (`linkedin/notifications/sheets.py`):
+- Standalone command: `manage.py sync_sheets` (gspread + service-account auth, not MCP).
+- Iterates Deals at `state >= PENDING` and `disqualified=False`, groups by `company_name`, writes one row per Lead into the People tab keyed by LinkedIn URL.
+- Stage hierarchy: `Prospecting → Qualification → Meeting → Closing → Won` (Lost terminates). Stage = company-level aggregate denormalized onto each row.
+- Outreach status hierarchy: `Invite Sent → Connected → Waiting → Replied → Wants Meeting → Meeting Booked → Had Meeting → Manual followup → Prospecting to close → Won → Don't send` (Lost separately overridable).
+- `should_patch_stage` and `should_patch_outreach_status` block downgrades, so manual sheet edits are never clobbered.
+- Decoupled from the daemon — sheet failures don't affect outreach.
 
-**Synthesis pass** (`linkedin/notifications/synthesis.py`, runs inside `sync_attio`):
-- **D1 email extract:** regex over inbound `crm.Message` rows, appends to `Lead.email` and the Attio Person's `email_addresses`.
-- **D2 wants-meeting LLM:** cheap LLM (configured via `AI_MODEL`) reads the thread; if meeting intent detected, patches Outreach status to "Wants Meeting" and POSTs an auto-detected note to the Person.
+**Synthesis pass** (`linkedin/notifications/synthesis.py`, runs inside `sync_sheets`):
+- **D1 email extract:** regex over inbound `crm.Message` rows, mirrored into `Lead.email`. `sync_sheets` then folds the union of `Lead.email` ∪ existing sheet emails into the People tab Email addresses cell.
+- **D2 wants-meeting LLM:** cheap LLM (configured via `AI_MODEL`) reads the thread; if meeting intent detected, returns a `SynthResult` that `sync_sheets` folds into the row's Outreach status (advances to `Wants Meeting`). Notes column is human-only — synthesis never writes there.
 - Gated by `Deal.wants_meeting_detected_at` (lock-in) and `Deal.last_synthesized_at` vs latest message timestamp (skip when no new signal).
 
 ---
@@ -136,8 +136,8 @@ Two interactive runbooks driven by Claude that sit on top of the data the automa
 
 | Workflow | Purpose |
 |---|---|
-| [`docs/followup-generation-workflow.md`](docs/followup-generation-workflow.md) | Generate per-prospect follow-up drafts from `crm.Message` + Gmail + Calendar + Drive. Output goes to `followups/YYYY-MM-DD/*.txt` for you to paste. Ball-on-court classifier supports daily runs. |
-| [`docs/attio-meeting-sync-workflow.md`](docs/attio-meeting-sync-workflow.md) | Enrich Attio People with cross-source meeting context (calendar + Gmail + Drive Gemini notes), update Outreach status and Entry stage, compose AI Notes. Preview-first; you approve before any Attio write. |
+| [`docs/followup-generation-workflow.md`](docs/followup-generation-workflow.md) | Generate per-prospect follow-up drafts from `crm.Message` + Gmail + Calendar + Drive. Output goes to `Arian - Followups` and `Chuka - Followups` tabs in Google Sheets. Ball-on-court classifier supports daily runs. |
+| [`docs/sheets-meeting-sync-workflow.md`](docs/sheets-meeting-sync-workflow.md) | Enrich the Sheets People tab with cross-source meeting context (calendar + Gmail + Drive Gemini notes), update Outreach status and Stage, compose AI Notes. Preview-first; you approve before any sheet write. |
 
 These don't run on cron. You run them in conversation with Claude when you need them.
 
@@ -159,10 +159,10 @@ make test / make docker-test
 pytest tests/api/test_voyager.py   # single file
 pytest -k test_name                # single test
 
-# Attio CRM sync (mirrors Deal state to the Sales list)
-.venv/bin/python manage.py sync_attio --campaign 1
-.venv/bin/python manage.py sync_attio
-.venv/bin/python manage.py sync_attio --dry-run
+# Sheets CRM sync (mirrors Deal state to the People tab in Google Sheets)
+.venv/bin/python manage.py sync_sheets --campaign 1
+.venv/bin/python manage.py sync_sheets
+.venv/bin/python manage.py sync_sheets --dry-run
 
 # Resync crm.Message from LinkedIn DM threads (run on cron)
 .venv/bin/python manage.py backfill_messages [--campaign 1] [--limit 50] [--dry-run]
@@ -192,7 +192,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 | `CONNECTION_SWEEP_INTERVAL_HOURS` | `2` | How often the sweep task fires |
 | `AI_MODEL` | `gpt-4o` | Used for both qualification and synthesis (cheap models work fine for synthesis) |
 | `DATABASE_URL` | (unset → SQLite) | Postgres connection string |
-| `ATTIO_API_KEY` + `ATTIO_SALES_LIST_ID` | (unset → no sync) | Required for Attio mirroring |
+| `GOOGLE_SHEETS_ID` + `GOOGLE_SHEETS_CREDENTIALS_PATH` | (unset → no sync) | Required for Sheets mirroring |
 | `SLACK_WEBHOOK_URL` | (unset → no Slack) | Notifications when sweep detects accepts |
 
 ---
@@ -205,7 +205,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── system-flow.txt                 # Operational state of your deployment
 │   ├── human-workflows.md              # Overview of the two Claude runbooks
 │   ├── followup-generation-workflow.md # Drafts: replied / connected-no-reply / met cohorts
-│   ├── attio-meeting-sync-workflow.md  # Attio enrichment from calendar + Gmail + Drive
+│   ├── sheets-meeting-sync-workflow.md # Sheets enrichment from calendar + Gmail + Drive
 │   ├── docker.md                       # Docker setup
 │   ├── templating.md                   # Follow-up message templating
 │   ├── template-variables.md           # Available template variables
@@ -219,10 +219,10 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── daemon.py                       # Task queue worker loop
 │   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
 │   ├── django_settings.py              # Django settings (Postgres or SQLite)
-│   ├── management/commands/            # backfill_messages, sync_attio, import_connections, ...
+│   ├── management/commands/            # backfill_messages, sync_sheets, import_connections, ...
 │   ├── ml/                             # Bayesian qualifier (GPR), embeddings
 │   ├── models.py                       # Campaign, LinkedInProfile, Task, etc.
-│   ├── notifications/                  # attio.py, slack.py, synthesis.py
+│   ├── notifications/                  # sheets.py, slack.py, synthesis.py
 │   ├── onboarding.py                   # First-run interactive setup
 │   ├── pipeline/                       # Candidate sourcing + qualification
 │   ├── setup/                          # GDPR, self-profile, freemium campaign
@@ -243,7 +243,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 - [System flow (operational)](docs/system-flow.txt)
 - [Human-in-the-loop workflows](docs/human-workflows.md)
 - [Follow-up generation runbook](docs/followup-generation-workflow.md)
-- [Attio meeting sync runbook](docs/attio-meeting-sync-workflow.md)
+- [Sheets meeting sync runbook](docs/sheets-meeting-sync-workflow.md)
 - [Docker installation](docs/docker.md)
 - [Follow-up templating](docs/templating.md)
 - [Template variables](docs/template-variables.md)

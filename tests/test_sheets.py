@@ -81,7 +81,7 @@ def test_headers_match_expected_schema():
     assert sheets.HEADERS == [
         "Name", "First name", "Last name", "Company", "Title",
         "LinkedIn URL", "Email addresses", "Outreach status", "Stage",
-        "Priority", "Primary location", "Notes", "AI Notes",
+        "Priority", "Primary location", "AI Notes", "Notes",
         "Created at", "Last synced",
     ]
 
@@ -96,6 +96,237 @@ def test_col_letter_handles_aa_overflow():
     assert sheets._col_letter(15) == "O"
     assert sheets._col_letter(26) == "Z"
     assert sheets._col_letter(27) == "AA"
+
+
+# ---------------------------------------------------------------------------
+# Followups schema invariants
+# ---------------------------------------------------------------------------
+
+
+def test_fu_headers_match_expected_schema():
+    """Locks the followups tab layout. Reordering breaks every saved
+    operator-edit and downstream column-index lookups."""
+    assert sheets.FU_HEADERS == [
+        "Name", "Status", "Cohort", "ROLE", "PRIORITY",
+        "Days since", "Days since connection", "CONVO",
+        "Draft Email", "Email Link", "Sent Email (manual toggle)",
+        "Draft LinkedIn", "LinkedIn Message Url", "Sent LinkedIn (manual toggle)",
+        "Qualify/Disqualify",
+    ]
+
+
+def test_qualify_column_is_last():
+    """Operator-facing rule: the Qualify/Disqualify dropdown is on the
+    far right so it doesn't compete with draft-review activity."""
+    assert sheets.FU_HEADERS[-1] == sheets.FU_COL_QUALIFY
+
+
+def test_followup_cell_defaults_qualify_to_qualify():
+    """Fresh rows default Qualify so the operator only has to flip the
+    rare Disqualify ones — not click into every cell."""
+    assert sheets._followup_cell({}, sheets.FU_COL_QUALIFY) == "Qualify"
+
+
+def test_followup_cell_normalizes_disqualify_variants():
+    """Stale payloads might carry 'disqualified' (past-tense) or other
+    casings; coerce to the dropdown vocabulary so data validation accepts."""
+    for v in ["Disqualify", "disqualify", "DISQUALIFIED", "disqualified"]:
+        assert sheets._followup_cell(
+            {sheets.FU_COL_QUALIFY: v}, sheets.FU_COL_QUALIFY,
+        ) == "Disqualify"
+
+
+def test_followup_cell_unknown_qualify_value_falls_back_to_qualify():
+    """Anything that doesn't start with 'disq' lands as Qualify — safer
+    default; a typo doesn't accidentally suppress a lead from drafts."""
+    assert sheets._followup_cell(
+        {sheets.FU_COL_QUALIFY: "active"}, sheets.FU_COL_QUALIFY,
+    ) == "Qualify"
+
+
+def test_fresh_connection_priority_bumps_recent_no_reply():
+    """Connected <3 days ago + no_reply_yet → HIGH regardless of the tier
+    classifier's proposal. Strike while iron is warm."""
+    assert sheets.fresh_connection_priority(
+        days_since_connection=1,
+        cohort=sheets.COHORT_NO_REPLY,
+        fallback_priority="LOW",
+    ) == "HIGH"
+    assert sheets.fresh_connection_priority(
+        days_since_connection=5,
+        cohort=sheets.COHORT_NO_REPLY,
+        fallback_priority="LOW",
+    ) == "MEDIUM-HIGH"
+    assert sheets.fresh_connection_priority(
+        days_since_connection=10,
+        cohort=sheets.COHORT_NO_REPLY,
+        fallback_priority="LOW",
+    ) == "MEDIUM"
+
+
+def test_fresh_connection_priority_never_bumps_down():
+    """Engagement-driven HIGH stays HIGH even if the connection is old.
+    The freshness rule only adds urgency, never removes it."""
+    assert sheets.fresh_connection_priority(
+        days_since_connection=1,
+        cohort=sheets.COHORT_NO_REPLY,
+        fallback_priority="HIGH",
+    ) == "HIGH"
+    # Old connection at MEDIUM-HIGH from tier rules — leave alone.
+    assert sheets.fresh_connection_priority(
+        days_since_connection=60,
+        cohort=sheets.COHORT_NO_REPLY,
+        fallback_priority="MEDIUM-HIGH",
+    ) == "MEDIUM-HIGH"
+
+
+def test_fresh_connection_priority_only_applies_to_no_reply():
+    """Other cohorts are driven by engagement signals (ball-on-court,
+    met, ack-vs-substantive) that already capture recency. The freshness
+    bump is specifically for connected-but-silent leads where the
+    accept itself is the only signal we have."""
+    for c in (sheets.COHORT_MET, sheets.COHORT_BALL_ON_US,
+              sheets.COHORT_COLD_THREAD, sheets.COHORT_ACTIVE_IN_FLIGHT):
+        assert sheets.fresh_connection_priority(
+            days_since_connection=1, cohort=c, fallback_priority="LOW",
+        ) == "LOW"
+
+
+def test_fresh_connection_priority_handles_missing_timestamp():
+    """Legacy rows from before Deal.connected_at existed have None.
+    Don't bump them — the field's only meaningful when populated."""
+    assert sheets.fresh_connection_priority(
+        days_since_connection=None,
+        cohort=sheets.COHORT_NO_REPLY,
+        fallback_priority="LOW",
+    ) == "LOW"
+
+
+def test_fu_role_to_icp_covers_every_role():
+    """Every workflow ROLE must map to an ICP — the drafter assumes total."""
+    for r in sheets.FU_ROLES:
+        assert r in sheets.FU_ROLE_TO_ICP, f"ROLE {r} missing ICP mapping"
+
+
+def test_followup_cell_defaults_sent_to_no():
+    assert sheets._followup_cell({}, sheets.FU_COL_SENT_EMAIL) == "No"
+    assert sheets._followup_cell({}, sheets.FU_COL_SENT_LINKEDIN) == "No"
+
+
+def test_followup_cell_normalizes_legacy_truthy_to_yes():
+    """A row payload that uses TRUE/True/Yes (any of the legacy boolean
+    flavors) should land as the 'Yes' dropdown value."""
+    for v in ["TRUE", True, "Yes", "y"]:
+        assert sheets._followup_cell({sheets.FU_COL_SENT_EMAIL: v},
+                                     sheets.FU_COL_SENT_EMAIL) == "Yes"
+
+
+def test_followup_cell_passthrough_for_other_columns():
+    """Non-Sent columns just stringify the value — including HYPERLINK formulas."""
+    assert sheets._followup_cell({sheets.FU_COL_DRAFT_EMAIL: "Hi Sarah"},
+                                 sheets.FU_COL_DRAFT_EMAIL) == "Hi Sarah"
+    assert sheets._followup_cell({sheets.FU_COL_EMAIL_LINK: '=HYPERLINK("u","d")'},
+                                 sheets.FU_COL_EMAIL_LINK) == '=HYPERLINK("u","d")'
+
+
+# ---------------------------------------------------------------------------
+# HYPERLINK formula construction
+# ---------------------------------------------------------------------------
+
+
+def test_linkedin_thread_url_strips_urn_prefix():
+    out = sheets.linkedin_thread_url("urn:li:conv:2-XYZABC=")
+    assert out == "https://www.linkedin.com/messaging/thread/2-XYZABC=/"
+
+
+def test_linkedin_thread_url_accepts_bare_id():
+    out = sheets.linkedin_thread_url("2-rawid")
+    assert out == "https://www.linkedin.com/messaging/thread/2-rawid/"
+
+
+def test_linkedin_thread_url_falls_back_to_profile():
+    """No thread URN → return the profile URL the caller passed in so the
+    column always resolves to *somewhere* sensible."""
+    out = sheets.linkedin_thread_url(
+        "", fallback_profile_url="https://www.linkedin.com/in/janedoe/",
+    )
+    assert out == "https://www.linkedin.com/in/janedoe/"
+
+
+def test_hyperlink_formula_escapes_quotes():
+    out = sheets.hyperlink_formula('https://x.com/?q="a"', 'go')
+    # Both arguments are double-quote-escaped (Sheets formula rules) so a
+    # rogue quote in either doesn't break the formula.
+    assert out == '=HYPERLINK("https://x.com/?q=""a""","go")'
+
+
+def test_hyperlink_formula_empty_url_yields_empty_cell():
+    assert sheets.hyperlink_formula("", "click me") == ""
+
+
+def test_email_search_hyperlink_url_encodes_email():
+    out = sheets.email_search_hyperlink("Sarah.Lange@prescient.com")
+    assert "https://mail.google.com/mail/u/0/#search/" in out
+    # @ and . get percent-encoded; result reads back as searchable email.
+    assert "Sarah.Lange%40prescient.com" in out
+    # Display text is the raw email (case preserved).
+    assert ',"Sarah.Lange@prescient.com")' in out
+
+
+def test_email_search_hyperlink_empty_email_yields_empty_cell():
+    assert sheets.email_search_hyperlink("") == ""
+
+
+def test_linkedin_message_hyperlink_uses_thread_when_available():
+    out = sheets.linkedin_message_hyperlink(
+        "urn:li:conv:abc",
+        profile_url="https://www.linkedin.com/in/jane/",
+    )
+    assert "messaging/thread/abc/" in out
+
+
+def test_linkedin_message_hyperlink_falls_back_to_profile():
+    out = sheets.linkedin_message_hyperlink(
+        None, profile_url="https://www.linkedin.com/in/jane/",
+    )
+    assert out == '=HYPERLINK("https://www.linkedin.com/in/jane/","Open in LinkedIn")'
+
+
+# ---------------------------------------------------------------------------
+# Hidden-column run-coalescing
+# ---------------------------------------------------------------------------
+
+
+def test_coalesce_runs_collapses_contiguous_indices():
+    """Operator hiding columns 1, 2, 3, 7 should compress to two ranges
+    (cuts API request volume) — not four single-cell updateDimension ops."""
+    assert sheets._coalesce_runs([1, 2, 3, 7]) == [(1, 4), (7, 8)]
+
+
+def test_coalesce_runs_handles_empty_and_unsorted():
+    assert sheets._coalesce_runs([]) == []
+    # Out-of-order input should still group correctly.
+    assert sheets._coalesce_runs([4, 2, 5, 1]) == [(1, 3), (4, 6)]
+
+
+# ---------------------------------------------------------------------------
+# Sent-row preservation across runs
+# ---------------------------------------------------------------------------
+
+
+def test_is_sent_recognizes_yes_flavors():
+    assert sheets._is_sent("Yes")
+    assert sheets._is_sent("YES")
+    assert sheets._is_sent("y")
+    # Legacy boolean flavor still recognized so a half-migrated tab works.
+    assert sheets._is_sent("TRUE")
+    assert sheets._is_sent("✓")
+
+
+def test_is_sent_rejects_no_and_blank():
+    assert not sheets._is_sent("No")
+    assert not sheets._is_sent("")
+    assert not sheets._is_sent("MAYBE")
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +520,45 @@ def test_upsert_row_no_op_when_payload_matches_existing():
     assert changed == []
     counts = idx.flush()
     assert counts == {"appended": 0, "updated": 0}
+
+
+def test_upsert_row_preserves_operator_added_columns():
+    """An unknown column inserted into the sheet (e.g. 'Apollo Email') is
+    addressed by name — its value passes through untouched on update."""
+    apollo_pos = sheets.HEADERS.index(sheets.COL_AI_NOTES)  # insert before AI Notes
+    actual_headers = (
+        list(sheets.HEADERS[:apollo_pos])
+        + ["Apollo Email"]
+        + list(sheets.HEADERS[apollo_pos:])
+    )
+    fields = {h: "" for h in sheets.HEADERS}
+    fields.update({
+        sheets.COL_LINKEDIN_URL: "https://www.linkedin.com/in/janedoe/",
+        sheets.COL_OUTREACH_STATUS: sheets.STATUS_CONNECTED,
+        sheets.COL_STAGE: sheets.STAGE_PROSPECTING,
+    })
+    existing_row = []
+    for h in actual_headers:
+        existing_row.append("jane@apollo.example" if h == "Apollo Email" else fields[h])
+    rows = [list(actual_headers), existing_row]
+    idx = sheets.SheetIndex(_FakeWorksheet(), rows, actual_headers=actual_headers)
+
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="CTO", emails=[], outreach_status=sheets.STATUS_REPLIED,
+        stage=sheets.STAGE_QUALIFICATION, priority="", primary_location="",
+        notes="", ai_notes="", last_synced="2026-05-05",
+    )
+    was_new, changed = idx.upsert_row(payload)
+    assert was_new is False
+    assert sheets.COL_OUTREACH_STATUS in changed
+
+    new_row = idx._pending_updates[0]["values"][0]
+    apollo_col_0 = actual_headers.index("Apollo Email")
+    assert new_row[apollo_col_0] == "jane@apollo.example"
+    # Update range must span the full live width, not just managed cols.
+    expected_last = sheets._col_letter(len(actual_headers))
+    assert idx._pending_updates[0]["range"] == f"A2:{expected_last}2"
 
 
 def test_upsert_row_raises_when_linkedin_url_missing():

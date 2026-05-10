@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Gmail__search_threads",
+      "mcp__claude_ai_Gmail__get_thread",
+      "mcp__claude_ai_Google_Calendar__list_events",
+      "mcp__claude_ai_Google_Drive__search_files",
+      "mcp__claude_ai_Google_Drive__read_file_content",
+      "mcp__attio__list-lists",
+      "mcp__attio__list-records",
+      "mcp__attio__list-records-in-list",
+      "mcp__attio__list-attribute-definitions",
+      "mcp__attio__list-list-attribute-definitions",
+      "mcp__attio__get-records-by-ids",
+      "mcp__attio__search-records",
+      "mcp__attio__whoami",
+      "mcp__claude_ai_Sanity__query_documents",
+      "mcp__meta-ads__get_ad_insights",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_snapshot"
+    ]
+  }
+}

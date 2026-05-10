@@ -83,59 +83,70 @@ Idempotent on (source, external_id). Source is "linkedin", "gmail", or
     THIS is what keeps message history fresh after the first accept.
     Without it on cron, every reply that arrives more than a few minutes
     after the invite-accept never makes it to crm.Message — and that
-    starves sync_attio's Stage D synthesis.
+    starves sync_sheets's Stage D synthesis.
       - Logs in via StandaloneLinkedInSession (cookies cached at
         data/<label>_cookies.json — separate from daemon cookies).
       - Pulls all DM threads for env-configured account(s):
           LINKEDIN_USERNAME + LINKEDIN_PASSWORD            (primary)
           BACKFILL_LINKEDIN_USERNAME + ...PASSWORD          (backfill)
       - Persists new messages to crm.Message.
+      - Stamps Deal.last_reply_at from the newest inbound (drives
+        Prospecting → Qualification stage transition).
       - Runs once per env-configured account.
       - Args: --campaign N, --limit N, --dry-run
 
 ================================================================================
-4. ATTIO SYNC  (manage.py sync_attio — no scheduler in repo)
+4. SHEETS SYNC  (manage.py sync_sheets — no scheduler in repo)
 ================================================================================
 Run externally on cron / manually. CLAUDE.md mentions hourly cadence.
 
-For each Deal at state >= PENDING, group by company. Per group:
+For each Deal at state >= PENDING and lead.disqualified=False, group by
+company. Per group:
 
-  STAGE A/B/C — mirror to Attio Sales list
-    • Create/update Attio Company
-    • Create/update Attio People (one per Lead)
-    • Create/update Sales list Entry
-    • Patch Stage:
+  STAGE A/B/C — mirror to Google Sheets People tab
+    • Compute company-level aggregate Stage from per-lead deal states
+    • Per Lead, build a row payload (Name, Company, Title, Status, Stage,
+      Priority, Email addresses, etc.) keyed by LinkedIn URL
+    • SheetIndex.upsert_row applies don't-downgrade rules per cell:
+      Stage:
         Prospecting → Qualification → Meeting → Closing → Won
         (Lost terminates)
-    • Patch Outreach status:
-        Invite Sent → Connected → Replied → Wants Meeting →
-        Meeting Booked → Had Meeting → Prospecting to close → Won
-    • should_patch_stage / should_patch_outreach_status block
-      downgrades — manual Attio status changes are never clobbered.
+      Outreach status:
+        Invite Sent → Connected → Waiting → Replied → Wants Meeting →
+        Meeting Booked → Had Meeting → Manual followup →
+        Prospecting to close → Won → Don't send
+        (Lost separately overridable)
+    • should_patch_stage / should_patch_outreach_status block downgrades
+      — manual sheet edits are never clobbered.
+    • Single batch_update at end: one Sheets API write per sync run.
 
   STAGE D — synthesis pass
     (linkedin/notifications/synthesis.py, per-Deal, best-effort)
 
     D1: extract_email_from_messages
       - Regex over inbound crm.Message bodies.
-      - Writes email to Lead.email + Attio Person.email_addresses.
+      - Writes email to Lead.email; sync_sheets folds the union of
+        Lead.email + existing sheet emails into the People-tab Email
+        addresses cell on the same row write.
       - Idempotent (skipped if Lead.email already set).
 
     D2: detect_wants_meeting
       - Cheap LLM (gemini-2.5-flash) over the unified thread with
         Pydantic-structured output.
-      - If meeting intent: patches Outreach status to "Wants Meeting"
-        and POSTs a "Wants Meeting (auto-detected)" note to the Person.
+      - If meeting intent: returns SynthResult(wants_meeting_now=True).
+        sync_sheets advances the Outreach status to "Wants Meeting" via
+        the don't-downgrade upsert. Notes column is human-only —
+        synthesis NEVER writes there.
       - Gates: Deal.wants_meeting_detected_at lock-in,
                Deal.last_synthesized_at vs latest Message.sent_at,
-               skip when status already past Wants Meeting.
+               skip when current sheet status already past Wants Meeting.
 
   Failures in Stage D are logged but never block Stage A/B/C.
 
 DATA DEPENDENCY
   Stage D reads only crm.Message — not LinkedIn directly. So D1 (email
   extract) and D2 (wants-meeting LLM) are only as good as the last
-  backfill_messages run. If backfill isn't on cron, Attio's email/status
+  backfill_messages run. If backfill isn't on cron, sheets's email/status
   signals lag.
 
 

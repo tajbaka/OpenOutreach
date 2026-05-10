@@ -106,6 +106,15 @@ def set_profile_state(session, public_identifier: str, new_state: str, reason: s
     if ps == ProfileState.COMPLETED:
         deal.closing_reason = ClosingReason.COMPLETED
 
+    # Stamp connected_at the first time we move into CONNECTED. Idempotent —
+    # never overwrites a prior value, so re-flipping (e.g. operator reverts
+    # then accepts again) keeps the original accept timestamp. The sweep
+    # cron runs hourly, so this is within ~hour-resolution of the actual
+    # accept moment; close enough for the followup classifier's purposes.
+    if ps == ProfileState.CONNECTED and deal.connected_at is None:
+        from django.utils import timezone as dj_tz
+        deal.connected_at = dj_tz.now()
+
     deal.save()
 
     label, color, attrs = _STATE_LOG_STYLE.get(ps, ("ERROR", "red", ["bold"]))

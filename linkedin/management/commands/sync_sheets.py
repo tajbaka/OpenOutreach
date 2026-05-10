@@ -130,9 +130,9 @@ class Command(BaseCommand):
 
                 # ---- Phase D synthesis: D1 email extract + D2 Wants Meeting.
                 # Runs before payload assembly so D2 status changes feed into
-                # the same row write below.
+                # the same row write below. Notes column is human-only — we
+                # never write synthesis-derived text there.
                 synth_status_override = ""
-                synth_note = ""
                 try:
                     from linkedin.notifications.synthesis import synthesize_for_deal
                     synth_result = synthesize_for_deal(
@@ -141,7 +141,6 @@ class Command(BaseCommand):
                     )
                     if synth_result and synth_result.wants_meeting_now:
                         synth_status_override = sheets.STATUS_WANTS_MEETING
-                        synth_note = synth_result.note_block
                     synth_ok += 1
                 except Exception as e:
                     self.stdout.write(self.style.WARNING(
@@ -167,11 +166,8 @@ class Command(BaseCommand):
                     if e not in merged_emails:
                         merged_emails.append(e)
 
+                # Notes is human-only — preserve whatever's already in the sheet.
                 notes = existing.get(sheets.COL_NOTES, "") or ""
-                if synth_note:
-                    notes = (
-                        f"{synth_note}\n\n---\n\n{notes}" if notes else synth_note
-                    )
 
                 payload = sheets.build_row_payload(
                     lead=lead,

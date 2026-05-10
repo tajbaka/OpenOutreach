@@ -140,6 +140,72 @@ def discover_list_url_template(session, list_id: str, *, timeout_ms: int = 20_00
     return urlunparse(parsed._replace(query=rebuilt_query))
 
 
+def discover_search_url_template(session, search_url: str, *, timeout_ms: int = 20_000) -> str:
+    """Open a Sales Nav People search page and sniff the search XHR.
+
+    Same shape as `discover_list_url_template`, but for search URLs (e.g.
+    `linkedin.com/sales/search/people?query=...`) instead of saved-list pages.
+    The captured XHR uses `salesApiPeopleSearch` with a `query=(...)` clause
+    that bakes in the active filter selections.
+    """
+    page = session.page
+    captured: list[str] = []
+
+    def on_response(response):
+        url = response.url
+        if "salesApi" not in url:
+            return
+        if response.status != 200:
+            return
+        try:
+            data = response.json()
+        except Exception:
+            return
+        # The search XHR is distinguishable from sibling salesApi calls
+        # (Lego widgets, Identity, etc.) by having a populated paging.total.
+        paging = data.get("paging") if isinstance(data, dict) else None
+        if not isinstance(paging, dict) or paging.get("total") is None:
+            return
+        if "elements" not in data:
+            return
+        captured.append(url)
+
+    page.on("response", on_response)
+    try:
+        page.goto(search_url)
+        page.wait_for_load_state("load")
+        try:
+            page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
+    finally:
+        try:
+            page.remove_listener("response", on_response)
+        except Exception:
+            pass
+
+    if not captured:
+        raise IOError(
+            f"Could not auto-discover Sales Nav search XHR. "
+            f"The page may have failed to load — check the browser window."
+        )
+
+    captured_url = captured[0]
+    logger.info("Discovered Sales Nav search XHR URL: %s", captured_url)
+
+    parsed = urlparse(captured_url)
+    new_parts = []
+    for part in parsed.query.split("&"):
+        if part.startswith("start="):
+            new_parts.append("start={start}")
+        elif part.startswith("count="):
+            new_parts.append("count={count}")
+        else:
+            new_parts.append(part)
+    rebuilt_query = "&".join(new_parts)
+    return urlunparse(parsed._replace(query=rebuilt_query))
+
+
 def iter_sales_nav_list(
     api,
     list_id: str,

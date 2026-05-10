@@ -122,10 +122,10 @@ class SynthResult:
 
     `wants_meeting_now` is True only on the first detection — once
     `Deal.wants_meeting_detected_at` is set, subsequent calls return False
-    so the caller doesn't keep re-applying the status / re-prepending notes.
+    so the caller doesn't keep re-advancing the status. The Notes column
+    is reserved for human-written notes; we never write to it.
     """
     wants_meeting_now: bool = False
-    note_block: str = ""
 
 
 def synthesize_for_deal(
@@ -179,12 +179,6 @@ def synthesize_for_deal(
                         current_outreach_status, STATUS_WANTS_MEETING,
                     ):
                         result.wants_meeting_now = True
-                        today = timezone.now().date().isoformat()
-                        result.note_block = (
-                            f"[{today}] Wants Meeting (auto-detected)\n"
-                            f"Flagged based on message thread: {decision.reason}\n"
-                            f"— Auto-flagged by sync_sheets synthesis pass."
-                        )
                     deal.wants_meeting_detected_at = timezone.now()
         except Exception as e:
             logger.warning("D2 wants-meeting detection failed for deal %s: %s", deal.pk, e)

@@ -131,6 +131,20 @@ GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "").strip()
 GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "").strip()
 GOOGLE_SHEETS_TAB_NAME = os.getenv("GOOGLE_SHEETS_TAB_NAME", "People").strip()
 
+# Gmail thread merge. HOST_EMAIL is the connected Gmail account that runs
+# the operator's outreach (organizes calendar invites, replies to threads).
+# Used by linkedin.notifications.gmail_threads to mark messages outbound
+# vs inbound when persisting Gmail threads into crm.Message.
+# TEAM_EMAILS is a comma-separated list of additional addresses that count
+# as outbound (co-founders, BD assistants) so a thread the host CC'd in is
+# still classified correctly. Both empty = Gmail merge disabled.
+HOST_EMAIL = os.getenv("HOST_EMAIL", "").strip().lower()
+TEAM_EMAILS = tuple(
+    e.strip().lower()
+    for e in os.getenv("TEAM_EMAILS", "").split(",")
+    if e.strip()
+)
+
 # Kill-switch for the connect lane's auto-discovery + LLM qualification
 # fallback. When false, the daemon only connects to leads already in
 # READY_TO_CONNECT — no LinkedIn search, no LLM qualifier, no auto-

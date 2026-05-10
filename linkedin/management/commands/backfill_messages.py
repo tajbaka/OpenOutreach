@@ -222,9 +222,27 @@ class Command(BaseCommand):
                 ).count()
                 if count_now > 0:
                     persisted += 1
+
+                # Stamp Deal.last_reply_at from the newest inbound message we
+                # just persisted. Without this, Stage stays at Prospecting
+                # even after a reply is in the DB (sync_sheets gates the
+                # Prospecting → Qualification transition on this field).
+                latest_inbound = Message.objects.filter(
+                    lead=lead, source=Message.Source.LINKEDIN,
+                    direction=Message.Direction.INBOUND,
+                ).order_by("-sent_at").first()
+                stamped = ""
+                if latest_inbound and (
+                    deal.last_reply_at is None
+                    or latest_inbound.sent_at > deal.last_reply_at
+                ):
+                    deal.last_reply_at = latest_inbound.sent_at
+                    deal.save(update_fields=["last_reply_at"])
+                    stamped = f" → last_reply_at={latest_inbound.sent_at.isoformat()}"
+
                 self.stdout.write(
                     f"  [{i}/{len(deals)}] {pid}: fetched {len(parsed)} msgs, "
-                    f"persisted={count_now}"
+                    f"persisted={count_now}{stamped}"
                 )
             else:
                 self.stdout.write(f"  [{i}/{len(deals)}] {pid}: no conversation found")
