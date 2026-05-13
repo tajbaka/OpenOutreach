@@ -210,6 +210,11 @@ def fill_message(
       - `{last_name}`  — lead's last name (rarely used in current templates)
       - `{company_name}` — lead's company (CSP template uses this)
       - `{my_name}` — operator's display name (email signatures only)
+      - `{our_company_name}` — our product/company name (from `.env`
+        `OUR_COMPANY_NAME`). Lets templates reference the product without
+        hardcoding a string the operator can change in one place.
+      - `{our_website_url}` — our website URL (from `.env`
+        `OUR_WEBSITE_URL`). Same rationale as `{our_company_name}`.
 
     Variant selection precedence:
       1. Explicit `variant_index` (if provided) — caller controls.
@@ -220,6 +225,8 @@ def fill_message(
     no-silent-fallback rule; sending a wrong-bucket message in
     production is a worse outcome than crashing the run.
     """
+    from linkedin.conf import OUR_COMPANY_NAME, OUR_WEBSITE_URL
+
     messages = load_icp_messages()
     if icp not in messages:
         raise SheetsError(
@@ -250,6 +257,8 @@ def fill_message(
         last_name=last_name or "",
         company_name=company_name or "",
         my_name=my_name or "",
+        our_company_name=OUR_COMPANY_NAME,
+        our_website_url=OUR_WEBSITE_URL,
     )
     # Collapse the blank line the stripped placeholder leaves behind.
     body = re.sub(r"\n{3,}", "\n\n", body).strip()

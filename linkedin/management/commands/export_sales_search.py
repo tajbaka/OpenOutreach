@@ -56,6 +56,26 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        import os
+        from linkedin.notifications.slack import notify_on_error
+        try:
+            from linkedin.operators import resolve_operator
+            account_user = os.getenv("SALES_NAV_LINKEDIN_USERNAME", "").strip()
+            operator = resolve_operator(account_user) if account_user else ""
+        except Exception:
+            operator, account_user = "", ""
+        with notify_on_error(
+            "export_sales_search",
+            context={
+                "operator": operator or "(sales-nav)",
+                "account": account_user or "(unset)",
+                "url": options.get("url"),
+                "limit": options.get("limit"),
+            },
+        ):
+            self._handle_impl(*args, **options)
+
+    def _handle_impl(self, *args, **options):
         from linkedin.actions.sales_nav_list import (
             discover_search_url_template,
             iter_sales_nav_list,

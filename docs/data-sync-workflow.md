@@ -79,6 +79,36 @@ print(f"Preflight OK — running as operator={detected!r} ({host_email})")
 
 **Why no `--force-operator` bypass shouldn't be the default:** the operator-tag in `WorkflowRun` is what the followup workflow's Phase 0.5 staleness check reads. If it's wrong, staleness flags fire incorrectly for both operators — Chuka thinks "I have fresh data-sync" when it was actually Arian's data that got synced. Worth the 1-line safety net.
 
+### Phase 0.5 — Prerequisite staleness check (MANDATORY)
+
+Data-sync depends on `import-connections` and `backfill-messages` being fresh for the same operator. If they're stale, data-sync still runs but with degraded quality (calendar attendees show as unmatched, LinkedIn DM context is missing from the merged timeline, etc.).
+
+Use the shared helper from `linkedin/workflow_prereqs.py` — it queries `WorkflowRun` for each upstream and prints a per-operator staleness table. On a TTY it prompts continue/abort; on cron (non-TTY) it auto-continues with a stderr warning so automated runs don't block.
+
+```python
+from linkedin.workflow_prereqs import run_prereq_gate
+if not run_prereq_gate("data-sync", operator=detected):
+    print("Aborted by operator.")
+    raise SystemExit(0)
+```
+
+Sample output when `backfill-messages` for Arian is 9 days old:
+
+```
+Prerequisite check for `data-sync` (operator: Arian):
+  ⚠ backfill-messages   STALE   (ran 9d ago — 2026-05-03 14:22 UTC)
+  ✓ import-connections  fresh   (ran 26h ago — 2026-05-11 20:50 UTC)
+
+Some prerequisites are stale or have never run for this operator.
+Continuing now will produce lower-quality output (e.g. missing Gmail
+context, missing LinkedIn DMs). Re-running the upstreams first is
+recommended.
+
+Continue anyway? [y/N]:
+```
+
+The dependency graph is encoded once at the top of `linkedin/workflow_prereqs.py` (`WORKFLOW_PREREQS`); when that graph changes, every workflow's Phase 0.5 picks up the new shape automatically without per-doc edits.
+
 ### Phase 0 — Sync Gmail threads into `crm.Message`
 
 Owns the previously-followup-Phase-3b ingest. For every Lead with `Lead.email` populated, pull recent Gmail threads via MCP and idempotent-upsert each message into `crm.Message` with `source=gmail`.

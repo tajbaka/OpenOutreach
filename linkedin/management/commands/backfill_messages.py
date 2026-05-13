@@ -108,6 +108,43 @@ def _eligible_deals(*, sender: str, campaign_id: int | None):
     return qs
 
 
+def _run_prereq_gate_for_accounts(configured: list[tuple[str, str, str]]) -> bool:
+    """Stack one prereq report per configured account, prompt once.
+
+    `configured` is the list of (label, env_user_name, env_pass_name) tuples
+    this command run will iterate over. We map each env_user → operator
+    canonical handle, build a StalenessReport per operator, print them all,
+    and prompt continue/abort if any is stale. Returns True to proceed.
+    """
+    from linkedin.operators import resolve_operator
+    from linkedin.workflow_prereqs import check_prereqs, format_report, prompt_if_stale, StalenessReport
+
+    reports: list[StalenessReport] = []
+    for _label, env_user_name, _env_pass_name in configured:
+        account = os.getenv(env_user_name, "").strip()
+        operator = resolve_operator(account) if account else ""
+        reports.append(check_prereqs("backfill-messages", operator=operator))
+
+    any_warn = any(r.has_warnings for r in reports)
+    for r in reports:
+        print(format_report(r))
+    if not any_warn:
+        return True
+
+    # Synthesize a single "any-warning" report so prompt_if_stale handles
+    # the prompt + TTY auto-continue logic in one place. Operator + workflow
+    # name in the synthesized header are cosmetic ("multi-operator") since
+    # the real per-operator reports were already printed above.
+    composite = StalenessReport(
+        workflow="backfill-messages",
+        operator="multi-operator",
+        rows=[row for r in reports for row in r.rows if row.is_warning],
+    )
+    # Reports already printed above; suppress the helper's print so the
+    # output isn't duplicated.
+    return prompt_if_stale(composite, print_report=False)
+
+
 class Command(BaseCommand):
     help = "Resync crm.Message rows from LinkedIn DM threads. Auto-runs one pass per env-configured account."
 
@@ -127,6 +164,18 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **opts):
+        from linkedin.notifications.slack import notify_on_error
+        with notify_on_error(
+            "backfill_messages",
+            context={
+                "campaign": opts.get("campaign"),
+                "limit": opts.get("limit"),
+                "dry_run": opts.get("dry_run", False),
+            },
+        ):
+            self._handle_impl(*args, **opts)
+
+    def _handle_impl(self, *args, **opts):
         campaign_id = opts["campaign"]
         limit = opts["limit"]
         dry_run = opts["dry_run"]
@@ -142,6 +191,14 @@ class Command(BaseCommand):
                 "  LINKEDIN_USERNAME + LINKEDIN_PASSWORD (primary account), or\n"
                 "  BACKFILL_LINKEDIN_USERNAME + BACKFILL_LINKEDIN_PASSWORD (backfill account)."
             )
+
+        # Prereq staleness check — backfill_messages depends on
+        # import-connections being fresh per operator. This command iterates
+        # over every configured account, so build one report per operator
+        # and surface them together before prompting once.
+        if not _run_prereq_gate_for_accounts(configured):
+            self.stdout.write(self.style.WARNING("Aborted by operator."))
+            return
 
         for label, env_user, env_pass in configured:
             user_display = os.getenv(env_user)

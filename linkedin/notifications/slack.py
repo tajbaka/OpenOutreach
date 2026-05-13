@@ -1,20 +1,41 @@
 """Slack notifications via incoming webhook.
 
-Triggered when a connection invite gets accepted (PENDING → CONNECTED via
-the sweep). Sends a single Block Kit message with the lead's name, role,
-and profile link. No-op when SLACK_WEBHOOK_URL is unset, so callers don't
-need to guard.
+Two surfaces:
+
+1. `notify_connection_accepted` — fires when a connection invite gets
+   accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
+   with the lead's name, role, and profile link.
+2. `notify_error` / `notify_on_error` — fires when any of our workflows
+   (daemon task dispatch, backfill_messages, import_connections,
+   export_sales_*, daemon top-level) raises an unexpected exception.
+   Wraps a code block via the context manager; the underlying exception
+   re-raises so the process still crashes (per project rule: crash on
+   unexpected errors). 5-min in-process dedupe by
+   (workflow, exception_type, last_traceback_frame) so a runaway loop
+   doesn't spam the channel.
+
+Both no-op when SLACK_WEBHOOK_URL is unset, so callers don't need to guard.
 """
 from __future__ import annotations
 
 import json
 import logging
+import time
+import traceback
+from contextlib import contextmanager
 from urllib import request
 from urllib.error import URLError
 
 from linkedin.conf import SLACK_WEBHOOK_URL
 
 logger = logging.getLogger(__name__)
+
+# In-process dedupe: (workflow, exc_type_name, last_tb_frame_repr) → last seen epoch.
+# Reset on process restart, which is fine — these are crash notifications, not
+# durable state. We just want to avoid spamming a channel when one error fires
+# 50 times in 30 seconds during a real burst.
+_RECENT_ERRORS: dict[tuple[str, str, str], float] = {}
+_DEDUPE_WINDOW_SECONDS = 300  # 5 min
 
 
 def notify_connection_accepted(
@@ -92,6 +113,105 @@ def notify_connection_accepted(
                 )
     except (URLError, TimeoutError) as e:
         logger.warning("Slack webhook failed for %s: %s", full_name, e)
+
+
+def notify_error(
+    workflow: str,
+    exc: BaseException,
+    context: dict | None = None,
+) -> None:
+    """Post a workflow-crash notification to Slack. Silent no-op if disabled.
+
+    `workflow` is a short identifier like "daemon:follow_up", "backfill_messages",
+    "import_connections", "export_sales_list", "export_sales_search", or
+    "daemon:startup". `context` is an optional dict of supplementary fields
+    (campaign, operator, payload, lead URL, etc.) rendered as a context block.
+
+    Dedup window: a 5-min in-process cache suppresses repeats of the same
+    (workflow, exception type, last traceback frame) so a tight error loop
+    spams once, not N times.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    exc_type = type(exc).__name__
+    tb_frames = traceback.extract_tb(exc.__traceback__) if exc.__traceback__ else []
+    last_frame_repr = (
+        f"{tb_frames[-1].filename}:{tb_frames[-1].lineno}:{tb_frames[-1].name}"
+        if tb_frames else ""
+    )
+    key = (workflow, exc_type, last_frame_repr)
+
+    now = time.time()
+    # Garbage-collect stale entries so the dict can't grow unbounded.
+    for k in list(_RECENT_ERRORS.keys()):
+        if now - _RECENT_ERRORS[k] > _DEDUPE_WINDOW_SECONDS:
+            del _RECENT_ERRORS[k]
+
+    if key in _RECENT_ERRORS:
+        logger.debug("Slack error notify deduped: %s", key)
+        return
+    _RECENT_ERRORS[key] = now
+
+    tb_text = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    # Slack section block has a 3000-char text limit; keep traceback under
+    # that with room for the ``` fence and a truncation marker.
+    if len(tb_text) > 2800:
+        tb_text = tb_text[:2800] + "\n…(truncated)"
+
+    exc_summary = f"{exc_type}: {exc}"
+    summary_line = f":rotating_light: *{workflow} crashed* — `{exc_summary[:200]}`"
+    fallback = f":rotating_light: {workflow} crashed: {exc_summary[:200]}"
+
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": summary_line}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"```{tb_text}```"}},
+    ]
+    if context:
+        elements = [
+            {"type": "mrkdwn", "text": f"*{k}:* `{v}`"}
+            for k, v in context.items()
+        ]
+        blocks.append({"type": "context", "elements": elements})
+
+    payload = {"text": fallback, "blocks": blocks}
+
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        SLACK_WEBHOOK_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "Slack error webhook returned %d for %s", resp.status, workflow
+                )
+    except (URLError, TimeoutError) as e:
+        # Never let a Slack outage mask the real exception — the caller's
+        # re-raise will still take the process down with the right traceback.
+        logger.warning("Slack error webhook failed for %s: %s", workflow, e)
+
+
+@contextmanager
+def notify_on_error(workflow: str, context: dict | None = None):
+    """Context manager: notify Slack on any Exception, then re-raise.
+
+    KeyboardInterrupt + SystemExit pass through untouched (a graceful Ctrl-C
+    or sys.exit shouldn't spam the channel). Use around the body of a
+    long-running entrypoint (daemon loop iteration, management command
+    handle()) so a crash both shows up in Slack and still propagates out
+    of the process per the project's "crash on unexpected" rule.
+    """
+    try:
+        yield
+    except Exception as exc:
+        notify_error(workflow, exc, context=context)
+        raise
 
 
 def latest_reply_from_lead(messages: list[dict] | None, lead_full_name: str) -> dict | None:

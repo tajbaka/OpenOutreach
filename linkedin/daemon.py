@@ -27,6 +27,7 @@ from linkedin.conf import (
 from linkedin.diagnostics import failure_diagnostics
 from linkedin.ml.qualifier import BayesianQualifier, KitQualifier
 from linkedin.models import ActionLog, Task
+from linkedin.notifications.slack import notify_error
 from linkedin.tasks.connect import (
     enqueue_connect,
     enqueue_follow_up,
@@ -437,9 +438,18 @@ def run_daemon(session):
         try:
             with failure_diagnostics(session):
                 handler(task, session, qualifiers)
-        except Exception:
+        except Exception as exc:
             task.mark_failed(traceback.format_exc())
             logger.exception("Task %s failed", task)
+            notify_error(
+                f"daemon:{task.task_type}",
+                exc,
+                context={
+                    "task_id": task.id,
+                    "operator": our_operator,
+                    "payload": task.payload,
+                },
+            )
             # Self-rescheduling tasks (connect) never reach their own
             # reschedule path on crash.  Re-seed so the queue doesn't stall.
             if task.task_type == Task.TaskType.CONNECT:

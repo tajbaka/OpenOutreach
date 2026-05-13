@@ -94,9 +94,14 @@ def _ensure_db():
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
-        # No arguments → run the daemon
+        # No arguments → run the daemon. Top-level Exception goes to Slack
+        # before re-raising so an operator sees the crash even when the
+        # process logs scroll off. KeyboardInterrupt / SystemExit pass
+        # through untouched.
+        from linkedin.notifications.slack import notify_on_error
         _ensure_db()
-        _run_daemon()
+        with notify_on_error("daemon:startup"):
+            _run_daemon()
     else:
         # Auto-migrate before starting the admin server
         if sys.argv[1] == "runserver":

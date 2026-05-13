@@ -88,89 +88,38 @@ Before any cohort work, the orchestrator (the agent running this workflow) reads
 
 **Drafting rule that depends on this phase:** every concrete feature claim in a draft must be traceable back to a file the orchestrator read in Phase 0. If you can't name the file, delete the sentence. Hedge language ("scoping", "on the roadmap") is allowed only if there's a stub / planning comment in the code that supports it.
 
-### Phase 0.5 — Staleness check (MANDATORY)
+### Phase 0.5 — Prerequisite staleness check (MANDATORY)
 
-Before running cohort classification, the orchestrator queries the
-`linkedin.WorkflowRun` table to see how fresh each upstream data source
-is. If something's stale, surface it to the operator as a checklist so
-they can decide whether to re-run upstreams before drafting.
+Followup is the most downstream workflow in the chain (`import-connections → backfill-messages → data-sync → followup`). It depends on all three upstreams being fresh per operator. If any are stale, the drafts suffer in predictable ways — calendar attendees show as unmatched, LinkedIn DM context is missing from the merged timeline, Met-cohort drafter flies half-blind without fresh Gemini meeting notes.
 
-The four workflows tracked:
+The shared helper at `linkedin/workflow_prereqs.py` does the check. Same shape as data-sync's Phase 0.5 — TTY-interactive prompt, non-TTY auto-continue with stderr warning. The dependency graph is encoded once in `WORKFLOW_PREREQS` so when it changes, every workflow's Phase 0.5 picks up the new shape automatically.
 
-| Workflow | Scope | Staleness signal |
-|---|---|---|
-| `data-sync` | per-operator | new Lead.email populated since last run → suggests new Gmail to pull; or new Meet on calendar that hasn't been ingested |
-| `import-connections` | per-operator | the operator has connected with new people on LinkedIn but the CSV-driven import hasn't run |
-| `backfill-messages` | per-operator | new outbound messages from this operator might have received replies the daemon didn't see |
-| `followup` | global | last followup was today and operator hasn't sent any of the drafts → flag potential re-run waste |
-
-**Query pattern:**
+Followup is **global** (operator=""), but its prereqs are **per-operator**. So the orchestrator runs the check once per active operator and surfaces all warnings in one combined view:
 
 ```python
-from linkedin.models import WorkflowRun
-from linkedin.operators import resolve_operator
-from datetime import datetime, timezone, timedelta
+from linkedin.workflow_prereqs import check_prereqs, format_report, prompt_if_stale, StalenessReport
 
 OPERATORS = ["Chuka", "Arian"]  # add new operators as they join
-PER_OPERATOR_WORKFLOWS = ["data-sync", "import-connections", "backfill-messages"]
-GLOBAL_WORKFLOWS = ["followup"]
-STALE_AFTER_HOURS = 24 * 7  # 7 days — tune per workflow if needed
 
-now = datetime.now(timezone.utc)
-report: list[str] = []
+reports = [check_prereqs("followup", operator=op) for op in OPERATORS]
+for r in reports:
+    print(format_report(r))
 
-for op in OPERATORS:
-    for name in PER_OPERATOR_WORKFLOWS:
-        latest = (WorkflowRun.objects
-                  .filter(name=name, operator=op)
-                  .order_by("-completed_at")
-                  .first())
-        if not latest:
-            report.append(f"⚠  {name} has NEVER run for {op}")
-            continue
-        age = now - latest.completed_at
-        if age > timedelta(hours=STALE_AFTER_HOURS):
-            report.append(
-                f"⚠  {name} for {op} last ran {age.days}d ago — consider re-running"
-            )
-
-for name in GLOBAL_WORKFLOWS:
-    latest = (WorkflowRun.objects
-              .filter(name=name, operator="")
-              .order_by("-completed_at")
-              .first())
-    if not latest:
-        report.append(f"⚠  {name} has NEVER run")
-        continue
-    age = now - latest.completed_at
-    if age < timedelta(hours=2):
-        report.append(
-            f"⚠  {name} ran {int(age.total_seconds()/60)}m ago — re-running may overwrite recent drafts"
-        )
-
-if report:
-    print("\n=== Staleness check — review before continuing ===")
-    for line in report:
-        print(line)
-    print()
-    # Surface to the operator (interactive Claude session) — let them decide
-    # whether to abort and re-run upstreams, or proceed with stale data.
-else:
-    print("Staleness check: all upstream workflows fresh ✓")
+if any(r.has_warnings for r in reports):
+    composite = StalenessReport(
+        workflow="followup",
+        operator="multi-operator",
+        rows=[row for r in reports for row in r.rows if row.is_warning],
+    )
+    if not prompt_if_stale(composite, print_report=False):
+        raise SystemExit("Aborted by operator.")
 ```
 
-**How to decide:** if any per-operator workflow is flagged ⚠, the
-operator should probably run that workflow first. Most common case: if
-`data-sync` for one operator is stale and that operator has had recent
-meetings (look at the People tab Outreach status for fresh `Wants
-Meeting` / `Meeting Booked` entries that didn't exist last followup
-run), the Met-cohort drafter will be flying half-blind without fresh
-calendar/Gemini context. Run `data-sync` first, then the followup.
+**How to decide:** if any per-operator prereq is flagged ⚠, the operator should probably re-run that upstream first. Most common case: if `data-sync` for one operator is stale and that operator has had recent meetings (look at the People tab Outreach status for fresh `Wants Meeting` / `Meeting Booked` entries that didn't exist last followup run), the Met-cohort drafter will be flying half-blind without fresh calendar/Gemini context. Run `data-sync` for that operator first, then the followup.
 
-**Skipping is fine** for ball-on-us / cold-thread cohorts since they
-depend mostly on `crm.Message` which is updated by `backfill-messages`
-and the daemon, both of which are typically fresh. Met-cohort quality
-is where this matters most.
+**Skipping is fine** for ball-on-us / cold-thread cohorts since they depend mostly on `crm.Message` which is updated by `backfill-messages` and the daemon. Met-cohort quality is where this matters most.
+
+**Recent-followup-overwrite guard:** the helper doesn't flag "followup ran <2h ago" today — that was a single-purpose check in the original Phase 0.5 inline block, kept here as a sanity reminder for the operator. If the last followup row in `WorkflowRun` is from earlier in the same session and you haven't sent any of those drafts yet, re-running will overwrite the sheet (operator's `Sent` toggles still preserve verbatim, but the unsent drafts get regenerated).
 
 ### Phase 1 — Pull cohort data (ball-on-court classifier)
 

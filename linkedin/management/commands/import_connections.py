@@ -354,11 +354,47 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **opts):
+        from linkedin.notifications.slack import notify_on_error
+        # Account/operator: BACKFILL_LINKEDIN_USERNAME is the env var this
+        # command logs in as — resolve_operator maps it to "Arian"/"Chuka"
+        # so the Slack ping says whose backfill session crashed.
+        try:
+            from linkedin.operators import resolve_operator
+            account_user = os.getenv(ENV_USERNAME, "").strip()
+            operator = resolve_operator(account_user) if account_user else ""
+        except Exception:
+            operator, account_user = "", ""
+        with notify_on_error(
+            "import_connections",
+            context={
+                "operator": operator or "(unknown)",
+                "account": account_user or "(unset)",
+                "csv": opts.get("csv"),
+                "campaign": opts.get("campaign"),
+                "dry_run": opts.get("dry_run", False),
+            },
+        ):
+            self._handle_impl(*args, **opts)
+
+    def _handle_impl(self, *args, **opts):
+        from linkedin.operators import resolve_operator
+        from linkedin.workflow_prereqs import run_prereq_gate
+
         csv_path = opts["csv"]
         campaign_id = opts["campaign"]
         since_days = opts["since_days"]
         limit = opts["limit"]
         dry_run = opts["dry_run"]
+
+        # Prereq staleness check — import-connections has no upstream prereqs
+        # in the graph today, so this just prints "no upstream prereqs" and
+        # passes through. Calling the gate anyway keeps the wire-up
+        # symmetric: the day the graph changes, this command starts checking
+        # automatically without an extra code touch.
+        operator = resolve_operator(os.getenv(ENV_USERNAME, "").strip())
+        if not run_prereq_gate("import-connections", operator=operator):
+            self.stdout.write(self.style.WARNING("Aborted by operator."))
+            return
 
         # Resolve the target campaign first — purely a read in dry-run mode
         # (no rows created), so the dry-run is now truly side-effect-free.

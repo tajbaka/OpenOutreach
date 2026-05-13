@@ -22,6 +22,8 @@ from linkedin.conf import (
     CONNECTION_NOTE_FALLBACK,
     CONNECTION_NOTE_PERSONALIZED,
     ENABLE_CONNECT,
+    OUR_COMPANY_NAME,
+    OUR_WEBSITE_URL,
 )
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
 from linkedin.db.leads import disqualify_lead
@@ -60,6 +62,11 @@ def build_connection_note(lead_id: int | None) -> str:
     # ICP-keyed path. Try only when we have a lead + a resolvable ICP +
     # matching connect-note variants in the JSON. Any missing piece
     # bumps us to the env-var fallback so we never refuse to send.
+    #
+    # Substitution kwargs match the documented ICP-template tokens
+    # (see CLAUDE.md "Rigid ICP outbound templates" bullet). Anything
+    # not used by a given template is harmless — `str.format` ignores
+    # kwargs that don't appear in the string.
     if lead is not None:
         icp = resolve_icp(lead)
         if icp:
@@ -72,10 +79,28 @@ def build_connection_note(lead_id: int | None) -> str:
             variants = bucket.get("linkedin_connect_note") or []
             if variants:
                 template = random.choice(variants)
-                return template.format(first_name=first_name)
+                try:
+                    return template.format(
+                        first_name=first_name,
+                        last_name=(lead.last_name or "").strip(),
+                        company_name=(lead.company_name or "").strip(),
+                        our_company_name=OUR_COMPANY_NAME,
+                        our_website_url=OUR_WEBSITE_URL,
+                    )
+                except KeyError as e:
+                    # Unknown placeholder in template → log the offender
+                    # so the operator can fix the JSON, then fall back to
+                    # the env-var pool rather than crash the connect Task.
+                    logger.error(
+                        "build_connection_note: template for icp=%r has "
+                        "unknown placeholder %s — fix linkedin/icp_messages.json. "
+                        "Falling back to env-var pool for this send.",
+                        icp, e,
+                    )
 
-    # Env-var fallback (legacy path) — used for leads with no ICP or for
-    # ICPs that don't have a `linkedin_connect_note` channel configured yet.
+    # Env-var fallback (legacy path) — used for leads with no ICP, for
+    # ICPs without a `linkedin_connect_note` channel, or when an ICP
+    # template has an unknown placeholder (logged above).
     if first_name and CONNECTION_NOTE_PERSONALIZED:
         return random.choice(CONNECTION_NOTE_PERSONALIZED).format(first_name=first_name)
     if CONNECTION_NOTE_FALLBACK:

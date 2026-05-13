@@ -69,6 +69,29 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        import os
+        from linkedin.notifications.slack import notify_on_error
+        # Sales-nav uses its own dedicated LinkedIn account (separate from
+        # the outreach operators), so the account email is the most useful
+        # identifier — include both for ops clarity.
+        try:
+            from linkedin.operators import resolve_operator
+            account_user = os.getenv("SALES_NAV_LINKEDIN_USERNAME", "").strip()
+            operator = resolve_operator(account_user) if account_user else ""
+        except Exception:
+            operator, account_user = "", ""
+        with notify_on_error(
+            "export_sales_list",
+            context={
+                "operator": operator or "(sales-nav)",
+                "account": account_user or "(unset)",
+                "list_id": options.get("list_id"),
+                "limit": options.get("limit"),
+            },
+        ):
+            self._handle_impl(*args, **options)
+
+    def _handle_impl(self, *args, **options):
         from linkedin.actions.sales_nav_list import discover_list_url_template
         from linkedin.actions.standalone_session import StandaloneLinkedInSession
         from linkedin.api.client import PlaywrightLinkedinAPI
