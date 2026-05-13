@@ -1,6 +1,10 @@
-# Sheets Meeting Context Sync — MCP Workflow
+# Data Sync — MCP Ingestion Workflow
 
-Reusable runbook for enriching the Google Sheets People tab with calendar / Gmail / Drive / LinkedIn DM context, then updating Outreach status, Stage, and AI Notes per contact.
+Reusable runbook for ingesting all Google-side data (Gmail threads, Calendar events, Drive Gemini meeting notes) into our DB, plus enriching the People tab's Outreach status / Stage / AI Notes column.
+
+This is the single workflow that owns MCP → DB writes for Google data. Downstream consumers (the followup workflow, future analytics) read from `crm.Message` / `crm.Meeting` directly and don't make any MCP calls of their own.
+
+Was previously named "sheets-meeting-sync-workflow" — renamed 2026-05-11 when Gmail ingestion moved here from the followup workflow.
 
 Run periodically (weekly/biweekly) or after a batch of meetings.
 
@@ -12,13 +16,107 @@ Run periodically (weekly/biweekly) or after a batch of meetings.
 
 ## Inputs (clarify before starting)
 
-1. **Time window** — default: last 90d + next 30d
-2. **Write mode** — preview-first (recommended) | apply directly | dry-run
-3. **Calendar scope** — primary only (default) | all calendars
+1. **Expected operator** — `Chuka` / `Arian` — whose Google account the operator *intends* for this run to use. The preflight asserts the connected MCP account matches.
+2. **Time window** — default: last 90d + next 30d
+3. **Write mode** — preview-first (recommended) | apply directly | dry-run
+4. **Calendar scope** — primary only (default) | all calendars
+5. **`--force-operator`** flag — bypasses the preflight identity assertion. Use only when you've deliberately connected MCP to a different account than expected (e.g., debugging, one-off audit).
 
 ---
 
 ## Workflow
+
+### Phase -1 — Preflight: assert MCP is the expected operator
+
+Before any persistence happens, confirm the Google account currently connected via MCP matches the operator you intended to run for. Without this check, it's easy to accidentally pull Chuka's calendar into rows tagged as Arian's run (and vice versa) — silent identity drift that's hard to undo once `crm.Meeting` rows are persisted with the wrong lead linkage.
+
+**Probe the connected account** — make a small Calendar query and inspect the organizer:
+
+```python
+import json
+# Minimal calendar query — one event from this week is enough to identify
+# the connected account via its organizer.self.email.
+events_payload = mcp__claude_ai_Google_Calendar__list_events(
+    startTime="<today>",
+    endTime="<tomorrow>",
+    pageSize=5,
+)
+
+# Extract host_email — the address LinkedIn lists as 'self == true' on any event
+host_email = next(
+    (e["organizer"]["email"]
+     for e in events_payload.get("events", [])
+     if e.get("organizer", {}).get("self") is True),
+    None,
+)
+if not host_email:
+    # Fall back to a wider window if today's empty
+    raise SystemExit(
+        "Preflight: could not resolve host email from any event organizer. "
+        "Either expand the time window or use --force-operator to skip."
+    )
+
+from linkedin.operators import resolve_operator
+detected = resolve_operator(host_email)
+expected = inputs["expected_operator"]
+
+if expected and detected != expected:
+    if not inputs.get("force_operator"):
+        raise SystemExit(
+            f"Preflight FAILED: MCP connected as {detected!r} ({host_email}), "
+            f"but inputs.expected_operator = {expected!r}. "
+            f"Either reconnect MCP to the right account, "
+            f"or pass --force-operator to proceed anyway."
+        )
+    print(
+        f"⚠  Preflight overridden — running data-sync as {detected!r} "
+        f"even though expected was {expected!r}. "
+        f"WorkflowRun will record operator={detected!r}."
+    )
+
+print(f"Preflight OK — running as operator={detected!r} ({host_email})")
+```
+
+**Why no `--force-operator` bypass shouldn't be the default:** the operator-tag in `WorkflowRun` is what the followup workflow's Phase 0.5 staleness check reads. If it's wrong, staleness flags fire incorrectly for both operators — Chuka thinks "I have fresh data-sync" when it was actually Arian's data that got synced. Worth the 1-line safety net.
+
+### Phase 0 — Sync Gmail threads into `crm.Message`
+
+Owns the previously-followup-Phase-3b ingest. For every Lead with `Lead.email` populated, pull recent Gmail threads via MCP and idempotent-upsert each message into `crm.Message` with `source=gmail`.
+
+**Why this runs in data-sync** (not followup): MCP-side ingestion is one workflow's job. Followup is a pure consumer that queries `Message.objects.filter(lead=lead).order_by("sent_at")` and gets LinkedIn + Gmail + Calendar all merged. Putting the MCP call here means followup can run without MCP access (e.g. from a cron) once data-sync has populated the cache.
+
+**Scope:** every Lead with `Lead.email` populated, not just leads we're about to draft to. This pre-caches Gmail context for the whole DB so subsequent followup runs are MCP-free.
+
+**Step A — resolve `self_emails` once for this run.** Direction inference needs to know which Gmail addresses count as "us" (so messages we sent get marked outbound). Rather than maintain a static env-var list of every alias, resolve this dynamically from the connected Gmail account at start of phase:
+
+```python
+# Get the primary mailbox address
+me = mcp__claude_ai_Gmail__get_profile()  # or equivalent — return {emailAddress, ...}
+primary = me["emailAddress"].lower()
+
+# Get all configured Send-As aliases (eddy@, arian@, etc. for shared Workspace)
+sendas = mcp__claude_ai_Gmail__list_sendas()  # or settings.sendAs.list — returns sendAs[]
+aliases = {entry["sendAsEmail"].lower() for entry in sendas.get("sendAs", [])}
+
+self_emails = {primary} | aliases
+print(f"self_emails for this run: {sorted(self_emails)}")
+```
+
+If the Gmail MCP wrapper you have doesn't expose `getProfile` / `listSendAs` directly, fall back to manually maintaining a one-line set at the top of the Phase: `self_emails = {"eddy@tryfedrampgpt.com", "arian@tryfedrampgpt.com", ...}`. The point is it's resolved once per run, not from env.
+
+**Step B — for each Lead with `Lead.email` populated:**
+
+1. Pull Gmail threads via MCP:
+   ```
+   mcp__claude_ai_Gmail__search_threads
+     query: "from:<lead.email> OR to:<lead.email>"
+     pageSize: 5
+   ```
+2. Persist via `linkedin.notifications.gmail_threads.persist_gmail_threads(lead=..., threads=<MCP response.threads>, self_emails=self_emails)`. Idempotent on `(source=gmail, external_id=message_id)` — re-running is a free no-op upsert. Direction inferred against the resolved `self_emails` set (empty → SheetsError raised, caller misconfigured).
+
+**Cost:** one MCP search call per lead with an email. Typically 30-200 calls per data-sync run. Persisted on first contact, cached in DB thereafter so future runs are mostly no-ops.
+
+**Pre-flight optimization (optional):** if `Lead.last_gmail_synced_at` was set on the lead's last data-sync pass and no `crm.Message` was added since, skip the MCP call for that lead. (Not yet implemented — leave as a TODO; current behavior is to always re-pull, which is safe due to idempotency.)
 
 ### Phase 1 — Discover meetings
 
@@ -160,27 +258,59 @@ Captures:
 - If People tab `Title` ≠ `Lead.description` headline, decide which is more authoritative (usually `Lead.description` if recent; sheet Title if it was edited intentionally).
 - If `Lead.disqualified=True` but the contact has had recent meetings, that's a contradiction worth surfacing.
 
-### Phase 4 — Pull external thread context
+### Phase 4 — Pull external thread context + persist meetings to DB
 
-**4.1 Gmail** — per matched email:
-```
-mcp__claude_ai_Gmail__search_threads
-  query:    "from:<email> OR to:<email>"
-  pageSize: 3-5
-```
-Watch for: pricing discussions, declined offers, no-shows, follow-up commitments, slide sends.
+**4.1 Gmail** — already handled in Phase 0 (per-Lead Gmail pull persists to `crm.Message`). At this point the merged-timeline data for matched leads is already in DB; this phase just *reads* it to compose AI Notes prose later in Phase 6.
 
-**4.2 Drive Gemini meeting notes** — bulk search once:
+```python
+from crm.models import Message
+gmail_msgs = Message.objects.filter(
+    lead__linkedin_url__in=matched_urls,
+    source=Message.Source.GMAIL,
+).order_by("sent_at")
+```
+
+Watch for: pricing discussions, declined offers, no-shows, follow-up commitments, slide sends. These shape the AI Notes summary.
+
+**4.2 Persist matched calendar events to `crm.Meeting`** — for each matched lead, take their slice of the calendar payload (`event.attendees` contains lead's email) and call:
+```python
+from linkedin.notifications.calendar_events import persist_calendar_events
+from crm.models import Lead
+
+for lead in matched_leads:
+    events_for_lead = [
+        e for e in all_events
+        if any((a.get("email") or "").lower() == lead.email.lower()
+               for a in (e.get("attendees") or []))
+    ]
+    created = persist_calendar_events(lead=lead, events=events_for_lead)
+    print(f"{lead.linkedin_url}: persisted {created} new calendar events")
+```
+Idempotent on `(source=google_calendar, external_id=event_id)` — re-running is a free no-op upsert.
+
+**4.3 Drive Gemini meeting notes — bulk search once**:
 ```
 mcp__claude_ai_Google_Drive__search_files
   query: "title contains 'FedrampGPT' and modifiedTime > '<window start>'"
 ```
-Doc title pattern: `<event title> - YYYY/MM/DD HH:MM EST - Notes by Gemini` — match by event title + date.
+Doc title pattern: `<event title> - YYYY/MM/DD HH:MM EST - Notes by Gemini` — match by event title + date against the just-persisted Meeting rows.
 
-**4.3 Read high-signal docs only** — Gemini docs run 30-80KB each.
-- Read 2-4 most important docs in full (active commercial deals, repeat meetings, technical follow-ups).
-- For others: rely on calendar metadata + Gmail signals + sheet Title / Notes columns.
-- Drive `read_file_content` often exceeds context — use jq on persisted-output files.
+**4.4 Read + persist Gemini doc content** — Gemini docs run 30-80KB each.
+- For each matched Drive doc, identify the corresponding Meeting row by `(title, start_at date)` heuristic.
+- Read the doc content via `mcp__claude_ai_Google_Drive__read_file_content` (or `download_file_content`).
+- Persist the raw text:
+  ```python
+  from linkedin.notifications.calendar_events import persist_gemini_notes
+  persist_gemini_notes(
+      meeting=meeting,
+      doc_id=drive_file_id,
+      doc_title=drive_file_title,
+      raw_text=drive_doc_text,  # the FULL transcript, no summarization
+  )
+  ```
+- The drafter LLM in followup will read `Meeting.gemini_notes_raw` directly and decide what's relevant per draft. Don't pre-summarize — the synthesized AI Notes prose is for the *People-tab column* (operator-readable), not for the drafter.
+
+**Cost:** ~25-50 Drive reads per data-sync run for active leads with recent meetings. Cached in `Meeting.gemini_notes_raw` after first fetch — subsequent runs are no-ops unless the Gemini doc was regenerated (in which case `gemini_notes_fetched_at` is bumped on the next fetch).
 
 ### Phase 5 — Read current sheet state (avoid clobbering)
 
@@ -281,6 +411,39 @@ idx.flush()
 ```
 
 **For unmatched-but-add contacts:** create the Lead in the DB first (via `import_connections` if you have a LinkedIn URL, or manual Lead creation if not), then re-run Phase 5 onwards. The next `sync_sheets` cron run will surface them in the People tab automatically.
+
+### Phase 10 — Record the run
+
+So the followup workflow's Phase 0.5 staleness check knows when this last ran for which operator:
+
+```python
+from linkedin.models import WorkflowRun
+from linkedin.operators import resolve_operator
+
+# `operator` here is whichever person's Google account was connected via
+# MCP during this session. Resolve via host_email or the connected
+# account's display name — anything that runs through resolve_operator
+# canonicalizes to "Chuka" / "Arian" / etc.
+operator = resolve_operator(host_email)  # e.g. "eddy@tryfedrampgpt.com" → "Chuka"
+
+WorkflowRun.objects.create(
+    name="data-sync",
+    operator=operator,
+    summary=(
+        f"events={len(all_events)} matched_leads={len(matched_leads)} "
+        f"meetings_persisted={meetings_created} "
+        f"gemini_docs_persisted={gemini_persisted} "
+        f"sheet_rows_updated={len(approved_changes)}"
+    ),
+    counts={
+        "calendar_events":       len(all_events),
+        "matched_leads":         len(matched_leads),
+        "meetings_persisted":    meetings_created,    # from persist_calendar_events return
+        "gemini_docs_persisted": gemini_persisted,    # from persist_gemini_notes call sites
+        "sheet_rows_updated":    len(approved_changes),
+    },
+)
+```
 
 ---
 

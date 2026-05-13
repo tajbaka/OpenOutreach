@@ -65,11 +65,17 @@ class AccountSession:
         self.page.wait_for_load_state("load")
 
     def _maybe_refresh_cookies(self):
-        """Re-login if the li_at auth cookie in the saved DB state is expired."""
+        """Re-login if the cached `li_at` auth cookie has expired.
+
+        Reads the cookie file on disk (`data/cookies-<safe_username>.json`)
+        rather than a DB column. The standalone scripts have used this
+        same path since 2026-05-11; the daemon switched over on
+        2026-05-12 to mirror that pattern.
+        """
+        from linkedin.browser.cookie_store import cookie_path_for, load_cookies
         from linkedin.browser.login import start_browser_session
 
-        self.linkedin_profile.refresh_from_db(fields=["cookie_data"])
-        cookie_data = self.linkedin_profile.cookie_data
+        cookie_data = load_cookies(cookie_path_for(self.linkedin_profile.linkedin_username))
         if not cookie_data:
             return
         for cookie in cookie_data.get("cookies", []):

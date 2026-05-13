@@ -25,50 +25,54 @@ def notify_connection_accepted(
     profile_url: str,
     campaign_name: str,
     reply_text: str | None = None,
+    operator: str = "",
 ) -> None:
     """Post a 'connection accepted' message to Slack. Silent no-op if disabled.
 
     `reply_text` (when truthy) signals the lead also replied to your note —
     the notification then highlights the reply rather than just the accept.
+    `operator` is the display name of the account that owns this lead
+    (Chuka / Arian) — derived by the caller from `session.linkedin_profile`.
+    Rendered alongside Campaign so the team knows whose lead it is at a glance.
     """
     if not SLACK_WEBHOOK_URL:
         return
 
     headline = " · ".join(p for p in (title, company) if p)
+    operator_clean = (operator or "").strip()
+
+    def _context_elements() -> list[dict]:
+        elements: list[dict] = []
+        if operator_clean:
+            elements.append({"type": "mrkdwn", "text": f"*Lead for:* {operator_clean}"})
+        elements.append({"type": "mrkdwn", "text": f"*Campaign:* {campaign_name}"})
+        if headline:
+            elements.append({"type": "mrkdwn", "text": f"*Role:* {headline}"})
+        return elements
+
+    op_suffix = f" — {operator_clean}'s lead" if operator_clean else ""
 
     if reply_text:
         emoji = ":speech_balloon:"
-        action_line = f"{emoji} *<{profile_url}|{full_name}>* accepted *and replied*"
-        fallback = f"{emoji} {full_name} accepted and replied ({campaign_name})"
+        action_line = f"{emoji} *<{profile_url}|{full_name}>* accepted *and replied*{op_suffix}"
+        fallback = f"{emoji} {full_name} accepted and replied ({campaign_name}){op_suffix}"
         snippet = reply_text.strip().replace("\n", " ")
         if len(snippet) > 280:
             snippet = snippet[:277] + "..."
         blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
             {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
-            {
-                "type": "context",
-                "elements": [
-                    {"type": "mrkdwn", "text": f"*Campaign:* {campaign_name}"},
-                    *([{"type": "mrkdwn", "text": f"*Role:* {headline}"}] if headline else []),
-                ],
-            },
+            {"type": "context", "elements": _context_elements()},
         ]
     else:
         emoji = ":handshake:"
         action_line = (
-            f"{emoji} *<{profile_url}|{full_name}>* accepted your invite (no reply yet)"
+            f"{emoji} *<{profile_url}|{full_name}>* accepted your invite (no reply yet){op_suffix}"
         )
-        fallback = f"{emoji} {full_name} accepted your invite ({campaign_name})"
+        fallback = f"{emoji} {full_name} accepted your invite ({campaign_name}){op_suffix}"
         blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
-            {
-                "type": "context",
-                "elements": [
-                    {"type": "mrkdwn", "text": f"*Campaign:* {campaign_name}"},
-                    *([{"type": "mrkdwn", "text": f"*Role:* {headline}"}] if headline else []),
-                ],
-            },
+            {"type": "context", "elements": _context_elements()},
         ]
 
     payload = {"text": fallback, "blocks": blocks}

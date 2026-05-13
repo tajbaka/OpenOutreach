@@ -37,25 +37,27 @@ The automation gathers raw signal. The human workflows turn that signal into out
 
 **When to run:** safe to run daily. Ball-on-court classifier prevents drafting on top of fresh outbound.
 
-**Reads from:** `crm.Message` (LinkedIn DMs), Gmail (MCP), Calendar (`/tmp/cal_meetings.json`), Drive (Gemini meeting notes via MCP), existing `Sent? = TRUE` rows in the Followups tabs (to skip already-handled leads).
+**Reads from:** `crm.Message` (LinkedIn DMs + Gmail + Calendar — already ingested by data-sync, no MCP calls of its own), existing `Sent? = TRUE` rows in the Followups tabs (to skip already-handled leads), People-tab Outreach status to identify Met / Scheduling cohorts.
 
 **Writes to:** the two Followups tabs in Google Sheets via `linkedin.notifications.sheets.write_followups()`. Optionally a `followups/YYYY-MM-DD/raw.json` archive for history.
 
-### 2. `sheets-meeting-sync-workflow.md` — enrich Sheets after meetings
+### 2. `data-sync-workflow.md` — ingest Google data + enrich Sheets
 
-**Purpose:** keep the Google Sheets People tab contacts current with what's actually happening — calendar meetings, Gmail threads, Drive meeting notes, LinkedIn DM context — and roll that up into a per-Person AI Note plus the right Outreach status / Stage.
+**Purpose:** single owner of MCP-based ingestion for Google data. Pulls calendar events, Gmail threads, and Drive Gemini meeting notes; persists them to DB (`crm.Message` for Gmail, `crm.Meeting` for Calendar + Gemini); writes the synthesized AI Note + Outreach status updates to the People tab.
 
-**Output:** writes directly to the People tab:
-- Per-Person AI Notes column (composed from cross-source thread context)
-- Outreach status updates (Replied → Wants Meeting → Meeting Booked → Had Meeting → ...)
-- Stage updates (Prospecting → Qualification → Meeting → Closing → Won)
+**Output:**
+- `crm.Message` rows with `source=gmail` (raw thread data)
+- `crm.Meeting` rows with calendar event facts + raw Gemini notes (one row per attended meeting)
+- People tab updates: AI Notes column, Outreach status (Replied → Wants Meeting → Had Meeting → ...), Stage (Prospecting → Qualification → Meeting → Closing → Won)
 - Preview-then-apply gate — Claude shows you the planned diff, you approve before any write fires
 
-**When to run:** weekly/biweekly, or after a batch of meetings (e.g., end of a busy demo week).
+**When to run:** weekly/biweekly, or after a batch of meetings (e.g., end of a busy demo week). The followup workflow's Phase 0.5 staleness check flags when this hasn't run recently and recommends running it first.
 
 **Reads from:** the People tab (current state), Gmail (MCP), Calendar (MCP), Drive (MCP), `crm.Message` (CRM).
 
-**Writes to:** the People tab (with approval) via `sheets.SheetIndex.upsert_row()`. Does NOT write to `crm.Message` — read-only there.
+**Writes to:**
+- `crm.Message` (Gmail rows) and `crm.Meeting` (Calendar + Gemini rows) via DB upserts (idempotent on `(source, external_id)`).
+- The People tab (with approval) via `sheets.SheetIndex.upsert_row()`.
 
 ---
 
@@ -76,7 +78,7 @@ The automation gathers raw signal. The human workflows turn that signal into out
           • Writes drafts to Arian/Chuka Followups tabs
           • You copy the Draft cell into LinkedIn / Gmail
 
-        sheets-meeting-sync-workflow.md
+        data-sync-workflow.md
           • Reads People tab + Gmail + Cal + Drive + crm.Message
           • Writes to People tab (preview-then-apply)
           • Updates Outreach status, Stage,
@@ -104,9 +106,9 @@ Verify with `crontab -l` on whichever box runs `backfill_messages` before trusti
 | Situation | Workflow |
 |---|---|
 | It's Monday morning, want to know who to message this week | `followup-generation-workflow.md` |
-| Just had a heavy demo week, want the Sheets People tab to reflect reality | `sheets-meeting-sync-workflow.md` |
+| Just had a heavy demo week, want the Sheets People tab to reflect reality | `data-sync-workflow.md` |
 | New batch of cold-acceptances landed, want to re-engage them | `followup-generation-workflow.md` (connected-no-reply cohort) |
-| A meeting happened but the prospect isn't in our DB yet | `sheets-meeting-sync-workflow.md` (it surfaces them; you add via `import_connections` or manual creation) |
+| A meeting happened but the prospect isn't in our DB yet | `data-sync-workflow.md` (it surfaces them; you add via `import_connections` or manual creation) |
 | Daily cadence sanity check ("anything blow up overnight?") | `followup-generation-workflow.md` (ball-on-us bucket surfaces same-day inbound) |
 
 You can run both in the same session if you want a full sweep — they don't share state, so order doesn't matter, but doing the meeting sync first means the followup generator reads cleaner sheet "already met" exclusions.

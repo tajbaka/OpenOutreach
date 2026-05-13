@@ -1,56 +1,86 @@
 # linkedin/tasks/follow_up.py
-"""Follow-up task — runs the agentic follow-up for one CONNECTED profile."""
+"""Follow-up task — sends the rigid ICP DM to one CONNECTED lead.
+
+Flow per task:
+  1. Honor `ENABLE_FOLLOW_UP` kill-switch + the daily-cap rate limit.
+  2. Resolve the lead, scan the LinkedIn thread for any reply from them.
+     If they replied — auto-pin stops, mark Completed, return. We never
+     re-pitch over an active human thread; the operator picks it up via
+     the followup sheet's MET / Replied cohort.
+  3. Classify ROLE via `linkedin.icp_outbound.classify_role(lead)`, look
+     up the matching ICP template, fill `{first_name}` (the only dynamic
+     span), send via `send_raw_message`.
+  4. On success: mark Completed, record an ActionLog.
+     On failure: re-enqueue in 24h.
+
+Previously the handler had three send paths — a fixed
+`POST_ACCEPT_MESSAGE_TEMPLATE` walkthrough (gated by
+`POST_ACCEPT_VIDEO_LINK`), an LLM-driven agent fallback
+(`linkedin.agents.follow_up.run_follow_up_agent`), and the daemon
+honoring whichever was configured. Collapsed to a single path on
+2026-05-12: rigid ICP template is the only send mode. The LLM agent
+was unpredictable enough that operator feedback consistently flagged
+drafts mentioning features that didn't exist, and per-lead
+AI-personalization at the daemon's volume isn't worth the cost or the
+inconsistency. The bespoke AI-personalized path now lives exclusively
+in the followup-sheet workflow (`docs/followup-generation-workflow.md`)
+where the operator reviews each draft before sending.
+"""
 from __future__ import annotations
 
 import logging
 
 from termcolor import colored
 
-from linkedin.conf import (
-    ENABLE_FOLLOW_UP,
-    FOLLOW_UP_MEDIA_PATH,
-    POST_ACCEPT_MESSAGE_TEMPLATE,
-    POST_ACCEPT_VIDEO_LINK,
-)
-from linkedin.db.deals import get_profile_dict_for_public_id
+from linkedin.conf import ENABLE_FOLLOW_UP
+from linkedin.db.deals import get_profile_dict_for_public_id, set_profile_state
+from linkedin.db.urls import public_id_to_url
+from linkedin.icp_outbound import classify_role, fill_for_lead
 from linkedin.models import ActionLog
 
 logger = logging.getLogger(__name__)
 
 
-def _build_post_accept_message(first_name: str) -> str:
-    name = (first_name or "").strip() or "there"
-    return POST_ACCEPT_MESSAGE_TEMPLATE.format(first_name=name, video_link=POST_ACCEPT_VIDEO_LINK)
+def handle_follow_up(task, session, qualifiers):
+    if not ENABLE_FOLLOW_UP:
+        # Defense in depth: should never fire, since daemon cancels these on
+        # startup and enqueue_follow_up is also gated.
+        logger.debug("follow_up disabled — skipping task %s", task.pk)
+        return
 
-
-def _send_post_accept_message(session, profile: dict, message: str) -> bool:
-    from linkedin.actions.message import send_media_message, send_raw_message
-
-    if FOLLOW_UP_MEDIA_PATH:
-        sent = send_media_message(session, profile, message, FOLLOW_UP_MEDIA_PATH)
-        if not sent:
-            logger.warning("Media send failed for %s, falling back to text-only", profile.get("public_identifier"))
-            sent = send_raw_message(session, profile, message)
-        return sent
-
-    return send_raw_message(session, profile, message)
-
-
-def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campaign_id: int) -> dict | None:
-    """Run the deterministic accepted-connection flow when a tracked video link is configured.
-
-    Returns None when the custom flow is disabled and the generic agent should run.
-    Otherwise returns {"sent_message": bool} after handling the lead.
-    """
-    if not POST_ACCEPT_VIDEO_LINK:
-        return None
-
+    # Lazy imports so unit tests that don't touch the send path don't pull
+    # in playwright / browser action modules.
     from crm.models import Deal
+    from linkedin.actions.message import send_raw_message
+    from linkedin.db.messages import lead_outbound_operators
+    from linkedin.operators import resolve_operator
+    from linkedin.tasks.connect import _seconds_until_tomorrow, enqueue_follow_up
 
-    from linkedin.actions.conversations import get_conversation
-    from linkedin.db.deals import set_profile_state
-    from linkedin.db.urls import public_id_to_url
-    from linkedin.tasks.connect import enqueue_follow_up
+    payload = task.payload
+    public_id = payload["public_id"]
+    campaign_id = payload["campaign_id"]
+
+    logger.info(
+        "[%s] %s %s",
+        session.campaign, colored("▶ follow_up", "green", attrs=["bold"]), public_id,
+    )
+
+    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+
+    # Rate limit check — defer to tomorrow if we've hit today's cap.
+    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
+        enqueue_follow_up(
+            campaign_id, public_id,
+            operator=our_operator,
+            delay_seconds=_seconds_until_tomorrow(),
+        )
+        return
+
+    profile_dict = get_profile_dict_for_public_id(session, public_id)
+    if profile_dict is None:
+        logger.warning("follow_up: no Deal for %s — skipping", public_id)
+        return
+    profile = profile_dict.get("profile") or profile_dict
 
     deal = (
         Deal.objects.filter(
@@ -61,101 +91,109 @@ def _handle_post_accept_video_flow(session, public_id: str, profile: dict, campa
         .first()
     )
     if not deal:
-        return None
+        logger.warning("follow_up: no Deal for %s in campaign %s — skipping",
+                       public_id, session.campaign)
+        return
 
-    messages = get_conversation(session, public_id) or []
+    # Owner-scoping guard (second line of defense — claim_next already
+    # pre-filters by operator). The lead's outbound LinkedIn DM thread
+    # was opened by whichever account sent the connection invite — that's
+    # the only account that can DM them now. If a Task for someone else's
+    # lead ends up in our queue anyway (legacy Task missing payload.operator,
+    # or operator field never stamped), drop the send. Travis incident,
+    # 2026-05-12: daemon as Arian almost sent to one of Chuka's connections.
+    owning_operators = lead_outbound_operators(deal.lead)
+    if owning_operators and our_operator not in owning_operators:
+        logger.warning(
+            "follow_up: %s belongs to %s, daemon logged in as %s (%s) — skipping send",
+            public_id, owning_operators, our_operator,
+            session.linkedin_profile.linkedin_username,
+        )
+        return
 
-    lead_full_name = f"{deal.lead.first_name or ''} {deal.lead.last_name or ''}".strip().lower()
-    lead_replied = any(
-        (msg.get("sender", "") or "").strip().lower() == lead_full_name
-        for msg in messages
-    )
-
-    # Prospect replied — stop automation, let the user handle the thread.
-    if lead_replied:
-        set_profile_state(
-            session,
+    # No-thread guard. A follow-up presumes there's an existing LinkedIn DM
+    # thread to nudge — typically seeded by the connect lane's connection-
+    # note send. If `crm.Message` has zero outbound on this lead, there's
+    # nothing to follow up on: either the connect lane never ran (CSV-only
+    # import) or its outbound was never persisted. The daemon would
+    # otherwise try `messaging/thread/new/?recipient=urn:...` which fails
+    # silently and gets re-enqueued every 24h forever. Mark Completed with
+    # a clear reason and move on — the operator can re-seed via
+    # `manage.py import_connections` (with a `Message` column in the CSV)
+    # if they want to start the thread.
+    from crm.models import Message
+    has_outbound = Message.objects.filter(
+        lead=deal.lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.OUTBOUND,
+    ).exists()
+    if not has_outbound:
+        logger.warning(
+            "follow_up: no outbound LinkedIn thread for %s — marking Completed "
+            "(use connect lane or import_connections --csv with Message column to seed)",
             public_id,
-            "Completed",
+        )
+        set_profile_state(
+            session, public_id, "Completed",
+            reason="No outbound LinkedIn thread to follow up on",
+        )
+        return
+
+    # If the lead already sent us anything on this thread, stop — operator
+    # picks it up from the followup sheet's REPLIED / MET cohort. Sending
+    # the rigid pitch over an active human thread is the worst outcome here.
+    #
+    # Read from `crm.Message` rather than live-fetching via `get_conversation`
+    # (which would navigate to the LinkedIn thread URL first, costing a full
+    # page nav before send and leaving a bot-like double-navigation pattern
+    # in the trace). `sync_sheets` + sweep_connections + backfill_messages
+    # keep crm.Message current; the cached read is the canonical source.
+    from crm.models import Message
+    has_inbound = Message.objects.filter(
+        lead=deal.lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.INBOUND,
+    ).exists()
+    if has_inbound:
+        set_profile_state(
+            session, public_id, "Completed",
             reason="Lead replied; automation stopped",
         )
-        return {"sent_message": False}
+        return
 
-    message = _build_post_accept_message(deal.lead.first_name)
-    sent = _send_post_accept_message(session, profile, message)
+    # ICP-keyed send. `my_name` is unused for LinkedIn channel (no
+    # signature block in those templates), passed for symmetry with the
+    # email channel where {my_name} fills the sign-off. Templates can
+    # also embed `{add <filename>}` placeholders to attach a media file
+    # (looked up in assets/followup/ then ROOT_DIR) — handled in
+    # `_send_with_attachments_or_text` below.
+    role = classify_role(deal.lead)
+    filled = fill_for_lead(
+        role=role, channel="linkedin", lead=deal.lead, my_name=our_operator,
+    )
+    # If the template included {add <filename>} placeholders, send via
+    # the media path (first attachment only — LinkedIn's message form
+    # accepts one inline media per send). Multiple attachments would
+    # require sequential sends; today's templates use 0 or 1.
+    if filled.attachments:
+        from linkedin.actions.message import send_media_message
+        sent = send_media_message(
+            session, profile, filled.body, str(filled.attachments[0]),
+        )
+    else:
+        sent = send_raw_message(session, profile, filled.body)
     if not sent:
-        logger.warning("Post-accept walkthrough send failed for %s — re-enqueuing in 24h", public_id)
-        enqueue_follow_up(campaign_id, public_id, delay_seconds=24 * 3600)
-        return {"sent_message": False}
+        logger.warning("follow_up send failed for %s — re-enqueuing in 24h", public_id)
+        enqueue_follow_up(
+            campaign_id, public_id,
+            operator=our_operator,
+            delay_seconds=24 * 3600,
+        )
+        return
 
+    session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
     set_profile_state(
-        session,
-        public_id,
-        "Completed",
-        reason="Accepted without reply; sent walkthrough",
+        session, public_id, "Completed",
+        reason=f"Sent ICP-{role} follow-up DM",
     )
-    return {"sent_message": True}
-
-
-def handle_follow_up(task, session, qualifiers):
-    if not ENABLE_FOLLOW_UP:
-        # Defense in depth: should never fire, since daemon cancels these on
-        # startup and enqueue_follow_up is also gated.
-        logger.debug("follow_up disabled \u2014 skipping task %s", task.pk)
-        return
-
-    from linkedin.agents.follow_up import run_follow_up_agent
-    from linkedin.tasks.connect import _seconds_until_tomorrow, enqueue_follow_up
-
-    payload = task.payload
-    public_id = payload["public_id"]
-    campaign_id = payload["campaign_id"]
-
-    logger.info(
-        "[%s] %s %s",
-        session.campaign, colored("\u25b6 follow_up", "green", attrs=["bold"]), public_id,
-    )
-
-    # Rate limit check
-    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
-        enqueue_follow_up(campaign_id, public_id, delay_seconds=_seconds_until_tomorrow())
-        return
-
-    profile_dict = get_profile_dict_for_public_id(session, public_id)
-    if profile_dict is None:
-        logger.warning("follow_up: no Deal for %s — skipping", public_id)
-        return
-
-    profile = profile_dict.get("profile") or profile_dict
-
-    custom_result = _handle_post_accept_video_flow(session, public_id, profile, campaign_id)
-    if custom_result is not None:
-        if custom_result["sent_message"]:
-            session.linkedin_profile.record_action(
-                ActionLog.ActionType.FOLLOW_UP, session.campaign,
-            )
-        logger.info(
-            "post_accept flow for %s: %s",
-            public_id,
-            "sent walkthrough" if custom_result["sent_message"] else "no message",
-        )
-        return
-
-    result = run_follow_up_agent(session, public_id, profile, campaign_id)
-
-    # Record action if any message was sent
-    sent_messages = [a for a in result["actions"] if a["tool"] == "send_message"]
-    if sent_messages:
-        session.linkedin_profile.record_action(
-            ActionLog.ActionType.FOLLOW_UP, session.campaign,
-        )
-
-    # Safety net: if agent didn't schedule or complete, re-enqueue
-    terminal_tools = {"mark_completed", "schedule_follow_up"}
-    if not any(a["tool"] in terminal_tools for a in result["actions"]):
-        logger.warning("follow_up agent for %s did not schedule or complete — re-enqueuing in 72h", public_id)
-        enqueue_follow_up(campaign_id, public_id, delay_seconds=72 * 3600)
-
-    # Log summary
-    action_names = [a["tool"] for a in result["actions"]]
-    logger.info("follow_up agent for %s: %s", public_id, ", ".join(action_names) or "no actions")
+    logger.info("follow_up sent to %s (role=%s)", public_id, role)

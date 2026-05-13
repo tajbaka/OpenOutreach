@@ -1,4 +1,6 @@
 # tests/conftest.py
+from unittest.mock import patch
+
 import pytest
 
 from linkedin.management.setup_crm import setup_crm
@@ -13,6 +15,28 @@ def _ensure_crm_data(db):
     Since transaction=True tests rollback, we re-create data each time.
     """
     setup_crm()
+
+
+@pytest.fixture(autouse=True)
+def _silence_slack(monkeypatch):
+    """Disable Slack notifications during tests.
+
+    Without this, `handle_sweep_connections` tests (which transition the
+    fixture lead "Alice Smith" from PENDING → CONNECTED) call
+    `notify_connection_accepted`, which reads `SLACK_WEBHOOK_URL` from
+    the live .env and POSTs to the real Slack channel. That's why
+    operators were seeing "Alice Smith just accepted" pinging the team
+    every test run (2026-05-12). Clear the webhook env so the slack
+    notify is a no-op for all tests — production daemon path is
+    untouched.
+    """
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "")
+    # Module-level constant is read at import time, so also patch the
+    # imported reference and any cached copies in callers.
+    monkeypatch.setattr("linkedin.conf.SLACK_WEBHOOK_URL", "")
+    monkeypatch.setattr(
+        "linkedin.notifications.slack.SLACK_WEBHOOK_URL", "",
+    )
 
 
 class FakeAccountSession:

@@ -190,3 +190,77 @@ def test_get_conversation_persists_messages_when_lead_exists(
     result = get_conversation(fake_session, "waylonkrush")
     assert result and len(result) == 1
     assert Message.objects.filter(external_id="urn:li:msg:hook1").exists()
+
+
+# ---------------------------------------------------------------------------
+# lead_outbound_operators — daemon owner-scoping helper
+# ---------------------------------------------------------------------------
+
+
+def test_lead_outbound_operators_canonicalizes_known_aliases(db):
+    """Senders flow through `linkedin.operators.resolve_operator`, so the
+    set returns canonical handles like 'Chuka' regardless of which
+    surface-form of the name was on the Message row."""
+    from linkedin.db.messages import lead_outbound_operators
+    lead = Lead.objects.create(
+        first_name="Travis",
+        linkedin_url="https://www.linkedin.com/in/travis/",
+    )
+    for sender in ("chukwuka agu", "Chuka Eddy Jack", "eddy@tryfedrampgpt.com"):
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id=f"urn:li:msg:{sender[:5]}",
+            direction=Message.Direction.OUTBOUND,
+            sender=sender,
+            body="hi",
+            sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
+        )
+    assert lead_outbound_operators(lead) == {"Chuka"}
+
+
+def test_lead_outbound_operators_skips_inbound_and_gmail(db):
+    """Only OUTBOUND LINKEDIN messages count — inbound is the lead replying
+    (so they're the sender there, which we never want to use as 'who owns
+    the daemon thread'), and Gmail threads don't constrain LinkedIn DM
+    sending ability."""
+    from linkedin.db.messages import lead_outbound_operators
+    lead = Lead.objects.create(
+        first_name="Travis",
+        linkedin_url="https://www.linkedin.com/in/travis/",
+    )
+    Message.objects.create(
+        lead=lead, source=Message.Source.LINKEDIN, external_id="m1",
+        direction=Message.Direction.INBOUND, sender="travis", body="hi",
+        sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    Message.objects.create(
+        lead=lead, source=Message.Source.GMAIL, external_id="m2",
+        direction=Message.Direction.OUTBOUND, sender="arian taj", body="hi",
+        sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    # No qualifying outbound LinkedIn → empty set (no constraint).
+    assert lead_outbound_operators(lead) == set()
+
+
+def test_lead_outbound_operators_returns_multiple_operators(db):
+    """Cross-operator threads (rare, e.g. shared account or accidental
+    cross-send) surface both operator handles. Caller decides what to
+    do — the daemon's owner-scoping check uses `in` so as long as the
+    current operator is in the set, the send proceeds."""
+    from linkedin.db.messages import lead_outbound_operators
+    lead = Lead.objects.create(
+        first_name="Travis",
+        linkedin_url="https://www.linkedin.com/in/travis/",
+    )
+    Message.objects.create(
+        lead=lead, source=Message.Source.LINKEDIN, external_id="m1",
+        direction=Message.Direction.OUTBOUND, sender="chukwuka agu", body="hi",
+        sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
+    )
+    Message.objects.create(
+        lead=lead, source=Message.Source.LINKEDIN, external_id="m2",
+        direction=Message.Direction.OUTBOUND, sender="Arian Taj", body="follow-up",
+        sent_at=datetime(2026, 4, 2, 10, 0, tzinfo=timezone.utc),
+    )
+    assert lead_outbound_operators(lead) == {"Chuka", "Arian"}

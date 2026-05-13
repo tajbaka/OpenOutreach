@@ -1,6 +1,6 @@
 # Follow-up Generation Workflow
 
-Reusable runbook for producing tailored LinkedIn DM follow-ups from `crm.Lead` + `Deal` + `Message` data, broken out by cohort and sender. Companion to `docs/sheets-meeting-sync-workflow.md` (which handles the Sheets side after meetings).
+Reusable runbook for producing tailored LinkedIn DM follow-ups from `crm.Lead` + `Deal` + `Message` data, broken out by cohort and sender. Companion to `docs/data-sync-workflow.md` (which handles the Sheets side after meetings).
 
 ## When to run
 
@@ -15,11 +15,13 @@ Drafts land in two **Google Sheets tabs** — one per active sender:
 
 Each tab has 14 columns and is divided into five sections via merged divider rows:
 
-1. **🤝 MET** — `Cohort = Met`
-2. **💬 REPLIED** — `Cohort ∈ {Ball on us, Cold thread}`
-3. **⏳ CONNECTED, NO REPLY** — `Cohort = No reply yet`
+1. **🤝 MET** — `Cohort = Met` (strictly post-meeting: `Had Meeting` / `Manual followup` / `Prospecting to close`)
+2. **📅 SCHEDULING** — `Cohort = Scheduling` (pre-meeting: `Wants Meeting` / `Meeting Booked`)
+3. **💬 REPLIED** — `Cohort ∈ {Ball on us, Cold thread}`
 4. **🌊 ACTIVE IN-FLIGHT** — `Cohort = Active in-flight` (visibility-only, no draft)
 5. **✅ SENT** — preserved from prior runs (rows where the operator toggled either `Sent Email` or `Sent LinkedIn` = `Yes`)
+
+> The "Connected, no reply" cohort was retired 2026-05-12: the daemon's `handle_follow_up` task now DMs those leads rigidly from `linkedin/icp_messages.json`, so surfacing them for manual drafting was duplicate work.
 
 Schema (in column order):
 
@@ -27,10 +29,10 @@ Schema (in column order):
 |---|---|---|
 | 1 | `Name` | first + last |
 | 2 | `Status` | snapshot of People-tab `Outreach status` |
-| 3 | `Cohort` | dropdown — Met / Ball on us / Cold thread / No reply yet / Active in-flight / Sent |
+| 3 | `Cohort` | dropdown — Met / Ball on us / Cold thread / Active in-flight / Sent |
 | 4 | `ROLE` | dropdown — CSP / 3PAO / Advisor / Assessor / Channel |
 | 5 | `PRIORITY` | dropdown — HIGH / MEDIUM-HIGH / MEDIUM / LOW / HOLD (conditional-format colored) |
-| 6 | `Days since` | int — days since the last message on either medium (merged latest) |
+| 6 | `Days since` | int — `(now - msgs[-1].sent_at).days` on the merged timeline regardless of direction. **Met:** `max(latest_message, latest_meeting.start_at)` so a calendar meeting counts as activity even without a message exchange. |
 | 7 | `Days since connection` | int — days since `Deal.connected_at` (the moment they accepted our invite). Drives the freshness priority bump. Blank for legacy rows pre-dating the field. |
 | 8 | `CONVO` | one or two sentences summarizing the *full* relationship (both mediums) |
 | 9 | `Draft Email` | populated when there's real Gmail engagement (typed reply, not just a calendar acceptance) |
@@ -46,16 +48,18 @@ A `followups/YYYY-MM-DD/raw.json` archive is also written (per-run snapshot of t
 
 ## Cohorts
 
-Five buckets the workflow generates files / sections for. The drafted ones are split per active sender (Chuka, Arian, etc.). Active-in-flight is a section inside the relevant draft file, not a separate file.
+Six buckets the workflow generates files / sections for. The drafted ones are split per active sender (Chuka, Arian, etc.). Active-in-flight is a section inside the relevant draft file, not a separate file.
 
 | Cohort | Filter | Sheet section / Cohort value | Why follow up |
 |---|---|---|---|
-| **Replied, ball on us** | `Deal.state=Connected` AND latest message is **inbound** AND not in already-met set AND not disqualified | 💬 REPLIED, `Cohort = Ball on us` | They replied last, we owe a response. Most time-sensitive cohort — these need same-day or next-day attention. |
-| **Replied, cold thread (ball on us to nudge)** | `Deal.state=Connected` AND has ≥1 inbound AND latest message is outbound ≥ `NUDGE_AFTER_DAYS` (default 5) old AND not in already-met set AND not disqualified | 💬 REPLIED, `Cohort = Cold thread` | They engaged once and went quiet. Re-engagement nudge needed. |
+| **Met (post-meeting)** | People-tab `Outreach status ∈ MET_STATUSES` ({Had Meeting, Manual followup, Prospecting to close}) AND not disqualified | 🤝 MET, `Cohort = Met` | Real post-meeting follow-up. Drafter leads with the deliverable owed from the call (Loom, repo, doc, intro) or a forward-looking question rooted in what was discussed. |
+| **Scheduling (pre-meeting)** | People-tab `Outreach status ∈ PRE_MEETING_STATUSES` ({Wants Meeting, Meeting Booked}) AND not disqualified | 📅 SCHEDULING, `Cohort = Scheduling` | Meeting is on the track but hasn't happened. Drafter resurfaces time slots (Wants Meeting) or sends a light pre-meeting confirm (Meeting Booked). Never deliverable-first — we haven't met yet. |
+| **Replied, ball on us** | `Deal.state=Connected` AND latest message is **inbound** AND not in pre-meeting / met sets AND not disqualified | 💬 REPLIED, `Cohort = Ball on us` | They replied last, we owe a response. Most time-sensitive cohort — these need same-day or next-day attention. |
+| **Replied, cold thread (ball on us to nudge)** | `Deal.state=Connected` AND has ≥1 inbound AND latest message is outbound ≥ `NUDGE_AFTER_DAYS` (default 5) old AND not in pre-meeting / met sets AND not disqualified | 💬 REPLIED, `Cohort = Cold thread` | They engaged once and went quiet. Re-engagement nudge needed. |
 | **Active / in-flight** | Latest message is outbound, < `NUDGE_AFTER_DAYS` old | 🌊 ACTIVE IN-FLIGHT, `Cohort = Active in-flight` (no Draft) | They've had a recent reach-out from us; sending again today would step on it. Listed for visibility so they don't disappear from daily runs. |
-| **Connected, no reply** | `Deal.state=Connected` AND zero inbound messages AND not disqualified AND ICP-relevant title | ⏳ CONNECTED, NO REPLY, `Cohort = No reply yet` | Cold lead, but they accepted the invite. Try a different angle than the original. |
-| **Met (post-meeting)** | `Deal.state=Connected` AND lead has had a Google Meet (per `cal_meetings.json` / Drive Gemini notes) | 🤝 MET, `Cohort = Met` | Post-meeting follow-up; ball-on-court derived from the merged LinkedIn + Gmail + meeting timeline. |
 | **Replied, polite no** | Same filter as Replied cohorts but inbound message contains a `NO_PHRASES` decline phrase | Surfaced in the run's SUMMARY (printed to stdout, not written to sheet) → recommend `Lead.disqualified=True` | Don't follow up. Disqualify the Lead. |
+
+> The "Connected, no reply" cohort was previously surfaced here and drafted into the SENIOR/T1 tiers; it's now handled programmatically by the daemon (`linkedin/tasks/follow_up.py` + `linkedin/icp_messages.json`). Leads who accept an invite and never reply get a rigid template DM from the daemon and are then marked Completed — no operator review step.
 
 ## Step-by-step
 
@@ -84,6 +88,90 @@ Before any cohort work, the orchestrator (the agent running this workflow) reads
 
 **Drafting rule that depends on this phase:** every concrete feature claim in a draft must be traceable back to a file the orchestrator read in Phase 0. If you can't name the file, delete the sentence. Hedge language ("scoping", "on the roadmap") is allowed only if there's a stub / planning comment in the code that supports it.
 
+### Phase 0.5 — Staleness check (MANDATORY)
+
+Before running cohort classification, the orchestrator queries the
+`linkedin.WorkflowRun` table to see how fresh each upstream data source
+is. If something's stale, surface it to the operator as a checklist so
+they can decide whether to re-run upstreams before drafting.
+
+The four workflows tracked:
+
+| Workflow | Scope | Staleness signal |
+|---|---|---|
+| `data-sync` | per-operator | new Lead.email populated since last run → suggests new Gmail to pull; or new Meet on calendar that hasn't been ingested |
+| `import-connections` | per-operator | the operator has connected with new people on LinkedIn but the CSV-driven import hasn't run |
+| `backfill-messages` | per-operator | new outbound messages from this operator might have received replies the daemon didn't see |
+| `followup` | global | last followup was today and operator hasn't sent any of the drafts → flag potential re-run waste |
+
+**Query pattern:**
+
+```python
+from linkedin.models import WorkflowRun
+from linkedin.operators import resolve_operator
+from datetime import datetime, timezone, timedelta
+
+OPERATORS = ["Chuka", "Arian"]  # add new operators as they join
+PER_OPERATOR_WORKFLOWS = ["data-sync", "import-connections", "backfill-messages"]
+GLOBAL_WORKFLOWS = ["followup"]
+STALE_AFTER_HOURS = 24 * 7  # 7 days — tune per workflow if needed
+
+now = datetime.now(timezone.utc)
+report: list[str] = []
+
+for op in OPERATORS:
+    for name in PER_OPERATOR_WORKFLOWS:
+        latest = (WorkflowRun.objects
+                  .filter(name=name, operator=op)
+                  .order_by("-completed_at")
+                  .first())
+        if not latest:
+            report.append(f"⚠  {name} has NEVER run for {op}")
+            continue
+        age = now - latest.completed_at
+        if age > timedelta(hours=STALE_AFTER_HOURS):
+            report.append(
+                f"⚠  {name} for {op} last ran {age.days}d ago — consider re-running"
+            )
+
+for name in GLOBAL_WORKFLOWS:
+    latest = (WorkflowRun.objects
+              .filter(name=name, operator="")
+              .order_by("-completed_at")
+              .first())
+    if not latest:
+        report.append(f"⚠  {name} has NEVER run")
+        continue
+    age = now - latest.completed_at
+    if age < timedelta(hours=2):
+        report.append(
+            f"⚠  {name} ran {int(age.total_seconds()/60)}m ago — re-running may overwrite recent drafts"
+        )
+
+if report:
+    print("\n=== Staleness check — review before continuing ===")
+    for line in report:
+        print(line)
+    print()
+    # Surface to the operator (interactive Claude session) — let them decide
+    # whether to abort and re-run upstreams, or proceed with stale data.
+else:
+    print("Staleness check: all upstream workflows fresh ✓")
+```
+
+**How to decide:** if any per-operator workflow is flagged ⚠, the
+operator should probably run that workflow first. Most common case: if
+`data-sync` for one operator is stale and that operator has had recent
+meetings (look at the People tab Outreach status for fresh `Wants
+Meeting` / `Meeting Booked` entries that didn't exist last followup
+run), the Met-cohort drafter will be flying half-blind without fresh
+calendar/Gemini context. Run `data-sync` first, then the followup.
+
+**Skipping is fine** for ball-on-us / cold-thread cohorts since they
+depend mostly on `crm.Message` which is updated by `backfill-messages`
+and the daemon, both of which are typically fresh. Met-cohort quality
+is where this matters most.
+
 ### Phase 1 — Pull cohort data (ball-on-court classifier)
 
 The classifier is **ball-on-court**, not freshness-based. The right question for a daily run is "whose move is it?" — not "how recent was the last message?" A 24-hour-old outbound shouldn't trigger a re-nudge (the prospect hasn't had time), but a 24-hour-old *inbound* absolutely should surface (we owe a reply). This was a deliberate fix on 2026-04-28 after the previous freshness filter silently hid Mark Milton (calendar-invite-just-sent) and similarly classified active threads as "too fresh."
@@ -93,23 +181,76 @@ The classifier is **ball-on-court**, not freshness-based. The right question for
 import json
 from datetime import datetime, timedelta, timezone
 from crm.models import Lead, Deal, Message
-from linkedin.notifications.sheets import read_followup_sent_rows
+from linkedin.notifications.sheets import (
+    read_followup_sent_rows,
+    read_followup_templates,
+    SheetIndex,
+    COL_LINKEDIN_URL, COL_OUTREACH_STATUS,
+    MET_STATUSES, PRE_MEETING_STATUSES,
+    FU_ROLE_TO_ICP,
+)
 
 # Skip leads the operator already ticked Sent? in either tab on a prior
 # run. Those rows will be preserved verbatim under ✅ SENT by write_followups()
 # below — no need to re-classify or re-draft for them.
-ALREADY_SENT_URLS = set()
+#
+# Match by Name (case-insensitive, whitespace-normalized): the followups
+# tab has Name but no profile URL column (LinkedIn Message Url is a thread
+# deep-link, different shape). URL-based matching here silently failed —
+# every prior run re-drafted Sent=Yes rows, and write_followups's
+# caller-wins dedupe then clobbered the operator's toggle when the tab
+# rebuilt. Name reconstructed from Lead.first_name + last_name matches
+# the same string the workflow writes into the tab in Phase 6.
+def _norm_name(s: str) -> str:
+    return " ".join((s or "").split()).lower()
+
+ALREADY_SENT_NAMES: set[str] = set()
 for op in ("Arian", "Chuka"):
     for r in read_followup_sent_rows(op):
-        url = (r.get("LinkedIn URL") or "").strip()
-        if url:
-            ALREADY_SENT_URLS.add(url)
+        nm = _norm_name(r.get("Name", ""))
+        if nm:
+            ALREADY_SENT_NAMES.add(nm)
 
-# Leads who already had a meeting (post-meeting follow-up cohort) are
-# pulled from the People tab where Outreach status = Had Meeting / Meeting
-# Booked / Wants Meeting. The classifier below puts them in the Met cohort.
-# Update this set if you have meetings tracked outside the sheet.
-ALREADY_MET_URLS: set[str] = set()  # populate from sheet if needed
+# Leads on the meeting track are pulled from the People tab where Outreach
+# status is one of:
+#   - MET_STATUSES (Had Meeting, Manual followup, Prospecting to close) →
+#     post-meeting; lands in 🤝 MET cohort, drafter leads with deliverable
+#   - PRE_MEETING_STATUSES (Wants Meeting, Meeting Booked) →
+#     pre-meeting; lands in 📅 SCHEDULING cohort, drafter resurfaces slots
+#     or sends pre-meeting confirm (NEVER deliverable-first — we haven't met)
+# Failure to load the sheet shouldn't block the rest of the cohort run —
+# both cohorts will just be empty for that run.
+#
+# Past bugs (2026-05-11):
+#   (a) MET_STATUSES used to only include Wants/Booked/Had, so leads the
+#       operator manually advanced to "Prospecting to close" / "Manual
+#       followup" fell back to the ball-on-court classifier and were
+#       treated as cold-thread re-engagements. Fixed by adding them.
+#   (b) Then MET_STATUSES included Wants Meeting / Meeting Booked which
+#       are pre-meeting states with fundamentally different draft strategies
+#       (slot pin / pre-meeting confirm vs. post-meeting follow-up). They
+#       got split out into PRE_MEETING_STATUSES → 📅 SCHEDULING section.
+ALREADY_MET_URLS: set[str] = set()
+ALREADY_PRE_MEETING_URLS: set[str] = set()
+_met_url_to_status: dict[str, str] = {}
+_pre_meeting_url_to_status: dict[str, str] = {}
+try:
+    _idx = SheetIndex.load()
+    _url_col = _idx.actual_index_0[COL_LINKEDIN_URL]
+    _status_col = _idx.actual_index_0[COL_OUTREACH_STATUS]
+    for _row in _idx.rows[1:]:
+        _url = (_row[_url_col] if _url_col < len(_row) else "").strip()
+        _status = (_row[_status_col] if _status_col < len(_row) else "").strip()
+        if not _url:
+            continue
+        if _status in MET_STATUSES:
+            ALREADY_MET_URLS.add(_url)
+            _met_url_to_status[_url] = _status
+        elif _status in PRE_MEETING_STATUSES:
+            ALREADY_PRE_MEETING_URLS.add(_url)
+            _pre_meeting_url_to_status[_url] = _status
+except Exception as _e:
+    print(f"warning: could not load People tab for Met/Scheduling cohorts: {_e}")
 
 NUDGE_AFTER_DAYS = 5  # how long to wait before nudging an unanswered outbound
 now = datetime.now(timezone.utc)
@@ -121,7 +262,7 @@ def classify(lead):
       - 'ball_on_us'        : latest msg is inbound, we owe a reply         → DRAFT
       - 'cold_thread'       : latest is outbound, ≥ NUDGE_AFTER_DAYS old    → DRAFT (nudge)
       - 'active_in_flight'  : latest is outbound, < NUDGE_AFTER_DAYS old    → VISIBILITY ONLY
-      - 'no_reply_yet'      : zero inbound messages                         → connected-no-reply cohort
+      - 'no_inbound'        : zero inbound messages                         → SKIP (daemon handles)
       - 'no_messages'       : edge case, skip
     """
     msgs = list(Message.objects.filter(lead=lead).order_by("sent_at"))
@@ -129,7 +270,10 @@ def classify(lead):
         return ('no_messages', None, [])
     has_inbound = any(m.direction == 'inbound' for m in msgs)
     if not has_inbound:
-        return ('no_reply_yet', None, msgs)
+        # Connected-no-reply lane belongs to the daemon
+        # (linkedin/tasks/follow_up.py + icp_messages.json) as of 2026-05-12.
+        # Surfacing them for manual draft was duplicate work.
+        return ('no_inbound', None, msgs)
     latest = msgs[-1]
     if latest.direction == 'inbound':
         return ('ball_on_us', latest, msgs)
@@ -138,13 +282,100 @@ def classify(lead):
         return ('cold_thread', latest, msgs)
     return ('active_in_flight', latest, msgs)
 
-# Cohort A: replied, no meeting (ball_on_us OR cold_thread → DRAFT)
-# Cohort A-active: latest outbound < NUDGE_AFTER_DAYS old → VISIBILITY only
-# Cohort B: connected, no reply
-
+# Cohorts: replied (ball_on_us OR cold_thread → DRAFT), active in-flight
+# (latest outbound < NUDGE_AFTER_DAYS old → VISIBILITY only), met / scheduling
+# (sourced from the People tab independently above).
 cohort_drafts = []          # ball_on_us + cold_thread
 cohort_active_in_flight = [] # active_in_flight (visibility only)
-cohort_no_reply = []         # no_reply_yet
+cohort_met = []              # post-meeting follow-up (🤝 MET)
+cohort_pre_meeting = []      # pre-meeting (📅 SCHEDULING — Wants/Booked)
+
+def _build_row(lead, klass, msgs, latest=None, extra=None):
+    """Shared row-dict builder used by both the Met pass and the
+    ball-on-court loop, so Met rows have the same shape as everything else."""
+    deal = lead.deal_set.order_by('-creation_date').first()
+    try: prof = json.loads(lead.description) if lead.description else {}
+    except Exception: prof = {}
+    latest_any = msgs[-1] if msgs else None
+    # Latest past meeting from crm.Meeting — used by Met cohort `Days since`
+    # math and by the drafter prompt (Phase 5) for raw Gemini context.
+    from linkedin.notifications.calendar_events import latest_meeting_for
+    latest_meeting = latest_meeting_for(lead)
+    # Cohort-specific anchor for "Days since" — see schema doc above.
+    # - met: max(latest_message, latest_meeting.start_at) — a calendar
+    #   meeting counts as activity even if no message was exchanged around it,
+    #   so anchoring purely on `crm.Message` would under-report time-since-
+    #   contact for met leads.
+    # - everything else: most recent message on merged timeline regardless
+    #   of direction.
+    if klass == "met":
+        candidates = []
+        if latest_any:
+            candidates.append(latest_any.sent_at)
+        if latest_meeting:
+            candidates.append(latest_meeting.start_at)
+        anchor = max(candidates) if candidates else None
+        days_since = (now - anchor).days if anchor else None
+    else:
+        days_since = (now - latest_any.sent_at).days if latest_any else None
+    row = {
+        "lead_id": lead.id, "deal_id": (deal.id if deal else None),
+        "first_name": lead.first_name, "last_name": lead.last_name,
+        "company_name": lead.company_name,
+        "linkedin_url": lead.linkedin_url or "", "email": lead.email or "",
+        "headline": prof.get("headline",""),
+        "summary": (prof.get("summary","") or "")[:1500],
+        "primary_sender": next(iter([m.sender for m in msgs if m.direction=="outbound"]), ""),
+        "classification": klass,
+        "latest_direction": (latest.direction if latest else None),
+        "latest_at": (str(latest.sent_at)[:19] if latest else None),
+        "latest_any_direction": (latest_any.direction if latest_any else None),
+        "latest_any_at": (str(latest_any.sent_at)[:19] if latest_any else None),
+        "days_since": days_since,
+        "messages": [{"source": m.source, "d": m.direction, "t": str(m.sent_at)[:19], "b": (m.body or "")[:600], "s": m.sender} for m in msgs],
+        # Meet context — drafter reads raw Gemini transcript for Met cohort.
+        # Truncated to 3500 chars in the JSON dump to keep row size sane;
+        # drafter can re-fetch the full row if it needs more.
+        "latest_meeting_at": (str(latest_meeting.start_at)[:19] if latest_meeting else None),
+        "latest_meeting_title": (latest_meeting.title if latest_meeting else ""),
+        "latest_meeting_gemini_notes": ((latest_meeting.gemini_notes_raw or "")[:3500] if latest_meeting else ""),
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+# Met pass — strictly post-meeting leads. Query independently so a
+# meeting can exist on Calendar with zero recorded DMs / emails and the
+# lead still surfaces in 🤝 MET.
+met_leads_qs = (Lead.objects
+    .filter(disqualified=False, linkedin_url__in=ALREADY_MET_URLS)
+    .distinct())
+
+for lead in met_leads_qs:
+    if _norm_name(f"{lead.first_name} {lead.last_name}") in ALREADY_SENT_NAMES:
+        continue  # operator already sent the post-meeting follow-up
+    msgs = list(Message.objects.filter(lead=lead).order_by("sent_at"))
+    latest = msgs[-1] if msgs else None
+    cohort_met.append(_build_row(lead, "met", msgs, latest, extra={
+        "outreach_status": _met_url_to_status.get(lead.linkedin_url or "", ""),
+    }))
+
+# Scheduling pass — pre-meeting leads (Wants Meeting / Meeting Booked).
+# These have a different draft strategy than Met: resurface time slots
+# (Wants Meeting) or send a pre-meeting confirm (Meeting Booked). Never
+# deliverable-first — we haven't met them yet.
+pre_meeting_qs = (Lead.objects
+    .filter(disqualified=False, linkedin_url__in=ALREADY_PRE_MEETING_URLS)
+    .distinct())
+
+for lead in pre_meeting_qs:
+    if _norm_name(f"{lead.first_name} {lead.last_name}") in ALREADY_SENT_NAMES:
+        continue
+    msgs = list(Message.objects.filter(lead=lead).order_by("sent_at"))
+    latest = msgs[-1] if msgs else None
+    cohort_pre_meeting.append(_build_row(lead, "pre_meeting", msgs, latest, extra={
+        "outreach_status": _pre_meeting_url_to_status.get(lead.linkedin_url or "", ""),
+    }))
 
 # Iterate by Lead (not Deal) so leads whose entire conversation lives in
 # Gmail — no LinkedIn invite was ever sent / accepted, so no Deal was
@@ -158,47 +389,62 @@ leads_qs = (Lead.objects
     .distinct())
 
 for lead in leads_qs:
-    if lead.linkedin_url and lead.linkedin_url in ALREADY_SENT_URLS:
+    if _norm_name(f"{lead.first_name} {lead.last_name}") in ALREADY_SENT_NAMES:
         continue  # preserved under ✅ SENT
     if lead.linkedin_url and lead.linkedin_url in ALREADY_MET_URLS:
-        continue  # met cohort handled below from People tab status
+        continue  # already added to cohort_met above
+    if lead.linkedin_url and lead.linkedin_url in ALREADY_PRE_MEETING_URLS:
+        continue  # already added to cohort_pre_meeting above
     klass, latest, msgs = classify(lead)
-    if klass == 'no_messages':
+    if klass in ('no_messages', 'no_inbound'):
+        # 'no_inbound' = connected-no-reply lane, owned by the daemon.
         continue
-    deal = lead.deal_set.order_by('-creation_date').first()
-    try: prof = json.loads(lead.description) if lead.description else {}
-    except Exception: prof = {}
-    base = {
-        "lead_id": lead.id, "deal_id": (deal.id if deal else None),
-        "first_name": lead.first_name, "last_name": lead.last_name,
-        "company_name": lead.company_name, "linkedin_url": lead.linkedin_url or "", "email": lead.email or "",
-        "headline": prof.get("headline",""),
-        "summary": (prof.get("summary","") or "")[:1500],
-        "primary_sender": next(iter([m.sender for m in msgs if m.direction=="outbound"]), ""),
-        "classification": klass,
-        "latest_direction": (latest.direction if latest else None),
-        "latest_at": (str(latest.sent_at)[:19] if latest else None),
-        "messages": [{"source": m.source, "d": m.direction, "t": str(m.sent_at)[:19], "b": (m.body or "")[:600], "s": m.sender} for m in msgs],
-    }
-    if klass == 'no_reply_yet':
-        cohort_no_reply.append(base)
-    elif klass == 'active_in_flight':
+    base = _build_row(lead, klass, msgs, latest)
+    if klass == 'active_in_flight':
         cohort_active_in_flight.append(base)
     else:  # ball_on_us or cold_thread
         cohort_drafts.append(base)
 
 with open("/tmp/followup_drafts.json","w") as f: json.dump(cohort_drafts, f, indent=2)
 with open("/tmp/followup_active_in_flight.json","w") as f: json.dump(cohort_active_in_flight, f, indent=2)
-with open("/tmp/followup_no_reply.json","w") as f: json.dump(cohort_no_reply, f, indent=2)
-print(f"drafts: {len(cohort_drafts)}, active-in-flight: {len(cohort_active_in_flight)}, no-reply: {len(cohort_no_reply)}")
+with open("/tmp/followup_met.json","w") as f: json.dump(cohort_met, f, indent=2)
+with open("/tmp/followup_pre_meeting.json","w") as f: json.dump(cohort_pre_meeting, f, indent=2)
+
+# Followup Templates snapshot — per-ICP strategic Goal from the operator's
+# `Followup Templates` tab, plus the canonical ROLE→ICP mapping. Phase 5
+# reads `goal` only — it's strategic context (what each ICP's draft is
+# angling for). The `linkedin_template` / `email_template` columns are
+# preserved here for the operator's own reference in Google Sheets, but
+# the drafter does NOT copy them verbatim into outputs (retired 2026-05-13
+# after the verbatim chassis produced too-generic pitch-shaped drafts
+# across ICPs that needed cohort-specific shapes instead). Dumping here
+# (vs. relying on Phase 5 to call read_followup_templates() itself)
+# ensures `goal` is a hard input dependency.
+_followup_templates = {}
+try:
+    _followup_templates = read_followup_templates()
+except Exception as _e:
+    print(f"warning: could not load Followup Templates tab: {_e}")
+with open("/tmp/followup_templates.json","w") as f:
+    json.dump({"role_to_icp": FU_ROLE_TO_ICP, "templates": _followup_templates}, f, indent=2)
+
+print(
+    f"drafts: {len(cohort_drafts)}, active-in-flight: {len(cohort_active_in_flight)}, "
+    f"met: {len(cohort_met)}, pre-meeting: {len(cohort_pre_meeting)}, "
+    f"icp-buckets: {len(_followup_templates)}"
+)
 EOF
 ```
 
-The output splits into three files instead of two:
+The output splits into four cohort files plus the templates snapshot:
 
 - `/tmp/followup_drafts.json` — leads that need a draft. Mix of "ball on us, draft a reply" and "cold thread, draft a nudge." The `latest_direction` field tells you which kind.
+- `/tmp/followup_pre_meeting.json` — leads with Outreach status `Wants Meeting` or `Meeting Booked`. Drafter resurfaces time slots or sends pre-meeting confirms. Never deliverable-first.
 - `/tmp/followup_active_in_flight.json` — visibility only. Listed in the SUMMARY/ACTIVE section of the output file with a one-line state, no draft. These are the leads that under the old freshness filter would have silently disappeared.
-- `/tmp/followup_no_reply.json` — the connected-no-reply cohort, unchanged from before.
+- `/tmp/followup_met.json` — post-meeting follow-up cohort. Sourced from the People tab's Outreach status (Wants Meeting / Meeting Booked / Had Meeting). Each entry carries an `outreach_status` field so Phase 5 can pick the right post-meeting frame (pre-meeting confirm, post-meeting deliverable, etc.). These land in 🤝 MET with `Cohort = "Met"` in Phase 6.
+- `/tmp/followup_templates.json` — snapshot of the operator's `Followup Templates` tab plus the canonical ROLE→ICP mapping. Shape: `{"role_to_icp": {ROLE: ICP}, "templates": {ICP: {"linkedin_template": str, "email_template": str, "goal": str}}}`. Phase 5 reads **`goal` only** — it tells the drafter what strategic outcome each ICP's draft is angling for (e.g., advisors → referral-into-CSP-clients, CSPs → design-partner/beta). `linkedin_template` / `email_template` are preserved in the file for the operator's own sheet-side reference and are not copied verbatim into generated drafts (retired 2026-05-13).
+
+Leads with zero inbound messages no longer surface here — the daemon (`linkedin/tasks/follow_up.py`) DMs them rigidly from `linkedin/icp_messages.json` on its own schedule. The classifier still walks them so the per-row build doesn't fail, but the `'no_inbound'` branch in `classify()` drops them before any cohort accumulator.
 
 `NUDGE_AFTER_DAYS = 5` is the threshold for "cold thread" — tunable. Five days catches the bulk of normal B2B reply cadence.
 
@@ -225,52 +471,21 @@ NO_PHRASES = [
 
 The old "last outbound within 5 days = ACTIVE, skip" rule is gone — the ball-on-court classifier in Phase 1 already handled freshness correctly by routing fresh outbounds to `followup_active_in_flight.json`.
 
-For the connected-no-reply cohort, apply ICP filter on `Lead.description` (Voyager scrape headline + summary):
-
-```python
-ICP_KEYWORDS = ["fedramp","cmmc","nist","rmf","fisma","govcloud","govern","compliance","grc",
-                "ciso","cco","cso","3pao","isso","ato","auth","audit","security","cyber",
-                "risk","privacy","trust","assessor"]
-EXCLUDE = ["recruit","talent","marketing","sales rep","customer success"]
-```
-
 ### Phase 3 — Bucket by sender
 
 `Message.sender` field holds who sent each outbound (e.g., "chukwuka agu", "Arian Taj"). For each candidate, the primary sender = the most-frequent outbound sender on that thread. One follow-up file per sender.
 
 If a sender has zero candidates in a cohort, still create the file with a short "no leads to follow up here yet" note. Easier to scan than missing files.
 
-### Phase 3b — Merge Gmail threads with LinkedIn DMs (MANDATORY)
+### Phase 3b — Gmail context (READ-ONLY, from DB)
 
-The ball-on-court classifier in Phase 1 reads `crm.Message`, so any lead who replied via email after going silent on LinkedIn would still classify as `cold_thread` until their Gmail reply lands in the same table. **This phase is what makes the classifier honest.** Skipping it means the followup pipeline is operating on stale LinkedIn-only context for any lead with a meeting / pre-existing email thread.
+**Followup no longer pulls Gmail itself.** Gmail ingestion moved to the data-sync workflow (`docs/data-sync-workflow.md`) on 2026-05-11 — separation of concerns means MCP ingestion is owned by data-sync, and followup is a pure consumer.
 
-**For each candidate that has `Lead.email` populated:**
+Phase 1's `_build_row` already reads the merged timeline via `Message.objects.filter(lead=lead).order_by("sent_at")` which naturally spans `source ∈ {linkedin, gmail, calendar}`. So as long as data-sync has run recently, Gmail context is already in `crm.Message` and the ball-on-court classifier sees it transparently — no extra code in followup.
 
-1. Pull Gmail threads via MCP:
-   ```
-   mcp__claude_ai_Gmail__search_threads
-     query: "from:<lead.email> OR to:<lead.email>"
-     pageSize: 5
-   ```
-2. Persist via `linkedin.notifications.gmail_threads.persist_gmail_threads(lead=..., threads=<MCP response.threads>, host_email=HOST_EMAIL, team_emails=TEAM_EMAILS)`. The helper is idempotent on `(source, external_id)` — re-running is a free no-op upsert. Direction is inferred by comparing the From header to `HOST_EMAIL` / `TEAM_EMAILS` in `linkedin/conf.py` (env-loaded; both empty disables the merge).
-3. **Re-classify** by calling `classify_ball_on_court(lead, nudge_after_days=5)` from the same module instead of the inline classifier. It operates on the merged timeline from `crm.Message` (LinkedIn + Gmail union) so an email reply correctly flips the lead to `ball_on_us`.
+**Staleness contract:** if data-sync hasn't run since the operator's most recent Gmail activity, followup will miss those emails. Phase 0.5 (staleness check) flags this — if `WorkflowRun.objects.filter(name='data-sync', operator=<op>).latest('completed_at')` is more than a day old AND there's known recent meeting/Gmail activity, the operator gets prompted to run data-sync first.
 
-Once Gmail messages are persisted, downstream features (synthesis pass, sheet status derivation, Phase 6 `Status` column) read merged context for free — no second MCP roundtrip on subsequent runs.
-
-**Reply venue:** after persisting, the merged timeline's latest message's `source` is the canonical answer — `linkedin` → DM, `gmail` → email. Phase 5 reads this off `Message.source`, no extra logic.
-
-**Cost:** one MCP search call per lead with an email (typically 30-100 per run depending on cohort size); persisted on first contact, cached in DB thereafter. The host filter on `Lead.email` keeps cost bounded — no email, no Gmail call.
-
-### Phase 4 — Tier classification (connected-no-reply only)
-
-The connected-no-reply cohort can be huge (dozens to hundreds). Tier into:
-
-- **T1_SENIOR**: Tier-1 company AND senior title (CISO/Director/VP/Founder/etc.) → full personalized draft
-- **T1**: Tier-1 company, mid-level title → full personalized draft if scope allows
-- **SENIOR**: Senior title at non-Tier-1 → batch template with 1-line personalization
-- **OTHER**: ICP-keyword match but title isn't a buyer → list-only, manual review
-
-Tier-1 companies are CSPs the FedRAMP universe revolves around (AWS, Salesforce, Oracle, Microsoft, Cisco, etc.) plus top 3PAOs (Coalfire, Schellman, Prescient) plus federal services giants (Booz Allen, GDIT, Maximus, Leidos, etc.).
+**No re-classification call needed in followup** — the inline classifier in Phase 1 reads the merged DB timeline and produces correct ball-on-court results.
 
 ### Phase 5 — Draft
 
@@ -293,6 +508,11 @@ Tier-1 companies are CSPs the FedRAMP universe revolves around (AWS, Salesforce,
 - Their ball, gone cold: lead with a profile-derived question or a concrete update on what's shipped since. Rotate openers: "Picking this back up.", "Quick one,", "Saw [X] go live recently — curious how that lands at [their company].", or open with the ask directly.
 - Our ball, gone cold: lead with the deliverable. "Sending the [thing] now." Not the apology — drop it entirely.
 - Cold lead, never replied: profile-derived hook (their background, prior role, recent post). Skip "no rush, figured I'd send one more note since I never heard back" — worn out.
+- **Pre-meeting cohort (`classification: "pre_meeting"`)**: meeting agreed to but not yet held. Branch on `outreach_status`:
+  - `Wants Meeting` — they've said yes but haven't picked a slot. Resurface the time slots from the merged timeline (your last outbound likely already proposed them) plus a one-line specific hook from the conversation. No new ask, just a nudge for the slot pick. NEVER deliverable-first — we haven't met.
+  - `Meeting Booked` — pre-meeting confirm. Light touch ("looking forward Wed at 2pm PT, here's the doc I'll have queued up"). Don't re-pitch. Don't ask anything that should wait until the call.
+- **Met cohort (`classification: "met"`)**: post-meeting follow-up. Branch on `outreach_status`:
+  - `Had Meeting` / `Manual followup` / `Prospecting to close` — send the deliverable you owed from the call (Loom, repo link, doc, intro). If no deliverable owed, send a light async question that picks up where the call left off, **rooted in `row["latest_meeting_gemini_notes"]`** so it references something concrete from the actual meeting transcript (the raw Gemini notes from `crm.Meeting.gemini_notes_raw`, populated by the data-sync workflow). Never lead with "thanks for the time" — too generic. If `latest_meeting_gemini_notes` is empty (Gemini doc not yet pulled for this meeting, or data-sync hasn't run), fall back to the People-tab AI Notes prose summary; if both are empty, prompt the operator to run data-sync first.
 
 **Calibrate the ask to engagement temperature.** This is the single biggest unforced error in re-engagement: re-asking for a meeting when the lead barely engaged the first time. Sales hat on. Match the ask to where the relationship actually is, not where you wish it was.
 
@@ -327,7 +547,38 @@ Each row in the followups tab has TWO draft cells (`Draft Email`, `Draft LinkedI
 - **Both populated** — for leads with substantive convo on each channel, both columns get a draft. The unified context is the same merged-timeline view (the email draft can reference what was said on LinkedIn and vice versa); the medium-specific phrasing is what differs. Operator decides which channel(s) to fire and toggles the corresponding `Sent ...` cell on send.
 - **Neither populated** — only when the cohort row is `Active in-flight` (visibility-only, no draft regardless of medium).
 
-**ICP-level Goal (from the `ICP Templates` tab):** before drafting, call `linkedin.notifications.sheets.read_icp_templates()` to load `{ICP: goal_text}`. Map each lead's `ROLE` to its ICP via `FU_ROLE_TO_ICP` (CSP → CSPs, 3PAO/Assessor → 3PAOs/Assessors, Advisor/Channel → Advisors). Use the matching Goal text as strategic direction — what each draft should aim for at the ICP level, not just per-lead. The Goal text may include explicit instructions like "mention the demo gif" — incorporate those into the draft naturally.
+**Per-ICP Goal (from the `Followup Templates` tab) — MANDATORY input:**
+
+Phase 1 already dumped `/tmp/followup_templates.json` for you. Open it before drafting:
+
+```python
+import json
+icp = json.load(open("/tmp/followup_templates.json"))
+role_to_icp = icp["role_to_icp"]    # {ROLE: ICP-bucket}
+templates = icp["templates"]        # {ICP: {"linkedin_template", "email_template", "goal"}}
+```
+
+**What to use vs. ignore:**
+
+1. For every lead, resolve `ICP = role_to_icp[ROLE]` → grab `entry = templates[ICP]`.
+2. Read `entry["goal"]` — this is the strategic outcome the draft is angling for (e.g., advisors → "introduce us to ONE of their CSP clients", CSPs → "design-partner / beta track"). The draft must serve this goal, not just be a generic pitch.
+3. **Ignore `entry["linkedin_template"]` and `entry["email_template"]` for drafting.** Those columns exist in the Google Sheet for the operator's own reference (so they can hand-edit a reusable chassis if they want), but the drafter writes free-form per the cohort-specific frames in this Phase 5 section. They were retired as a load-bearing input on 2026-05-13: the verbatim chassis was producing too-generic pitch-shaped drafts for cohorts (Met, Scheduling, Replied) that needed fundamentally different shapes, and the bullet-list / referral-CTA verbatim block was the same for every ICP under the chassis, defeating the whole point of per-ICP framing.
+
+**Use `goal` like this:**
+
+- `goal` informs *what the draft is trying to accomplish* — keep that target in mind, but write the body around it.
+- For ball_on_us / cold_thread: a CSP-goal draft should angle toward a design-partner / beta conversation; an Advisor-goal draft should angle toward a referral-into-clients ask (without making the entire DM about the referral program — drop it in once, then move on).
+- For Met / Scheduling: cohort framing dominates (deliverable-first / slot pin / pre-meeting confirm). `goal` still informs the *kind* of next step proposed.
+- `FU_ROLE_TO_ICP` mapping (for orientation): CSP → CSPs, 3PAO/Assessor → 3PAOs/Assessors, Advisor/Channel → Advisors.
+
+**Fallback when a `goal` is missing or the tab is unreachable:**
+
+- If `entry["goal"]` is `""` for a lead's ICP: fall back to the workflow doc's default ROLE framing table (later in this Phase 5 section). Print a one-line warning to the run summary.
+- If the whole `templates` dict is empty: loud warning, fall back wholesale to the ROLE framing table for every lead.
+
+Past run history (2026-05-10 → 2026-05-13):
+- 2026-05-10 — Advisor drafts came out generic because Phase 5 was reading `goal` only without strong cohort-specific framing rules. Verbatim templates were introduced as a fix.
+- 2026-05-13 — Verbatim templates retired: they over-corrected. The same 4-bullet pitch + referral-program block appearing across every Advisor or CSP cold reply made the output feel templated when scanned top-to-bottom, and the chassis fit no other cohort. Cohort framing rules (this Phase 5 section, plus the ROLE framing table below) now do the load-bearing work; `goal` is the strategic compass.
 
 **Voice consistency:** before drafting, pull the N (default 30) most recent **outbound** rows from `crm.Message` where `sender` matches the operator (e.g. "Chuka Eddy Jack", "Arian Taj"). Use those as voice / format reference samples. The drafter mirrors phrasing patterns the operator actually uses, instead of generating fresh "AI tone" each run.
 
@@ -336,17 +587,6 @@ Each row in the followups tab has TWO draft cells (`Draft Email`, `Draft LinkedI
 - `ROLE: CSP | 3PAO | Advisor | Assessor | Channel` — describes whose seat the lead is in. Drives draft framing; if the framing in the body copy contradicts the ROLE, that's a bug.
 - `PRIORITY: HIGH/MEDIUM-HIGH/MEDIUM/LOW/HOLD (reasoning in plain language)` — `HOLD` is for leads that should have a draft but the freshness window hasn't opened yet (e.g., we already nudged in the last few days on another channel).
 - `CONVO: <one-or-two-sentence summary of the thread to date>` — required, so the drafts make sense in isolation without re-reading messages. Same value across both medium drafts (it summarizes the relationship, not one medium's slice).
-
-**Freshness priority bump (`no_reply_yet` cohort only):** apply `linkedin.notifications.sheets.fresh_connection_priority(days_since_connection, cohort, fallback_priority=tier_priority)` after the tier classifier proposes a base PRIORITY. The helper bumps UP for recently-connected leads but never down. Effective rule:
-
-| days since accept | bumps `fallback_priority` to at least |
-|---|---|
-| <3 days | HIGH |
-| <7 days | MEDIUM-HIGH |
-| <14 days | MEDIUM |
-| ≥14 days | unchanged — tier classifier's answer wins (a T1_SENIOR connected 60 days ago is still HIGH if seniority rule put them there) |
-
-The bump is additive urgency for the warm-handshake window only; after that, ICP / role / seniority drive PRIORITY as before. Legacy rows where `Deal.connected_at` is null get fallback_priority unchanged.
 
 **ROLE values explained:**
 
@@ -369,6 +609,8 @@ After every draft is written, run the `humanizer` skill (installed at `~/.claude
 **How to invoke:**
 
 The humanizer pass works on the in-memory list of row dicts (the input to Phase 6's `write_followups()` call). For each row, pass BOTH `row["Draft Email"]` and `row["Draft LinkedIn"]` through the humanizer (independently — the email draft can stay slightly longer and more formal than the DM draft) and replace the fields with the humanized outputs. ROLE / PRIORITY / CONVO / Cohort / Email Link / LinkedIn Message Url / Sent toggles are structural metadata — never rewrite those. Active-in-flight rows have empty drafts on both columns and should be skipped entirely.
+
+**All drafts are free-form as of 2026-05-13** — no verbatim chassis to preserve, so the humanizer can rewrite the whole body. (Historical note: prior to 2026-05-13 the replied cohort was assembled from a verbatim ICP template chassis with one `{Add personal message …}` hole, and the humanizer had to confine its rewrites to that hole. That contract is retired — `linkedin_template` / `email_template` columns are now operator-only reference, not drafter inputs.)
 
 **Top tells to watch for in this workflow's drafts specifically** (observed in past runs):
 
@@ -403,7 +645,7 @@ Skip Phase 5b only if you're explicitly running with `--no-humanize` for speed; 
 
 ### Phase 6 — Sheet output
 
-The drafts land in two Google Sheets tabs (`Arian - Followups`, `Chuka - Followups`) via a single helper call. Build a row dict per Lead with the schema below, group by operator, and call `write_followups()`:
+The drafts land in two Google Sheets tabs (`Arian - Followups`, `Chuka - Followups`) via a single helper call. Build a row dict per Lead from **all four** cohort files — `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, and `/tmp/followup_pre_meeting.json` — group by operator, and call `write_followups()`. The `Cohort` field is what routes each row to its section (🤝 MET / 📅 SCHEDULING / 💬 REPLIED / 🌊 ACTIVE IN-FLIGHT). For Met entries, set `Cohort = "Met"`; the row also gets `Status = <outreach_status>` (Wants Meeting / Meeting Booked / Had Meeting) carried verbatim from the People tab so the operator can scan at a glance which sub-state each met lead is in.
 
 ```python
 from linkedin.notifications.sheets import (
@@ -422,7 +664,7 @@ arian_rows = [
         "Cohort":   "Ball on us",     # see FU_SECTIONS
         "ROLE":     "CSP",            # see FU_ROLES
         "PRIORITY": "HIGH",           # see FU_PRIORITIES
-        "Days since": 5,              # int — merged latest across both mediums
+        "Days since": row["days_since"], # int — pre-computed in Phase 1 (msgs[-1].sent_at). Don't re-derive from "last inbound" — see schema note.
         "Days since connection": 47,  # int — Deal.connected_at to now; blank for legacy rows
         "CONVO":    "She replied via email after our LinkedIn intro asking about ConMon scope.",
         "Draft Email":    "Hi Jane, ... <full email body>",
@@ -457,15 +699,37 @@ write_followups({"Arian": arian_rows, "Chuka": chuka_rows})
 
 **Polite-no candidates:** print to stdout / SUMMARY of the run output, do not include in the sheet payload. The operator runs `Lead.objects.filter(...).update(disqualified=True)` separately.
 
-### Phase 7 — Surface decisions to user
+### Phase 7 — Surface decisions to user + record the run
 
 Print a SUMMARY block to stdout (and optionally include in `raw.json`) at the end of the run. Items to flag:
 
-- **Dedupes** between cohorts (someone classified into both replied + connected-no-reply, or someone in user's manual `followups.txt` exemplar)
+- **Dedupes** between cohorts (someone classified into both replied + met, or someone in user's manual `followups.txt` exemplar)
 - **Same-firm salvos** (multiple contacts at one company → coordinate messaging)
 - **Polite-no candidates** for `Lead.disqualified=True` batch
-- **Already-met-but-not-in-People-tab** contacts (Section C from `docs/sheets-meeting-sync-workflow.md`)
+- **Already-met-but-not-in-People-tab** contacts (Section C from `docs/data-sync-workflow.md`)
 - **Action items** owed by us across multiple threads (e.g., "we owe Percy the Anthropic-pattern repo link")
+
+**Finally — record the WorkflowRun so the next session's Phase 0.5 staleness check knows when followup last ran:**
+
+```python
+from linkedin.models import WorkflowRun
+WorkflowRun.objects.create(
+    name="followup",
+    operator="",  # global — drafts for all operators in one pass
+    summary=(
+        f"drafts={len(cohort_drafts)} met={len(cohort_met)} "
+        f"pre_meeting={len(cohort_pre_meeting)} "
+        f"active={len(cohort_active_in_flight)} polite_no={len(polite_no)}"
+    ),
+    counts={
+        "drafts":               len(cohort_drafts),
+        "met":                  len(cohort_met),
+        "pre_meeting":          len(cohort_pre_meeting),
+        "active_in_flight":     len(cohort_active_in_flight),
+        "polite_no_candidates": len(polite_no),
+    },
+)
+```
 
 ## Tone exemplar
 
@@ -501,10 +765,10 @@ Tier 2 leads don't get individual drafts; they share a name-personalized templat
 - Use this to bucket per-sender, since each sender's threads should stay continuous to the same prospect.
 
 ### Already-met-but-not-in-sheet carryover
-Some calendar attendees had meetings but aren't yet reflected in the People tab's Outreach status (e.g., Lauren@ResilientTech, Oreale Kouo). They show up in the replied cohort as "looks like never had a meeting" but actually did. Cross-reference against `/tmp/cal_meetings.json` from the meeting-sync workflow before drafting.
+Some calendar attendees had meetings but aren't yet reflected in the People tab's Outreach status (e.g., Lauren@ResilientTech, Oreale Kouo). They show up in the replied cohort as "looks like never had a meeting" but actually did. Cross-reference against `/tmp/cal_meetings.json` from the data-sync workflow before drafting.
 
 ### File path conventions
-- Generation scratch: `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_no_reply.json`, `/tmp/polite_no_candidates.json`
+- Generation scratch: `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, `/tmp/followup_pre_meeting.json`, `/tmp/followup_templates.json`, `/tmp/polite_no_candidates.json`
 - Final output: `Arian - Followups` and `Chuka - Followups` tabs in the Google Sheet (via `linkedin.notifications.sheets.write_followups()`)
 - Optional archive: `followups/YYYY-MM-DD/raw.json` (per-run snapshot of rows + classifier state, for history only)
 - Tone exemplar: `followups.txt` at repo root (manual reference, do not overwrite)
@@ -513,4 +777,4 @@ Some calendar attendees had meetings but aren't yet reflected in the People tab'
 
 - Actually sending the DMs (operator copies the `Draft` cell, sends manually via LinkedIn / Gmail, ticks `Sent?` in the sheet — or future automation via existing follow-up agent)
 - Disqualifying polite-no Leads in the DB (separate one-liner: `Lead.objects.filter(...).update(disqualified=True)`)
-- Updating `Outreach status` to `Had Meeting` after a meeting (covered in `docs/sheets-meeting-sync-workflow.md`)
+- Updating `Outreach status` to `Had Meeting` after a meeting (covered in `docs/data-sync-workflow.md`)

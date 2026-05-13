@@ -84,10 +84,27 @@ def _normalize_columns(fieldnames: list[str]) -> dict[str, str]:
     return {name.strip().lower(): name for name in fieldnames}
 
 
-def parse_csv_leads(text: str) -> list[dict]:
-    """Parse CSV text into a list of lead dicts with url, first_name, last_name, company_name.
+def _normalize_csv_icp(raw: str) -> str:
+    """Map a CSV `ICP` column value to one of `LEAD_ICP_BUCKETS`, or "".
 
-    Raises ValueError if 'profile url' column is missing.
+    Case-insensitive, trims punctuation. Unknown labels return "" so
+    they don't pollute `Lead.icp` with arbitrary strings \u2014 they'll
+    backfill later via `resolve_icp` at first scrape.
+    """
+    from linkedin.notifications.sheets import CSV_ICP_TO_LEAD_ICP
+
+    key = (raw or "").strip().lower()
+    return CSV_ICP_TO_LEAD_ICP.get(key, "")
+
+
+def parse_csv_leads(text: str) -> list[dict]:
+    """Parse CSV text into a list of lead dicts with url, first_name, last_name, company_name, icp.
+
+    Raises ValueError if 'profile url' column is missing. The `ICP`
+    column is optional \u2014 when present, values are normalized to one of
+    `LEAD_ICP_BUCKETS` and stamped on `Lead.icp` at import. When absent,
+    `icp` field stays "" and `linkedin.icp_outbound.resolve_icp` will
+    fill it on first scrape.
     """
     # Strip BOM if present (common in Excel-exported CSVs)
     text = text.lstrip("\ufeff")
@@ -107,6 +124,7 @@ def parse_csv_leads(text: str) -> list[dict]:
     first_col = col_map.get("first name")
     last_col = col_map.get("last name")
     company_col = col_map.get("company")
+    icp_col = col_map.get("icp")
 
     leads = []
     for row in reader:
@@ -123,6 +141,7 @@ def parse_csv_leads(text: str) -> list[dict]:
             "first_name": (row.get(first_col) or "").strip() if first_col else "",
             "last_name": (row.get(last_col) or "").strip() if last_col else "",
             "company_name": (row.get(company_col) or "").strip() if company_col else "",
+            "icp": _normalize_csv_icp(row.get(icp_col) or "") if icp_col else "",
         })
     return leads
 
@@ -151,9 +170,13 @@ def create_seed_leads_from_csv(
             defaults={"public_identifier": public_id},
         )
 
-        # Update name/company fields if provided and not already set
+        # Update name/company/icp fields if provided and not already set.
+        # `icp` follows the same "fill if blank" rule: a CSV ICP doesn't
+        # overwrite a value that was already set (e.g. by a prior import
+        # or by resolve_icp). If you need to reclassify a lead, do it
+        # explicitly via Django Admin or a shell update.
         updated_fields = []
-        for field in ("first_name", "last_name", "company_name"):
+        for field in ("first_name", "last_name", "company_name", "icp"):
             value = entry.get(field, "")
             if value and not getattr(lead, field):
                 setattr(lead, field, value)

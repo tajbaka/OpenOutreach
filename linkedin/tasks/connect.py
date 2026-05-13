@@ -21,6 +21,7 @@ from linkedin.conf import (
     CAMPAIGN_CONFIG,
     CONNECTION_NOTE_FALLBACK,
     CONNECTION_NOTE_PERSONALIZED,
+    ENABLE_CONNECT,
 )
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
 from linkedin.db.leads import disqualify_lead
@@ -34,17 +35,47 @@ MAX_CONNECT_ATTEMPTS = 3
 
 
 def build_connection_note(lead_id: int | None) -> str:
-    """Build a personalized connection note from Lead data.
+    """Build a connection note for the lead, ICP-keyed when possible.
 
-    Both CONNECTION_NOTE_PERSONALIZED and CONNECTION_NOTE_FALLBACK are lists
-    of variants (parsed from `|||`-delimited env vars). Each call picks one
-    at random to defeat templated-text detection.
+    Routing precedence:
+      1. `Lead.icp` resolves to a bucket in `icp_messages.json` with a
+         `linkedin_connect_note` channel → pick a variant from that bucket.
+         Source of truth: CSV `ICP` column stamped at `add_seeds` time,
+         or `resolve_icp()` backfill at first scrape.
+      2. ICP blank, unmapped, or template missing → fall back to the
+         env-var pool (`CONNECTION_NOTE_PERSONALIZED` /
+         `CONNECTION_NOTE_FALLBACK`, pipe-delimited variants).
+
+    Variant selection within a bucket: random (defeats templated-text
+    detection across batches). Variant is `.format()`'d with
+    `first_name` only — no other substitutions at connect time, since
+    we typically haven't scraped the lead's profile yet.
     """
     from crm.models import Lead
+    from linkedin.icp_outbound import load_icp_messages, resolve_icp
 
     lead = Lead.objects.filter(pk=lead_id).first() if lead_id else None
     first_name = lead.first_name.strip() if lead and lead.first_name else ""
 
+    # ICP-keyed path. Try only when we have a lead + a resolvable ICP +
+    # matching connect-note variants in the JSON. Any missing piece
+    # bumps us to the env-var fallback so we never refuse to send.
+    if lead is not None:
+        icp = resolve_icp(lead)
+        if icp:
+            try:
+                bucket = load_icp_messages().get(icp, {})
+            except Exception as e:
+                # Don't let a malformed JSON kill the send — fall back.
+                logger.warning("build_connection_note: load_icp_messages failed → %s", e)
+                bucket = {}
+            variants = bucket.get("linkedin_connect_note") or []
+            if variants:
+                template = random.choice(variants)
+                return template.format(first_name=first_name)
+
+    # Env-var fallback (legacy path) — used for leads with no ICP or for
+    # ICPs that don't have a `linkedin_connect_note` channel configured yet.
     if first_name and CONNECTION_NOTE_PERSONALIZED:
         return random.choice(CONNECTION_NOTE_PERSONALIZED).format(first_name=first_name)
     if CONNECTION_NOTE_FALLBACK:
@@ -134,6 +165,15 @@ def handle_connect(task, session, qualifiers):
     from linkedin.actions.connect import send_connection_request
     from linkedin.actions.status import get_connection_status
 
+    # Read at call-time (via the module attr) so tests can `@patch
+    # "linkedin.tasks.connect.ENABLE_CONNECT"` without restarting conf.
+    if not ENABLE_CONNECT:
+        # Defense in depth: should never fire, since enqueue_connect is
+        # also gated. But if a task slipped in before the flag flipped,
+        # bail without rescheduling so the queue drains.
+        logger.debug("connect disabled — skipping task %s", task.pk)
+        return
+
     cfg = CAMPAIGN_CONFIG
     campaign = session.campaign
     campaign_id = campaign.pk
@@ -184,9 +224,11 @@ def handle_connect(task, session, qualifiers):
 
         if status == ProfileState.CONNECTED:
             set_profile_state(session, public_id, status.value)
+            from linkedin.operators import resolve_operator
             enqueue_follow_up(
                 campaign_id,
                 public_id,
+                operator=resolve_operator(session.linkedin_profile.linkedin_username),
                 delay_seconds=recommended_action_delay(
                     session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                 ),
@@ -229,9 +271,11 @@ def handle_connect(task, session, qualifiers):
                 ).update(sent_note=note)
                 enqueue_sweep_connections()
             elif new_state == ProfileState.CONNECTED:
+                from linkedin.operators import resolve_operator
                 enqueue_follow_up(
                     campaign_id,
                     public_id,
+                    operator=resolve_operator(session.linkedin_profile.linkedin_username),
                     delay_seconds=recommended_action_delay(
                         session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                     ),
@@ -277,6 +321,8 @@ def _enqueue_task(task_type: "Task.TaskType", payload: dict, delay_seconds: floa
 
 
 def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
+    if not ENABLE_CONNECT:
+        return
     _enqueue_task(
         task_type=Task.TaskType.CONNECT,
         payload={"campaign_id": campaign_id},
@@ -284,13 +330,28 @@ def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
     )
 
 
-def enqueue_follow_up(campaign_id: int, public_id: str, delay_seconds: float = 10):
+def enqueue_follow_up(
+    campaign_id: int,
+    public_id: str,
+    *,
+    operator: str = "",
+    delay_seconds: float = 10,
+):
+    """Enqueue a follow_up Task.
+
+    `operator` is the canonical handle (`linkedin.operators.resolve_operator`)
+    of the LinkedIn account that owns the thread to this lead — empty
+    when unknown (legacy callers). Stamped on `Task.payload.operator`
+    so `Task.objects.claim_next(operator=...)` can pre-filter, keeping
+    cross-account leaks (Travis-class, 2026-05-12) from ever being
+    popped by the wrong daemon.
+    """
     from linkedin.conf import ENABLE_FOLLOW_UP
 
     if not ENABLE_FOLLOW_UP:
         return
     _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,
-        payload={"campaign_id": campaign_id, "public_id": public_id},
+        payload={"campaign_id": campaign_id, "public_id": public_id, "operator": operator},
         delay_seconds=delay_seconds,
     )

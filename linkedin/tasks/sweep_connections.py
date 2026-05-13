@@ -103,6 +103,11 @@ def handle_sweep_connections(task, session, qualifiers):
                     pass
 
         try:
+            # Operator = the human running this LinkedIn account (Chuka /
+            # Arian). Derived from the session's LinkedInProfile.user so the
+            # Slack notification tells the team whose lead just accepted.
+            user = getattr(session.linkedin_profile, "user", None)
+            operator = (user.first_name or user.username) if user else ""
             notify_connection_accepted(
                 full_name=full_name,
                 title="",
@@ -111,6 +116,7 @@ def handle_sweep_connections(task, session, qualifiers):
                 or f"https://www.linkedin.com/in/{public_id}/",
                 campaign_name=deal.campaign.name,
                 reply_text=reply_text,
+                operator=operator,
             )
         except Exception as e:
             logger.warning("Slack notify failed for %s: %s", full_name, e)
@@ -128,7 +134,13 @@ def handle_sweep_connections(task, session, qualifiers):
                     public_id, age_days, delay_seconds,
                 )
 
-        enqueue_follow_up(deal.campaign.pk, public_id, delay_seconds=delay_seconds)
+        from linkedin.operators import resolve_operator
+        enqueue_follow_up(
+            deal.campaign.pk,
+            public_id,
+            operator=resolve_operator(session.linkedin_profile.linkedin_username),
+            delay_seconds=delay_seconds,
+        )
         matched += 1
 
     logger.info(

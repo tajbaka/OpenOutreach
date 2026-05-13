@@ -16,9 +16,13 @@ cost again, and downstream features (synthesis, sheet status derivation)
 get email context for free.
 
 Direction inference for Gmail: a message is OUTBOUND if its From header
-is `HOST_EMAIL` or any address in `TEAM_EMAILS` (configured in conf.py),
-otherwise INBOUND. The lead's `Lead.email` is what we matched the thread
-on, so anything from that email is by definition the lead replying.
+matches any address in the `self_emails` set the caller passes in;
+otherwise INBOUND. Caller resolves `self_emails` at run start from the
+connected Gmail account itself (primary mailbox + Send-As aliases via
+Gmail Profile API), rather than from a static env-var list — see
+`docs/data-sync-workflow.md` Phase 0 for the resolution snippet. The
+lead's `Lead.email` is what we matched the thread on, so anything from
+that email is by definition the lead replying.
 
 This module does NOT call the Gmail MCP itself — MCP tools are only
 callable from the Claude Code harness. The orchestrator (interactive
@@ -38,7 +42,6 @@ from django.db import transaction
 from django.utils import timezone as dj_tz
 
 from crm.models import Message
-from linkedin.conf import HOST_EMAIL, TEAM_EMAILS
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +55,7 @@ def persist_gmail_threads(
     *,
     lead,
     threads: list[dict],
-    host_email: str | None = None,
-    team_emails: Iterable[str] = (),
+    self_emails: Iterable[str],
 ) -> int:
     """Upsert all messages in the supplied Gmail thread payloads.
 
@@ -62,20 +64,27 @@ def persist_gmail_threads(
     collection. We're tolerant of missing fields because both the MCP and
     Gmail's own API surface vary across endpoints.
 
+    `self_emails` is the set of email addresses that count as "us" for
+    direction inference (primary + any Send-As aliases). Caller is
+    expected to resolve this from the connected Gmail account at run
+    start — typically via Gmail's `users.getProfile` + `users.settings.sendAs.list`
+    — rather than from a static env-var list. That removes the brittle
+    "remember every alias" config maintenance.
+
     Returns the number of NEW Message rows created. Re-running with the
     same payload is a no-op (idempotent on `(source, external_id)`).
     """
-    host = (host_email or HOST_EMAIL or "").strip().lower()
-    team = {host} | {(e or "").strip().lower() for e in team_emails or TEAM_EMAILS}
-    team.discard("")
-    if not team:
+    self_set = {(e or "").strip().lower() for e in self_emails}
+    self_set.discard("")
+    if not self_set:
         # Without any address marked as "us", direction inference is
         # meaningless — caller has misconfigured. Crash early per project's
         # error-handling rule.
         from linkedin.exceptions import SheetsError
         raise SheetsError(
-            "gmail_threads: HOST_EMAIL (or team_emails) must be set so we "
-            "can mark messages outbound vs inbound."
+            "gmail_threads: `self_emails` must be a non-empty set of "
+            "addresses we treat as outbound senders (primary + Send-As "
+            "aliases of the connected account)."
         )
 
     created = 0
@@ -90,7 +99,7 @@ def persist_gmail_threads(
                 from_addr = _extract_from(raw_msg)
                 direction = (
                     Message.Direction.OUTBOUND
-                    if from_addr in team
+                    if from_addr in self_set
                     else Message.Direction.INBOUND
                 )
                 sent_at = _extract_timestamp(raw_msg)

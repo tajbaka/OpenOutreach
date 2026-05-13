@@ -1,4 +1,4 @@
-"""Idempotent persistence of conversation threads into crm.Message."""
+"""Idempotent persistence of conversation threads into crm.Message + lookups."""
 from __future__ import annotations
 
 import logging
@@ -10,6 +10,41 @@ from django.utils import timezone
 from crm.models import Message
 
 logger = logging.getLogger(__name__)
+
+
+def lead_outbound_operators(lead) -> set[str]:
+    """Return canonical operator handles found in the lead's LinkedIn DM outbound senders.
+
+    Used by the daemon's `follow_up` Task handler (and the
+    `enqueue_no_reply_followups` backfill) to scope which leads a given
+    daemon process is allowed to message. The originating account is
+    whichever LinkedIn user sent the first outbound on the thread —
+    that's the only account with an active DM channel to the lead, and
+    is also the account whose connection request the lead accepted.
+
+    Returns the set of canonical operator handles
+    (`linkedin.operators.resolve_operator`) so the caller can do a
+    plain set-membership check (`our_operator in owners`) regardless of
+    whether the sender field stores `"chukwuka agu"` or
+    `"Chuka Eddy Jack"`.
+
+    Empty set means we have zero outbound LinkedIn Messages for this
+    lead — typically a freshly-swept-into-CONNECTED lead that hasn't
+    been messaged yet. Caller should treat that as "no constraint":
+    whoever runs the daemon may proceed.
+    """
+    from linkedin.operators import resolve_operator
+    senders = (
+        Message.objects.filter(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            direction=Message.Direction.OUTBOUND,
+        )
+        .exclude(sender="")
+        .values_list("sender", flat=True)
+        .distinct()
+    )
+    return {resolve_operator(s) for s in senders if s}
 
 
 def persist_thread(

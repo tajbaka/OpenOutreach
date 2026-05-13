@@ -1,10 +1,38 @@
 # linkedin/browser/login.py
+"""Daemon's Playwright login + cookie cross-check.
+
+Mirrors `StandaloneLinkedInSession` (`linkedin/actions/standalone_session.py`)
+since 2026-05-12: cookies live on disk at `data/cookies-<safe_username>.json`
+keyed by LinkedIn username, not in the DB. The daemon picks which account
+to log in as via `LINKEDIN_USERNAME` env (see `linkedin.conf.get_daemon_handle`).
+Per-username cookie files mean two accounts never collide on disk, and
+flipping which account the daemon runs as is a `.env` edit + restart.
+
+Cross-check after restoring `storage_state`: navigate to `/feed/`,
+check the URL path. If LinkedIn bounced us to `/login` / `/checkpoint`
+the cookie is stale → fresh login. Same mechanism as the standalone
+sessions, no special API call.
+
+Fresh-login window is up to 10 minutes — the visible browser stays
+open so the operator can complete 2FA / security checkpoints by hand.
+Once `/feed/` loads, cookies are auto-saved and subsequent runs skip
+the form entirely.
+"""
+from __future__ import annotations
+
 import logging
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 from termcolor import colored
 
+from linkedin.browser.cookie_store import (
+    clear_cookies,
+    cookie_path_for,
+    load_cookies,
+    save_cookies,
+)
 from linkedin.browser.nav import goto_page, human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
@@ -22,6 +50,12 @@ SELECTORS = {
     "password": 'input#password',
     "submit": 'button[type="submit"]',
 }
+
+# 10-minute window for the operator to complete LinkedIn's 2FA / phone /
+# security verification by hand in the visible browser. Matches the
+# standalone session's timeout — daemon logins from a fresh fingerprint
+# get challenged the same way standalone scripts do.
+_LOGIN_WITH_2FA_TIMEOUT_MS = 10 * 60 * 1000
 
 
 def playwright_login(session: "AccountSession"):
@@ -41,13 +75,18 @@ def playwright_login(session: "AccountSession"):
     human_type(page.locator(SELECTORS["password"]), lp.linkedin_password)
     session.wait()
 
-    goto_page(
-        session,
-        action=lambda: page.locator(SELECTORS["submit"]).click(),
-        expected_url_pattern="/feed",
-        timeout=BROWSER_LOGIN_TIMEOUT_MS,
-        error_message="Login failed – no redirect to feed",
+    # Click submit, then give the operator up to 10 minutes to complete
+    # whatever LinkedIn challenges with (2FA, phone verification, captcha,
+    # etc.). The standalone session has the same window; daemon login is
+    # equally exposed to those challenges on first run / new fingerprint.
+    page.locator(SELECTORS["submit"]).click()
+    logger.info(
+        "Login form submitted. If LinkedIn shows 2FA / verification, complete "
+        "it manually in the browser window — waiting up to 10 minutes for "
+        "/feed/ …"
     )
+    page.wait_for_url("**/feed/**", timeout=_LOGIN_WITH_2FA_TIMEOUT_MS)
+    logger.info(colored("Feed reached — login successful", "green", attrs=["bold"]))
 
 
 def launch_browser(storage_state=None):
@@ -61,22 +100,33 @@ def launch_browser(storage_state=None):
     return page, context, browser, playwright
 
 
-def _save_cookies(session):
-    """Persist Playwright storage state (cookies) to the DB."""
-    state = session.context.storage_state()
-    session.linkedin_profile.cookie_data = state
-    session.linkedin_profile.save(update_fields=["cookie_data"])
+def _cookies_still_valid(session) -> bool:
+    """Did LinkedIn bounce us off /feed/? If yes, the cookies are stale."""
+    session.page.goto(LINKEDIN_FEED_URL)
+    session.page.wait_for_load_state("load")
+    path = urlparse(session.page.url).path
+    return not (
+        path.startswith("/uas/login")
+        or path.startswith("/login")
+        or path.startswith("/checkpoint")
+    )
 
 
 def start_browser_session(session: "AccountSession", handle: str):
+    """Bring the session online: load cached cookies, validate, re-login if stale.
+
+    Mirrors `StandaloneLinkedInSession.start()`. Cookie store is the
+    per-username JSON file at `data/cookies-<safe_username>.json`;
+    LinkedInProfile row is still used for credentials + rate-limit
+    bookkeeping, but no longer holds `cookie_data`.
+    """
     logger.debug("Configuring browser for @%s", handle)
 
-    session.linkedin_profile.refresh_from_db(fields=["cookie_data"])
-    cookie_data = session.linkedin_profile.cookie_data
+    cookie_path = cookie_path_for(session.linkedin_profile.linkedin_username)
+    storage_state = load_cookies(cookie_path)
 
-    storage_state = cookie_data if cookie_data else None
     if storage_state:
-        logger.info("Loading saved session for @%s", handle)
+        logger.info("Loading saved session for @%s from %s", handle, cookie_path)
 
     try:
         session.page, session.context, session.browser, session.playwright = launch_browser(
@@ -86,8 +136,7 @@ def start_browser_session(session: "AccountSession", handle: str):
         if not storage_state:
             raise
         logger.warning("Saved browser state for @%s failed to load — falling back to fresh login", handle)
-        session.linkedin_profile.cookie_data = None
-        session.linkedin_profile.save(update_fields=["cookie_data"])
+        clear_cookies(cookie_path)
         session.page, session.context, session.browser, session.playwright = launch_browser(
             storage_state=None,
         )
@@ -95,24 +144,17 @@ def start_browser_session(session: "AccountSession", handle: str):
 
     if not storage_state:
         playwright_login(session)
-        _save_cookies(session)
-        logger.info(colored("Login successful – session saved", "green", attrs=["bold"]))
-    else:
-        from urllib.parse import urlparse
-
-        session.page.goto(LINKEDIN_FEED_URL)
-        session.page.wait_for_load_state("load")
-        path = urlparse(session.page.url).path
-        if path.startswith("/uas/login") or path.startswith("/login") or path.startswith("/checkpoint"):
-            logger.warning(
-                "Saved session expired for @%s (landed on %s) — re-authenticating",
-                handle, path,
-            )
-            session.linkedin_profile.cookie_data = None
-            session.linkedin_profile.save(update_fields=["cookie_data"])
-            playwright_login(session)
-            _save_cookies(session)
-            logger.info(colored("Re-login successful – session saved", "green", attrs=["bold"]))
+        save_cookies(session.context.storage_state(), cookie_path)
+        logger.info(colored("Login successful – cookies cached at %s", "green", attrs=["bold"]), cookie_path)
+    elif not _cookies_still_valid(session):
+        logger.warning(
+            "Saved session expired for @%s (landed on %s) — re-authenticating",
+            handle, urlparse(session.page.url).path,
+        )
+        clear_cookies(cookie_path)
+        playwright_login(session)
+        save_cookies(session.context.storage_state(), cookie_path)
+        logger.info(colored("Re-login successful – cookies refreshed", "green", attrs=["bold"]))
 
     session.page.wait_for_load_state("load")
     logger.info(colored("Browser ready", "green", attrs=["bold"]))

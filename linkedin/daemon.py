@@ -281,6 +281,12 @@ def heal_tasks(session):
 
     # Follow_up tasks for CONNECTED profiles. If the worker was down when a
     # lead accepted, make sure those follow-ups get a prompt retry on startup.
+    # Tasks owned by other operators are skipped so the catch-up only enqueues
+    # work this daemon's account can actually do.
+    from linkedin.db.messages import lead_outbound_operators
+    from linkedin.operators import resolve_operator
+    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+
     for campaign in session.campaigns:
         session.campaign = campaign
         connected_deals = Deal.objects.filter(
@@ -290,11 +296,19 @@ def heal_tasks(session):
 
         created = 0
         rescheduled = 0
+        skipped_other_operator = 0
         base_time = timezone.now()
 
         for index, deal in enumerate(connected_deals):
             public_id = url_to_public_id(deal.lead.linkedin_url) if deal.lead.linkedin_url else None
             if not public_id:
+                continue
+            # Owner-scoping: skip leads whose outbound thread belongs to a
+            # different operator. Empty owner set = freshly swept, no
+            # outbound yet — fair game for whichever daemon picks it up.
+            owners = lead_outbound_operators(deal.lead)
+            if owners and our_operator not in owners:
+                skipped_other_operator += 1
                 continue
             target_time = base_time + timedelta(seconds=index * 30)
             was_created, was_rescheduled = _bring_task_forward(
@@ -302,11 +316,17 @@ def heal_tasks(session):
                 {
                     "campaign_id": campaign.pk,
                     "public_id": public_id,
+                    "operator": our_operator,
                 },
                 target_time,
             )
             created += int(was_created)
             rescheduled += int(was_rescheduled)
+        if skipped_other_operator:
+            logger.info(
+                "[%s] follow-up catch-up: skipped %d lead(s) owned by other operators",
+                campaign, skipped_other_operator,
+            )
         if created or rescheduled:
             logger.info(
                 "[%s] follow-up catch-up queued: %d created, %d rescheduled",
@@ -351,10 +371,19 @@ def run_daemon(session):
         logger.error("No campaigns found — cannot start daemon")
         return
 
+    # Operator scoping — derived once at startup. Used by Task.claim_next
+    # and seconds_to_next so this daemon process never pops a follow_up
+    # Task belonging to a different LinkedIn account (Travis incident,
+    # 2026-05-12). The canonical handle lookup also handles the case
+    # where LINKEDIN_USERNAME and the LinkedInProfile row use different
+    # surface forms ("ariantajbakh@gmail.com" vs "Arian Taj" etc.).
+    from linkedin.operators import resolve_operator
+    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+
     logger.info(
         colored("Daemon started", "green", attrs=["bold"])
-        + " — %d campaigns, task queue worker",
-        len(campaigns),
+        + " — %d campaigns, task queue worker, operator=%s (%s)",
+        len(campaigns), our_operator, session.linkedin_profile.linkedin_username,
     )
 
     freemium = _FreemiumRotator(every=2)
@@ -374,9 +403,9 @@ def run_daemon(session):
             time.sleep(pause)
             continue
 
-        task = Task.objects.claim_next()
+        task = Task.objects.claim_next(operator=our_operator)
         if task is None:
-            wait = Task.objects.seconds_to_next()
+            wait = Task.objects.seconds_to_next(operator=our_operator)
             if wait is None:
                 logger.info("Queue empty — nothing to do")
                 return

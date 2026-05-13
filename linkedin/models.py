@@ -62,8 +62,11 @@ class LinkedInProfile(models.Model):
     connect_weekly_limit = models.PositiveIntegerField(default=100)
     follow_up_daily_limit = models.PositiveIntegerField(default=30)
     legal_accepted = models.BooleanField(default=False)
-    cookie_data = models.JSONField(null=True, blank=True)
     newsletter_processed = models.BooleanField(default=False)
+    # Cookies: stored on disk at `data/cookies-<safe_username>.json`
+    # (`linkedin.browser.cookie_store.cookie_path_for(username)`).
+    # The DB `cookie_data` JSONField was removed 2026-05-12 to mirror
+    # the standalone scripts' on-disk pattern — see migration 0004.
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -191,12 +194,55 @@ class TaskQuerySet(models.QuerySet):
     def due(self):
         return self.pending().filter(scheduled_at__lte=timezone.now())
 
-    def claim_next(self) -> "Task | None":
-        return self.due().first()
+    def claim_next(self, operator: str | None = None) -> "Task | None":
+        """Pop the next due Task, optionally filtered to the current operator.
 
-    def seconds_to_next(self) -> float | None:
-        """Seconds until the next pending task, or None if queue is empty."""
-        next_task = self.pending().only("scheduled_at").first()
+        `operator` is the canonical handle of the LinkedIn account the
+        daemon is logged in as. When supplied, follow_up Tasks are
+        pre-filtered to those whose `payload.operator` matches (or is
+        empty/missing, for legacy Tasks enqueued before the field
+        existed). Other task types (connect / sweep_connections) are
+        account-agnostic — they pass through regardless.
+
+        Without this filter, a daemon logged in as Arian could pop a
+        follow_up Task for one of Chuka's connections and try to send
+        from the wrong account (Travis incident, 2026-05-12). The
+        in-handler `lead_outbound_operators` guard catches it as a
+        second line of defense.
+        """
+        from django.db.models import Q
+
+        qs = self.due()
+        if operator:
+            not_follow_up = ~Q(task_type=Task.TaskType.FOLLOW_UP)
+            mine_or_legacy = Q(task_type=Task.TaskType.FOLLOW_UP) & (
+                Q(payload__operator=operator)
+                | Q(payload__operator__isnull=True)
+                | Q(payload__operator="")
+            )
+            qs = qs.filter(not_follow_up | mine_or_legacy)
+        return qs.first()
+
+    def seconds_to_next(self, operator: str | None = None) -> float | None:
+        """Seconds until the next pending task (optionally operator-scoped).
+
+        Mirrors `claim_next`'s filter so a daemon doesn't sleep waiting
+        on a task it would never pop. Without the filter, a follow_up
+        Task scheduled for another operator would dictate the sleep
+        duration even though this daemon will skip it.
+        """
+        from django.db.models import Q
+
+        qs = self.pending().only("scheduled_at", "task_type", "payload")
+        if operator:
+            not_follow_up = ~Q(task_type=Task.TaskType.FOLLOW_UP)
+            mine_or_legacy = Q(task_type=Task.TaskType.FOLLOW_UP) & (
+                Q(payload__operator=operator)
+                | Q(payload__operator__isnull=True)
+                | Q(payload__operator="")
+            )
+            qs = qs.filter(not_follow_up | mine_or_legacy)
+        next_task = qs.first()
         if next_task is None:
             return None
         return max((next_task.scheduled_at - timezone.now()).total_seconds(), 0)
@@ -249,3 +295,47 @@ class Task(models.Model):
         self.status = self.Status.FAILED
         self.error = error
         self.save(update_fields=["status", "error"])
+
+
+class WorkflowRun(models.Model):
+    """Audit + freshness signal for high-level workflows the operator runs.
+
+    The followup workflow's Phase 0.5 staleness check queries this table to
+    answer "when did Chuka last run backfill_messages?" and similar — and
+    flags which upstream(s) the operator should re-run before drafting.
+
+    Workflow names are free-form strings; canonical values today:
+      - "data-sync"        Calendar + Gmail + Drive Gemini → DB + sheet
+      - "followup"         Drafts → Followups tabs
+      - "import-connections"  CSV → Lead/Deal/Message rows
+      - "backfill-messages"   LinkedIn DM threads → Message rows
+
+    `operator` is "Chuka" / "Arian" for per-account workflows, "" (empty)
+    for whole-system workflows (followup). Free-form string so we don't
+    need a foreign key to LinkedInProfile / User; callers just write the
+    display name the session resolves to. The `(name, operator,
+    -completed_at)` index makes the staleness lookup O(1) per workflow.
+
+    `counts` holds whatever the workflow wants to surface for telemetry —
+    e.g. {"leads_created": 6, "threads_persisted": 33}. Schemaless so each
+    workflow controls its own keys without needing migrations.
+    """
+
+    name = models.CharField(max_length=64, db_index=True)
+    operator = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+    )
+    completed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    summary = models.TextField(blank=True, default="")
+    counts = models.JSONField(blank=True, default=dict)
+
+    class Meta:
+        app_label = "linkedin"
+        ordering = ["-completed_at"]
+        indexes = [
+            models.Index(fields=["name", "operator", "-completed_at"]),
+        ]
+
+    def __str__(self):
+        op = f"({self.operator}) " if self.operator else ""
+        return f"{self.name} {op}@ {self.completed_at:%Y-%m-%d %H:%M}"

@@ -34,8 +34,15 @@ BROWSER_SLOW_MO = 200
 BROWSER_DEFAULT_TIMEOUT_MS = 30_000
 BROWSER_LOGIN_TIMEOUT_MS = 40_000
 BROWSER_NAV_TIMEOUT_MS = 10_000
-HUMAN_TYPE_MIN_DELAY_MS = 50
-HUMAN_TYPE_MAX_DELAY_MS = 200
+# Per-keystroke delay bounds for `human_type`. Real humans average
+# 30-50 WPM (~200-300ms/keystroke) up to 70-90 WPM (~80-120ms/keystroke)
+# in bursts. Bumped from 50-200ms to 80-250ms on 2026-05-12 after
+# operator flagged sends were "way too fast and seems like a bot".
+# Sleep delays per keystroke are randomly sampled inside this band,
+# so the timing distribution matches a human typing with natural
+# pauses and bursts rather than a uniform machine cadence.
+HUMAN_TYPE_MIN_DELAY_MS = 35
+HUMAN_TYPE_MAX_DELAY_MS = 105
 VOYAGER_REQUEST_TIMEOUT_MS = 30_000
 
 # ----------------------------------------------------------------------
@@ -105,6 +112,18 @@ ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
+# Kill-switch for the connect lane (sending new connection invites).
+# When false, `handle_connect` is a no-op and `enqueue_connect` skips —
+# the daemon stops adding to the network while still processing
+# `follow_up` and `sweep_connections` tasks. Pair with
+# `ENABLE_FOLLOW_UP=true` + `enqueue_no_reply_followups` to test the
+# follow-up path against existing CONNECTED leads without growing the
+# network further. Default true so nothing breaks for operators not
+# using this gate.
+ENABLE_CONNECT = os.getenv("ENABLE_CONNECT", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 # Independent kill-switch for the connection sweep (acceptance detection).
 # When true, the daemon visits the Connections page every
 # CONNECTION_SWEEP_INTERVAL_HOURS and transitions PENDING → CONNECTED for
@@ -131,19 +150,21 @@ GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "").strip()
 GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "").strip()
 GOOGLE_SHEETS_TAB_NAME = os.getenv("GOOGLE_SHEETS_TAB_NAME", "People").strip()
 
-# Gmail thread merge. HOST_EMAIL is the connected Gmail account that runs
-# the operator's outreach (organizes calendar invites, replies to threads).
-# Used by linkedin.notifications.gmail_threads to mark messages outbound
-# vs inbound when persisting Gmail threads into crm.Message.
-# TEAM_EMAILS is a comma-separated list of additional addresses that count
-# as outbound (co-founders, BD assistants) so a thread the host CC'd in is
-# still classified correctly. Both empty = Gmail merge disabled.
-HOST_EMAIL = os.getenv("HOST_EMAIL", "").strip().lower()
-TEAM_EMAILS = tuple(
-    e.strip().lower()
-    for e in os.getenv("TEAM_EMAILS", "").split(",")
-    if e.strip()
-)
+# Gmail "self" address set is derived at runtime from the connected
+# Gmail account itself (Gmail Profile API + Send-As aliases) rather than
+# from an env-var list. Removes the brittle "remember every alias" config —
+# see `linkedin/notifications/gmail_threads.py:persist_gmail_threads` for the
+# new `self_emails` parameter that callers pass in. Was previously
+# HOST_EMAIL + TEAM_EMAILS env vars; removed 2026-05-12.
+
+# Our product identity — surfaced into outreach drafts via the ICP Templates
+# tab's `{our_company_name}` / `{our_website_url}` substitution tokens.
+# Centralizing here means renaming the product (or changing the URL) is a
+# one-line .env edit, not a sweep across every template cell. Templates that
+# pre-date this can keep hard-coded values; new templates should use the
+# substitution tokens.
+OUR_COMPANY_NAME = os.getenv("OUR_COMPANY_NAME", "").strip()
+OUR_WEBSITE_URL = os.getenv("OUR_WEBSITE_URL", "").strip()
 
 # Kill-switch for the connect lane's auto-discovery + LLM qualification
 # fallback. When false, the daemon only connects to leads already in
@@ -154,26 +175,14 @@ ENABLE_AUTO_DISCOVERY = os.getenv("ENABLE_AUTO_DISCOVERY", "true").strip().lower
     "1", "true", "yes", "on",
 }
 
-# Path to GIF/image to attach to follow-up messages (empty = disabled).
-# Relative paths are resolved from the repo root so the same .env works
-# across machines without requiring identical checkout locations.
-_raw_follow_up_media_path = os.getenv("FOLLOW_UP_MEDIA_PATH", "").strip()
-if _raw_follow_up_media_path:
-    _follow_up_media_path = Path(_raw_follow_up_media_path).expanduser()
-    if not _follow_up_media_path.is_absolute():
-        _follow_up_media_path = ROOT_DIR / _follow_up_media_path
-    FOLLOW_UP_MEDIA_PATH = str(_follow_up_media_path)
-else:
-    FOLLOW_UP_MEDIA_PATH = ""
-
-# Tracked walkthrough link sent after a connection is accepted without a reply.
-# Empty = keep the generic follow-up agent behavior.
-POST_ACCEPT_VIDEO_LINK = os.getenv("POST_ACCEPT_VIDEO_LINK", "")
-POST_ACCEPT_MESSAGE_TEMPLATE = os.getenv(
-    "POST_ACCEPT_MESSAGE_TEMPLATE",
-    "Hey {first_name} - put together a 60-second walkthrough of what I mentioned. "
-    "Easier to show than explain: {video_link}",
-)
+# Post-accept follow-up message content lives in `linkedin/icp_messages.json`
+# (rigid per-ICP templates, `{first_name}` substitution only). The daemon's
+# `linkedin.tasks.follow_up.handle_follow_up` resolves the lead's ROLE via
+# `linkedin.icp_outbound.classify_role()` and pulls the matching template.
+# Previously this section held `POST_ACCEPT_VIDEO_LINK` /
+# `POST_ACCEPT_MESSAGE_TEMPLATE` / `FOLLOW_UP_MEDIA_PATH` env vars +
+# a parallel LLM-agent fallback (`linkedin.agents.follow_up`); both were
+# collapsed into the single ICP-template path on 2026-05-12.
 
 CAMPAIGN_CONFIG = {
     "min_action_interval": 120,
@@ -203,3 +212,119 @@ def get_first_active_profile_handle() -> str | None:
 
     profile = LinkedInProfile.objects.filter(active=True).select_related("user").first()
     return profile.user.username if profile else None
+
+
+def get_daemon_handle() -> str | None:
+    """Resolve which LinkedInProfile the daemon should run as.
+
+    Precedence:
+      1. `LINKEDIN_USERNAME` env var matches an existing row → return it.
+      2. `LINKEDIN_USERNAME` set but NO row matches AND `LINKEDIN_PASSWORD`
+         is also set → auto-materialize a User + LinkedInProfile from env
+         and join all existing Campaigns. Next boot finds the row directly.
+      3. `LINKEDIN_USERNAME` set but NO row matches AND no
+         `LINKEDIN_PASSWORD` → refuse to start (return None). The daemon's
+         caller exits with a clear message rather than guessing.
+      4. `LINKEDIN_USERNAME` UNSET → fall back to the
+         `LinkedInProfile.active=True` row (legacy single-account setups).
+
+    Returns the Django `User.username` (the "handle" the rest of the
+    daemon's registry / session machinery keys on), not the LinkedIn
+    username. Cookies live on disk at
+    `data/cookies-<safe_linkedin_username>.json` (per-username, not
+    per-row), so flipping between two configured accounts via .env
+    doesn't force a re-login as long as each has a cached cookie file.
+
+    Why the silent-fallback path was removed (2026-05-12, Chuka footgun):
+    operator flipped `LINKEDIN_USERNAME` to switch the daemon from Arian
+    to Chuka, hit a missing-row situation, and the daemon quietly came
+    up as Arian (the only `active=True` row). The session went out under
+    the wrong identity until startup logs were re-read. Now: if env var
+    is set, either the row resolves, the row gets materialized, or the
+    daemon refuses to start. No silent identity swap.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    from linkedin.models import LinkedInProfile
+
+    env_username = os.getenv("LINKEDIN_USERNAME", "").strip()
+    if env_username:
+        match = (
+            LinkedInProfile.objects
+            .filter(linkedin_username__iexact=env_username)
+            .select_related("user")
+            .first()
+        )
+        if match:
+            return match.user.username
+
+        env_password = os.getenv("LINKEDIN_PASSWORD", "").strip()
+        if not env_password:
+            logger.error(
+                "LINKEDIN_USERNAME=%r has no matching LinkedInProfile row "
+                "and LINKEDIN_PASSWORD is unset — cannot auto-create. "
+                "Either add a row via Django Admin or set "
+                "LINKEDIN_PASSWORD in .env so the daemon can materialize "
+                "the row itself.",
+                env_username,
+            )
+            return None
+
+        return _materialize_profile_from_env(env_username, env_password)
+
+    return get_first_active_profile_handle()
+
+
+def _materialize_profile_from_env(linkedin_username: str, linkedin_password: str) -> str:
+    """Create User + LinkedInProfile from env credentials and join all
+    existing Campaigns. Used by get_daemon_handle when LINKEDIN_USERNAME
+    points at an account that doesn't have a DB row yet.
+
+    First-run onboarding for a new operator without making them touch
+    Django Admin — matches the UX of the backfill scripts where editing
+    .env is the only thing the operator does to switch accounts.
+
+    `legal_accepted=True` and `newsletter_processed=True` are stamped to
+    skip the interactive prompts in `ensure_onboarding` — the operator
+    accepted these implicitly by configuring the env vars, and an
+    interactive prompt would block an unattended daemon boot.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    from django.contrib.auth.models import User
+    from linkedin.models import LinkedInProfile, Campaign
+
+    # Django username = local-part of the email with dots stripped.
+    # The registry / session machinery keys on this string; making it
+    # deterministic from the linkedin email means the same env value
+    # always resolves to the same handle across machines.
+    handle = linkedin_username.split("@", 1)[0].replace(".", "")
+
+    user, user_created = User.objects.get_or_create(
+        username=handle,
+        defaults={"email": linkedin_username},
+    )
+    LinkedInProfile.objects.create(
+        user=user,
+        linkedin_username=linkedin_username,
+        linkedin_password=linkedin_password,
+        active=True,
+        legal_accepted=True,
+        newsletter_processed=True,
+    )
+    # Join all existing Campaigns. The daemon's per-task campaign switch
+    # (linkedin/daemon.py:421-428) picks the right one off the Task
+    # payload's `campaign_id`, so over-joining here is harmless — and
+    # under-joining would break startup with "No campaigns found".
+    joined = 0
+    for campaign in Campaign.objects.all():
+        campaign.users.add(user)
+        joined += 1
+
+    logger.info(
+        "Auto-materialized LinkedInProfile for %s (handle=%s, "
+        "user_created=%s, joined %d campaigns).",
+        linkedin_username, handle, user_created, joined,
+    )
+    return handle

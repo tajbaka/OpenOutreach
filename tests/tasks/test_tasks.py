@@ -91,7 +91,11 @@ def _build_context(fake_session):
 
 
 @pytest.mark.django_db
+@patch("linkedin.tasks.connect.ENABLE_CONNECT", True)
 class TestHandleConnect:
+    # Tests assume the connect lane is ON. .env may set ENABLE_CONNECT=false
+    # during operator's follow-up-only test windows; the class-level patch
+    # forces the gate open for these unit tests regardless of env.
     @pytest.fixture(autouse=True)
     def _db(self, embeddings_db):
         pass
@@ -270,18 +274,34 @@ class TestHandleSweepConnections:
 
 
 # ── handle_follow_up tests ─────────────────────────────────────
+#
+# Daemon's follow_up Task now sends the rigid ICP DM only — collapsed
+# from the older POST_ACCEPT_VIDEO_LINK / LLM-agent split on 2026-05-12.
+# Tests cover: send happy-path, skip-on-reply, missing-deal noop, rate-
+# limit reschedule, kill-switch.
 
 
 @pytest.mark.django_db
 class TestHandleFollowUp:
-    @patch("linkedin.tasks.follow_up.POST_ACCEPT_VIDEO_LINK", "https://go.example.com/sds-demo")
-    @patch("linkedin.tasks.follow_up.FOLLOW_UP_MEDIA_PATH", "/tmp/gif-video.gif")
     @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
-    def test_custom_flow_sends_walkthrough_when_no_reply(
-        self, mock_conversation, mock_send_media, fake_session,
+    def test_sends_icp_dm_when_no_reply(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
     ):
+        from crm.models import Lead, Message
         _make_connected(fake_session)
+        # Seed an outbound so the "no-thread" guard doesn't short-circuit.
+        # We're testing the happy path: connection note was sent, lead never
+        # replied, now we follow up with the ICP DM.
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead, source=Message.Source.LINKEDIN, external_id="urn:li:msg:note",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
 
         task = _make_task(
             Task.TaskType.FOLLOW_UP,
@@ -292,29 +312,25 @@ class TestHandleFollowUp:
 
         _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 1
-        assert mock_conversation.called
-        assert mock_send_media.called
-        sent_message = mock_send_media.call_args.args[2]
-        assert "60-second walkthrough" in sent_message
-        assert "https://go.example.com/sds-demo" in sent_message
-
-    @patch("linkedin.tasks.follow_up.POST_ACCEPT_VIDEO_LINK", "https://go.example.com/sds-demo")
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
-    @patch("linkedin.actions.conversations.get_conversation")
-    def test_custom_flow_skips_when_thread_has_other_messages(
-        self, mock_conversation, mock_send_media, fake_session,
-    ):
-        from crm.models import Deal
-        from linkedin.tasks.connect import build_connection_note
-
-        _make_connected(fake_session)
-        deal = Deal.objects.get(
-            lead__linkedin_url="https://www.linkedin.com/in/alice/",
-            campaign=fake_session.campaign,
+        # Template has `{add demo.gif}` so the send routes through
+        # send_media_message when the file exists in assets/follow_up/.
+        # In the test env that path resolves, so we expect the media send.
+        # If demo.gif is missing, the placeholder is stripped and the
+        # send falls back to send_raw_message — handle either.
+        sent_message = (
+            mock_send_media.call_args.args[2] if mock_send_media.called
+            else mock_send.call_args.args[2]
         )
-        connection_note = build_connection_note(deal.lead_id)
+        assert "FedrampGPT" in sent_message
+        assert "Alice" in sent_message
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation")
+    def test_skips_when_lead_already_replied(
+        self, mock_conversation, mock_send, fake_session,
+    ):
+        _make_connected(fake_session)
         mock_conversation.return_value = [
-            {"text": connection_note, "sender": "Antonio Coppe", "timestamp": "2026-03-30 10:00"},
             {"text": "Sounds interesting", "sender": "Alice Smith", "timestamp": "2026-03-30 10:05"},
         ]
 
@@ -325,20 +341,29 @@ class TestHandleFollowUp:
         qualifiers = _build_context(fake_session)
         handle_follow_up(task, fake_session, qualifiers)
 
+        # Reply detected → mark Completed without sending. The followup-
+        # sheet workflow picks the thread up under REPLIED / Ball-on-us.
         _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
-        mock_send_media.assert_not_called()
+        mock_send.assert_not_called()
 
-    @patch("linkedin.tasks.follow_up.POST_ACCEPT_VIDEO_LINK", "https://go.example.com/sds-demo")
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
-    @patch("linkedin.actions.conversations.get_conversation")
-    def test_custom_flow_skips_when_thread_is_not_campaign_matched(
-        self, mock_conversation, mock_send_media, fake_session,
+    @patch("linkedin.actions.message.send_media_message", return_value=False)
+    @patch("linkedin.actions.message.send_raw_message", return_value=False)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_reenqueues_in_24h_on_send_failure(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
     ):
+        from crm.models import Lead, Message
         _make_connected(fake_session)
-        mock_conversation.return_value = [
-            {"text": "Completely unrelated manual conversation", "sender": "Alice Smith", "timestamp": "2026-03-30 10:05"},
-        ]
+        # Same seed as the happy-path test — we want to reach the send.
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead, source=Message.Source.LINKEDIN, external_id="urn:li:msg:note2",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
 
         task = _make_task(
             Task.TaskType.FOLLOW_UP,
@@ -347,71 +372,44 @@ class TestHandleFollowUp:
         qualifiers = _build_context(fake_session)
         handle_follow_up(task, fake_session, qualifiers)
 
-        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        # Send returned False → Deal stays CONNECTED, ActionLog not recorded,
+        # next task is pending with delay.
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
-        mock_send_media.assert_not_called()
+        next_task = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exclude(pk=task.pk).first()
+        assert next_task is not None
 
-    @patch("linkedin.agents.follow_up.run_follow_up_agent")
-    def test_agent_sends_message_and_records_action(self, mock_agent, fake_session):
-        mock_agent.return_value = {
-            "messages": [],
-            "actions": [
-                {"tool": "send_message", "args": {"message": "Hello Alice!"}},
-                {"tool": "schedule_follow_up", "args": {"hours": 72}},
-            ],
-        }
-        _make_connected(fake_session)
-
-        task = _make_task(
-            Task.TaskType.FOLLOW_UP,
-            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
-        )
-        qualifiers = _build_context(fake_session)
-        handle_follow_up(task, fake_session, qualifiers)
-
-        mock_agent.assert_called_once()
-        assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 1
-
-    @patch("linkedin.agents.follow_up.run_follow_up_agent")
-    def test_agent_no_message_no_action_recorded(self, mock_agent, fake_session):
-        mock_agent.return_value = {
-            "messages": [],
-            "actions": [
-                {"tool": "mark_completed", "args": {"reason": "Lead went cold"}},
-            ],
-        }
-        _make_connected(fake_session)
-
-        task = _make_task(
-            Task.TaskType.FOLLOW_UP,
-            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
-        )
-        qualifiers = _build_context(fake_session)
-        handle_follow_up(task, fake_session, qualifiers)
-
-        assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
-
-    @patch("linkedin.agents.follow_up.run_follow_up_agent")
-    def test_noop_when_deal_missing(self, mock_agent, fake_session):
+    @patch("linkedin.actions.message.send_raw_message")
+    def test_noop_when_deal_missing(self, mock_send, fake_session):
         task = _make_task(
             Task.TaskType.FOLLOW_UP,
             {"campaign_id": fake_session.campaign.pk, "public_id": "nonexistent"},
         )
         qualifiers = _build_context(fake_session)
         handle_follow_up(task, fake_session, qualifiers)
-        mock_agent.assert_not_called()
+        mock_send.assert_not_called()
 
     def test_reschedules_on_rate_limit(self, fake_session):
         _make_connected(fake_session)
-        fake_session.linkedin_profile.follow_up_daily_limit = 0
-        fake_session.linkedin_profile.save(update_fields=["follow_up_daily_limit"])
-
-        task = _make_task(
-            Task.TaskType.FOLLOW_UP,
-            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
-        )
-        qualifiers = _build_context(fake_session)
-        handle_follow_up(task, fake_session, qualifiers)
+        # Force can_execute=False directly. Setting follow_up_daily_limit=0
+        # on the row doesn't help: the env-var override FOLLOW_UP_DAILY_LIMIT
+        # in `linkedin.models._LIMIT_OVERRIDES` wins over the per-row value
+        # when truthy, so 0 just gets replaced by the env default.
+        with patch.object(
+            type(fake_session.linkedin_profile),
+            "can_execute",
+            return_value=False,
+        ):
+            task = _make_task(
+                Task.TaskType.FOLLOW_UP,
+                {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+            )
+            qualifiers = _build_context(fake_session)
+            handle_follow_up(task, fake_session, qualifiers)
 
         # Should have re-enqueued with delay
         next_task = Task.objects.filter(
@@ -420,3 +418,83 @@ class TestHandleFollowUp:
             payload__public_id="alice",
         ).exclude(pk=task.pk).first()
         assert next_task is not None
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_skips_when_lead_belongs_to_other_operator(
+        self, mock_conversation, mock_send, fake_session,
+    ):
+        """Travis-like incident (2026-05-12): daemon logged in as Arian
+        almost sent to a lead Chuka had connected with. The Deal exists
+        on the shared campaign but the outbound thread sender is Chuka,
+        not Arian. Owner-scoping guard must short-circuit the send."""
+        from crm.models import Lead, Message
+
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        # Seed an outbound that's NOT from this daemon's logged-in account.
+        # fake_session.linkedin_profile.linkedin_username defaults to "testuser"
+        # — the resolver leaves unknown handles as-is, so we set the lead's
+        # outbound sender to a known-other operator.
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:travis-1",
+            direction=Message.Direction.OUTBOUND,
+            sender="chukwuka agu",  # resolves → "Chuka"
+            body="hey",
+            sent_at=timezone.now() - timedelta(days=10),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        qualifiers = _build_context(fake_session)
+        handle_follow_up(task, fake_session, qualifiers)
+
+        mock_send.assert_not_called()
+        # State stays CONNECTED — no Completed flip, no re-enqueue. The
+        # right daemon will pick it up when it runs.
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_skips_when_no_outbound_thread_exists(
+        self, mock_conversation, mock_send, fake_session,
+    ):
+        """Imported / CSV-loaded leads that never had a connection note
+        persisted have zero outbound LinkedIn messages. Sending a "follow-up"
+        cold to them creates a brand-new thread, which fails silently and
+        loops every 24h forever. Mark Completed and move on; the operator
+        re-seeds via import_connections if they want to start the thread."""
+        _make_connected(fake_session)
+        # No outbound LinkedIn Message rows seeded → has_outbound=False
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        qualifiers = _build_context(fake_session)
+        handle_follow_up(task, fake_session, qualifiers)
+
+        mock_send.assert_not_called()
+        # Marked Completed so the Task doesn't re-enqueue
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
+
+    @patch("linkedin.tasks.follow_up.ENABLE_FOLLOW_UP", False)
+    @patch("linkedin.actions.message.send_raw_message")
+    def test_kill_switch_noop(self, mock_send, fake_session):
+        """ENABLE_FOLLOW_UP=False makes the handler a no-op — defense in
+        depth alongside the daemon's startup cancellation pass."""
+        _make_connected(fake_session)
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        qualifiers = _build_context(fake_session)
+        handle_follow_up(task, fake_session, qualifiers)
+
+        mock_send.assert_not_called()
+        # Deal state untouched — still CONNECTED, not Completed.
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)

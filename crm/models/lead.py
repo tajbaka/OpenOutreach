@@ -17,6 +17,12 @@ class Lead(models.Model):
     public_identifier = models.CharField(max_length=200, blank=True, default="")
     description = models.TextField(blank=True, default="")
     embedding = models.BinaryField(null=True, blank=True)
+    # Canonical ICP bucket this lead sits in for template routing — both
+    # the connect-note picker and the follow-up template path read it.
+    # Populated at import (CSV `ICP` column via `add_seeds`) or at first
+    # scrape (lazy backfill via `linkedin.icp_outbound.resolve_icp`).
+    # See `linkedin.notifications.sheets.LEAD_ICP_BUCKETS` for the vocab.
+    icp = models.CharField(max_length=64, blank=True, default="", db_index=True)
     disqualified = models.BooleanField(default=False)
     creation_date = models.DateTimeField(default=timezone.now)
     update_date = models.DateTimeField(auto_now=True)

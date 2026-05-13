@@ -94,32 +94,48 @@ def _send_msg_pop_up(session: "AccountSession", profile: Dict[str, Any], message
 
 
 def _send_message(session: "AccountSession", profile: Dict[str, Any], message: str) -> bool:
+    """Compose-and-send via URN-keyed direct thread URL.
+
+    Pre-2026-05-12 behavior: navigate to `/messaging/thread/new/` (no
+    recipient), type the lead's full name into the connections search
+    input, wait, scroll-into-view, click the first search result, then
+    type the message and Send. That's three extra UI steps a human
+    doesn't take when they're already on the lead's profile — operator
+    flagged it as bot-like (Dustin Rich incident, 2026-05-12).
+
+    New behavior: resolve the lead's URN, navigate directly to
+    `messaging/thread/new/?recipient=<URN>` which puts us straight into
+    the compose with the recipient already attached. No search, no
+    scroll, no result click. Then human_type the message + Send.
+    """
+    from linkedin.api.messaging import encode_urn
+    from linkedin.db.leads import resolve_urn
+
     public_identifier = profile.get("public_identifier")
-    full_name = profile.get("full_name")
     try:
+        target_urn = resolve_urn(public_identifier, session=session)
+        if not target_urn:
+            logger.error("Direct-thread send for %s → could not resolve URN", public_identifier)
+            return False
+
+        direct_url = f"{LINKEDIN_MESSAGING_URL}?recipient={encode_urn(target_urn)}"
         goto_page(
             session,
-            action=lambda: session.page.goto(LINKEDIN_MESSAGING_URL),
+            action=lambda: session.page.goto(direct_url),
             expected_url_pattern="/messaging",
             timeout=30_000,
-            error_message="Error opening messaging",
+            error_message="Error opening direct compose",
         )
-        # Search person
-        human_type(session.page.locator(SELECTORS["connections_input"]), full_name, min_delay=10, max_delay=50)
-        session.wait(0.5, 1)
+        session.wait(0.5, 1.2)
 
-        item = session.page.locator(SELECTORS["search_result_row"]).first
-        session.wait(0.5, 1)
-
-        # Scroll into view + click (very reliable on LinkedIn)
-        item.scroll_into_view_if_needed()
-        item.click(delay=200)  # small delay between mousedown/mouseup = very human
-
-        human_type(session.page.locator(SELECTORS["compose_input"]), message, min_delay=10, max_delay=50)
+        # human_type is multi-line safe (\n → Shift+Enter, not Enter) and
+        # uses conf.HUMAN_TYPE_MIN/MAX_DELAY_MS for human cadence.
+        human_type(session.page.locator(SELECTORS["compose_input"]), message)
+        session.wait(0.4, 0.9)
 
         session.page.locator(SELECTORS["compose_send"]).click(delay=200)
         session.wait(0.5, 1)
-        logger.info("Message sent to %s (direct thread)", public_identifier)
+        logger.info("Message sent to %s (direct thread, URN-keyed)", public_identifier)
         return True
     except (PlaywrightError, TimeoutError) as e:
         logger.error("Failed to send message to %s (direct thread) → %s", public_identifier, e)
@@ -164,46 +180,45 @@ def _send_message_via_api(
 
 
 def send_media_message(session, profile: Dict[str, Any], message: str, media_path: str) -> bool:
-    """Send a message with a media attachment via UI file input.
+    """Send a message + media attachment via the URN-keyed direct compose URL.
 
-    Navigates to the existing conversation, attaches the file, optionally
-    types a message, and clicks Send.
+    Mirrors `_send_message`'s single-nav pattern: navigate once to
+    `/messaging/thread/new/?recipient=<URN>` (recipient attached by URL —
+    no search, no click), attach the file via the hidden file input,
+    human_type the body, click Send.
+
+    Previously this resolved the existing conversation URN (API first,
+    navigation fallback) and then navigated to `/messaging/thread/<id>/`,
+    which produced a visible double-nav whenever the conv URN wasn't in
+    the recent-conversations cache — the fallback navigation to
+    `/messaging/thread/new/?recipient=<URN>` left the page on the
+    compose, then we'd immediately goto the thread URL on top of it.
+    Hemang Bhatt incident, 2026-05-12. The compose URL already renders
+    the file input + send button, so the conv-URN lookup wasn't earning
+    its second navigation.
     """
     import time
+    from linkedin.api.messaging import encode_urn
     from linkedin.db.chat import save_chat_message
-    from linkedin.actions.conversations import find_conversation_urn, find_conversation_urn_via_navigation
-    from linkedin.api.client import PlaywrightLinkedinAPI
     from linkedin.db.leads import resolve_urn
 
     public_identifier = profile.get("public_identifier")
     page = session.page
 
-    # Find conversation thread URL
     target_urn = resolve_urn(public_identifier, session=session)
     if not target_urn:
         logger.error("Cannot resolve URN for %s — media send failed", public_identifier)
         return False
 
-    api = PlaywrightLinkedinAPI(session=session)
-    conv_urn = find_conversation_urn(api, target_urn)
-    if not conv_urn:
-        conv_urn = find_conversation_urn_via_navigation(session, target_urn)
-    if not conv_urn:
-        logger.error("No conversation found for %s — media send failed", public_identifier)
-        return False
-
-    # Extract thread ID from conversation URN and navigate
-    # conv_urn format: urn:li:msg_conversation:(urn:li:fsd_profile:XXX,THREAD_ID)
-    thread_id = conv_urn.rsplit(",", 1)[-1].rstrip(")")
-    thread_url = f"{LINKEDIN_MESSAGING_THREAD_URL}{thread_id}/"
+    direct_url = f"{LINKEDIN_MESSAGING_URL}?recipient={encode_urn(target_urn)}"
 
     try:
         goto_page(
             session,
-            action=lambda: page.goto(thread_url),
+            action=lambda: page.goto(direct_url),
             expected_url_pattern="/messaging",
             timeout=30_000,
-            error_message="Error opening messaging thread",
+            error_message="Error opening direct compose for media send",
         )
         session.wait()
 
@@ -218,11 +233,14 @@ def send_media_message(session, profile: Dict[str, Any], message: str, media_pat
         time.sleep(3)
         session.wait()
 
-        # Type message if provided
+        # Type message if provided. human_type uses per-keystroke randomized
+        # cadence (HUMAN_TYPE_MIN/MAX_DELAY_MS) and is multi-line safe
+        # (\n → Shift+Enter). fill() pasted the entire body in one shot,
+        # which read as bot-like in-thread (2026-05-12 operator report).
         if message:
             msg_input = page.locator(SELECTORS["message_input"])
             if msg_input.count() > 0:
-                msg_input.first.fill(message)
+                human_type(msg_input.first, message)
                 session.wait()
 
         # Click send

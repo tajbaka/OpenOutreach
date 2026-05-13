@@ -68,8 +68,33 @@ def find_top_card(session):
 
 
 def human_type(locator, text: str, min_delay: int = HUMAN_TYPE_MIN_DELAY_MS, max_delay: int = HUMAN_TYPE_MAX_DELAY_MS):
-    """Type text with randomized per-keystroke delay to mimic human input."""
-    locator.type(text, delay=random.randint(min_delay, max_delay))
+    """Type text with randomized per-keystroke delay to mimic human input.
+
+    Multi-line safe: `\\n` characters are dispatched as `Shift+Enter` (a
+    line break inside contenteditable / form inputs) rather than as a
+    plain Enter keystroke (which LinkedIn's compose box interprets as
+    Send-submit). Tommy Fauth incident, 2026-05-12: a multi-paragraph
+    template sent 3 partial messages before the body because `\\n` in
+    the text was being dispatched as raw Enter on each line break.
+    """
+    if "\n" not in text:
+        # Fast path: no line breaks → straight per-key type, preserving the
+        # exact randomized cadence the bot-detection avoidance relies on.
+        locator.type(text, delay=random.randint(min_delay, max_delay))
+        return
+
+    # Multi-line: focus the locator once, then alternate typing line text
+    # with Shift+Enter for line breaks. `keyboard.press("Shift+Enter")`
+    # dispatches a single modifier-held keystroke — same shape a human
+    # types — without submitting the form.
+    locator.click()
+    lines = text.split("\n")
+    page = locator.page
+    for i, line in enumerate(lines):
+        if line:
+            page.keyboard.type(line, delay=random.randint(min_delay, max_delay))
+        if i < len(lines) - 1:
+            page.keyboard.press("Shift+Enter")
 
 
 def dump_page_html(session: "AccountSession", profile: dict, ):

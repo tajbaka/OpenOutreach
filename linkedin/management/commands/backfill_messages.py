@@ -40,7 +40,6 @@ from crm.models import Deal, Message
 from linkedin.actions.conversations import get_conversation
 from linkedin.actions.standalone_session import StandaloneLinkedInSession
 from linkedin.api.client import PlaywrightLinkedinAPI
-from linkedin.conf import ROOT_DIR
 from linkedin.enums import ProfileState
 
 logger = logging.getLogger(__name__)
@@ -52,30 +51,19 @@ SLEEP_MIN_SECONDS = 8
 SLEEP_MAX_SECONDS = 22
 
 
-# Each tuple: (label, username env var, password env var, cookie cache path).
-# Add more entries here to support additional LinkedIn accounts. The cookie
-# path must be unique per account so sessions don't collide.
+# Each tuple: (label, username env var, password env var). The session
+# derives its cookie cache path from the resolved username, so swapping
+# usernames within a slot doesn't collide with the prior account's cache.
 ACCOUNTS = [
-    (
-        "primary",
-        "LINKEDIN_USERNAME",
-        "LINKEDIN_PASSWORD",
-        ROOT_DIR / "data" / "primary_cookies.json",
-    ),
-    (
-        "backfill",
-        "BACKFILL_LINKEDIN_USERNAME",
-        "BACKFILL_LINKEDIN_PASSWORD",
-        ROOT_DIR / "data" / "backfill_cookies.json",
-    ),
+    ("primary",  "LINKEDIN_USERNAME",          "LINKEDIN_PASSWORD"),
+    ("backfill", "BACKFILL_LINKEDIN_USERNAME", "BACKFILL_LINKEDIN_PASSWORD"),
 ]
 
 
-def _make_session(label: str, env_user: str, env_pass: str, cookie_path) -> StandaloneLinkedInSession:
+def _make_session(label: str, env_user: str, env_pass: str) -> StandaloneLinkedInSession:
     return StandaloneLinkedInSession(
         env_username=env_user,
         env_password=env_pass,
-        cookie_path=cookie_path,
         label=label,
     )
 
@@ -144,8 +132,8 @@ class Command(BaseCommand):
         dry_run = opts["dry_run"]
 
         configured = [
-            (label, env_user, env_pass, cookie_path)
-            for (label, env_user, env_pass, cookie_path) in ACCOUNTS
+            (label, env_user, env_pass)
+            for (label, env_user, env_pass) in ACCOUNTS
             if os.getenv(env_user) and os.getenv(env_pass)
         ]
         if not configured:
@@ -155,11 +143,11 @@ class Command(BaseCommand):
                 "  BACKFILL_LINKEDIN_USERNAME + BACKFILL_LINKEDIN_PASSWORD (backfill account)."
             )
 
-        for label, env_user, env_pass, cookie_path in configured:
+        for label, env_user, env_pass in configured:
             user_display = os.getenv(env_user)
             self.stdout.write(f"\n=== {label} ({user_display}) ===")
             try:
-                session = _make_session(label, env_user, env_pass, cookie_path)
+                session = _make_session(label, env_user, env_pass)
                 session.start()
             except Exception as e:
                 self.stdout.write(self.style.WARNING(
@@ -254,3 +242,26 @@ class Command(BaseCommand):
             f"Done. Processed {len(deals)} Leads → fetched {fetched} threads "
             f"→ persisted {persisted}. Errors: {errors}. Skipped (no public_id): {skipped}."
         )
+
+        # Record the pass so the followup workflow's staleness check knows
+        # who walked threads + when. Per-operator key so Chuka's pass and
+        # Arian's pass each have their own latest-run timestamp.
+        if not dry_run:
+            from linkedin.models import WorkflowRun
+            from linkedin.operators import resolve_operator
+            WorkflowRun.objects.create(
+                name="backfill-messages",
+                operator=resolve_operator(sender),
+                summary=(
+                    f"sender={sender!r} processed={len(deals)} "
+                    f"fetched={fetched} persisted={persisted} "
+                    f"errors={errors} skipped_no_pid={skipped}"
+                ),
+                counts={
+                    "deals_eligible": len(deals),
+                    "threads_fetched": fetched,
+                    "messages_persisted": persisted,
+                    "errors": errors,
+                    "skipped_no_pid": skipped,
+                },
+            )

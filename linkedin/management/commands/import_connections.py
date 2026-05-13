@@ -32,6 +32,7 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime as _dt, timedelta
+from pathlib import Path
 from typing import Iterable, IO
 
 from django.core.management.base import BaseCommand, CommandError
@@ -59,17 +60,38 @@ class CsvRow:
 
 
 def parse_csv(fp: IO) -> Iterable[CsvRow]:
+    """Parse a connections CSV. Accepts either of the two formats we get in
+    the wild:
+
+    1. **LinkedIn-Connections export** (the default when you "Get a copy
+       of your data" from LinkedIn): `Profile URL, First Name, Last Name,
+       Company`. No Message column.
+    2. **Manual outreach log** (operator-curated): `LinkedIn URL, First Name,
+       Message`. Has the outbound invite text, doesn't have Last/Company.
+
+    The parser accepts either URL column name (`LinkedIn URL` or `Profile
+    URL`) and treats `Message` / `Last Name` / `Company` as optional value-
+    add: present → captured, absent → empty string. This way the same
+    command handles both data sources without per-account CSV munging.
+    """
     reader = csv_module.DictReader(fp)
-    if reader.fieldnames is None or "LinkedIn URL" not in reader.fieldnames:
+    fields = reader.fieldnames or []
+
+    # URL column — first match wins; both names point at the same data.
+    url_col = next(
+        (c for c in ("LinkedIn URL", "Profile URL") if c in fields),
+        None,
+    )
+    if url_col is None:
         raise CsvFormatError(
-            "CSV must include a 'LinkedIn URL' column. "
-            f"Got: {reader.fieldnames}"
+            "CSV must include a 'LinkedIn URL' or 'Profile URL' column. "
+            f"Got: {fields}"
         )
-    if "First Name" not in reader.fieldnames:
+    if "First Name" not in fields:
         raise CsvFormatError("CSV must include a 'First Name' column.")
 
     for row in reader:
-        url = (row.get("LinkedIn URL") or "").strip()
+        url = (row.get(url_col) or "").strip()
         if not url:
             continue
         public_id = url_to_public_id(url) or ""
@@ -133,18 +155,38 @@ def decide_dedupe(*, linkedin_url: str, target_campaign: Campaign) -> tuple[Dedu
 # ---------------------------------------------------------------------------
 
 
-def apply_match(*, row: CsvRow, target_campaign: Campaign) -> DedupeDecision:
+def apply_match(
+    *,
+    row: CsvRow,
+    target_campaign: Campaign,
+    connected_on: "date | None" = None,
+) -> DedupeDecision:
     """Apply CREATE or REPLACE for a CSV row. Returns the decision taken.
 
     Outbound message persistence is deferred to `get_conversation` (called by
     the command's main loop) — Voyager returns the real entityUrn, sender,
     and timestamp, which is strictly better than the CSV-derived placeholder.
+
+    `connected_on` is the date pulled from the scraped Connections-page card
+    for this lead. Used to stamp `Deal.connected_at` so the followup
+    classifier's freshness-priority bump has a real signal to anchor on. We
+    stamp on all three paths (CREATE/REPLACE/SKIP) when `connected_at` is
+    null — strictly additive, idempotent: never overwrites an existing
+    timestamp. SKIP path used to be a no-op; now it backfills `connected_at`
+    for historically-connected leads who were imported before the daemon
+    started stamping the field.
     """
     decision, existing = decide_dedupe(
         linkedin_url=row.linkedin_url, target_campaign=target_campaign,
     )
 
+    # SKIP path: existing Deal is already at CONNECTED+. Only meaningful
+    # write here is backfilling connected_at if we have the date and the
+    # field is null. No Voyager calls, no Lead mutation.
     if decision == DedupeDecision.SKIP:
+        if connected_on and existing is not None and existing.connected_at is None:
+            existing.connected_at = _coerce_to_datetime(connected_on)
+            existing.save(update_fields=["connected_at"])
         return decision
 
     with transaction.atomic():
@@ -166,12 +208,15 @@ def apply_match(*, row: CsvRow, target_campaign: Campaign) -> DedupeDecision:
                 setattr(lead, k, v)
             lead.save(update_fields=list(updates.keys()))
 
+        connected_at = _coerce_to_datetime(connected_on) if connected_on else None
+
         if decision == DedupeDecision.CREATE:
             Deal.objects.create(
                 lead=lead,
                 campaign=target_campaign,
                 state=ProfileState.CONNECTED,
                 sent_note=row.outbound_message or "",
+                connected_at=connected_at,
             )
         elif decision == DedupeDecision.REPLACE:
             # Promote existing PENDING/READY/QUALIFIED Deal to CONNECTED and
@@ -183,11 +228,23 @@ def apply_match(*, row: CsvRow, target_campaign: Campaign) -> DedupeDecision:
                 existing.sent_note = row.outbound_message
             existing.connect_attempts = 0
             existing.backoff_hours = 0
-            existing.save(update_fields=[
-                "state", "sent_note", "connect_attempts", "backoff_hours",
-            ])
+            update_fields = ["state", "sent_note", "connect_attempts", "backoff_hours"]
+            if connected_at and existing.connected_at is None:
+                existing.connected_at = connected_at
+                update_fields.append("connected_at")
+            existing.save(update_fields=update_fields)
 
     return decision
+
+
+def _coerce_to_datetime(d):
+    """`ConnectionEntry.connected_on` is a `date`; `Deal.connected_at` is a
+    `DateTimeField`. Convert at midnight UTC — we don't have sub-day
+    precision from the Connections page anyway."""
+    from datetime import datetime, time, timezone
+    if isinstance(d, datetime):
+        return d
+    return datetime.combine(d, time.min, tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -245,14 +302,12 @@ def _resolve_target_campaign(campaign_id: int | None) -> Campaign:
 from linkedin.actions.connections import scrape_connections  # noqa: E402
 from linkedin.actions.conversations import get_conversation  # noqa: E402
 from linkedin.actions.standalone_session import StandaloneLinkedInSession  # noqa: E402
-from linkedin.conf import ROOT_DIR  # noqa: E402
 from linkedin.notifications.slack import latest_reply_from_lead  # noqa: E402
 
 
 # Env-var-driven separate LinkedIn account (distinct from daemon's profile).
 ENV_USERNAME = "BACKFILL_LINKEDIN_USERNAME"
 ENV_PASSWORD = "BACKFILL_LINKEDIN_PASSWORD"
-COOKIE_PATH = ROOT_DIR / "data" / "backfill_cookies.json"
 
 # Pacing between get_conversation calls. With ~300 matches, 25-50s jitter
 # averages ~37s/lead → ~3 hours total runtime, well below LinkedIn's
@@ -264,13 +319,13 @@ SLEEP_MAX_SECONDS = 50
 def make_backfill_session() -> StandaloneLinkedInSession:
     """Build a StandaloneLinkedInSession configured for the backfill account.
 
-    Reads BACKFILL_LINKEDIN_USERNAME / BACKFILL_LINKEDIN_PASSWORD from env;
-    cookies cached separately from Sales Nav at data/backfill_cookies.json.
+    Reads BACKFILL_LINKEDIN_USERNAME / BACKFILL_LINKEDIN_PASSWORD from env.
+    Cookie cache filename is derived from the resolved username by the
+    session itself (see `cookie_path_for` in standalone_session).
     """
     return StandaloneLinkedInSession(
         env_username=ENV_USERNAME,
         env_password=ENV_PASSWORD,
-        cookie_path=COOKIE_PATH,
         label="Backfill",
     )
 
@@ -344,15 +399,23 @@ class Command(BaseCommand):
         for r in plan[DedupeDecision.REPLACE]:
             self.stdout.write(f"  replace (will promote → CONNECTED): {r.linkedin_url}")
 
-        actionable = plan[DedupeDecision.CREATE] + plan[DedupeDecision.REPLACE]
+        # SKIP rows are included here so apply_match's SKIP path can backfill
+        # Deal.connected_at from the scrape's connected_on date (no Voyager
+        # work, just a SQL update — safe to mix with CREATE/REPLACE since the
+        # loop's pacing only runs after Voyager-touching iterations).
+        actionable = (
+            plan[DedupeDecision.CREATE]
+            + plan[DedupeDecision.REPLACE]
+            + plan[DedupeDecision.SKIP]
+        )
         if limit > 0 and len(actionable) > limit:
             self.stdout.write(f"Capping actionable to first {limit} (--limit).")
             actionable = actionable[:limit]
         self.stdout.write(
             f"Actionable: {len(actionable)} "
             f"(create={len(plan[DedupeDecision.CREATE])}, "
-            f"replace={len(plan[DedupeDecision.REPLACE])}), "
-            f"skipped: {len(plan[DedupeDecision.SKIP])}"
+            f"replace={len(plan[DedupeDecision.REPLACE])}, "
+            f"skip={len(plan[DedupeDecision.SKIP])} — included so connected_at can be backfilled)"
         )
 
         if dry_run:
@@ -389,7 +452,12 @@ class Command(BaseCommand):
                 time.sleep(random.uniform(SLEEP_MIN_SECONDS, SLEEP_MAX_SECONDS))
             last_iter_did_voyager = False
 
-            decision = apply_match(row=row, target_campaign=target_campaign)
+            connected_on = accepted_by_pid[row.public_id].connected_on
+            decision = apply_match(
+                row=row,
+                target_campaign=target_campaign,
+                connected_on=connected_on,
+            )
 
             if decision == DedupeDecision.SKIP:
                 skipped_already_connected += 1
@@ -438,4 +506,30 @@ class Command(BaseCommand):
             f"skipped_already_connected={skipped_already_connected}, "
             f"with_reply={with_reply} of {len(matched_rows)} matched; "
             f"sync_sheets will mirror these on its next run."
+        )
+
+        # Record the run so the followup workflow's staleness check knows
+        # who imported what + when. Operator handle resolved from the
+        # LinkedIn session username so future runs by the same person bump
+        # the same WorkflowRun key.
+        from linkedin.models import WorkflowRun
+        from linkedin.operators import resolve_operator
+        WorkflowRun.objects.create(
+            name="import-connections",
+            operator=resolve_operator(session.username),
+            summary=(
+                f"csv={Path(opts['csv']).name} since_days={since_days} "
+                f"created={created} replaced={replaced} "
+                f"skipped={skipped_already_connected} with_reply={with_reply}"
+            ),
+            counts={
+                "csv_rows":              len(rows),
+                "scrape_size":           len(entries),
+                "actionable":            len(actionable),
+                "matched":               len(matched_rows),
+                "created":               created,
+                "replaced":              replaced,
+                "skipped_connected":     skipped_already_connected,
+                "with_reply":            with_reply,
+            },
         )

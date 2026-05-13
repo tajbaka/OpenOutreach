@@ -8,56 +8,53 @@ independent of) the outreach account that runs `make run`.
 Default env vars (Sales Nav, the original consumer):
     SALES_NAV_LINKEDIN_USERNAME
     SALES_NAV_LINKEDIN_PASSWORD
-Default cookie cache: `data/sales_nav_cookies.json`.
 
-Other consumers (e.g., manage.py import_connections) pass their own env-var
-names and cookie filename to the constructor. Delete the cookie file to
-force a fresh login.
+Cookies are cached at `data/cookies-<safe_username>.json`, keyed by the
+LinkedIn username itself rather than by the consumer slot. This means
+swapping accounts inside the same env-var slot (e.g. changing
+BACKFILL_LINKEDIN_USERNAME from Chuka to Arian) no longer collides with the
+previous account's cached session — each username keeps its own cookie file
+and can be flipped in and out of any slot without re-authenticating.
+
+Past bug (2026-05-11): cookies used to be keyed by slot label
+(`backfill_cookies.json`, `sales_nav_cookies.json`). Swapping the username
+inside a slot silently kept the old account's cookies; the validity check
+passes (the feed loads as the old account) but the session is running under
+the wrong identity. Per-username filenames fix that — a mismatched username
+just means no cached file exists, so the session forces a fresh login.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
-from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
+from linkedin.browser.cookie_store import (
+    clear_cookies,
+    cookie_path_for,
+    load_cookies,
+    save_cookies,
+)
 from linkedin.browser.login import LINKEDIN_FEED_URL, LINKEDIN_LOGIN_URL, SELECTORS
 from linkedin.browser.nav import human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
     BROWSER_LOGIN_TIMEOUT_MS,
     BROWSER_SLOW_MO,
-    ROOT_DIR,
 )
 from linkedin.exceptions import AuthenticationError
 
 logger = logging.getLogger(__name__)
 
-# Defaults — Sales Nav was the original consumer. Other consumers pass their
-# own env-var names + cookie path to the constructor.
-COOKIE_PATH = ROOT_DIR / "data" / "sales_nav_cookies.json"
-
+# Default env vars — Sales Nav was the original consumer. Other consumers
+# pass their own env-var names to the constructor; the cookie path is
+# always derived from the resolved username (see
+# `linkedin.browser.cookie_store.cookie_path_for`).
 ENV_USERNAME = "SALES_NAV_LINKEDIN_USERNAME"
 ENV_PASSWORD = "SALES_NAV_LINKEDIN_PASSWORD"
-
-
-def _load_cookies(path) -> dict | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("Failed to read cached cookies at %s: %s", path, e)
-        return None
-
-
-def _save_cookies(state: dict, path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state), encoding="utf-8")
 
 
 class StandaloneLinkedInSession:
@@ -80,12 +77,10 @@ class StandaloneLinkedInSession:
         *,
         env_username: str = ENV_USERNAME,
         env_password: str = ENV_PASSWORD,
-        cookie_path=COOKIE_PATH,
         label: str = "Sales Nav",
     ):
         self._env_username_name = env_username
         self._env_password_name = env_password
-        self._cookie_path = cookie_path
         self._label = label
 
         self.username = os.getenv(env_username, "").strip()
@@ -95,13 +90,16 @@ class StandaloneLinkedInSession:
                 f"{label} credentials missing — set {env_username} "
                 f"and {env_password} in .env"
             )
+        # Cookie path derived from username so any account swap inside the
+        # same env slot is conflict-free — see module docstring.
+        self._cookie_path = cookie_path_for(self.username)
         self.page = None
         self.context = None
         self.browser = None
         self.playwright = None
 
     def start(self) -> None:
-        storage_state = _load_cookies(self._cookie_path)
+        storage_state = load_cookies(self._cookie_path)
         self._launch(storage_state)
 
         if storage_state:
@@ -109,15 +107,12 @@ class StandaloneLinkedInSession:
                 logger.info("%s: reused cached session for %s", self._label, self.username)
                 return
             logger.warning("%s: cached cookies expired — re-authenticating", self._label)
-            try:
-                self._cookie_path.unlink()
-            except FileNotFoundError:
-                pass
+            clear_cookies(self._cookie_path)
             self.close()
             self._launch(storage_state=None)
 
         self._login()
-        _save_cookies(self.context.storage_state(), self._cookie_path)
+        save_cookies(self.context.storage_state(), self._cookie_path)
         logger.info("%s: login successful, cookies cached at %s", self._label, self._cookie_path)
 
     def ensure_browser(self) -> None:

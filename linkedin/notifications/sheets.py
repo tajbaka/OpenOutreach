@@ -120,6 +120,29 @@ STATUS_WON = "Won"
 STATUS_LOST = "Lost"
 STATUS_DONT_SEND = "Don't send"
 
+# MET = "we've already met them" — strictly post-meeting states. Drafts for
+# this cohort assume a real meeting happened and lead with a deliverable
+# (Loom, doc, repo link) or a forward-looking question rooted in what was
+# discussed on the call.
+#
+# Refinement 2026-05-11 (second pass): previously MET also included
+# Wants Meeting / Meeting Booked, but those are pre-meeting states with
+# fundamentally different draft strategies (resurface time slots / pre-meeting
+# confirm vs. deliverable-first follow-up). Surfacing them under the same
+# "🤝 MET" section misled the operator — a row labeled "Met" they hadn't
+# actually met yet. They now live in PRE_MEETING_STATUSES → "📅 SCHEDULING".
+MET_STATUSES: set[str] = {
+    STATUS_HAD_MEETING, STATUS_MANUAL_FOLLOWUP, STATUS_PROSPECTING_TO_CLOSE,
+}
+
+# Pre-meeting states — they've agreed to meet but haven't picked a slot,
+# OR the meeting is on the calendar but hasn't happened yet. Distinct from
+# MET because the draft shape is different (slot pin / pre-meeting confirm
+# vs. post-meeting follow-up).
+PRE_MEETING_STATUSES: set[str] = {
+    STATUS_WANTS_MEETING, STATUS_MEETING_BOOKED,
+}
+
 
 def deal_to_outreach_status(deal) -> str:
     """Map Deal.state to a per-person Outreach status (auto-managed values only)."""
@@ -560,18 +583,27 @@ def _col_letter(n: int) -> str:
 # Cohort labels used by the Claude task's classifier. Stored verbatim in
 # the Cohort column so per-cohort filtering / sorting works in the sheet.
 COHORT_MET = "Met"
+COHORT_SCHEDULING = "Scheduling"  # pre-meeting — Wants Meeting / Meeting Booked
 COHORT_BALL_ON_US = "Ball on us"
 COHORT_COLD_THREAD = "Cold thread"
-COHORT_NO_REPLY = "No reply yet"
 COHORT_ACTIVE_IN_FLIGHT = "Active in-flight"
 COHORT_SENT = "Sent"
 
 # Section ordering within each tab. Each section bundles one or more
 # cohorts; the Cohort column distinguishes them within a section.
+# Order = operator scan priority (top = most time-sensitive revenue).
+#
+# Note: the "Connected, no reply" cohort was removed 2026-05-12. The
+# daemon now handles those leads programmatically via
+# `linkedin/tasks/follow_up.py` + the rigid ICP templates in
+# `linkedin/icp_messages.json` — surfacing them in the Followups tab
+# for manual drafting was redundant work the operator no longer needs.
+# Cohorts left in this list are conversation-driven (Met / Scheduling /
+# Replied / Active in-flight / Sent).
 FU_SECTIONS = [
     ("🤝 MET",                  [COHORT_MET]),
+    ("📅 SCHEDULING",           [COHORT_SCHEDULING]),
     ("💬 REPLIED",              [COHORT_BALL_ON_US, COHORT_COLD_THREAD]),
-    ("⏳ CONNECTED, NO REPLY",  [COHORT_NO_REPLY]),
     ("🌊 ACTIVE IN-FLIGHT",     [COHORT_ACTIVE_IN_FLIGHT]),
     ("✅ SENT",                 [COHORT_SENT]),
 ]
@@ -633,60 +665,46 @@ FU_SENT_LINKEDIN_COL_0 = FU_HEADER_INDEX_0[FU_COL_SENT_LINKEDIN]
 FU_QUALIFY_COL_0 = FU_HEADER_INDEX_0[FU_COL_QUALIFY]
 FU_NAME_COL_0 = FU_HEADER_INDEX_0[FU_COL_NAME]
 
-# ROLE → ICP-template bucket mapping. The "ICP Templates" tab keys rows
-# by ICP, but the followup row carries a finer-grained ROLE; this maps
+# ROLE → ICP-template bucket mapping. The "Followup Templates" tab keys
+# rows by ICP, but the followup row carries a finer-grained ROLE; this maps
 # one to the other so the drafter can look up the right Goal cell.
+#
+# Channel got its own bucket on 2026-05-12 (was previously collapsed into
+# Advisors). The partnership/co-sell pitch is structurally different from
+# the "deliver to your CSP clients" Advisor pitch, and we now stamp it
+# from the CSV `ICP` column at import time so the routing has the signal
+# it needs without depending on a runtime classifier that can't tell a
+# reseller from an in-house security engineer from the headline alone.
 FU_ROLE_TO_ICP = {
     "CSP": "CSPs",
     "3PAO": "3PAOs/Assessors",
     "Assessor": "3PAOs/Assessors",
     "Advisor": "Advisors",
-    "Channel": "Advisors",  # rare; Channel rolls into Advisors for templating
+    "Channel": "Channel",
 }
 
+# Canonical ICP buckets persisted on `Lead.icp`. Templates in
+# `linkedin/icp_messages.json` key on these strings; connect-note +
+# follow-up + sheets ROLE column all converge here. Adding a bucket means
+# adding a key in the JSON and listing it here.
+LEAD_ICP_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors", "Channel")
 
-def fresh_connection_priority(
-    days_since_connection: int | None,
-    cohort: str,
-    fallback_priority: str,
-) -> str:
-    """Return the PRIORITY a row should land at given how recently the lead
-    accepted our connection invite.
-
-    Fresh accepts are warm — the followup workflow's default tier-based
-    priority misses this signal entirely (a connection from yesterday
-    sits at the same LOW priority as one from 3 months ago). Apply only
-    on `no_reply_yet` cohort; other cohorts are driven by engagement
-    signals that already capture recency.
-
-    `fallback_priority` is what the tier classifier proposed; we either
-    accept it or bump it up. Never bump down — if engagement said HIGH
-    and they've been connected a while, HIGH still wins.
-
-    Rules:
-      - <3 days  + no_reply_yet → HIGH       (strike while iron is warm)
-      - <7 days  + no_reply_yet → MEDIUM-HIGH
-      - <14 days + no_reply_yet → at least MEDIUM
-      - otherwise → fallback unchanged
-    """
-    if cohort != COHORT_NO_REPLY:
-        return fallback_priority
-    if days_since_connection is None:
-        return fallback_priority
-
-    fb_rank = FU_PRIORITY_RANK.get(fallback_priority, 0)
-
-    if days_since_connection < 3:
-        proposed = "HIGH"
-    elif days_since_connection < 7:
-        proposed = "MEDIUM-HIGH"
-    elif days_since_connection < 14:
-        proposed = "MEDIUM"
-    else:
-        return fallback_priority
-
-    proposed_rank = FU_PRIORITY_RANK.get(proposed, 0)
-    return proposed if proposed_rank > fb_rank else fallback_priority
+# Operator's Sales Nav search labels (the values in the merged CSV's
+# `ICP` column) normalized to the persisted vocab. `add_seeds` applies
+# this map at import so a single Lead.icp value drives all downstream
+# template routing. Keys are case-insensitive — see
+# `linkedin.setup.seeds._normalize_csv_icp`.
+CSV_ICP_TO_LEAD_ICP = {
+    "csps":             "CSPs",
+    "advisors":         "Advisors",
+    "channel":          "Channel",
+    "firms-advisors":   "Advisors",
+    "grc-advisors":     "Advisors",
+    "vciso-advisors":   "Advisors",
+    "3paos":            "3PAOs/Assessors",
+    "3paos/assessors":  "3PAOs/Assessors",
+    "assessors":        "3PAOs/Assessors",
+}
 
 
 def _followup_tab_name(operator: str) -> str:
@@ -981,7 +999,6 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
             (COHORT_MET,              _rgb255(13, 122, 42),   True),
             (COHORT_BALL_ON_US,       _rgb255(204, 17, 34),   True),    # red — most urgent
             (COHORT_COLD_THREAD,      _rgb255(221, 102, 34),  False),   # orange
-            (COHORT_NO_REPLY,         _rgb255(108, 117, 125), False),   # gray
             (COHORT_ACTIVE_IN_FLIGHT, _rgb255(0, 102, 204),   False),   # blue
             (COHORT_SENT,             _rgb255(108, 117, 125), False),   # gray
         ]
@@ -1172,49 +1189,99 @@ def linkedin_message_hyperlink(
     profile_url: str = "",
     display: str = "Open in LinkedIn",
 ) -> str:
-    """=HYPERLINK formula for the LinkedIn message thread (or profile if
-    we don't have a thread URN). Empty if neither is supplied."""
-    target = linkedin_thread_url(thread_external_id, fallback_profile_url=profile_url)
+    """=HYPERLINK formula for the lead's LinkedIn profile.
+
+    `thread_external_id` is accepted but ignored. The thread-URL path used
+    to build `https://www.linkedin.com/messaging/thread/<urn>/` from the
+    Voyager `urn:li:msg_conversation:(...)` URN, but LinkedIn web treats
+    that path as opaque — the parens / colons / equals signs don't reliably
+    resolve to the inbox thread, so the operator clicks the cell and lands
+    on a broken page. The profile URL always opens the lead's profile,
+    where the operator can press the Message button to reach the same DM
+    thread. Simpler, durable.
+    """
+    target = (profile_url or "").strip()
     return hyperlink_formula(target, display)
 
 
 # ----------------------------------------------------------------------
-# ICP Templates tab — read the operator's per-ICP Goal cells.
+# Followup Templates tab — read the operator's per-ICP Goal cells.
 # ----------------------------------------------------------------------
 
 
-ICP_TEMPLATES_TAB = "ICP Templates"
+FOLLOWUP_TEMPLATES_TAB = "Followup Templates"
 
 
-def read_icp_templates() -> dict[str, str]:
-    """Return `{ICP: goal_text}` from the operator's `ICP Templates` tab.
+def read_followup_templates() -> dict[str, dict[str, str]]:
+    """Return `{ICP: {"linkedin_template", "email_template", "goal"}}` from
+    the operator's `Followup Templates` tab.
 
-    Drafter calls this once per run, looks up each lead's ICP via
-    FU_ROLE_TO_ICP, and uses the goal text as strategic direction (what
-    each draft should aim for). Missing tab is a no-op (empty dict) —
-    drafter falls back to the workflow doc's default ROLE table.
+    Columns are matched by header name (case-insensitive, trimmed) so the
+    operator can reorder columns or insert extras without breaking the
+    read. Headers recognized:
+      - "ICP" (or "ICP Name" / "Name")           → bucket key
+      - "LinkedIn Template" (or "LinkedIn")      → verbatim LI body
+      - "Email Template" (or "Email")            → verbatim email body
+      - "Goal" (or "Goals")                      → strategic-direction prose
+
+    Missing values for any field return as empty strings — the drafter
+    falls back to the workflow doc's default ROLE framing when a template
+    is empty. Missing tab returns an empty dict.
+
+    Template syntax: text outside `{curly braces}` is copied verbatim into
+    the draft. Text inside `{curly braces}` is an instruction to the drafter
+    to generate that fragment dynamically (e.g. `Hi {first_name},` or
+    `{one-line hook from their LinkedIn headline}`). See Phase 5 of
+    docs/followup-generation-workflow.md for full semantics.
     """
     try:
         sh = _gspread_client()
-        ws = sh.worksheet(ICP_TEMPLATES_TAB)
+        ws = sh.worksheet(FOLLOWUP_TEMPLATES_TAB)
     except WorksheetNotFound:
         return {}
     except APIError as e:
-        raise SheetsError(f"failed opening ICP Templates: {e}") from e
+        raise SheetsError(f"failed opening Followup Templates: {e}") from e
 
     try:
         rows = ws.get_all_values()
     except APIError as e:
-        raise SheetsError(f"failed reading ICP Templates: {e}") from e
+        raise SheetsError(f"failed reading Followup Templates: {e}") from e
 
     if len(rows) < 2:
         return {}
-    out: dict[str, str] = {}
+
+    header_lower = [h.strip().lower() for h in rows[0]]
+
+    def col_idx(*candidates: str) -> int | None:
+        for cand in candidates:
+            try:
+                return header_lower.index(cand.lower())
+            except ValueError:
+                continue
+        return None
+
+    icp_idx = col_idx("icp", "icp name", "name")
+    if icp_idx is None:
+        icp_idx = 0  # legacy layout — assume ICP is column A
+    li_idx = col_idx("linkedin template", "linkedin")
+    email_idx = col_idx("email template", "email")
+    goal_idx = col_idx("goal", "goals")
+
+    def cell(row: list[str], idx: int | None) -> str:
+        if idx is None or idx >= len(row):
+            return ""
+        return row[idx].strip()
+
+    out: dict[str, dict[str, str]] = {}
     for row in rows[1:]:
-        icp = (row[0] if row else "").strip()
-        goal = (row[1] if len(row) > 1 else "").strip()
-        if icp and goal:
-            out[icp] = goal
+        icp = cell(row, icp_idx)
+        if not icp:
+            continue
+        out[icp] = {
+            "linkedin_template": cell(row, li_idx),
+            "email_template":    cell(row, email_idx),
+            "goal":              cell(row, goal_idx),
+        }
     return out
 
 

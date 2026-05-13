@@ -144,64 +144,6 @@ def test_followup_cell_unknown_qualify_value_falls_back_to_qualify():
     ) == "Qualify"
 
 
-def test_fresh_connection_priority_bumps_recent_no_reply():
-    """Connected <3 days ago + no_reply_yet → HIGH regardless of the tier
-    classifier's proposal. Strike while iron is warm."""
-    assert sheets.fresh_connection_priority(
-        days_since_connection=1,
-        cohort=sheets.COHORT_NO_REPLY,
-        fallback_priority="LOW",
-    ) == "HIGH"
-    assert sheets.fresh_connection_priority(
-        days_since_connection=5,
-        cohort=sheets.COHORT_NO_REPLY,
-        fallback_priority="LOW",
-    ) == "MEDIUM-HIGH"
-    assert sheets.fresh_connection_priority(
-        days_since_connection=10,
-        cohort=sheets.COHORT_NO_REPLY,
-        fallback_priority="LOW",
-    ) == "MEDIUM"
-
-
-def test_fresh_connection_priority_never_bumps_down():
-    """Engagement-driven HIGH stays HIGH even if the connection is old.
-    The freshness rule only adds urgency, never removes it."""
-    assert sheets.fresh_connection_priority(
-        days_since_connection=1,
-        cohort=sheets.COHORT_NO_REPLY,
-        fallback_priority="HIGH",
-    ) == "HIGH"
-    # Old connection at MEDIUM-HIGH from tier rules — leave alone.
-    assert sheets.fresh_connection_priority(
-        days_since_connection=60,
-        cohort=sheets.COHORT_NO_REPLY,
-        fallback_priority="MEDIUM-HIGH",
-    ) == "MEDIUM-HIGH"
-
-
-def test_fresh_connection_priority_only_applies_to_no_reply():
-    """Other cohorts are driven by engagement signals (ball-on-court,
-    met, ack-vs-substantive) that already capture recency. The freshness
-    bump is specifically for connected-but-silent leads where the
-    accept itself is the only signal we have."""
-    for c in (sheets.COHORT_MET, sheets.COHORT_BALL_ON_US,
-              sheets.COHORT_COLD_THREAD, sheets.COHORT_ACTIVE_IN_FLIGHT):
-        assert sheets.fresh_connection_priority(
-            days_since_connection=1, cohort=c, fallback_priority="LOW",
-        ) == "LOW"
-
-
-def test_fresh_connection_priority_handles_missing_timestamp():
-    """Legacy rows from before Deal.connected_at existed have None.
-    Don't bump them — the field's only meaningful when populated."""
-    assert sheets.fresh_connection_priority(
-        days_since_connection=None,
-        cohort=sheets.COHORT_NO_REPLY,
-        fallback_priority="LOW",
-    ) == "LOW"
-
-
 def test_fu_role_to_icp_covers_every_role():
     """Every workflow ROLE must map to an ICP — the drafter assumes total."""
     for r in sheets.FU_ROLES:
@@ -277,12 +219,15 @@ def test_email_search_hyperlink_empty_email_yields_empty_cell():
     assert sheets.email_search_hyperlink("") == ""
 
 
-def test_linkedin_message_hyperlink_uses_thread_when_available():
+def test_linkedin_message_hyperlink_uses_profile_even_with_thread_id():
+    """thread_external_id is accepted (back-compat) but ignored — the
+    thread-URL path produced broken links for the Voyager URN format, so
+    the column always resolves to the profile now."""
     out = sheets.linkedin_message_hyperlink(
-        "urn:li:conv:abc",
+        "urn:li:msg_conversation:(urn:li:fsd_profile:ABC,2-XYZ==)",
         profile_url="https://www.linkedin.com/in/jane/",
     )
-    assert "messaging/thread/abc/" in out
+    assert out == '=HYPERLINK("https://www.linkedin.com/in/jane/","Open in LinkedIn")'
 
 
 def test_linkedin_message_hyperlink_falls_back_to_profile():

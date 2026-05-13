@@ -1,0 +1,333 @@
+"""Rigid ICP-keyed outbound message templates for high-volume cohorts.
+
+Companion to `linkedin.notifications.sheets.read_followup_templates()` —
+that helper reads operator-editable templates from the `Followup Templates`
+Sheets tab, which carry a freeform `{Add personal message ...}` span that
+the followup drafter fills with an AI-generated 1-2 sentence hook per
+lead. That path is right for warm cohorts (ball-on-us, met, cold-thread,
+pre-meeting) where personalization is the lift, but it's overkill for
+the high-volume Connected/No-Reply cohort the daemon DMs rigidly via
+`linkedin/tasks/follow_up.py` — same canonical pitch blasted out with
+only the first name filled in.
+
+This module is the rigid alternative. Templates live in
+`linkedin/icp_messages.json` (checked into the repo). The shape is
+`{icp: {channel: [variant1, variant2, ...]}}` — multiple variants per
+ICP × channel so the batch doesn't look templated when scanned
+top-to-bottom. The only substitution is `{first_name}`; product name,
+URLs, signature, everything else is hardcoded literally in the message
+body. To change the wording, edit the JSON.
+
+Variant selection is seeded on `lead.id` so the same lead always gets
+the same variant across re-runs — useful when the operator edits a
+draft mid-run and re-renders. Lead `42` always lands on variant 0 (or
+whatever `42 % len(variants)` resolves to), not a random new one.
+
+Routing: ROLE → ICP via the same `FU_ROLE_TO_ICP` mapping the Sheets
+path uses, so a lead the followup workflow classifies as `ROLE=CSP`
+gets the `CSPs` template here. Channel rolls into Advisors, Assessor
+rolls into 3PAOs/Assessors (same as Sheets).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from linkedin.conf import ROOT_DIR
+from linkedin.exceptions import SheetsError
+from linkedin.notifications.sheets import FU_ROLE_TO_ICP
+
+logger = logging.getLogger(__name__)
+
+_MESSAGES_PATH = Path(__file__).parent / "icp_messages.json"
+
+# `{add <filename>}` placeholders attach a file to the send. The
+# placeholder text is stripped from the rendered body. Multiple
+# attachments per template are supported. Resolution order:
+#   1. If the value contains a path separator → resolve relative to
+#      ROOT_DIR verbatim (e.g. `{add assets/followup/demo.gif}`).
+#   2. Else → search `_ATTACH_SEARCH_DIRS` in order; first match wins
+#      (e.g. `{add demo.gif}` finds `assets/followup/demo.gif`).
+# Missing files log a warning and are silently dropped so a stale
+# template reference doesn't block the whole send.
+_ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
+# Both spellings supported — `assets/follow_up` (snake_case, matches the
+# Python `follow_up` task module) and `assets/followup` (no separator).
+# Trailing "" = ROOT_DIR itself for legacy callers.
+_ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
+
+
+@dataclass
+class FilledMessage:
+    """Body + resolved attachment paths from rendering a rigid ICP template.
+
+    Acts string-ish for backward compatibility: `str(filled)`, `"X" in filled`,
+    `filled == "..."` all delegate to `.body`. New callers should prefer
+    explicit `.body` / `.attachments` access for clarity.
+    """
+    body: str
+    attachments: list[Path] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        return self.body
+
+    def __contains__(self, item) -> bool:
+        return item in self.body
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, str):
+            return self.body == other
+        if isinstance(other, FilledMessage):
+            return self.body == other.body and self.attachments == other.attachments
+        return NotImplemented
+
+    def __ne__(self, other) -> bool:
+        eq = self.__eq__(other)
+        return NotImplemented if eq is NotImplemented else not eq
+
+    def __hash__(self) -> int:
+        return hash((self.body, tuple(self.attachments)))
+
+
+# ROLE classification — used by the daemon's follow_up Task handler to
+# pick which ICP template fires for a given Lead. The followup-sheet
+# workflow runs a fancier per-lead classifier inside its drafting
+# subagents (Phase 5 of `docs/followup-generation-workflow.md`); this
+# is the lighter-weight pure-Python version for the always-on daemon
+# path, where we can't afford an LLM call per send. Misclassification
+# downside is small — CSP is the default and the three templates all
+# read fine to anyone in the FedRAMP universe; the bucket only tunes
+# the angle (referral program vs assessor-portal vs CSP pitch).
+TIER1_3PAO_FIRMS = {
+    "coalfire", "schellman", "prescient", "a-lign", "alignsec",
+    "barr advisory", "barr", "kratos", "knowx", "fortreum",
+    "kpmg", "ey ", "deloitte", "pwc",  # big-four auditors that 3PAO
+}
+ADVISOR_SIGNALS = (
+    "advisor", "consultant", "vciso", "ciso advisor",
+    "managed service", "managed compliance", "compliance services",
+    "fractional", "principal", "managing director",
+    "compliance partner", "grc partner",
+)
+
+
+def resolve_icp(lead) -> str:
+    """Return the canonical ICP bucket for a lead, populating Lead.icp if blank.
+
+    Single source of truth used by both the connect-note picker and the
+    follow-up template path. Two write paths converge here:
+
+      1. `add_seeds` stamps `Lead.icp` at import from the CSV `ICP`
+         column (operator's sourcing intent, normalized via
+         `CSV_ICP_TO_LEAD_ICP`). This is the primary path for new leads.
+      2. This function backfills `Lead.icp` from `classify_role(lead)`
+         when it's still blank — typically a legacy lead imported before
+         the field existed, or imported via a path that didn't stamp it.
+         The result is cached on the row so subsequent calls are a free
+         attribute read.
+
+    Returns "" when the lead has no signal at all (no CSV ICP, no
+    scrape data yet). Callers should treat "" as "no template routing
+    available, fall back to env-var defaults". This is intentional —
+    sending under a wrong-bucket pitch is worse than sending under a
+    generic one.
+    """
+    if lead.icp:
+        return lead.icp
+
+    role = classify_role(lead)
+    icp = FU_ROLE_TO_ICP.get(role, "")
+    if icp:
+        lead.icp = icp
+        try:
+            lead.save(update_fields=["icp"])
+        except Exception as e:
+            # Don't fail the caller if the save bounces — they still get
+            # the resolved ICP. Next call will retry the save.
+            logger.warning("resolve_icp: save failed for lead=%s → %s", lead.pk, e)
+    return icp
+
+
+def classify_role(lead) -> str:
+    """Map a Lead to one of `FU_ROLES` based on company + headline signals.
+
+    Deterministic, no LLM. Order matters: 3PAO check first (strong signal
+    from the firm name), then Advisor (headline / summary signal), then
+    fall back to CSP as the broad default. Channel and Assessor aren't
+    auto-detected here — the daemon's deterministic path doesn't have
+    enough signal to distinguish a Channel/reseller role from a CSP
+    employee from the LinkedIn description alone, and Channel rolls into
+    the Advisor template anyway via `FU_ROLE_TO_ICP`. If the operator
+    needs a Channel-specific draft they can override via the followup
+    sheet, which is what the bespoke per-lead drafter is for.
+    """
+    co = (lead.company_name or "").lower()
+    if any(t in co for t in TIER1_3PAO_FIRMS):
+        return "3PAO"
+
+    headline_summary = ""
+    if lead.description:
+        try:
+            prof = json.loads(lead.description)
+            headline_summary = (
+                f"{prof.get('headline', '')} {prof.get('summary', '')}".lower()
+            )
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if any(s in headline_summary for s in ADVISOR_SIGNALS):
+        return "Advisor"
+    return "CSP"
+
+
+def load_icp_messages() -> dict[str, dict[str, list[str]]]:
+    """Return `{icp: {channel: [variant, ...]}}` from the JSON file.
+
+    Loaded fresh on every call so an operator edit of the file takes
+    effect on the next followup run without needing a process restart.
+    """
+    return json.loads(_MESSAGES_PATH.read_text())
+
+
+def fill_message(
+    *,
+    icp: str,
+    channel: str,
+    first_name: str,
+    last_name: str = "",
+    company_name: str = "",
+    my_name: str = "",
+    lead_id: int | None = None,
+    variant_index: int | None = None,
+) -> str:
+    """Pick a variant from the rigid template and substitute placeholders.
+
+    Mechanical substitutions only (no LLM generation):
+      - `{first_name}` — lead's first name
+      - `{last_name}`  — lead's last name (rarely used in current templates)
+      - `{company_name}` — lead's company (CSP template uses this)
+      - `{my_name}` — operator's display name (email signatures only)
+
+    Variant selection precedence:
+      1. Explicit `variant_index` (if provided) — caller controls.
+      2. `lead_id` mod len(variants) — stable across re-runs for a lead.
+      3. Index 0 — fallback when neither is supplied.
+
+    Missing ICP or channel raises `SheetsError` per the project's
+    no-silent-fallback rule; sending a wrong-bucket message in
+    production is a worse outcome than crashing the run.
+    """
+    messages = load_icp_messages()
+    if icp not in messages:
+        raise SheetsError(
+            f"icp_outbound: ICP {icp!r} has no rigid template "
+            f"(known: {sorted(messages)})"
+        )
+    variants = messages[icp].get(channel)
+    if not variants:
+        raise SheetsError(
+            f"icp_outbound: ICP {icp!r} has no {channel!r} channel "
+            f"variants (known channels: {sorted(messages[icp])})"
+        )
+
+    if variant_index is not None:
+        idx = variant_index % len(variants)
+    elif lead_id is not None:
+        idx = lead_id % len(variants)
+    else:
+        idx = 0
+
+    # IMPORTANT: extract `{add <filename>}` placeholders BEFORE str.format —
+    # otherwise format() sees them as named placeholders and raises KeyError
+    # on "add demo.gif" since there's no matching kwarg.
+    template = variants[idx]
+    stripped, attachments = _extract_attachments(template)
+    body = stripped.format(
+        first_name=first_name or "",
+        last_name=last_name or "",
+        company_name=company_name or "",
+        my_name=my_name or "",
+    )
+    # Collapse the blank line the stripped placeholder leaves behind.
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    return FilledMessage(body=body, attachments=attachments)
+
+
+def _extract_attachments(template: str) -> tuple[str, list[Path]]:
+    """Strip `{add <filename>}` from `template` and resolve each filename.
+
+    Returns `(template_without_attach_placeholders, resolved_paths)`.
+    Missing files are logged-and-dropped so a stale reference doesn't
+    block the send.
+    """
+    attachments: list[Path] = []
+
+    def _swap(match):
+        filename = match.group(1).strip()
+        candidate = _resolve_attachment(filename)
+        if candidate:
+            attachments.append(candidate)
+        else:
+            logger.warning(
+                "icp_outbound: attachment %r referenced in template but not found "
+                "(searched %s)",
+                filename,
+                [str(ROOT_DIR / d / filename) for d in _ATTACH_SEARCH_DIRS],
+            )
+        return ""
+
+    return _ATTACH_RE.sub(_swap, template), attachments
+
+
+def _resolve_attachment(filename: str) -> Path | None:
+    """Search ROOT_DIR-relative paths for an attachment. Returns None on miss."""
+    # Explicit path → resolve verbatim relative to ROOT_DIR.
+    if "/" in filename or "\\" in filename:
+        path = ROOT_DIR / filename
+        return path if path.exists() else None
+    # Bare filename → search known asset dirs in order.
+    for subdir in _ATTACH_SEARCH_DIRS:
+        path = ROOT_DIR / subdir / filename if subdir else ROOT_DIR / filename
+        if path.exists():
+            return path
+    return None
+
+
+def fill_for_lead(
+    *,
+    role: str,
+    channel: str,
+    lead,
+    my_name: str = "",
+) -> str:
+    """Convenience wrapper — resolves ROLE → ICP and pulls lead fields.
+
+    Equivalent to `fill_message(icp=FU_ROLE_TO_ICP[role], channel=channel,
+    first_name=lead.first_name, last_name=lead.last_name,
+    company_name=lead.company_name, my_name=my_name,
+    lead_id=lead.id)`. Used by the daemon's follow_up handler so
+    callers can stay in lead-space without thinking about the ICP key
+    or variant rotation.
+
+    `my_name` is the operator's canonical handle ("Arian" / "Chuka")
+    used only by email-channel templates (signature block). LinkedIn
+    templates have no signature, so passing it has no effect there.
+    """
+    icp = FU_ROLE_TO_ICP.get(role)
+    if not icp:
+        raise SheetsError(
+            f"icp_outbound: ROLE {role!r} has no ICP mapping in "
+            f"FU_ROLE_TO_ICP (known ROLEs: {sorted(FU_ROLE_TO_ICP)})"
+        )
+    return fill_message(
+        icp=icp,
+        channel=channel,
+        first_name=lead.first_name or "",
+        last_name=getattr(lead, "last_name", "") or "",
+        company_name=getattr(lead, "company_name", "") or "",
+        my_name=my_name,
+        lead_id=getattr(lead, "id", None),
+    )
