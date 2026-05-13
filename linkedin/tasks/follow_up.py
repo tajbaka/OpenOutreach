@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import logging
 
+from django.db import connections
+from django.db.utils import InterfaceError, OperationalError
 from termcolor import colored
 
 from linkedin.conf import ENABLE_FOLLOW_UP
@@ -39,6 +41,9 @@ from linkedin.icp_outbound import classify_role, fill_for_lead
 from linkedin.models import ActionLog
 
 logger = logging.getLogger(__name__)
+
+# DB errors that mean "fresh connection needed" — Neon idle-timeout drops.
+_DB_DEAD_ERRORS = (OperationalError, InterfaceError)
 
 
 def handle_follow_up(task, session, qualifiers):
@@ -191,9 +196,29 @@ def handle_follow_up(task, session, qualifiers):
         )
         return
 
-    session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
-    set_profile_state(
-        session, public_id, "Completed",
-        reason=f"Sent ICP-{role} follow-up DM",
-    )
+    # Post-send DB writes — critical: if `set_profile_state` doesn't run,
+    # the Deal stays at CONNECTED and a future task will re-send the same
+    # DM (duplicate). Wrap both writes so a Neon idle-timeout mid-task
+    # (DM already sent on LinkedIn) gets a fresh conn + one retry before
+    # we let the exception escape to the daemon's task except block.
+    try:
+        session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
+        set_profile_state(
+            session, public_id, "Completed",
+            reason=f"Sent ICP-{role} follow-up DM",
+        )
+    except _DB_DEAD_ERRORS as e:
+        logger.warning(
+            "follow_up post-send DB writes hit dead conn for %s (DM already "
+            "sent on LinkedIn) — recycling conn and retrying once: %s",
+            public_id, e,
+        )
+        connections.close_all()
+        # Bound model instances refresh on next attribute access; method
+        # calls on `session.linkedin_profile` reopen the connection.
+        session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
+        set_profile_state(
+            session, public_id, "Completed",
+            reason=f"Sent ICP-{role} follow-up DM",
+        )
     logger.info("follow_up sent to %s (role=%s)", public_id, role)

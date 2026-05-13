@@ -1,13 +1,25 @@
 """Rigid ICP-keyed outbound template tests.
 
 `linkedin.icp_outbound` is the no-LLM path for the high-volume
-no-reply cohort. Substitution is just `{first_name}`; everything else
-in the message body is hardcoded literally in the JSON.
+no-reply cohort. Substitution covers `{first_name}` plus the env-driven
+`{our_company_name}` / `{our_website_url}` so a rebrand only needs an
+.env edit (no JSON / code change).
 """
 import pytest
 
 from linkedin import icp_outbound
 from linkedin.exceptions import SheetsError
+
+
+@pytest.fixture(autouse=True)
+def _stub_brand(monkeypatch):
+    """Pin {our_company_name} and {our_website_url} to known values so
+    assertions don't depend on whatever .env currently holds. `fill_message`
+    does a fresh `from linkedin.conf import OUR_COMPANY_NAME` inside its
+    body each call, so patching `linkedin.conf.*` is what reaches the
+    substitution."""
+    monkeypatch.setattr("linkedin.conf.OUR_COMPANY_NAME", "BrandCo")
+    monkeypatch.setattr("linkedin.conf.OUR_WEBSITE_URL", "https://brand.co/")
 
 
 def test_load_icp_messages_returns_known_buckets():
@@ -28,9 +40,11 @@ def test_load_icp_messages_returns_lists_of_variants():
             assert all(isinstance(v, str) for v in variants)
 
 
-def test_fill_message_substitutes_first_name_only():
-    """{first_name} fills, everything else (product name, URL, etc.) is
-    hardcoded in the JSON. No env-var indirection."""
+def test_fill_message_substitutes_first_name_and_brand():
+    """{first_name}, {our_company_name}, and {our_website_url} all fill.
+    The brand fields come from `.env` via `linkedin.conf`, pinned to
+    `BrandCo` / `https://brand.co/` by the autouse `_stub_brand` fixture
+    so the assertion doesn't drift with operator-side env edits."""
     out = icp_outbound.fill_message(
         icp="CSPs",
         channel="linkedin",
@@ -38,7 +52,8 @@ def test_fill_message_substitutes_first_name_only():
         variant_index=0,
     )
     assert "Hey Jane," in out or "Hi Jane" in out or "Jane," in out
-    assert "FedrampGPT" in out  # hardcoded in body
+    assert "BrandCo" in out
+    assert "https://brand.co/" in out
     assert "{" not in out  # no leftover placeholders
 
 
@@ -114,8 +129,8 @@ def test_fill_message_missing_first_name_renders_empty():
         first_name="",
         variant_index=0,
     )
-    # Variant 0 starts with "Hey {first_name}, ..." → "Hey , ..."
-    assert "FedrampGPT" in out  # still well-formed message
+    # Variant 0 starts with "Hi {first_name}, ..." → "Hi , ..."
+    assert "BrandCo" in out  # still well-formed message (brand substituted)
     assert "{" not in out
 
 
@@ -131,11 +146,15 @@ def test_fill_for_lead_resolves_role_to_icp():
             self.id = lid
 
     role_to_expected_substring = {
-        "CSP":      "FedRamp 20x at Acme",                 # CSPs uses {company_name}
-        "3PAO":     "accessor portal",                     # 3PAOs/Assessors-specific
-        "Advisor":  "referral program that gives advisors",  # Advisors-specific copy
-        "Channel":  "referral program that gives advisors",  # rolls into Advisors
-        "Assessor": "accessor portal",                     # rolls into 3PAOs/Assessors
+        # Each substring must appear in ONLY one ICP's body so the test
+        # actually proves ROLE→ICP routing landed in the right bucket.
+        # FU_ROLE_TO_ICP: CSP→CSPs, 3PAO/Assessor→3PAOs/Assessors,
+        # Advisor→Advisors, Channel→Channel (own bucket since 2026-05-13).
+        "CSP":      "billable hours to advisors",           # CSPs-only copy
+        "3PAO":     "accessor portal",                      # 3PAOs/Assessors-specific
+        "Advisor":  "referral program that gives advisors", # Advisors-specific copy
+        "Channel":  "channel partner program with commission",  # Channel-specific
+        "Assessor": "accessor portal",                      # rolls into 3PAOs/Assessors
     }
     for role, expected in role_to_expected_substring.items():
         out = icp_outbound.fill_for_lead(

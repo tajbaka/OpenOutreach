@@ -8,6 +8,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from django.db import connections
+from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from termcolor import colored
@@ -340,6 +341,41 @@ def heal_tasks(session):
     logger.info("Task queue healed: %d pending tasks", pending_count)
 
 
+# DB error classes that mean "the SSL socket is dead, you need a fresh
+# connection." Neon's idle-timeout disconnect surfaces as both depending on
+# where in the request lifecycle the kill lands.
+_DB_DEAD_ERRORS = (OperationalError, InterfaceError)
+
+
+def _safe_mark_failed(task, error_text: str) -> bool:
+    """`task.mark_failed` that survives a dead Neon connection.
+
+    Returns True if mark_failed succeeded, False if both attempts failed.
+    On False, the task is left in `RUNNING` and gets healed back to
+    `PENDING` on next daemon startup by `heal_tasks` — operationally safe,
+    just costs one stale-task recovery line on the next launch.
+    """
+    try:
+        task.mark_failed(error_text)
+        return True
+    except _DB_DEAD_ERRORS as e:
+        logger.warning(
+            "mark_failed for task %s hit a dead DB conn (%s) — recycling "
+            "and retrying once", task.id, e.__class__.__name__,
+        )
+        try:
+            connections.close_all()
+            task.refresh_from_db()
+            task.mark_failed(error_text)
+            return True
+        except Exception:
+            logger.exception(
+                "mark_failed retry also failed for task %s — leaving it "
+                "RUNNING for heal_tasks to recover on next start", task.id,
+            )
+            return False
+
+
 def run_daemon(session):
     from linkedin.ml.hub import fetch_kit
     from linkedin.setup.freemium import import_freemium_campaign
@@ -424,22 +460,35 @@ def run_daemon(session):
         else:
             campaign = Campaign.objects.filter(pk=task.payload.get("campaign_id")).first()
             if not campaign:
-                task.mark_failed(f"Campaign {task.payload.get('campaign_id')} not found")
+                _safe_mark_failed(task, f"Campaign {task.payload.get('campaign_id')} not found")
                 continue
             session.campaign = campaign
+
+        # Pre-flight: detect a stale Neon socket BEFORE we start the work,
+        # so a dead conn doesn't surface mid-task (e.g. after the DM was
+        # already sent on LinkedIn — that path leaves orphaned state).
+        # ensure_connection() opens a fresh connection if the current one
+        # is closed; close_all() ahead of it guarantees we're not reusing
+        # a known-dead socket.
+        try:
+            connections["default"].ensure_connection()
+        except _DB_DEAD_ERRORS:
+            logger.warning("Pre-flight ensure_connection saw a dead conn — recycling")
+            connections.close_all()
+            connections["default"].ensure_connection()
 
         task.mark_running()
 
         handler = _HANDLERS.get(task.task_type)
         if handler is None:
-            task.mark_failed(f"Unknown task type: {task.task_type}")
+            _safe_mark_failed(task, f"Unknown task type: {task.task_type}")
             continue
 
         try:
             with failure_diagnostics(session):
                 handler(task, session, qualifiers)
         except Exception as exc:
-            task.mark_failed(traceback.format_exc())
+            _safe_mark_failed(task, traceback.format_exc())
             logger.exception("Task %s failed", task)
             notify_error(
                 f"daemon:{task.task_type}",

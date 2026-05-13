@@ -288,8 +288,16 @@ class TestHandleFollowUp:
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_sends_icp_dm_when_no_reply(
         self, mock_conversation, mock_send, mock_send_media, fake_session,
+        monkeypatch,
     ):
         from crm.models import Lead, Message
+        # Pin {our_company_name} / {our_website_url} to a known test brand
+        # so the assertion below doesn't drift with .env edits. `fill_message`
+        # does a fresh `from linkedin.conf import OUR_COMPANY_NAME` inside its
+        # body each call, so patching `linkedin.conf.*` is what reaches the
+        # substitution; an `icp_outbound.*` patch wouldn't (no such attr).
+        monkeypatch.setattr("linkedin.conf.OUR_COMPANY_NAME", "BrandCo")
+        monkeypatch.setattr("linkedin.conf.OUR_WEBSITE_URL", "https://brand.co/")
         _make_connected(fake_session)
         # Seed an outbound so the "no-thread" guard doesn't short-circuit.
         # We're testing the happy path: connection note was sent, lead never
@@ -321,7 +329,7 @@ class TestHandleFollowUp:
             mock_send_media.call_args.args[2] if mock_send_media.called
             else mock_send.call_args.args[2]
         )
-        assert "FedrampGPT" in sent_message
+        assert "BrandCo" in sent_message  # {our_company_name} substituted
         assert "Alice" in sent_message
 
     @patch("linkedin.actions.message.send_raw_message")
