@@ -40,7 +40,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from crm.models import Deal, Lead, Message
-from linkedin.db.urls import url_to_public_id
+from linkedin.db.urls import public_id_to_url, url_to_public_id
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign
 
@@ -100,7 +100,10 @@ def parse_csv(fp: IO) -> Iterable[CsvRow]:
             continue
         yield CsvRow(
             public_id=public_id,
-            linkedin_url=url,
+            # Canonical form — must match what the daemon's URL-keyed Deal
+            # lookups build via public_id_to_url(). Storing the raw CSV URL
+            # (often missing the trailing slash) silently breaks follow_up.
+            linkedin_url=public_id_to_url(public_id),
             first_name=(row.get("First Name") or "").strip(),
             outbound_message=(row.get("Message") or "").strip(),
         )
