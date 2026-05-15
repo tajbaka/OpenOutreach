@@ -85,25 +85,6 @@ CONNECTION_SWEEP_INTERVAL_HOURS = float(os.getenv("CONNECTION_SWEEP_INTERVAL_HOU
 # ----------------------------------------------------------------------
 # Campaign config (timing + ML defaults — hardcoded, no YAML)
 # ----------------------------------------------------------------------
-# ----------------------------------------------------------------------
-# Connection note templates (sent with connection requests)
-# ----------------------------------------------------------------------
-def _parse_note_variants(env_key: str) -> list[str]:
-    """Parse a `|||`-delimited env var into a list of note templates.
-    Single-string values (no `|||`) become a one-element list. Empty → [].
-    """
-    raw = os.getenv(env_key, "").strip()
-    if not raw:
-        return []
-    return [v.replace("\\n", "\n").strip() for v in raw.split("|||") if v.strip()]
-
-
-# Connection notes are pipe-delimited (`|||`) lists of variants in `.env`.
-# `build_connection_note()` picks one at random per send to defeat templated-
-# text detection. Add new variants by appending `|||<text>` to the env value.
-CONNECTION_NOTE_PERSONALIZED = _parse_note_variants("CONNECTION_NOTE_PERSONALIZED")
-CONNECTION_NOTE_FALLBACK = _parse_note_variants("CONNECTION_NOTE_FALLBACK")
-
 # Master kill-switch for all follow-up messaging. When false, the daemon
 # stops at the connect step: connection invites still go out, but no
 # post-accept message and no follow-up agent ever runs. Existing pending

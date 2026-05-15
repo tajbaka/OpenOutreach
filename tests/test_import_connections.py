@@ -48,6 +48,17 @@ def test_parse_csv_basic():
     assert rows[0].outbound_message == "Hey Waylon"
 
 
+def test_parse_csv_canonicalizes_url():
+    """A URL missing the trailing slash must be stored canonically — the
+    daemon's follow_up Deal lookup builds public_id_to_url() (always
+    slashed), so a raw non-canonical URL silently breaks follow-ups."""
+    rows = list(parse_csv(_csv("""\
+        LinkedIn URL,First Name
+        https://www.linkedin.com/in/waylonkrush,Waylon
+    """)))
+    assert rows[0].linkedin_url == "https://www.linkedin.com/in/waylonkrush/"
+
+
 def test_parse_csv_message_column_optional():
     rows = list(parse_csv(_csv("""\
         LinkedIn URL,First Name
@@ -251,11 +262,12 @@ def test_handle_end_to_end_creates_connected_deal_for_matches(
 
     bf_session = MagicMock()
     bf_session.start.return_value = None
+    bf_session.username = "backfill@example.com"
     mock_make_session.return_value = bf_session
     mock_scrape.return_value = [
         ConnectionEntry(
             public_id="waylonkrush",
-            full_name="Waylon Krush",
+            name="Waylon Krush",
             connected_on=date(2026, 4, 1),
         ),
     ]

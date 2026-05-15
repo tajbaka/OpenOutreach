@@ -19,8 +19,6 @@ from linkedin.conf import (
     ACTIVE_END_HOUR,
     ACTIVE_START_HOUR,
     CAMPAIGN_CONFIG,
-    CONNECTION_NOTE_FALLBACK,
-    CONNECTION_NOTE_PERSONALIZED,
     ENABLE_CONNECT,
     OUR_COMPANY_NAME,
     OUR_WEBSITE_URL,
@@ -37,21 +35,16 @@ MAX_CONNECT_ATTEMPTS = 3
 
 
 def build_connection_note(lead_id: int | None) -> str:
-    """Build a connection note for the lead, ICP-keyed when possible.
+    """Build a connection note for the lead, ICP-keyed via `icp_messages.json`.
 
-    Routing precedence:
-      1. `Lead.icp` resolves to a bucket in `icp_messages.json` with a
-         `linkedin_connect_note` channel → pick a variant from that bucket.
-         Source of truth: CSV `ICP` column stamped at `add_seeds` time,
-         or `resolve_icp()` backfill at first scrape.
-      2. ICP blank, unmapped, or template missing → fall back to the
-         env-var pool (`CONNECTION_NOTE_PERSONALIZED` /
-         `CONNECTION_NOTE_FALLBACK`, pipe-delimited variants).
+    `Lead.icp` resolves to a bucket with a `linkedin_connect_note` channel
+    → pick a variant from that bucket. Source of truth: CSV `ICP` column
+    stamped at `add_seeds` time, or `resolve_icp()` backfill at first
+    scrape. If the lead has no resolvable ICP, or the template is missing,
+    return "" — a note-less connection request is fine.
 
     Variant selection within a bucket: random (defeats templated-text
-    detection across batches). Variant is `.format()`'d with
-    `first_name` only — no other substitutions at connect time, since
-    we typically haven't scraped the lead's profile yet.
+    detection across batches).
     """
     from crm.models import Lead
     from linkedin.icp_outbound import load_icp_messages, resolve_icp
@@ -89,22 +82,15 @@ def build_connection_note(lead_id: int | None) -> str:
                     )
                 except KeyError as e:
                     # Unknown placeholder in template → log the offender
-                    # so the operator can fix the JSON, then fall back to
-                    # the env-var pool rather than crash the connect Task.
+                    # so the operator can fix the JSON, then send note-less
+                    # rather than crash the connect Task.
                     logger.error(
                         "build_connection_note: template for icp=%r has "
                         "unknown placeholder %s — fix linkedin/icp_messages.json. "
-                        "Falling back to env-var pool for this send.",
+                        "Sending note-less for this connect.",
                         icp, e,
                     )
 
-    # Env-var fallback (legacy path) — used for leads with no ICP, for
-    # ICPs without a `linkedin_connect_note` channel, or when an ICP
-    # template has an unknown placeholder (logged above).
-    if first_name and CONNECTION_NOTE_PERSONALIZED:
-        return random.choice(CONNECTION_NOTE_PERSONALIZED).format(first_name=first_name)
-    if CONNECTION_NOTE_FALLBACK:
-        return random.choice(CONNECTION_NOTE_FALLBACK)
     return ""
 
 

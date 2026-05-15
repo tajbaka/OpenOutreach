@@ -5,9 +5,6 @@
     ],
     "linkedin": [
       "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
-    ],
-    "email": [
-      "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
     ]
   },
 
@@ -17,9 +14,6 @@
     ],
     "linkedin": [
       "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWe have a referral program that gives 3POAs a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
-    ],
-    "email": [
-      "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWe have a referral program that gives 3POAs a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\nBest Regards,\n\n{my_name}\n\n{add demo.gif}"
     ]
   },
 
@@ -29,9 +23,6 @@
     ],
     "linkedin": [
       "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n\nWe have a referral program that gives advisors a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
-    ],
-    "email": [
-      "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n\nWe have a referral program that gives advisors a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\n\nBest Regards,\n\n{my_name}\n\n{add demo.gif}"
     ]
   },
 
@@ -43,9 +34,6 @@
     ],
     "linkedin": [
       "Hi {first_name},\n\n{our_company_name} compresses FedRAMP authorization + ConMon work for CSPs. Curious if there's a fit with how you bundle / co-sell to your customers.\n\n- AI drafts SSP narratives + POA&M closure trails\n- Continuous evidence ingest from AWS/Azure/GCP\n- Live demo at {our_website_url}\n\nWe have a channel partner program with commission on CSP customers that sign up through you.\n\nWorth a 2-min chat on partnership angles?\n\n{add demo.gif}"
-    ],
-    "email": [
-      "Hi {first_name},\n\n{our_company_name} compresses FedRAMP authorization + ConMon work for CSPs. Curious if there's a fit with how you bundle / co-sell to your customers.\n\n- AI drafts SSP narratives + POA&M closure trails\n- Continuous evidence ingest from AWS/Azure/GCP\n- Live demo at {our_website_url}\n\nWe have a channel partner program with commission on CSP customers that sign up through you.\n\nWorth a 2-min chat on partnership angles?\n\nBest Regards,\n\n{my_name}\n\n{add demo.gif}"
     ]
   }
 }

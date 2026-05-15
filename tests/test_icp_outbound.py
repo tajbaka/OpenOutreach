@@ -167,36 +167,6 @@ def test_fill_for_lead_resolves_role_to_icp():
         )
 
 
-def test_fill_for_lead_email_inserts_my_name_signature():
-    """Email channel templates end in `Best Regards,\\n\\n{my_name}` —
-    confirm the operator handle lands in the signature."""
-    class StubLead:
-        first_name = "Jane"
-        last_name = "Doe"
-        company_name = "Acme"
-        id = 1
-
-    out = icp_outbound.fill_for_lead(
-        role="CSP",  # CSP email template doesn't have signature block actually
-        channel="email",
-        lead=StubLead(),
-        my_name="Arian",
-    )
-    # CSP email doesn't have signature, just confirm no leftover braces
-    assert "{" not in out
-
-    # 3PAO email DOES have signature
-    out = icp_outbound.fill_for_lead(
-        role="3PAO",
-        channel="email",
-        lead=StubLead(),
-        my_name="Arian",
-    )
-    assert "Best Regards" in out
-    assert "Arian" in out
-    assert "{" not in out
-
-
 def test_fill_for_lead_unknown_role_raises():
 
     class StubLead:
