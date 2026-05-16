@@ -45,7 +45,7 @@ class AccountSession:
         from linkedin.models import Campaign
         from linkedin.conf import ENABLE_FREEMIUM_CAMPAIGN
 
-        campaigns = Campaign.objects.filter(users=self.django_user)
+        campaigns = Campaign.objects.filter(user=self.django_user)
         if not ENABLE_FREEMIUM_CAMPAIGN:
             campaigns = campaigns.filter(is_freemium=False)
         return campaigns

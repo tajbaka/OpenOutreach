@@ -355,6 +355,86 @@ class TestHandleFollowUp:
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
         mock_send.assert_not_called()
 
+    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_skips_when_same_operator_already_followed_up(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
+    ):
+        """A Lead this operator already daemon-followed-up (e.g. from
+        another campaign — leads can hold Deals in >1 campaign) must not
+        be DM'd again by the same operator. `daemon-send:` external_ids
+        are the dedup marker."""
+        from crm.models import Lead, Message
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        # Prior daemon follow-up by THIS operator (another campaign).
+        Message.objects.create(
+            lead=lead, source=Message.Source.LINKEDIN,
+            external_id=f"daemon-send:{lead.pk}:1778800000",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(prior follow-up DM)",
+            sent_at=timezone.now() - timedelta(days=1),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        qualifiers = _build_context(fake_session)
+        handle_follow_up(task, fake_session, qualifiers)
+
+        # Deduped: marked Completed, no second DM, no rate-limit action logged.
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        mock_send.assert_not_called()
+        mock_send_media.assert_not_called()
+        assert ActionLog.objects.filter(
+            action_type=ActionLog.ActionType.FOLLOW_UP
+        ).count() == 0
+
+    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_sends_when_only_a_different_operator_followed_up(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
+    ):
+        """Dedup is operator-scoped: a `daemon-send:` from a DIFFERENT
+        operator is a separate account's separate outreach and must not
+        block this operator's own first follow-up."""
+        from crm.models import Lead, Message
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        me = fake_session.linkedin_profile.linkedin_username
+        # This operator owns the thread (a non-daemon-send outbound) so the
+        # owner-scoping guard lets us through...
+        Message.objects.create(
+            lead=lead, source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note",
+            direction=Message.Direction.OUTBOUND, sender=me,
+            body="(connection note)", sent_at=timezone.now() - timedelta(days=5),
+        )
+        # ...but the only prior *daemon follow-up* was a different operator.
+        Message.objects.create(
+            lead=lead, source=Message.Source.LINKEDIN,
+            external_id=f"daemon-send:{lead.pk}:1778800000",
+            direction=Message.Direction.OUTBOUND,
+            sender="other-operator@example.com",
+            body="(other operator's follow-up)",
+            sent_at=timezone.now() - timedelta(days=1),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        qualifiers = _build_context(fake_session)
+        handle_follow_up(task, fake_session, qualifiers)
+
+        # Not deduped: this operator's own follow-up still goes out.
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        assert mock_send.called or mock_send_media.called
+
     @patch("linkedin.actions.message.send_media_message", return_value=False)
     @patch("linkedin.actions.message.send_raw_message", return_value=False)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)

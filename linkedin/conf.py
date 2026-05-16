@@ -202,7 +202,7 @@ def get_daemon_handle() -> str | None:
       1. `LINKEDIN_USERNAME` env var matches an existing row → return it.
       2. `LINKEDIN_USERNAME` set but NO row matches AND `LINKEDIN_PASSWORD`
          is also set → auto-materialize a User + LinkedInProfile from env
-         and join all existing Campaigns. Next boot finds the row directly.
+         without claiming any Campaigns. Next boot finds the row directly.
       3. `LINKEDIN_USERNAME` set but NO row matches AND no
          `LINKEDIN_PASSWORD` → refuse to start (return None). The daemon's
          caller exits with a clear message rather than guessing.
@@ -258,9 +258,9 @@ def get_daemon_handle() -> str | None:
 
 
 def _materialize_profile_from_env(linkedin_username: str, linkedin_password: str) -> str:
-    """Create User + LinkedInProfile from env credentials and join all
-    existing Campaigns. Used by get_daemon_handle when LINKEDIN_USERNAME
-    points at an account that doesn't have a DB row yet.
+    """Create User + LinkedInProfile from env credentials. Used by
+    get_daemon_handle when LINKEDIN_USERNAME points at an account that
+    doesn't have a DB row yet.
 
     First-run onboarding for a new operator without making them touch
     Django Admin — matches the UX of the backfill scripts where editing
@@ -274,7 +274,7 @@ def _materialize_profile_from_env(linkedin_username: str, linkedin_password: str
     import logging
     logger = logging.getLogger(__name__)
     from django.contrib.auth.models import User
-    from linkedin.models import LinkedInProfile, Campaign
+    from linkedin.models import LinkedInProfile
 
     # Django username = local-part of the email with dots stripped.
     # The registry / session machinery keys on this string; making it
@@ -294,18 +294,10 @@ def _materialize_profile_from_env(linkedin_username: str, linkedin_password: str
         legal_accepted=True,
         newsletter_processed=True,
     )
-    # Join all existing Campaigns. The daemon's per-task campaign switch
-    # (linkedin/daemon.py:421-428) picks the right one off the Task
-    # payload's `campaign_id`, so over-joining here is harmless — and
-    # under-joining would break startup with "No campaigns found".
-    joined = 0
-    for campaign in Campaign.objects.all():
-        campaign.users.add(user)
-        joined += 1
 
     logger.info(
-        "Auto-materialized LinkedInProfile for %s (handle=%s, "
-        "user_created=%s, joined %d campaigns).",
-        linkedin_username, handle, user_created, joined,
+        "Auto-materialized LinkedInProfile for %s (handle=%s, user_created=%s). "
+        "No campaigns were auto-assigned.",
+        linkedin_username, handle, user_created,
     )
     return handle

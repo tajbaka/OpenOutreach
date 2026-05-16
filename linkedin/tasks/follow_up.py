@@ -166,6 +166,39 @@ def handle_follow_up(task, session, qualifiers):
         )
         return
 
+    # Same-operator cross-campaign dedup. A follow-up DM is one-per-person-
+    # per-operator, but follow_up Tasks are per-Deal (campaign-scoped) — a
+    # Lead with CONNECTED Deals in two campaigns gets one Task per campaign,
+    # and the per-campaign state writes never see each other. When the same
+    # operator runs both campaigns (Arian's setup, 2026-05-15), both fire and
+    # the person gets the same rigid pitch twice from one account.
+    #
+    # Scoped to *this operator*: a `daemon-send:` from a DIFFERENT operator
+    # is a separate account's separate outreach and must not block our send.
+    # (The owner-scoping guard above already blocks an operator who never
+    # owned the thread; this handles the case where two operators both do.)
+    # `daemon-send:` external_ids are written only by the daemon's own
+    # follow-up sends (`save_chat_message`). Also closes the latent same-
+    # campaign re-send hole when a prior send succeeded but its
+    # `set_profile_state` write failed.
+    prior_followup_senders = (
+        Message.objects.filter(
+            lead=deal.lead,
+            source=Message.Source.LINKEDIN,
+            direction=Message.Direction.OUTBOUND,
+            external_id__startswith="daemon-send:",
+        )
+        .exclude(sender="")
+        .values_list("sender", flat=True)
+        .distinct()
+    )
+    if our_operator in {resolve_operator(s) for s in prior_followup_senders}:
+        set_profile_state(
+            session, public_id, "Completed",
+            reason="Follow-up already sent by this operator (deduped across campaigns)",
+        )
+        return
+
     # ICP-keyed send. `my_name` is unused for LinkedIn channel (no
     # signature block in those templates), passed for symmetry with the
     # email channel where {my_name} fills the sign-off. Templates can

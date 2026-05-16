@@ -51,7 +51,7 @@ class FakeAccountSession:
     @property
     def campaigns(self):
         from linkedin.models import Campaign
-        return Campaign.objects.filter(users=self.django_user)
+        return Campaign.objects.filter(user=self.django_user)
 
     def ensure_browser(self):
         pass
@@ -66,8 +66,10 @@ def fake_session(db):
 
     campaign = Campaign.objects.first()
     if campaign is None:
-        campaign = Campaign.objects.create(name="LinkedIn Outreach")
-    campaign.users.add(user)
+        campaign = Campaign.objects.create(name="LinkedIn Outreach", user=user)
+    else:
+        campaign.user = user
+        campaign.save(update_fields=["user"])
 
     linkedin_profile, _ = LinkedInProfile.objects.get_or_create(
         user=user,

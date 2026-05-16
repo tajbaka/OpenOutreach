@@ -8,8 +8,8 @@ from linkedin.models import ActionLog, Campaign, LinkedInProfile, SearchKeyword,
 
 @admin.register(Campaign)
 class CampaignAdmin(admin.ModelAdmin):
-    list_display = ("name", "booking_link", "is_freemium", "action_fraction")
-    filter_horizontal = ("users",)
+    list_display = ("name", "user", "booking_link", "is_freemium", "action_fraction")
+    raw_id_fields = ("user",)
 
 
 @admin.register(LinkedInProfile)

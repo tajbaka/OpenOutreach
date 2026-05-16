@@ -196,7 +196,7 @@ def heal_tasks(session):
 
     if not ENABLE_FREEMIUM_CAMPAIGN:
         disabled_campaign_ids = list(
-            Campaign.objects.filter(users=session.django_user, is_freemium=True)
+            Campaign.objects.filter(user=session.django_user, is_freemium=True)
             .values_list("pk", flat=True),
         )
         if disabled_campaign_ids:

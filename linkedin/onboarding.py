@@ -98,7 +98,7 @@ def _ensure_llm_config() -> None:
     )
 
 
-def _onboard_campaign():
+def _onboard_campaign(user):
     """Create a Campaign via interactive prompts. Returns the Campaign instance."""
     from linkedin.management.setup_crm import DEFAULT_CAMPAIGN_NAME
     from linkedin.models import Campaign
@@ -170,6 +170,7 @@ def _onboard_campaign():
 
     campaign = Campaign.objects.create(
         name=campaign_name,
+        user=user,
         product_docs=product_docs,
         campaign_objective=objective,
         booking_link=booking_link,
@@ -206,7 +207,7 @@ def _onboard_seed_urls(campaign):
     print(f"{created} seed profile(s) added as QUALIFIED.")
 
 
-def _onboard_account(campaign):
+def _onboard_account(campaign=None):
     """Create a LinkedInProfile via interactive prompts. Returns the profile."""
     from django.contrib.auth.models import User
     from linkedin.models import LinkedInProfile
@@ -247,8 +248,10 @@ def _onboard_account(campaign):
         user.set_unusable_password()
         user.save()
 
-    # Add user to campaign
-    campaign.users.add(user)
+    if campaign is not None:
+        # Scope the campaign to this operator.
+        campaign.user = user
+        campaign.save(update_fields=["user"])
 
     profile = LinkedInProfile.objects.create(
         user=user,
@@ -307,12 +310,14 @@ def ensure_onboarding() -> None:
     from linkedin.models import Campaign, LinkedInProfile
 
     campaign = Campaign.objects.first()
-    if campaign is None:
-        campaign = _onboard_campaign()
-        _onboard_seed_urls(campaign)
+    active_profile = LinkedInProfile.objects.filter(active=True).select_related("user").first()
 
-    if not LinkedInProfile.objects.filter(active=True).exists():
-        _onboard_account(campaign)
+    if active_profile is None:
+        active_profile = _onboard_account(campaign)
+
+    if campaign is None:
+        campaign = _onboard_campaign(active_profile.user)
+        _onboard_seed_urls(campaign)
 
     _ensure_llm_config()
 

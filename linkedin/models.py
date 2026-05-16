@@ -32,7 +32,11 @@ _RATE_LIMIT_FIELDS = {
 
 class Campaign(models.Model):
     name = models.CharField(max_length=200, unique=True)
-    users = models.ManyToManyField(User, blank=True, related_name="campaigns")
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="campaigns",
+    )
     product_docs = models.TextField(blank=True)
     campaign_objective = models.TextField(blank=True)
     booking_link = models.URLField(max_length=500, blank=True)

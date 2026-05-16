@@ -309,8 +309,10 @@ class TestMultiCampaignQualification:
         from linkedin.models import Campaign
         from tests.conftest import FakeAccountSession
 
-        campaign2 = Campaign.objects.create(name="Other Campaign")
-        campaign2.users.add(fake_session.django_user)
+        campaign2 = Campaign.objects.create(
+            name="Other Campaign",
+            user=fake_session.django_user,
+        )
         return FakeAccountSession(
             django_user=fake_session.django_user,
             linkedin_profile=fake_session.linkedin_profile,
