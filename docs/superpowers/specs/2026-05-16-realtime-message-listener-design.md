@@ -125,6 +125,22 @@ One process, two tabs, no threads.
      auto-run a long LinkedIn session unattended.
    Below the threshold (e.g. a quick restart), no prompt — just proceed.
 
+   **Account scoping (required).** `backfill_messages` today iterates *every*
+   env-configured account (`ACCOUNTS = [("primary", LINKEDIN_USERNAME…),
+   ("backfill", BACKFILL_LINKEDIN_USERNAME…)]`) — there is no account selector.
+   The daemon runs as the `LINKEDIN_USERNAME` / `"primary"` account, and the
+   catch-up must only resync *that* account's threads; it must not spin up a
+   separate login + pass for the unrelated `BACKFILL_LINKEDIN_USERNAME` account.
+   So this work adds an `--account <label>` option to `backfill_messages`
+   (restricting the run to one entry of `ACCOUNTS`), and the catch-up invokes
+   `call_command("backfill_messages", account="primary")`. With no flag,
+   `backfill_messages` keeps its current all-accounts behavior.
+
+   `backfill_messages` also has its own interactive prereq-staleness gate
+   (`_run_prereq_gate_for_accounts`, on `import_connections` freshness).
+   Invoked from the catch-up that gate would double-prompt; the catch-up
+   suppresses it (a `--skip-prereq-gate` flag, or running it non-interactively).
+
 ### Lifecycle
 
 - **Startup** — before the task loop, the startup catch-up (component 6) runs:
