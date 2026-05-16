@@ -18,7 +18,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from linkedin.models import Campaign
+        from linkedin.models import Campaign, LinkedInProfile
 
         path = Path(options["json_path"])
         if not path.exists():
@@ -41,6 +41,19 @@ class Command(BaseCommand):
             "action_fraction": payload.get("action_fraction", 0.2),
             "seed_public_ids": payload.get("seed_public_ids") or [],
         }
+        if not Campaign.objects.filter(name=name).exists():
+            owner_profile = (
+                LinkedInProfile.objects.filter(active=True)
+                .select_related("user")
+                .order_by("pk")
+                .first()
+            )
+            if owner_profile is None:
+                raise CommandError(
+                    "Cannot create a Campaign because no active LinkedInProfile exists "
+                    "to own it."
+                )
+            defaults["user"] = owner_profile.user
         campaign, created = Campaign.objects.update_or_create(name=name, defaults=defaults)
         action = "Created" if created else "Updated"
         self.stdout.write(
