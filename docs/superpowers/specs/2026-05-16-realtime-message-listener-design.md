@@ -7,8 +7,10 @@
 ## Problem
 
 Inbound LinkedIn messages are only detected by polling: the daemon-internal
-`sweep_connections` task (every ~2h) and the external hourly `backfill_messages`
-cron. There is no near-realtime path. The daemon's main loop is single-threaded
+`sweep_connections` task (every ~2h, and only for *freshly accepted*
+connections) and the operator-run `backfill_messages` management command (run
+manually, or via a crontab the operator chooses to set up). There is no
+near-realtime path. The daemon's main loop is single-threaded
 and idles in a dead `time.sleep()` between tasks — deaf to anything during the
 idle window.
 
@@ -21,13 +23,19 @@ jar.
 In scope:
 - Detect inbound LinkedIn DMs in near-realtime during the daemon's active hours.
 - On detection: persist the message to `crm.Message`; send a Slack notification.
+- Close the gap left by active-hours-only listening with a **daemon-startup
+  catch-up**: surface how long the listener has been off and offer to run
+  `backfill_messages` before the task loop starts.
 
 Explicitly out of scope:
 - No follow-up / reply-handling task is enqueued. The daemon only runs
   follow-ups for the *connected-no-reply* cohort and connection requests;
   received messages are recorded and surfaced to the human, not auto-actioned.
-- No overnight (off-hours) realtime coverage — the existing hourly
-  `backfill_messages` cron backstops that window.
+- No overnight (off-hours) realtime coverage by the listener itself — the
+  off-hours gap is closed by the startup catch-up (above), not by the listener.
+- No mid-run catch-up when active hours resume each morning — the same gap
+  technically reopens then, but there is no operator at the terminal to prompt.
+  Noted as a possible later enhancement; v1 handles startup only.
 - Outbound task execution (`connect`, `follow_up`, `sweep_connections`) is
   unchanged.
 
@@ -96,8 +104,31 @@ One process, two tabs, no threads.
    `time.sleep()` calls inside task handlers — events buffer there and flush a
    few seconds later. Acceptable.
 
+5. **Listener heartbeat** — while the listener is up, the chunked pumping wait
+   writes a timestamp to a small JSON file in `data/` (e.g.
+   `data/listener_heartbeat.json`), refreshed every ~30s slice. This is the
+   single source of truth for "when was the listener last alive." The `data/`
+   file matches the existing cookie-store pattern and stays decoupled from the
+   DB. (Per-account if the daemon runs multiple accounts — keyed like the
+   cookie files.)
+
+6. **Startup catch-up** — before the daemon enters its task loop, it reads the
+   heartbeat file and computes `gap = now − last_heartbeat`. The gap naturally
+   covers both off-hours and any time the process was stopped — exactly the
+   window the listener missed. If `gap` exceeds a threshold (~30 min):
+   - **Interactive (TTY):** prompt — `Listener was off ~Xh. Run backfill_messages
+     to catch up first? [y/N]`. On `y`, run `backfill_messages` inline via
+     Django `call_command` and then continue into the task loop; on `n` (or
+     timeout/default), continue straight into the loop.
+   - **Headless (no TTY):** skip the prompt; log a WARNING stating the gap and
+     that `backfill_messages` should be run to catch up. The daemon does not
+     auto-run a long LinkedIn session unattended.
+   Below the threshold (e.g. a quick restart), no prompt — just proceed.
+
 ### Lifecycle
 
+- **Startup** — before the task loop, the startup catch-up (component 6) runs:
+  read heartbeat → compute gap → prompt / log as appropriate.
 - **Open** — `start_browser_session` / `ensure_browser` opens and wires the
   listener tab (navigate `/messaging/`, attach CDP, subscribe) after the main
   tab is ready.
@@ -107,8 +138,8 @@ One process, two tabs, no threads.
   sleep, the listener tab is **closed** (not merely unpumped) so the account
   does not hold a live LinkedIn realtime connection overnight — that "present
   24/7, no daily rhythm" pattern is a mild bot signal we choose to avoid. The
-  tab is reopened when active hours resume. Overnight messages are caught by
-  the existing hourly `backfill_messages` cron.
+  tab is reopened when active hours resume. The off-hours gap is reconciled by
+  the next startup catch-up, not by the listener.
 - **Connection drops** — LinkedIn's own page JS auto-reconnects the
   `EventSource`; if the tab itself dies, crash recovery reopens it.
 
@@ -138,6 +169,10 @@ LinkedIn realtime SSE  →  Chrome (listener tab)  →  CDP eventSourceMessageRe
 - **Unit** — the event handler with persist + Slack mocked: parsed inbound →
   one `crm.Message` row + one Slack call; duplicate event → idempotent (one
   row); unresolved sender → skipped, no crash.
+- **Unit** — startup catch-up gap logic: missing heartbeat file → treated as a
+  large gap; gap below threshold → no prompt; gap above threshold → prompt
+  (interactive) / WARNING log (headless). Heartbeat read/write is a pure
+  file-IO unit, mockable.
 - **Manual** — browser/CDP integration (listener tab opens, CDP subscribes,
   a real test message round-trips). Not unit-testable.
 
