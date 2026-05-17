@@ -1,5 +1,10 @@
 # Realtime Inbound Message Listener — Design
 
+> **SUPERSEDED (2026-05-16):** the in-process CDP approach in this document
+> does not work — see `2026-05-16-realtime-listener-v2-design.md` for the
+> implemented design (separate process sharing the browser over CDP). This
+> file is kept for history.
+
 **Date:** 2026-05-16
 **Branch:** `realtime-message-listener`
 **Status:** Design — pending implementation plan

@@ -117,17 +117,28 @@ Three apps in `INSTALLED_APPS`:
 
 Near-realtime detection of inbound LinkedIn DMs. Gated by `ENABLE_REALTIME_LISTENER` (`conf.py`, default `false`). Any failure degrades gracefully to the existing polling path — realtime is an enhancement, not a dependency.
 
+### Architecture: Separate Child Process (v2)
+
+The listener runs as a **separate child process** — `manage.py listen_realtime` — which the daemon spawns and supervises via `linkedin/realtime/supervisor.py` (`ListenerSupervisor`). This is the key architectural decision: the listener does NOT run in-process with the daemon.
+
+**Why a separate process is required.** Playwright's sync API is built on a greenlet model: one event loop per process, and CDP event handlers and Playwright's task loop share it. An earlier in-process design (v1) attempted to drive CDP `Network.dataReceived` event callbacks while the daemon's task loop also drove sync Playwright — this corrupted Playwright's sync greenlet state and made the approach unworkable. Running the listener in its own process gives it a clean, independent Playwright/asyncio loop with no contention.
+
+**Persistent browser context.** The daemon launches Chromium using `launch_persistent_context` (storing state under `data/profile-<account>/`) with a fixed `--remote-debugging-port` controlled by `LISTENER_CDP_PORT` (default 9222, localhost-only). This port is opened only when `ENABLE_REALTIME_LISTENER` is on. The listener calls `connect_over_cdp` to attach to this already-running browser and shares its one browser context — one device fingerprint, one cookie jar. From LinkedIn's perspective this looks like one browser with two tabs, not two browsers, which is the correct bot-detection posture.
+
+**`StandaloneLinkedInSession`** (used by `backfill_messages` and sales-nav flows) stays on `launch()` + per-account JSON cookie files (`data/<label>_cookies.json`). It is not migrated to a persistent context; only the daemon uses `launch_persistent_context`.
+
 ### Modules
 
+- **`supervisor.py`** — `ListenerSupervisor`: spawns `manage.py listen_realtime` as a subprocess, restarts it on unexpected death, gives up after 5 consecutive spawn failures, and kills the child process during off-hours (restarting when active hours resume).
+- **`listener.py`** — `run_listener` / `_run_one_connection`: calls `connect_over_cdp` to attach to the daemon's browser, opens a `/messaging/` tab in the shared context, enables the CDP `Network` domain, calls `Network.streamResourceContent` to opt in to streaming, and receives `Network.dataReceived` events carrying base64-encoded SSE bytes. Reconnects automatically on a dropped CDP connection.
 - **`sse.py`** — `RealtimeSSEBuffer`: accumulates base64-encoded CDP stream chunks, decodes them, and frames the raw bytes into complete SSE events (splitting on `\n\n`).
 - **`parser.py`** — `parse_realtime_event(raw_event) → ParsedRealtimeMessage | None`: decodes the SSE `data:` payload as JSON, walks LinkedIn's realtime envelope, and extracts sender URN, conversation URN, message URN, body text, and `sent_at` timestamp. Returns `None` for non-message events (presence pings, typing indicators, etc.).
-- **`heartbeat.py`** — Writes and reads `data/listener-heartbeat-<account>.json` (timestamp + account label). Used by startup catch-up to compute how long the listener was offline.
-- **`lead_lookup.py`** — `resolve_lead_for_realtime(conversation_urn, sender_urn) → Lead | None`: queries the DB first by conversation URN (matched against Deal metadata), then falls back to sender URN (matched against `Lead.linkedin_url`).
 - **`handler.py`** — `handle_realtime_event(raw_event, account_label)`: orchestrates parse → lead lookup → `persist_thread` → `notify_message_received`. Inbound-only; outbound events are silently dropped. All exceptions are caught and logged so a bad event never crashes the listener.
-- **`listener.py`** — `RealtimeListener`: opens a second Playwright browser tab on `/messaging/` in the daemon's existing browser context, attaches CDP, enables `Network` domain, identifies the `/realtime/connect` stream via `Network.requestWillBeSent`, and subscribes to `Network.dataReceived`. `pump(slice_seconds)` drives Playwright's event loop for one slice, calling `handle_realtime_event` for each chunk received. Also exports `ensure_realtime_listener(session)` (idempotent open) and `stop_realtime_listener(session)` (tab close).
+- **`heartbeat.py`** — Writes and reads `data/listener-heartbeat-<account>.json` (timestamp + account label). Updated by the listener process; read by startup catch-up to compute how long the listener was offline.
+- **`lead_lookup.py`** — `resolve_lead_for_realtime(conversation_urn, sender_urn) → Lead | None`: queries the DB first by conversation URN (matched against Deal metadata), then falls back to sender URN (matched against `Lead.linkedin_url`).
 - **`catchup.py`** — `run_startup_catchup(account_label)`: reads the heartbeat file; if the gap since the last heartbeat exceeds `LISTENER_CATCHUP_GAP_MINUTES` (default 30), prompts the operator on TTY to run `backfill_messages --account primary --skip-prereq-gate`, or logs a warning when running headless.
 
-### Why CDP `Network.dataReceived`, Not `eventSourceMessageReceived`
+### Why CDP `Network.streamResourceContent`, Not `eventSourceMessageReceived`
 
 LinkedIn's `/realtime/connect` endpoint delivers a `text/event-stream` body over a regular `fetch()` call — it is not opened via the browser's native `EventSource` API. Playwright's `page.expect_event("websocket")` and CDP's `Network.eventSourceMessageReceived` only fire for native `EventSource` connections; they produce zero events here. The correct tap is `Network.streamResourceContent` (to opt in to streaming) followed by `Network.dataReceived` events, whose `data` field carries base64-encoded chunks of the raw SSE bytes. This was verified against a live LinkedIn session.
 
@@ -145,25 +156,21 @@ CDP Network.dataReceived (base64 chunk)
 
 ### Lifecycle
 
-- **Active hours**: `ensure_realtime_listener(session)` is called after the daemon's task-queue warm-up. During off-hours the tab is closed via `stop_realtime_listener(session)` — this avoids holding a 24/7 realtime connection open, which would be a mild bot signal.
-- **Recovery**: `ensure_realtime_listener` is idempotent; after a browser relaunch it reopens the tab and reattaches CDP cleanly.
-- **Pump loop**: the daemon's queue-idle `time.sleep` is replaced by `RealtimeListener.pump(LISTENER_PUMP_SLICE_SECONDS)`, so Playwright's event loop keeps running and heartbeat writes happen even when no tasks are queued.
-
-### Startup Catch-Up
-
-On daemon start, `run_startup_catchup(account_label)` reads `data/listener-heartbeat-<account>.json`. If the file is absent (first run) or the gap exceeds `LISTENER_CATCHUP_GAP_MINUTES`, it either prompts the operator interactively (TTY) or emits a `WARNING` log (headless) recommending:
+- **Supervisor**: `ListenerSupervisor` runs inside the daemon. It spawns `listen_realtime`, watches for unexpected exits (restart), gives up after 5 consecutive failures, and kills the child off-hours (resuming on active-hours re-entry).
+- **Reconnect**: inside the listener process, `_run_one_connection` wraps a single CDP session; `run_listener` loops around it so a dropped CDP connection triggers a clean reconnect without a full process restart.
+- **Startup catch-up**: the daemon calls `run_startup_catchup(account_label)` during startup. If the heartbeat gap exceeds `LISTENER_CATCHUP_GAP_MINUTES` (default 30 min), it either prompts the operator interactively (TTY) or emits a `WARNING` log (headless) recommending:
 
 ```bash
 .venv/bin/python manage.py backfill_messages --account primary --skip-prereq-gate
 ```
 
-`--skip-prereq-gate` bypasses the interactive staleness prompt inside `backfill_messages` so it can be called non-interactively from scripts or the daemon itself.
+`--skip-prereq-gate` bypasses the interactive staleness prompt inside `backfill_messages` so it can be called non-interactively.
 
 ## Configuration
 
 - **`.env`** (project root) — `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
 - **`conf.py` schedule** — `ACTIVE_START_HOUR` (9), `ACTIVE_END_HOUR` (17), `ACTIVE_TIMEZONE` ("UTC"), `REST_DAYS` ((5, 6) = Sat+Sun). Daemon sleeps outside this window.
-- **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30).
+- **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30).
 - **`conf.py:CAMPAIGN_CONFIG`** — `min_ready_to_connect_prob` (0.9), `min_positive_pool_prob` (0.20), `connect_delay_seconds` (10), `connect_no_candidate_delay_seconds` (300), `check_pending_recheck_after_hours` (24), `check_pending_jitter_factor` (0.2), `qualification_n_mc_samples` (100), `enrich_min_interval` (1), `min_action_interval` (120), `embedding_model` ("BAAI/bge-small-en-v1.5").
 - **Prompt templates** (at `linkedin/templates/prompts/`) — `qualify_lead.j2` (temp 0.7), `search_keywords.j2` (temp 0.9), `follow_up_agent.j2`.
 - **`requirements/`** — `base.txt`, `local.txt`, `production.txt`, `crm.txt` (empty — DjangoCRM installed via `--no-deps`).
