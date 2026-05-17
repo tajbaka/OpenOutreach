@@ -66,3 +66,48 @@ class TestRealtimeListenerConfig:
         importlib.reload(conf)
         assert conf.LISTENER_CDP_PORT == 9444
         importlib.reload(conf)
+
+
+class TestPhoneEnrichmentConfig:
+    def test_flag_defaults_off(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        monkeypatch.delenv("ENABLE_PHONE_ENRICHMENT", raising=False)
+        importlib.reload(conf)
+        assert conf.ENABLE_PHONE_ENRICHMENT is False
+        importlib.reload(conf)
+
+    def test_flag_truthy_strings_enable(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        for raw in ("1", "true", "YES", "on"):
+            monkeypatch.setenv("ENABLE_PHONE_ENRICHMENT", raw)
+            importlib.reload(conf)
+            assert conf.ENABLE_PHONE_ENRICHMENT is True
+        importlib.reload(conf)
+
+    def test_tuning_constants_have_defaults(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        for var in (
+            "ENRICHMENT_MAX_DURATION_SECONDS",
+            "ENRICHMENT_HTTP_TIMEOUT_SECONDS",
+            "BETTERCONTACT_POLL_INTERVAL_SECONDS",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        importlib.reload(conf)
+        assert conf.ENRICHMENT_MAX_DURATION_SECONDS == 600
+        assert conf.ENRICHMENT_HTTP_TIMEOUT_SECONDS == 5
+        assert conf.BETTERCONTACT_POLL_INTERVAL_SECONDS == 15
+        importlib.reload(conf)
+
+    def test_api_keys_default_empty(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        for var in ("BETTERCONTACT_API_KEY", "LEADMAGIC_API_KEY", "PROSPEO_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        importlib.reload(conf)
+        assert conf.BETTERCONTACT_API_KEY == ""
+        assert conf.LEADMAGIC_API_KEY == ""
+        assert conf.PROSPEO_API_KEY == ""
+        importlib.reload(conf)

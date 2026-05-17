@@ -182,6 +182,35 @@ LISTENER_PUMP_SLICE_SECONDS = int(os.getenv("LISTENER_PUMP_SLICE_SECONDS") or 30
 # is on; the listener connects to it.
 LISTENER_CDP_PORT = int(os.getenv("LISTENER_CDP_PORT") or 9222)
 
+# ----------------------------------------------------------------------
+# Phone enrichment (multi-provider waterfall — see linkedin/enrichment/)
+# ----------------------------------------------------------------------
+# Kill-switch for the phone-enrichment worker. When true, the daemon spawns
+# a background thread that enriches a lead's mobile number (via BetterContact
+# → LeadMagic → Prospeo) after the realtime listener detects an inbound reply.
+# Default OFF — enrichment is an enhancement; with it disabled the daemon
+# behaves exactly as before. Mirrors the existing ENABLE_* gates.
+ENABLE_PHONE_ENRICHMENT = os.getenv("ENABLE_PHONE_ENRICHMENT", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+# Hard cap on a single BetterContact submit→poll cycle. Past this the provider
+# returns API_FAILURE and the waterfall fails over to the next provider.
+ENRICHMENT_MAX_DURATION_SECONDS = int(os.getenv("ENRICHMENT_MAX_DURATION_SECONDS") or 600)
+
+# Per-request timeout for every enrichment HTTP call.
+ENRICHMENT_HTTP_TIMEOUT_SECONDS = int(os.getenv("ENRICHMENT_HTTP_TIMEOUT_SECONDS") or 5)
+
+# Delay between BetterContact async-result polls.
+BETTERCONTACT_POLL_INTERVAL_SECONDS = int(os.getenv("BETTERCONTACT_POLL_INTERVAL_SECONDS") or 15)
+
+# Provider API keys. Empty disables that provider (it returns API_FAILURE so
+# the waterfall fails over). Read here as constants — mirrors LLM_API_KEY —
+# so provider modules never call os.getenv directly.
+BETTERCONTACT_API_KEY = os.getenv("BETTERCONTACT_API_KEY", "").strip()
+LEADMAGIC_API_KEY = os.getenv("LEADMAGIC_API_KEY", "").strip()
+PROSPEO_API_KEY = os.getenv("PROSPEO_API_KEY", "").strip()
+
 # Post-accept follow-up message content lives in `linkedin/icp_messages.json`
 # (rigid per-ICP templates, `{first_name}` substitution only). The daemon's
 # `linkedin.tasks.follow_up.handle_follow_up` resolves the lead's ROLE via
