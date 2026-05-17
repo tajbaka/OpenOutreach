@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Three surfaces:
+Four surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
@@ -17,8 +17,9 @@ Three surfaces:
    and persists a new inbound LinkedIn DM. Single Block Kit message with
    the lead's name and profile link, a quoted snippet of the message body,
    and a context block identifying the owning operator.
+4. `notify_phone_enriched` — fires when the enrichment worker finishes a lead.
 
-All three no-op when SLACK_WEBHOOK_URL is unset, so callers don't need to guard.
+All four no-op when SLACK_WEBHOOK_URL is unset, so callers don't need to guard.
 """
 from __future__ import annotations
 
@@ -182,6 +183,61 @@ def notify_message_received(
                 )
     except (URLError, TimeoutError) as e:
         logger.warning("Slack message-received webhook failed for %s: %s", full_name, e)
+
+
+def notify_phone_enriched(*, lead, result) -> None:
+    """Post a 'phone enriched' notification. No-op if SLACK_WEBHOOK_URL unset.
+
+    `result` is an enrichment EnrichmentResult. A FOUND result renders the
+    number and the winning provider; a NOT_FOUND renders 'no number found'.
+    API_FAILURE never reaches here — the enrichment worker marks the task
+    failed without notifying.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    full_name = (
+        f"{lead.first_name or ''} {lead.last_name or ''}".strip()
+        or lead.public_identifier
+        or "Unknown lead"
+    )
+    profile_url = lead.linkedin_url or ""
+    name_md = f"<{profile_url}|{full_name}>" if profile_url else full_name
+
+    if result.phone:
+        action_line = f":telephone_receiver: Phone found for *{name_md}*: `{result.phone}`"
+        fallback = f":telephone_receiver: Phone found for {full_name}: {result.phone}"
+    else:
+        action_line = f":telephone_receiver: No phone number found for *{name_md}*"
+        fallback = f":telephone_receiver: No phone number found for {full_name}"
+
+    elements: list[dict] = []
+    if lead.company_name:
+        elements.append({"type": "mrkdwn", "text": f"*Company:* {lead.company_name}"})
+    elements.append({"type": "mrkdwn", "text": f"*Provider:* {result.provider}"})
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
+        {"type": "context", "elements": elements},
+    ]
+    payload = {"text": fallback, "blocks": blocks}
+
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        SLACK_WEBHOOK_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "Slack phone-enriched webhook returned %d for %s",
+                    resp.status, full_name,
+                )
+    except (URLError, TimeoutError) as e:
+        logger.warning("Slack phone-enriched webhook failed for %s: %s", full_name, e)
 
 
 def notify_error(

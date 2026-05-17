@@ -224,3 +224,65 @@ class TestNotifyMessageReceived:
         body = json.dumps(sent)
         assert "(Disqualified)" not in body
         assert "Bad Actor" in body
+
+
+class TestNotifyPhoneEnriched:
+    def _lead(self):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            first_name="Ada", last_name="Lovelace", company_name="Analytical Engines",
+            linkedin_url="https://www.linkedin.com/in/ada/", public_identifier="ada",
+        )
+
+    def test_noop_when_webhook_unset(self, monkeypatch):
+        from linkedin.notifications.slack import notify_phone_enriched
+        from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
+
+        monkeypatch.setattr("linkedin.notifications.slack.SLACK_WEBHOOK_URL", "")
+        # urlopen must never be called when the webhook is unset.
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            notify_phone_enriched(
+                lead=self._lead(),
+                result=EnrichmentResult(
+                    status=EnrichmentStatus.FOUND, provider="leadmagic", phone="+1",
+                ),
+            )
+        mock_open.assert_not_called()
+
+    def test_found_posts_phone_and_provider(self, monkeypatch):
+        from linkedin.notifications.slack import notify_phone_enriched
+        from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
+
+        monkeypatch.setattr(
+            "linkedin.notifications.slack.SLACK_WEBHOOK_URL", "https://hooks.test/x",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            notify_phone_enriched(
+                lead=self._lead(),
+                result=EnrichmentResult(
+                    status=EnrichmentStatus.FOUND, provider="leadmagic",
+                    phone="+14155550199",
+                ),
+            )
+        body = mock_open.call_args[0][0].data.decode("utf-8")
+        assert "+14155550199" in body
+        assert "leadmagic" in body
+
+    def test_not_found_posts_no_number(self, monkeypatch):
+        from linkedin.notifications.slack import notify_phone_enriched
+        from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
+
+        monkeypatch.setattr(
+            "linkedin.notifications.slack.SLACK_WEBHOOK_URL", "https://hooks.test/x",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            notify_phone_enriched(
+                lead=self._lead(),
+                result=EnrichmentResult(
+                    status=EnrichmentStatus.NOT_FOUND, provider="prospeo",
+                ),
+            )
+        body = mock_open.call_args[0][0].data.decode("utf-8")
+        assert "No phone number found" in body
