@@ -21,6 +21,7 @@ from linkedin.conf import (
     ENABLE_AUTO_DISCOVERY,
     ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
+    ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
     REST_DAYS,
@@ -400,6 +401,17 @@ def run_daemon(session):
         session.campaigns, cfg, kit_model=kit["model"] if kit else None,
     )
 
+    # Realtime listener startup catch-up — surface (and optionally backfill)
+    # the window the listener was off (off-hours + any downtime). Runs
+    # before the task loop; reads the heartbeat file written by the
+    # listener's pump. No-op when the listener is disabled.
+    if ENABLE_REALTIME_LISTENER:
+        from linkedin.realtime.catchup import run_startup_catchup
+        run_startup_catchup(
+            username=session.linkedin_profile.linkedin_username,
+            account_label="primary",
+        )
+
     # Startup healing
     heal_tasks(session)
 
@@ -434,11 +446,22 @@ def run_daemon(session):
 
         pause = seconds_until_active()
         if pause > 0:
+            # Off-hours: close the listener tab so the account doesn't hold
+            # a live LinkedIn realtime connection overnight (a mild bot
+            # signal). The next startup catch-up reconciles the gap.
+            from linkedin.realtime.listener import stop_realtime_listener
+            stop_realtime_listener(session)
             h, m = int(pause // 3600), int(pause % 3600 // 60)
             logger.info("Outside active hours — sleeping %dh%02dm", h, m)
             connections.close_all()
             time.sleep(pause)
             continue
+
+        # Active hours: ensure the listener tab is up (creates it on first
+        # iteration, recovers it after a browser relaunch). Degrades to
+        # polling if it can't start.
+        from linkedin.realtime.listener import ensure_realtime_listener
+        listener = ensure_realtime_listener(session, operator=our_operator)
 
         task = Task.objects.claim_next(operator=our_operator)
         if task is None:
@@ -450,7 +473,13 @@ def run_daemon(session):
                 h, m = int(wait // 3600), int(wait % 3600 // 60)
                 logger.info("Next task in %dh%02dm — sleeping", h, m)
                 connections.close_all()
-                time.sleep(wait)
+                # Chunked Playwright-pumping wait so CDP callbacks fire
+                # promptly during the idle window. Falls back to a plain
+                # sleep if the listener isn't available.
+                if listener is not None and listener.is_alive:
+                    listener.pump(wait)
+                else:
+                    time.sleep(wait)
             continue
 
         # Account-wide tasks (e.g. sweep_connections) span all campaigns and
