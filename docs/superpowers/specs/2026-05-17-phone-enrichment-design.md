@@ -318,8 +318,15 @@ assumptions as the code). All fixed:
    query param (documented only for the unrelated `/account` endpoint). Moved
    to the header.
 
-Still unverified by docs (acceptable — code already uses `.get()` so a wrong
-key degrades to `NOT_FOUND`, not a crash): BetterContact's terminated-response
-phone field name `contact_phone_number` is the convention across BetterContact's
-schemas but is not documented for the `/async` enrichment response. Confirm with
-one live `enrich_phone_number: true` call before relying on it.
+5. **BetterContact Cloudflare block** (found via the 2026-05-17 live check).
+   `app.bettercontact.rocks` sits behind Cloudflare, which 403-bans urllib's
+   default `Python-urllib/x` User-Agent (Cloudflare error 1010) — every submit
+   and poll would have failed in production while the mocked tests stayed
+   green. `http.py` now sends `User-Agent: OpenOutreach/1.0` on all enrichment
+   requests.
+
+Live-verified end-to-end against `linkedin.com/in/chukwukaagu` on 2026-05-17:
+all three providers reached `terminated`/HTTP 200 through the as-built code.
+BetterContact's terminated-response phone field is confirmed to be
+`contact_phone_number`. None of the three returned a number for that profile —
+a genuine coverage miss, not a defect.
