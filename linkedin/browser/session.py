@@ -9,9 +9,6 @@ from linkedin.conf import MIN_DELAY, MAX_DELAY
 
 logger = logging.getLogger(__name__)
 
-# The main LinkedIn auth cookie
-_AUTH_COOKIE_NAME = "li_at"
-
 
 def random_sleep(min_val, max_val):
     delay = random.uniform(min_val, max_val)
@@ -51,41 +48,21 @@ class AccountSession:
         return campaigns
 
     def ensure_browser(self):
-        """Launch or recover browser + login if needed. Call before using .page"""
+        """Launch or recover the persistent-context browser. Call before using .page.
+
+        A persistent context self-maintains its session on disk, so there is
+        no cookie-refresh step — a live page needs nothing; a closed/absent
+        page triggers a relaunch (which re-opens the same profile dir).
+        """
         from linkedin.browser.login import start_browser_session
 
         if not self.page or self.page.is_closed():
-            logger.debug("Launching/recovering browser for %s", self.handle)
+            logger.debug("Launching/recovering persistent-context browser for %s", self.handle)
             start_browser_session(session=self, handle=self.handle)
-        else:
-            self._maybe_refresh_cookies()
 
     def wait(self, min_delay=MIN_DELAY, max_delay=MAX_DELAY):
         random_sleep(min_delay, max_delay)
         self.page.wait_for_load_state("load")
-
-    def _maybe_refresh_cookies(self):
-        """Re-login if the cached `li_at` auth cookie has expired.
-
-        Reads the cookie file on disk (`data/cookies-<safe_username>.json`)
-        rather than a DB column. The standalone scripts have used this
-        same path since 2026-05-11; the daemon switched over on
-        2026-05-12 to mirror that pattern.
-        """
-        from linkedin.browser.cookie_store import cookie_path_for, load_cookies
-        from linkedin.browser.login import start_browser_session
-
-        cookie_data = load_cookies(cookie_path_for(self.linkedin_profile.linkedin_username))
-        if not cookie_data:
-            return
-        for cookie in cookie_data.get("cookies", []):
-            if cookie.get("name") == _AUTH_COOKIE_NAME:
-                expires = cookie.get("expires", -1)
-                if expires > 0 and expires < time.time():
-                    logger.warning("Auth cookie expired for %s — re-authenticating", self.handle)
-                    self.close()
-                    start_browser_session(session=self, handle=self.handle)
-                return
 
     def close(self):
         if self.context:

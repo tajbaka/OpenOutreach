@@ -1,22 +1,17 @@
 # linkedin/browser/login.py
-"""Daemon's Playwright login + cookie cross-check.
+"""Daemon's Playwright login + session management (persistent context).
 
-Mirrors `StandaloneLinkedInSession` (`linkedin/actions/standalone_session.py`)
-since 2026-05-12: cookies live on disk at `data/cookies-<safe_username>.json`
-keyed by LinkedIn username, not in the DB. The daemon picks which account
-to log in as via `LINKEDIN_USERNAME` env (see `linkedin.conf.get_daemon_handle`).
-Per-username cookie files mean two accounts never collide on disk, and
-flipping which account the daemon runs as is a `.env` edit + restart.
+The daemon uses `launch_persistent_context` so the realtime listener child
+process can share the browser over CDP. The persistent context self-persists
+cookies/localStorage to `data/profile-<safe_username>/` — no JSON jar load
+or save step. The daemon picks which account to log in as via `LINKEDIN_USERNAME`
+env (see `linkedin.conf.get_daemon_handle`).
 
-Cross-check after restoring `storage_state`: navigate to `/feed/`,
-check the URL path. If LinkedIn bounced us to `/login` / `/checkpoint`
-the cookie is stale → fresh login. Same mechanism as the standalone
-sessions, no special API call.
+`StandaloneLinkedInSession` (`linkedin/actions/standalone_session.py`) is NOT
+touched here — it keeps its own `launch()` + JSON cookie flow.
 
-Fresh-login window is up to 10 minutes — the visible browser stays
-open so the operator can complete 2FA / security checkpoints by hand.
-Once `/feed/` loads, cookies are auto-saved and subsequent runs skip
-the form entirely.
+Fresh-login window is up to 10 minutes — the visible browser stays open so
+the operator can complete 2FA / security checkpoints by hand.
 """
 from __future__ import annotations
 
@@ -27,16 +22,9 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 from termcolor import colored
 
-from linkedin.browser.cookie_store import (
-    clear_cookies,
-    cookie_path_for,
-    load_cookies,
-    save_cookies,
-)
 from linkedin.browser.nav import goto_page, human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
-    BROWSER_LOGIN_TIMEOUT_MS,
     BROWSER_SLOW_MO,
 )
 
@@ -89,15 +77,44 @@ def playwright_login(session: "AccountSession"):
     logger.info(colored("Feed reached — login successful", "green", attrs=["bold"]))
 
 
-def launch_browser(storage_state=None):
-    logger.debug("Launching Playwright")
+def launch_browser(profile_dir, *, cdp_port=None, seed_cookies=None):
+    """Launch Chromium as a persistent context rooted at `profile_dir`.
+
+    A persistent context is the browser's *default* context — required so
+    the realtime listener child process can see it via `connect_over_cdp`
+    (a plain `new_context()` context is invisible to CDP-connecting peers).
+    Cookies/localStorage persist in `profile_dir` automatically; there is no
+    JSON storage_state to load or save.
+
+    `cdp_port` (when set) exposes `--remote-debugging-port` so the listener
+    can attach. `seed_cookies` (a Playwright cookies list) is added once on
+    a first run to migrate an account off the legacy JSON cookie jar without
+    forcing a re-login.
+
+    Returns `(page, context, browser, playwright)`. NOTE: `browser` is
+    `None` for a persistent context — closing the context closes the
+    browser. Callers must tolerate a `None` browser.
+    """
     playwright = sync_playwright().start()
-    browser = playwright.chromium.launch(headless=False, slow_mo=BROWSER_SLOW_MO)
-    context = browser.new_context(storage_state=storage_state)
+    args = []
+    if cdp_port:
+        args.append(f"--remote-debugging-port={cdp_port}")
+    context = playwright.chromium.launch_persistent_context(
+        str(profile_dir),
+        headless=False,
+        slow_mo=BROWSER_SLOW_MO,
+        args=args,
+    )
     context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
     Stealth().apply_stealth_sync(context)
-    page = context.new_page()
-    return page, context, browser, playwright
+    if seed_cookies:
+        try:
+            context.add_cookies(seed_cookies)
+            logger.info("Seeded %d cookies into new persistent profile", len(seed_cookies))
+        except Exception as e:
+            logger.warning("Cookie seeding failed (will fall back to login): %s", e)
+    page = context.pages[0] if context.pages else context.new_page()
+    return page, context, context.browser, playwright
 
 
 def _cookies_still_valid(session) -> bool:
@@ -113,48 +130,48 @@ def _cookies_still_valid(session) -> bool:
 
 
 def start_browser_session(session: "AccountSession", handle: str):
-    """Bring the session online: load cached cookies, validate, re-login if stale.
+    """Bring the session online with a persistent-context Chromium.
 
-    Mirrors `StandaloneLinkedInSession.start()`. Cookie store is the
-    per-username JSON file at `data/cookies-<safe_username>.json`;
-    LinkedInProfile row is still used for credentials + rate-limit
-    bookkeeping, but no longer holds `cookie_data`.
+    Profile lives at `data/profile-<safe_username>/`. On the first run
+    (profile dir absent) the legacy `data/cookies-<safe_username>.json` jar,
+    if present, seeds the new context so the cutover skips a re-login.
+    After launch, `/feed/` is checked; a bounce to login/checkpoint means
+    the session is stale → interactive `playwright_login` (the persistent
+    context records the result itself — no save step).
     """
-    logger.debug("Configuring browser for @%s", handle)
+    from linkedin.browser.cookie_store import cookie_path_for, load_cookies, profile_dir_for
+    from linkedin.conf import ENABLE_REALTIME_LISTENER, LISTENER_CDP_PORT
 
-    cookie_path = cookie_path_for(session.linkedin_profile.linkedin_username)
-    storage_state = load_cookies(cookie_path)
+    logger.debug("Configuring persistent-context browser for @%s", handle)
 
-    if storage_state:
-        logger.info("Loading saved session for @%s from %s", handle, cookie_path)
+    linkedin_username = session.linkedin_profile.linkedin_username
+    profile_dir = profile_dir_for(linkedin_username)
+    cdp_port = LISTENER_CDP_PORT if ENABLE_REALTIME_LISTENER else None
+
+    seed_cookies = None
+    if not profile_dir.exists():
+        legacy = load_cookies(cookie_path_for(linkedin_username))
+        if legacy and legacy.get("cookies"):
+            seed_cookies = legacy["cookies"]
+            logger.info("First persistent-context run for @%s — seeding from legacy cookie jar", handle)
 
     try:
         session.page, session.context, session.browser, session.playwright = launch_browser(
-            storage_state=storage_state,
+            profile_dir, cdp_port=cdp_port, seed_cookies=seed_cookies,
         )
     except Exception:
-        if not storage_state:
-            raise
-        logger.warning("Saved browser state for @%s failed to load — falling back to fresh login", handle)
-        clear_cookies(cookie_path)
+        logger.warning("Persistent profile for @%s failed to launch — wiping and retrying fresh", handle)
+        import shutil
+        shutil.rmtree(profile_dir, ignore_errors=True)
         session.page, session.context, session.browser, session.playwright = launch_browser(
-            storage_state=None,
+            profile_dir, cdp_port=cdp_port, seed_cookies=None,
         )
-        storage_state = None
 
-    if not storage_state:
+    if not _cookies_still_valid(session):
+        logger.warning("Session for @%s not valid (landed on %s) — authenticating",
+                        handle, urlparse(session.page.url).path)
         playwright_login(session)
-        save_cookies(session.context.storage_state(), cookie_path)
-        logger.info(colored("Login successful – cookies cached at %s", "green", attrs=["bold"]), cookie_path)
-    elif not _cookies_still_valid(session):
-        logger.warning(
-            "Saved session expired for @%s (landed on %s) — re-authenticating",
-            handle, urlparse(session.page.url).path,
-        )
-        clear_cookies(cookie_path)
-        playwright_login(session)
-        save_cookies(session.context.storage_state(), cookie_path)
-        logger.info(colored("Re-login successful – cookies refreshed", "green", attrs=["bold"]))
+        logger.info(colored("Login successful — persistent profile at %s", "green", attrs=["bold"]), profile_dir)
 
     session.page.wait_for_load_state("load")
     logger.info(colored("Browser ready", "green", attrs=["bold"]))
