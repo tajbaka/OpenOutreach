@@ -258,6 +258,7 @@ class Task(models.Model):
         CHECK_PENDING = "check_pending"
         FOLLOW_UP = "follow_up"
         SWEEP_CONNECTIONS = "sweep_connections"
+        ENRICH_PHONE = "enrich_phone"
 
     class Status(models.TextChoices):
         PENDING = "pending"

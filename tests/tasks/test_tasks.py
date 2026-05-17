@@ -586,3 +586,10 @@ class TestHandleFollowUp:
         mock_send.assert_not_called()
         # Deal state untouched — still CONNECTED, not Completed.
         _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+
+
+def test_enrich_phone_task_type_exists():
+    from linkedin.models import Task
+
+    assert Task.TaskType.ENRICH_PHONE == "enrich_phone"
+    assert "enrich_phone" in {choice[0] for choice in Task.TaskType.choices}
