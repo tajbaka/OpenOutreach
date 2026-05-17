@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 
 from linkedin.conf import ENABLE_REALTIME_LISTENER, LISTENER_PUMP_SLICE_SECONDS
 from linkedin.realtime.handler import handle_realtime_event
@@ -110,14 +111,26 @@ class RealtimeListener:
     def pump(self, seconds: float) -> None:
         """Sleep `seconds` in slices via the listener page, refreshing the
         heartbeat each slice. Keeps the Playwright event loop pumped so CDP
-        callbacks fire promptly. Used in place of the daemon's idle sleep."""
+        callbacks fire promptly. Used in place of the daemon's idle sleep.
+
+        If the listener page dies mid-pump, falls back to a plain sleep for
+        the remaining time — a dead tab must never unwind the daemon loop.
+        """
         from linkedin.realtime.heartbeat import write_heartbeat
 
         username = self.session.linkedin_profile.linkedin_username
         remaining = seconds
         while remaining > 0:
             chunk = min(LISTENER_PUMP_SLICE_SECONDS, remaining)
-            self.page.wait_for_timeout(int(chunk * 1000))
+            try:
+                self.page.wait_for_timeout(int(chunk * 1000))
+            except Exception as e:
+                logger.warning(
+                    "Realtime listener page died mid-pump (%s) — falling back "
+                    "to plain sleep for %.0fs", e, remaining,
+                )
+                time.sleep(remaining)
+                return
             write_heartbeat(username)
             remaining -= chunk
 

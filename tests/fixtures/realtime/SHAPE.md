@@ -50,7 +50,8 @@ The message object is at:
 
 Fields on that `result`:
 - `body.text` — message text (`body` is an AttributedText dict).
-- `backendUrn` — message URN `urn:li:messagingMessage:2-...` (idempotency key).
+- `entityUrn` — message URN `urn:li:msg_message:(urn:li:fsd_profile:...,2-...)` — **idempotency key**; this is the form that `linkedin/actions/conversations.py:parse_messages` writes to `crm.Message.external_id`, so realtime + backfill dedupe correctly on `(source, external_id)`.
+- `backendUrn` — alternate URN form `urn:li:messagingMessage:2-...` — NOT used as the idempotency key.
 - `deliveredAt` — epoch milliseconds.
 - `conversation.entityUrn` — `urn:li:msg_conversation:(urn:li:fsd_profile:...,2-...)`
   — this is the form that matches `Message.thread_external_id` written by

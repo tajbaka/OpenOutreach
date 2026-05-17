@@ -27,7 +27,9 @@ class ParsedRealtimeMessage:
     `linkedin.db.messages.persist_thread` (which expects that format).
     """
 
-    entity_urn: str          # message URN (backendUrn) — idempotency key
+    entity_urn: str          # message URN (entityUrn) — idempotency key; matches what
+                             # linkedin/actions/conversations.py:parse_messages writes,
+                             # so realtime + backfill dedupe correctly
     conversation_urn: str    # conversation.entityUrn — matches Message.thread_external_id
     sender_name: str
     sender_member_urn: str
@@ -91,7 +93,7 @@ def _parse(event) -> ParsedRealtimeMessage | None:
         return None
 
     text = _attributed_text(result.get("body"))
-    entity_urn = result.get("backendUrn")
+    entity_urn = result.get("entityUrn")
     if not isinstance(entity_urn, str) or not entity_urn or not text:
         return None
 

@@ -22,7 +22,7 @@ def _load(name: str) -> dict:
 def test_inbound_message_parses():
     r = parse_realtime_event(_load("inbound_message.json"))
     assert isinstance(r, ParsedRealtimeMessage)
-    assert r.entity_urn.startswith("urn:li:messagingMessage:")
+    assert r.entity_urn.startswith("urn:li:msg_message:")
     assert r.conversation_urn.startswith("urn:li:msg_conversation:")
     assert r.text == "hey im interested"
     assert r.sender_name == "Arian Taj"
@@ -71,7 +71,7 @@ def test_truthy_non_dict_payload_does_not_raise():
     bad_actor = {"com.linkedin.realtimefrontend.DecoratedEvent":
                  {"topic": "urn:li-realtime:messagesTopic:x",
                   "payload": {"data": {"doDecorateMessageMessengerRealtimeDecoration":
-                      {"result": {"body": {"text": "hi"}, "backendUrn": "urn:li:messagingMessage:x",
+                      {"result": {"body": {"text": "hi"}, "entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:x,2-x)",
                        "actor": ["not a dict"]}}}}}}
     result = parse_realtime_event(bad_actor)
     assert isinstance(result, ParsedRealtimeMessage)
