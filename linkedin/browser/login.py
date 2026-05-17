@@ -26,6 +26,8 @@ from linkedin.browser.nav import goto_page, human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
     BROWSER_SLOW_MO,
+    ENABLE_REALTIME_LISTENER,
+    LISTENER_CDP_PORT,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,7 +142,6 @@ def start_browser_session(session: "AccountSession", handle: str):
     context records the result itself — no save step).
     """
     from linkedin.browser.cookie_store import cookie_path_for, load_cookies, profile_dir_for
-    from linkedin.conf import ENABLE_REALTIME_LISTENER, LISTENER_CDP_PORT
 
     logger.debug("Configuring persistent-context browser for @%s", handle)
 
@@ -160,12 +161,13 @@ def start_browser_session(session: "AccountSession", handle: str):
             profile_dir, cdp_port=cdp_port, seed_cookies=seed_cookies,
         )
     except Exception:
-        logger.warning("Persistent profile for @%s failed to launch — wiping and retrying fresh", handle)
-        import shutil
-        shutil.rmtree(profile_dir, ignore_errors=True)
-        session.page, session.context, session.browser, session.playwright = launch_browser(
-            profile_dir, cdp_port=cdp_port, seed_cookies=None,
+        logger.error(
+            "Failed to launch persistent-context browser for @%s at %s. "
+            "If the profile is corrupt, remove that directory and restart; "
+            "if it is locked, another Chromium is still using it.",
+            handle, profile_dir,
         )
+        raise
 
     if not _cookies_still_valid(session):
         logger.warning("Session for @%s not valid (landed on %s) — authenticating",
@@ -197,6 +199,5 @@ if __name__ == "__main__":
 
     session.ensure_browser()
 
-    start_browser_session(session=session, handle=handle)
     print("Logged in! Close browser manually.")
     session.page.pause()
