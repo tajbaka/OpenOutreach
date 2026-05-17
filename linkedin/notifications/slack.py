@@ -115,6 +115,67 @@ def notify_connection_accepted(
         logger.warning("Slack webhook failed for %s: %s", full_name, e)
 
 
+def notify_message_received(
+    *,
+    lead,
+    text: str,
+    operator: str = "",
+) -> None:
+    """Post an 'inbound message received' notification. No-op if disabled.
+
+    Fired by the realtime listener when an inbound LinkedIn DM is detected
+    and freshly persisted. `lead` is the crm.Lead; `text` is the message
+    body; `operator` is the canonical handle of the account that owns the
+    lead (rendered so the team knows whose lead replied).
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    full_name = lead.full_name or lead.public_identifier or "Unknown lead"
+    profile_url = lead.linkedin_url or ""
+    operator_clean = (operator or "").strip()
+
+    snippet = (text or "").strip().replace("\n", " ")
+    if len(snippet) > 280:
+        snippet = snippet[:277] + "..."
+
+    op_suffix = f" — {operator_clean}'s lead" if operator_clean else ""
+    name_md = f"<{profile_url}|{full_name}>" if profile_url else full_name
+    action_line = f":envelope: *{name_md}* sent you a message{op_suffix}"
+    fallback = f":envelope: {full_name} sent you a message{op_suffix}"
+
+    elements: list[dict] = []
+    if operator_clean:
+        elements.append({"type": "mrkdwn", "text": f"*Lead for:* {operator_clean}"})
+    if lead.company_name:
+        elements.append({"type": "mrkdwn", "text": f"*Company:* {lead.company_name}"})
+
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
+    ]
+    if elements:
+        blocks.append({"type": "context", "elements": elements})
+
+    payload = {"text": fallback, "blocks": blocks}
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        SLACK_WEBHOOK_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "Slack webhook returned %d for message-received (%s)",
+                    resp.status, full_name,
+                )
+    except (URLError, TimeoutError) as e:
+        logger.warning("Slack message-received webhook failed for %s: %s", full_name, e)
+
+
 def notify_error(
     workflow: str,
     exc: BaseException,

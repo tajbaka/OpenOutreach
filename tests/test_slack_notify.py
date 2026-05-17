@@ -143,3 +143,51 @@ def test_notify_on_error_passes_context_through(slack_url):
     elements_text = " ".join(e["text"] for e in context_block["elements"])
     assert "Chuka" in elements_text
     assert "campaign_id" in elements_text
+
+
+class TestNotifyMessageReceived:
+    def test_noop_when_webhook_unset(self, db):
+        """conftest._silence_slack clears the webhook — must not POST."""
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="Waylon", last_name="Krush",
+            linkedin_url="https://www.linkedin.com/in/waylonkrush/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            slack_mod.notify_message_received(
+                lead=lead, text="hello there", operator="Arian",
+            )
+        mock_open.assert_not_called()
+
+    def test_posts_block_kit_when_webhook_set(self, db, slack_url):
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="Waylon", last_name="Krush",
+            linkedin_url="https://www.linkedin.com/in/waylonkrush/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="hello there", operator="Arian",
+            )
+        mock_open.assert_called_once()
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        assert "blocks" in sent
+        assert "Waylon Krush" in sent["text"]
+        body = json.dumps(sent)
+        assert "hello there" in body
+        assert "waylonkrush" in body  # profile link
+
+    def test_long_text_is_truncated(self, db, slack_url):
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="A", linkedin_url="https://www.linkedin.com/in/a-long/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="x" * 600, operator="",
+            )
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        body = json.dumps(sent)
+        assert "..." in body
