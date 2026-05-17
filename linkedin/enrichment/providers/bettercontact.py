@@ -54,7 +54,8 @@ class BetterContactProvider:
 
     def _submit(self, lead) -> str:
         resp = post_json(
-            f"{_BASE}/async?api_key={BETTERCONTACT_API_KEY}",
+            f"{_BASE}/async",
+            headers={"X-API-Key": BETTERCONTACT_API_KEY},
             payload={
                 "data": [{
                     "first_name": lead.first_name,
@@ -76,7 +77,8 @@ class BetterContactProvider:
         deadline = time.monotonic() + ENRICHMENT_MAX_DURATION_SECONDS
         while True:
             resp = get_json(
-                f"{_BASE}/async/{request_id}?api_key={BETTERCONTACT_API_KEY}",
+                f"{_BASE}/async/{request_id}",
+                headers={"X-API-Key": BETTERCONTACT_API_KEY},
                 timeout=ENRICHMENT_HTTP_TIMEOUT_SECONDS,
             )
             if resp.get("status") == "terminated":

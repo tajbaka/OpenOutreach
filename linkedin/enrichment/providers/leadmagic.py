@@ -9,7 +9,7 @@ from linkedin.enrichment.http import HttpError, post_json
 
 logger = logging.getLogger(__name__)
 
-_URL = "https://api.leadmagic.io/mobile-finder"
+_URL = "https://api.leadmagic.io/v1/people/mobile-finder"
 
 
 class LeadMagicProvider:

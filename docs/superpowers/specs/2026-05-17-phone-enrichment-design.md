@@ -281,9 +281,45 @@ Substantive changes from the original approved draft:
 4. **Listener enqueue race.** Added a DB-level dedup against an existing
    `PENDING`/`RUNNING` `enrich_phone` task — the `phone_enriched_at` guard alone
    does not prevent duplicate enqueues (and duplicate provider billing).
-5. **Smaller corrections.** `operator` dropped from the task payload
+5. **Prospeo non-2xx semantics** (found via the 2026-05-17 live contract-check).
+   Prospeo returns HTTP 400 / `error_code: NO_MATCH` for a clean "no number"
+   result. `HttpError` now carries `status` + parsed `body`, and
+   `ProspeoProvider` maps a 400/`NO_MATCH` to `NOT_FOUND` instead of letting
+   it fall through as `API_FAILURE` (which would have wrongly left the task
+   `failed` and the lead un-stamped, causing a needless re-enrichment).
+
+6. **Smaller corrections.** `operator` dropped from the task payload
    (enrichment is not account-scoped); worker uses thread-scoped
    `connections.close()`; API keys live as `conf.py` constants; worker is not
    gated on active hours; `notify_phone_enriched` is keyword-only; two
    migrations not one; `scheduled_at` has no default; the single-threaded
    worker is load-bearing because `claim_next` is not atomic.
+
+## Provider contract fixes (2026-05-17, second verification pass)
+
+A second parallel verification pass — three agents fact-checking the *as-built*
+provider code against each vendor's live API docs — caught four implementation
+bugs that the mocked unit tests could not (the mocks encoded the same wrong
+assumptions as the code). All fixed:
+
+1. **Prospeo response shape.** `enrich-person` returns `person` at the **top
+   level** — there is no `response` wrapper (that wrapper exists only on
+   Prospeo's unrelated `account-information` endpoint). The code read
+   `resp["response"]["person"]…`, so every successful enrichment silently
+   degraded to `NOT_FOUND`. Fixed to `resp["person"]["mobile"]["mobile"]`.
+2. **Prospeo masked numbers.** `only_verified_mobile` alone returns a *masked*
+   number (`revealed: false`). The submit body now also sets
+   `enrich_mobile: true`, which triggers the reveal.
+3. **LeadMagic endpoint URL.** Correct path is
+   `https://api.leadmagic.io/v1/people/mobile-finder` — the code was missing
+   the `/v1/people` segment and would have 404'd in production.
+4. **BetterContact auth.** The documented scheme is the `X-API-Key` **header**
+   on both the submit and poll endpoints; the code passed `?api_key=` as a
+   query param (documented only for the unrelated `/account` endpoint). Moved
+   to the header.
+
+Still unverified by docs (acceptable — code already uses `.get()` so a wrong
+key degrades to `NOT_FOUND`, not a crash): BetterContact's terminated-response
+phone field name `contact_phone_number` is the convention across BetterContact's
+schemas but is not documented for the `/async` enrichment response. Confirm with
+one live `enrich_phone_number: true` call before relying on it.

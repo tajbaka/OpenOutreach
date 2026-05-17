@@ -28,12 +28,25 @@ class ProspeoProvider:
                 _URL,
                 headers={"X-KEY": PROSPEO_API_KEY},
                 payload={
+                    # enrich_mobile triggers the reveal — only_verified_mobile
+                    # alone returns a masked number (revealed: false).
+                    "enrich_mobile": True,
                     "only_verified_mobile": True,
                     "data": {"linkedin_url": lead.linkedin_url},
                 },
                 timeout=ENRICHMENT_HTTP_TIMEOUT_SECONDS,
             )
         except HttpError as exc:
+            # Prospeo signals "no verified mobile found" as HTTP 400 with
+            # error_code NO_MATCH — a clean terminal negative, not a
+            # transport failure. Everything else (other 400s, rate limits,
+            # 5xx, network errors) is a real API_FAILURE → waterfall failover.
+            body = exc.body or {}
+            if exc.status == 400 and body.get("error_code") == "NO_MATCH":
+                logger.info("Prospeo: no match for %s", lead.linkedin_url)
+                return EnrichmentResult(
+                    status=EnrichmentStatus.NOT_FOUND, provider=self.name, raw=body,
+                )
             logger.warning("Prospeo API failure: %s", exc)
             return EnrichmentResult(status=EnrichmentStatus.API_FAILURE, provider=self.name)
 
@@ -43,7 +56,9 @@ class ProspeoProvider:
                 status=EnrichmentStatus.API_FAILURE, provider=self.name, raw=resp,
             )
 
-        person = (resp.get("response") or {}).get("person") or {}
+        # enrich-person returns `person` at the top level — no `response`
+        # wrapper (that wrapper is only on Prospeo's account-info endpoint).
+        person = resp.get("person") or {}
         mobile = person.get("mobile") or {}
         phone = mobile.get("mobile")
         if phone:
