@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import logging
 
+from django.utils import timezone
+
+from linkedin.conf import ENABLE_PHONE_ENRICHMENT
 from linkedin.notifications.slack import notify_error, notify_message_received
 from linkedin.realtime.lead_lookup import resolve_lead_for_realtime
 from linkedin.realtime.parser import parse_realtime_event
@@ -28,6 +31,40 @@ def handle_realtime_event(event: dict, *, operator: str = "") -> None:
     except Exception as exc:
         logger.exception("handle_realtime_event failed — event dropped")
         notify_error("daemon:realtime_listener", exc, context={"operator": operator})
+
+
+def _maybe_enqueue_enrichment(lead) -> None:
+    """Enqueue a phone-enrichment task for a freshly-replied lead.
+
+    Gated by ENABLE_PHONE_ENRICHMENT. Skipped when the lead is already
+    enriched, disqualified, or already has a PENDING/RUNNING enrich_phone
+    task — the last guard prevents duplicate provider billing when a lead
+    sends several messages before the EnrichmentWorker runs (the
+    phone_enriched_at check alone cannot catch that — it is still None for
+    both events).
+    """
+    if not ENABLE_PHONE_ENRICHMENT:
+        return
+    if lead.phone_enriched_at is not None or lead.disqualified:
+        return
+
+    from linkedin.models import Task
+
+    already = Task.objects.filter(
+        task_type=Task.TaskType.ENRICH_PHONE,
+        status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+        payload__lead_id=lead.id,
+    ).exists()
+    if already:
+        logger.debug("Phone enrichment already queued for %s — skipping", lead)
+        return
+
+    Task.objects.create(
+        task_type=Task.TaskType.ENRICH_PHONE,
+        scheduled_at=timezone.now(),
+        payload={"lead_id": lead.id, "bettercontact_request_id": ""},
+    )
+    logger.info("Enqueued phone enrichment for %s", lead)
 
 
 def _handle(event: dict, *, operator: str) -> None:
@@ -73,5 +110,6 @@ def _handle(event: dict, *, operator: str) -> None:
     if msg.direction == Message.Direction.INBOUND:
         logger.info("Realtime inbound message persisted for %s", lead)
         notify_message_received(lead=lead, text=parsed.text, operator=operator)
+        _maybe_enqueue_enrichment(lead)
     else:
         logger.debug("Realtime outbound echo persisted for %s — no notify", lead)
