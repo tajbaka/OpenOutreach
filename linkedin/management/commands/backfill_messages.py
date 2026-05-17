@@ -162,6 +162,16 @@ class Command(BaseCommand):
             help="Log in (cheap once cookies are cached), derive sender, list eligible "
                  "Leads, but skip thread fetching.",
         )
+        parser.add_argument(
+            "--account", choices=[label for label, _u, _p in ACCOUNTS], default=None,
+            help="Restrict the run to one configured account slot ('primary' or "
+                 "'backfill'). Default: every env-configured account.",
+        )
+        parser.add_argument(
+            "--skip-prereq-gate", action="store_true",
+            help="Skip the interactive import-connections staleness gate. Used by "
+                 "the daemon's startup catch-up, which runs non-interactively.",
+        )
 
     def handle(self, *args, **opts):
         from linkedin.notifications.slack import notify_on_error
@@ -179,6 +189,8 @@ class Command(BaseCommand):
         campaign_id = opts["campaign"]
         limit = opts["limit"]
         dry_run = opts["dry_run"]
+        account = opts["account"]
+        skip_prereq_gate = opts["skip_prereq_gate"]
 
         configured = [
             (label, env_user, env_pass)
@@ -192,13 +204,25 @@ class Command(BaseCommand):
                 "  BACKFILL_LINKEDIN_USERNAME + BACKFILL_LINKEDIN_PASSWORD (backfill account)."
             )
 
+        # --account restricts the run to a single slot. The daemon's startup
+        # catch-up uses this so it never spins up the unrelated backfill
+        # account's login + pass.
+        if account is not None:
+            configured = [c for c in configured if c[0] == account]
+            if not configured:
+                raise CommandError(
+                    f"--account {account!r} is not configured in .env "
+                    f"(no username/password env pair for that slot)."
+                )
+
         # Prereq staleness check — backfill_messages depends on
-        # import-connections being fresh per operator. This command iterates
-        # over every configured account, so build one report per operator
-        # and surface them together before prompting once.
-        if not _run_prereq_gate_for_accounts(configured):
-            self.stdout.write(self.style.WARNING("Aborted by operator."))
-            return
+        # import-connections being fresh per operator. Skipped when the
+        # caller asks (the startup catch-up runs non-interactively and has
+        # already decided to proceed).
+        if not skip_prereq_gate:
+            if not _run_prereq_gate_for_accounts(configured):
+                self.stdout.write(self.style.WARNING("Aborted by operator."))
+                return
 
         for label, env_user, env_pass in configured:
             user_display = os.getenv(env_user)
