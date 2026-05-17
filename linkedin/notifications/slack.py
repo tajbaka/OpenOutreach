@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Two surfaces:
+Three surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
@@ -13,8 +13,12 @@ Two surfaces:
    unexpected errors). 5-min in-process dedupe by
    (workflow, exception_type, last_traceback_frame) so a runaway loop
    doesn't spam the channel.
+3. `notify_message_received` — fires when the realtime listener detects
+   and persists a new inbound LinkedIn DM. Single Block Kit message with
+   the lead's name and profile link, a quoted snippet of the message body,
+   and a context block identifying the owning operator.
 
-Both no-op when SLACK_WEBHOOK_URL is unset, so callers don't need to guard.
+All three no-op when SLACK_WEBHOOK_URL is unset, so callers don't need to guard.
 """
 from __future__ import annotations
 
@@ -131,7 +135,11 @@ def notify_message_received(
     if not SLACK_WEBHOOK_URL:
         return
 
-    full_name = lead.full_name or lead.public_identifier or "Unknown lead"
+    full_name = (
+        f"{lead.first_name or ''} {lead.last_name or ''}".strip()
+        or lead.public_identifier
+        or "Unknown lead"
+    )
     profile_url = lead.linkedin_url or ""
     operator_clean = (operator or "").strip()
 

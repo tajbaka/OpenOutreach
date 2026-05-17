@@ -178,6 +178,20 @@ class TestNotifyMessageReceived:
         assert "hello there" in body
         assert "waylonkrush" in body  # profile link
 
+        blocks = sent["blocks"]
+        # Block 0: action line with profile link and lead name.
+        assert blocks[0]["type"] == "section"
+        block0_text = blocks[0]["text"]["text"]
+        assert "waylonkrush" in block0_text
+        assert "Waylon Krush" in block0_text
+        # Block 1: quoted message snippet.
+        assert blocks[1]["type"] == "section"
+        assert "> hello there" in blocks[1]["text"]["text"]
+        # Block 2: context block with operator name.
+        assert blocks[2]["type"] == "context"
+        elements_text = " ".join(e["text"] for e in blocks[2]["elements"])
+        assert "Arian" in elements_text
+
     def test_long_text_is_truncated(self, db, slack_url):
         from crm.models import Lead
         lead = Lead.objects.create(
@@ -191,3 +205,22 @@ class TestNotifyMessageReceived:
         sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
         body = json.dumps(sent)
         assert "..." in body
+
+    def test_disqualified_lead_name_has_no_prefix(self, db, slack_url):
+        """Disqualified leads must not bleed the '(Disqualified)' prefix into Slack."""
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="Bad", last_name="Actor",
+            linkedin_url="https://www.linkedin.com/in/badactor/",
+            disqualified=True,
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="hey", operator="Arian",
+            )
+        mock_open.assert_called_once()
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        body = json.dumps(sent)
+        assert "(Disqualified)" not in body
+        assert "Bad Actor" in body
