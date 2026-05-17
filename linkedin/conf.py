@@ -156,6 +156,26 @@ ENABLE_AUTO_DISCOVERY = os.getenv("ENABLE_AUTO_DISCOVERY", "true").strip().lower
     "1", "true", "yes", "on",
 }
 
+# Kill-switch for the realtime inbound-message listener. When true, the
+# daemon opens a second browser tab on /messaging/ and observes LinkedIn's
+# own realtime SSE stream via CDP, persisting + Slack-notifying inbound
+# DMs within seconds. Default OFF — the listener is an enhancement; with
+# it disabled the daemon behaves exactly as before (polling only).
+# Mirrors the existing ENABLE_* gates.
+ENABLE_REALTIME_LISTENER = os.getenv("ENABLE_REALTIME_LISTENER", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+# Startup catch-up threshold. If the listener heartbeat is older than this
+# many minutes when the daemon boots, the catch-up surfaces the gap (prompt
+# on a TTY, WARNING log when headless). A quick restart stays below it.
+LISTENER_CATCHUP_GAP_MINUTES = int(os.getenv("LISTENER_CATCHUP_GAP_MINUTES") or 30)
+
+# Granularity of the daemon's chunked Playwright-pumping idle wait. The wait
+# loops in slices of this many seconds so CDP callbacks fire promptly and
+# the heartbeat file is refreshed each slice.
+LISTENER_PUMP_SLICE_SECONDS = int(os.getenv("LISTENER_PUMP_SLICE_SECONDS") or 30)
+
 # Post-accept follow-up message content lives in `linkedin/icp_messages.json`
 # (rigid per-ICP templates, `{first_name}` substitution only). The daemon's
 # `linkedin.tasks.follow_up.handle_follow_up` resolves the lead's ROLE via

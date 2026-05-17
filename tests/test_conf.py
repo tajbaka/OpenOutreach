@@ -20,3 +20,33 @@ class TestGetFirstActiveProfileHandle:
         from linkedin.models import LinkedInProfile
         LinkedInProfile.objects.all().update(active=False)
         assert get_first_active_profile_handle() is None
+
+
+class TestRealtimeListenerConfig:
+    def test_flag_defaults_off(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_REALTIME_LISTENER", raising=False)
+        import importlib
+        import linkedin.conf as conf
+        importlib.reload(conf)
+        assert conf.ENABLE_REALTIME_LISTENER is False
+        # Restore module state for other tests.
+        importlib.reload(conf)
+
+    def test_flag_truthy_strings_enable(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        for raw in ("1", "true", "YES", "on"):
+            monkeypatch.setenv("ENABLE_REALTIME_LISTENER", raw)
+            importlib.reload(conf)
+            assert conf.ENABLE_REALTIME_LISTENER is True
+        importlib.reload(conf)
+
+    def test_tuning_constants_have_defaults(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        monkeypatch.delenv("LISTENER_CATCHUP_GAP_MINUTES", raising=False)
+        monkeypatch.delenv("LISTENER_PUMP_SLICE_SECONDS", raising=False)
+        importlib.reload(conf)
+        assert conf.LISTENER_CATCHUP_GAP_MINUTES == 30
+        assert conf.LISTENER_PUMP_SLICE_SECONDS == 30
+        importlib.reload(conf)
