@@ -64,3 +64,16 @@ def test_large_gap_interactive_no_skips_backfill():
             username="arian@x.com", account_label="primary", interactive=True,
         )
     mock_cmd.assert_not_called()
+
+
+def test_interactive_none_defers_to_tty_detection():
+    """interactive=None resolves via sys.stdin.isatty() at call time."""
+    old = timezone.now() - timedelta(hours=9)
+    with patch("linkedin.realtime.catchup.read_heartbeat", return_value=old), \
+         patch("linkedin.realtime.catchup.call_command") as mock_cmd, \
+         patch("sys.stdin.isatty", return_value=True), \
+         patch("builtins.input", return_value="y"):
+        catchup.run_startup_catchup(username="arian@x.com", account_label="primary")
+    mock_cmd.assert_called_once_with(
+        "backfill_messages", account="primary", skip_prereq_gate=True,
+    )

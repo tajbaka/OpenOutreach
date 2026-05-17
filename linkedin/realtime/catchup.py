@@ -50,7 +50,7 @@ def run_startup_catchup(
     if gap < LISTENER_CATCHUP_GAP_MINUTES:
         logger.info(
             "Realtime listener gap %.0f min (< %d min threshold) — no catch-up needed",
-            gap if gap != float("inf") else -1, LISTENER_CATCHUP_GAP_MINUTES,
+            gap, LISTENER_CATCHUP_GAP_MINUTES,
         )
         return
 
