@@ -64,8 +64,9 @@ class RealtimeListener:
 
     def _on_request(self, params: dict) -> None:
         url = (params.get("request") or {}).get("url", "")
-        if _REALTIME_CONNECT_PATH in url:
-            self._stream_request_ids.add(params.get("requestId"))
+        request_id = params.get("requestId")
+        if request_id and _REALTIME_CONNECT_PATH in url:
+            self._stream_request_ids.add(request_id)
 
     def _on_response(self, params: dict) -> None:
         request_id = params.get("requestId")
@@ -122,6 +123,7 @@ class RealtimeListener:
 
     def stop(self) -> None:
         """Detach CDP and close the listener tab. Idempotent, never raises."""
+        was_open = self.page is not None
         try:
             if self.cdp is not None:
                 self.cdp.detach()
@@ -133,7 +135,8 @@ class RealtimeListener:
         except Exception as e:
             logger.debug("Realtime listener tab close failed: %s", e)
         self.page = self.cdp = None
-        logger.info("Realtime listener tab closed")
+        if was_open:
+            logger.info("Realtime listener tab closed")
 
 
 def ensure_realtime_listener(session, *, operator: str = ""):

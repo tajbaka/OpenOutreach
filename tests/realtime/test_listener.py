@@ -64,6 +64,7 @@ def test_dispatch_decodes_frames_and_calls_handler():
         listener._dispatch(chunk_b64)
     assert mock_handle.call_count == 2
     assert mock_handle.call_args_list[0].args[0] == {"a": 1}
+    assert mock_handle.call_args_list[1].args[0] == {"b": 2}
     assert mock_handle.call_args_list[1].kwargs == {"operator": "Arian"}
 
 
