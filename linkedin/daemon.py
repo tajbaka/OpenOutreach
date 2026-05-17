@@ -21,9 +21,11 @@ from linkedin.conf import (
     ENABLE_AUTO_DISCOVERY,
     ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
+    ENABLE_PHONE_ENRICHMENT,
     ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
+    LISTENER_PUMP_SLICE_SECONDS,
     REST_DAYS,
 )
 from linkedin.diagnostics import failure_diagnostics
@@ -188,9 +190,13 @@ def heal_tasks(session):
     from linkedin.enums import ProfileState
     from linkedin.models import Campaign
 
-    # 1. Recover stale running tasks
-    stale_count = Task.objects.filter(status=Task.Status.RUNNING).update(
-        status=Task.Status.PENDING,
+    # 1. Recover stale running tasks. ENRICH_PHONE is excluded — the
+    # EnrichmentWorker (spawned after heal_tasks) reclaims its own stale
+    # RUNNING tasks at start(); resetting them here would race the worker.
+    stale_count = (
+        Task.objects.filter(status=Task.Status.RUNNING)
+        .exclude(task_type=Task.TaskType.ENRICH_PHONE)
+        .update(status=Task.Status.PENDING)
     )
     if stale_count:
         logger.info("Recovered %d stale running tasks", stale_count)
@@ -441,6 +447,14 @@ def run_daemon(session):
     from linkedin.realtime.supervisor import ListenerSupervisor
     listener_supervisor = ListenerSupervisor()
 
+    # Phone-enrichment worker — a background thread claiming enrich_phone
+    # tasks. HTTP-only, so (unlike the listener) it is NOT gated on active
+    # hours; it runs whenever the daemon is up.
+    from linkedin.enrichment.worker import EnrichmentWorker
+    enrichment_worker = EnrichmentWorker()
+    if ENABLE_PHONE_ENRICHMENT:
+        enrichment_worker.start()
+
     # Single-threaded: one task at a time, no concurrent enqueuing,
     # so sleeping until the next scheduled_at is safe.
     while True:
@@ -467,8 +481,17 @@ def run_daemon(session):
         if task is None:
             wait = Task.objects.seconds_to_next(operator=our_operator)
             if wait is None:
+                if ENABLE_PHONE_ENRICHMENT and Task.objects.filter(
+                    task_type=Task.TaskType.ENRICH_PHONE,
+                    status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+                ).exists():
+                    logger.info("Outbound queue empty — waiting on enrichment worker")
+                    connections.close_all()
+                    time.sleep(LISTENER_PUMP_SLICE_SECONDS)
+                    continue
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()
+                enrichment_worker.stop()
                 return
             if wait > 0:
                 h, m = int(wait // 3600), int(wait % 3600 // 60)

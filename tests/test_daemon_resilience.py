@@ -184,3 +184,34 @@ def test_follow_up_post_send_retries_on_dead_conn(db, fake_session, monkeypatch)
         linkedin_profile=fake_session.linkedin_profile,
         action_type=ActionLog.ActionType.FOLLOW_UP,
     ).count() == 1
+
+
+def test_heal_tasks_does_not_reset_running_enrich_phone(fake_session):
+    """heal_tasks resets all stale RUNNING tasks to PENDING — but it must
+    leave ENRICH_PHONE tasks alone, because the EnrichmentWorker (which
+    spawns after heal_tasks) owns reclaiming those itself. Resetting them
+    here would yank an in-flight enrichment away from the worker."""
+    from django.utils import timezone
+
+    from linkedin.daemon import heal_tasks
+    from linkedin.models import Task
+
+    enrich = Task.objects.create(
+        task_type=Task.TaskType.ENRICH_PHONE,
+        status=Task.Status.RUNNING,
+        scheduled_at=timezone.now(),
+        payload={"lead_id": 1},
+    )
+    other = Task.objects.create(
+        task_type=Task.TaskType.CONNECT,
+        status=Task.Status.RUNNING,
+        scheduled_at=timezone.now(),
+        payload={"campaign_id": fake_session.campaign.pk},
+    )
+
+    heal_tasks(fake_session)
+
+    enrich.refresh_from_db()
+    other.refresh_from_db()
+    assert enrich.status == Task.Status.RUNNING   # left for the worker
+    assert other.status == Task.Status.PENDING    # reset as before
