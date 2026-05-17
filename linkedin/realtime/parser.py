@@ -16,7 +16,7 @@ from datetime import datetime, timezone as dt_timezone
 logger = logging.getLogger(__name__)
 
 _DECORATED_EVENT_KEY = "com.linkedin.realtimefrontend.DecoratedEvent"
-_MESSAGES_TOPIC = "messagesTopic"
+_MESSAGES_TOPIC = ":messagesTopic:"
 
 
 @dataclass(frozen=True)
@@ -57,8 +57,22 @@ def parse_realtime_event(event) -> ParsedRealtimeMessage | None:
     """Parse one decoded realtime event.
 
     Returns a ParsedRealtimeMessage for `messagesTopic` events, None for
-    everything else. Never raises — malformed input yields None.
+    everything else (heartbeats, typing, read receipts, badge updates,
+    unrecognised or malformed shapes). Never raises — any exception while
+    walking a malformed payload is caught and yields None.
+
+    Note: `entity_urn` and `text` on a returned message are always non-empty;
+    `conversation_urn`, `sender_member_urn`, and `sender_name` may be empty
+    strings if the payload omits them (the handler tolerates that).
     """
+    try:
+        return _parse(event)
+    except Exception as e:
+        logger.debug("parse_realtime_event: undecodable event dropped: %s", e)
+        return None
+
+
+def _parse(event) -> ParsedRealtimeMessage | None:
     if not isinstance(event, dict):
         return None
     decorated = event.get(_DECORATED_EVENT_KEY)
@@ -88,7 +102,9 @@ def parse_realtime_event(event) -> ParsedRealtimeMessage | None:
     if not conversation_urn:
         conversation_urn = result.get("backendConversationUrn") or ""
 
-    actor = result.get("actor") or {}
+    actor = result.get("actor")
+    if not isinstance(actor, dict):
+        actor = {}
     sender_member_urn = actor.get("hostIdentityUrn") or ""
     member = (actor.get("participantType") or {}).get("member") or {}
     sender_name = (

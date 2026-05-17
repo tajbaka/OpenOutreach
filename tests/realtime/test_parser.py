@@ -53,3 +53,28 @@ def test_garbage_returns_none():
         {"com.linkedin.realtimefrontend.DecoratedEvent":
          {"topic": "urn:li-realtime:messagesTopic:x", "payload": {}}}
     ) is None
+
+
+def test_truthy_non_dict_payload_does_not_raise():
+    """A truthy non-dict where a dict is expected must not raise.
+
+    - A non-dict payload list can't be traversed → None.
+    - A non-dict actor is gracefully defaulted to {} → message still parses
+      (body + backendUrn are valid), with empty sender fields.
+    """
+    # payload is a list — data traversal cannot proceed → None
+    bad_payload = {"com.linkedin.realtimefrontend.DecoratedEvent":
+                   {"topic": "urn:li-realtime:messagesTopic:x", "payload": ["oops"]}}
+    assert parse_realtime_event(bad_payload) is None
+
+    # actor is a list — gracefully treated as {} → parses with empty sender fields
+    bad_actor = {"com.linkedin.realtimefrontend.DecoratedEvent":
+                 {"topic": "urn:li-realtime:messagesTopic:x",
+                  "payload": {"data": {"doDecorateMessageMessengerRealtimeDecoration":
+                      {"result": {"body": {"text": "hi"}, "backendUrn": "urn:li:messagingMessage:x",
+                       "actor": ["not a dict"]}}}}}}
+    result = parse_realtime_event(bad_actor)
+    assert isinstance(result, ParsedRealtimeMessage)
+    assert result.text == "hi"
+    assert result.sender_member_urn == ""
+    assert result.sender_name == ""
