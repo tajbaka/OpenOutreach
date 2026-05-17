@@ -41,7 +41,7 @@ class BetterContactProvider:
             )
             return EnrichmentResult(status=EnrichmentStatus.API_FAILURE, provider=self.name)
 
-        request_id = (task.payload or {}).get("bettercontact_request_id") or ""
+        request_id = task.payload.get("bettercontact_request_id") or ""
         try:
             if not request_id:
                 request_id = self._submit(lead)

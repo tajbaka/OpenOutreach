@@ -204,6 +204,11 @@ ENRICHMENT_HTTP_TIMEOUT_SECONDS = int(os.getenv("ENRICHMENT_HTTP_TIMEOUT_SECONDS
 # Delay between BetterContact async-result polls.
 BETTERCONTACT_POLL_INTERVAL_SECONDS = int(os.getenv("BETTERCONTACT_POLL_INTERVAL_SECONDS") or 15)
 
+# How long the daemon waits between checks when its outbound queue is empty
+# but the enrichment worker still has tasks in flight — keeps the daemon from
+# exiting mid-enrichment (see the queue-empty guard in run_daemon).
+ENRICHMENT_WAIT_POLL_SECONDS = int(os.getenv("ENRICHMENT_WAIT_POLL_SECONDS") or 30)
+
 # Provider API keys. Empty disables that provider (it returns API_FAILURE so
 # the waterfall fails over). Read here as constants — mirrors LLM_API_KEY —
 # so provider modules never call os.getenv directly.

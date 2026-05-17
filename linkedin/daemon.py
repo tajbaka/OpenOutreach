@@ -25,7 +25,7 @@ from linkedin.conf import (
     ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
-    LISTENER_PUMP_SLICE_SECONDS,
+    ENRICHMENT_WAIT_POLL_SECONDS,
     REST_DAYS,
 )
 from linkedin.diagnostics import failure_diagnostics
@@ -487,7 +487,7 @@ def run_daemon(session):
                 ).exists():
                     logger.info("Outbound queue empty — waiting on enrichment worker")
                     connections.close_all()
-                    time.sleep(LISTENER_PUMP_SLICE_SECONDS)
+                    time.sleep(ENRICHMENT_WAIT_POLL_SECONDS)
                     continue
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()

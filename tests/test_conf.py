@@ -97,12 +97,14 @@ class TestPhoneEnrichmentConfig:
             "ENRICHMENT_MAX_DURATION_SECONDS",
             "ENRICHMENT_HTTP_TIMEOUT_SECONDS",
             "BETTERCONTACT_POLL_INTERVAL_SECONDS",
+            "ENRICHMENT_WAIT_POLL_SECONDS",
         ):
             monkeypatch.delenv(var, raising=False)
         importlib.reload(conf)
         assert conf.ENRICHMENT_MAX_DURATION_SECONDS == 600
         assert conf.ENRICHMENT_HTTP_TIMEOUT_SECONDS == 5
         assert conf.BETTERCONTACT_POLL_INTERVAL_SECONDS == 15
+        assert conf.ENRICHMENT_WAIT_POLL_SECONDS == 30
         importlib.reload(conf)
 
     def test_api_keys_default_empty(self, monkeypatch):
