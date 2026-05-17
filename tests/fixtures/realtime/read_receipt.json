@@ -1,0 +1,109 @@
+{
+  "com.linkedin.realtimefrontend.DecoratedEvent": {
+    "topic": "urn:li-realtime:messageSeenReceiptsTopic:urn:li-realtime:myself",
+    "leftServerAt": 1778979564325,
+    "id": "90cf8193-ab86-4ec4-a44b-5a7bbde2316e",
+    "payload": {
+      "data": {
+        "_recipeType": "com.linkedin.77af5b7af42a0712271f9ee525f0d9f0",
+        "_type": "com.linkedin.77af5b7af42a0712271f9ee525f0d9f0",
+        "doDecorateSeenReceiptMessengerRealtimeDecoration": {
+          "result": {
+            "_type": "com.linkedin.messenger.SeenReceipt",
+            "seenAt": 1778979564076,
+            "_recipeType": "com.linkedin.dc3e394bdf1ea2690cc5cf18b415f691",
+            "message": {
+              "_recipeType": "com.linkedin.5c829ab130dd79313cfe4d57e6479d40",
+              "_type": "com.linkedin.messenger.Message",
+              "entityUrn": "urn:li:msg_message:(urn:li:fsd_profile:ACoAACjaA8EBg8_h2HECXJns5An6ZSrcFNH35OA,2-MTc3ODk3OTU2NDA3NmI2OTk3NC0xMDAmNDk4MTM2ODEtYTdlYy00OWY3LWE2ZGQtZDgzZTQzYmI1ODRiXzEwMA==)"
+            },
+            "seenByParticipant": {
+              "hostIdentityUrn": "urn:li:fsd_profile:ACoAAAsVqaUBEQWiIVhXFjJBcJZrnKmp625hnCA",
+              "preview": null,
+              "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoAAAsVqaUBEQWiIVhXFjJBcJZrnKmp625hnCA",
+              "showPremiumInBug": false,
+              "memberBadgeType": "PREMIUM_PROFILE",
+              "showVerificationBadge": false,
+              "_type": "com.linkedin.messenger.MessagingParticipant",
+              "participantType": {
+                "member": {
+                  "profileUrl": "https://www.linkedin.com/in/ACoAAAsVqaUBEQWiIVhXFjJBcJZrnKmp625hnCA",
+                  "firstName": {
+                    "_type": "com.linkedin.pemberly.text.AttributedText",
+                    "attributes": [],
+                    "text": "Arian",
+                    "_recipeType": "com.linkedin.bba94e43ddf7898ea19d7dad84f1b95d"
+                  },
+                  "lastName": {
+                    "_type": "com.linkedin.pemberly.text.AttributedText",
+                    "attributes": [],
+                    "text": "Taj",
+                    "_recipeType": "com.linkedin.bba94e43ddf7898ea19d7dad84f1b95d"
+                  },
+                  "profilePicture": {
+                    "digitalmediaAsset": null,
+                    "_type": "com.linkedin.common.VectorImage",
+                    "attribution": null,
+                    "_recipeType": "com.linkedin.7702322b20250fb458523aa5efb39178",
+                    "focalPoint": null,
+                    "artifacts": [
+                      {
+                        "width": 100,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.7127f72cf9a35de816c375e167485980",
+                        "fileIdentifyingUrlPathSegment": "100_100/profile-displayphoto-shrink_100_100/0/1727803874637?e=1780531200&v=beta&t=-8jLkWiPMykNKsmHeZbfYOwR6UGYYiBx0K_udd_rVcc",
+                        "height": 100
+                      },
+                      {
+                        "width": 200,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.7127f72cf9a35de816c375e167485980",
+                        "fileIdentifyingUrlPathSegment": "200_200/profile-displayphoto-shrink_200_200/0/1727803874637?e=1780531200&v=beta&t=_0zDn_ngJs70J-RK5wU7QIf1JwRkElrVwJ7G5fpBVWo",
+                        "height": 200
+                      },
+                      {
+                        "width": 400,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.7127f72cf9a35de816c375e167485980",
+                        "fileIdentifyingUrlPathSegment": "400_400/profile-displayphoto-shrink_400_400/0/1727803874637?e=1780531200&v=beta&t=SUQ_AW3ZNOmEYmCzk35K7yo-viRtrT7w0BL_qTlnLWk",
+                        "height": 400
+                      },
+                      {
+                        "width": 800,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.7127f72cf9a35de816c375e167485980",
+                        "fileIdentifyingUrlPathSegment": "800_800/profile-displayphoto-shrink_800_800/0/1727803874652?e=1780531200&v=beta&t=F_GrN5UY9SAJfva140I5VfwrZOYg4y6GX7j_Su18Jz0",
+                        "height": 800
+                      }
+                    ],
+                    "rootUrl": "https://media.licdn.com/dms/image/v2/D4E03AQGCCX0Y0uzXXQ/profile-displayphoto-shrink_"
+                  },
+                  "distance": "DISTANCE_1",
+                  "profileFrameA11yContent": null,
+                  "pronoun": null,
+                  "_type": "com.linkedin.messenger.MemberParticipantInfo",
+                  "_recipeType": "com.linkedin.cf646a1a91a9dd15674a059de203f735",
+                  "headline": {
+                    "_type": "com.linkedin.pemberly.text.AttributedText",
+                    "attributes": [],
+                    "text": "Product Engineer | Automating FedRAMP authorization + 20x continuous monitoring",
+                    "_recipeType": "com.linkedin.bba94e43ddf7898ea19d7dad84f1b95d"
+                  }
+                },
+                "agent": null,
+                "custom": null,
+                "organization": null
+              },
+              "_recipeType": "com.linkedin.c347a58dcb5c53b24b38bcbdf01806b8",
+              "backendUrn": "urn:li:member:185969061"
+            }
+          },
+          "_recipeType": "com.linkedin.ae1345e963a1a8332291159b967f4fda",
+          "_type": "com.linkedin.restli.common.ActionResponse"
+        }
+      },
+      "$metadata": {}
+    },
+    "trackingId": "Ê3*8\u001b\u0013(®ùâúÂ\u0014\u0002\u000b"
+  }
+}

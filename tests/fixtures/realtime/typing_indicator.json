@@ -1,0 +1,108 @@
+{
+  "com.linkedin.realtimefrontend.DecoratedEvent": {
+    "topic": "urn:li-realtime:typingIndicatorsTopic:urn:li-realtime:myself",
+    "leftServerAt": 1778979560305,
+    "id": "697bb457-ec1e-4006-87f3-65ed85923568",
+    "payload": {
+      "data": {
+        "_recipeType": "com.linkedin.9399ea2910cb2327ff9f56d243375157",
+        "_type": "com.linkedin.9399ea2910cb2327ff9f56d243375157",
+        "doDecorateTypingIndicatorMessengerRealtimeDecoration": {
+          "result": {
+            "_type": "com.linkedin.messenger.RealtimeTypingIndicator",
+            "typingParticipant": {
+              "hostIdentityUrn": "urn:li:fsd_profile:ACoAAAsVqaUBEQWiIVhXFjJBcJZrnKmp625hnCA",
+              "preview": null,
+              "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoAAAsVqaUBEQWiIVhXFjJBcJZrnKmp625hnCA",
+              "showPremiumInBug": false,
+              "memberBadgeType": "PREMIUM_PROFILE",
+              "showVerificationBadge": false,
+              "_type": "com.linkedin.messenger.MessagingParticipant",
+              "participantType": {
+                "member": {
+                  "profileUrl": "https://www.linkedin.com/in/ACoAAAsVqaUBEQWiIVhXFjJBcJZrnKmp625hnCA",
+                  "firstName": {
+                    "_type": "com.linkedin.pemberly.text.AttributedText",
+                    "attributes": [],
+                    "text": "Arian",
+                    "_recipeType": "com.linkedin.b917855ca9b708b5b9351f5fdc9f2838"
+                  },
+                  "lastName": {
+                    "_type": "com.linkedin.pemberly.text.AttributedText",
+                    "attributes": [],
+                    "text": "Taj",
+                    "_recipeType": "com.linkedin.b917855ca9b708b5b9351f5fdc9f2838"
+                  },
+                  "profilePicture": {
+                    "digitalmediaAsset": null,
+                    "_type": "com.linkedin.common.VectorImage",
+                    "attribution": null,
+                    "_recipeType": "com.linkedin.b117ef0094abf6c248d5492ed89ed531",
+                    "focalPoint": null,
+                    "artifacts": [
+                      {
+                        "width": 100,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.a14780deea9a12382a5a03b8a09755e4",
+                        "fileIdentifyingUrlPathSegment": "100_100/profile-displayphoto-shrink_100_100/0/1727803874637?e=1780531200&v=beta&t=-8jLkWiPMykNKsmHeZbfYOwR6UGYYiBx0K_udd_rVcc",
+                        "height": 100
+                      },
+                      {
+                        "width": 200,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.a14780deea9a12382a5a03b8a09755e4",
+                        "fileIdentifyingUrlPathSegment": "200_200/profile-displayphoto-shrink_200_200/0/1727803874637?e=1780531200&v=beta&t=_0zDn_ngJs70J-RK5wU7QIf1JwRkElrVwJ7G5fpBVWo",
+                        "height": 200
+                      },
+                      {
+                        "width": 400,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.a14780deea9a12382a5a03b8a09755e4",
+                        "fileIdentifyingUrlPathSegment": "400_400/profile-displayphoto-shrink_400_400/0/1727803874637?e=1780531200&v=beta&t=SUQ_AW3ZNOmEYmCzk35K7yo-viRtrT7w0BL_qTlnLWk",
+                        "height": 400
+                      },
+                      {
+                        "width": 800,
+                        "_type": "com.linkedin.common.VectorArtifact",
+                        "_recipeType": "com.linkedin.a14780deea9a12382a5a03b8a09755e4",
+                        "fileIdentifyingUrlPathSegment": "800_800/profile-displayphoto-shrink_800_800/0/1727803874652?e=1780531200&v=beta&t=F_GrN5UY9SAJfva140I5VfwrZOYg4y6GX7j_Su18Jz0",
+                        "height": 800
+                      }
+                    ],
+                    "rootUrl": "https://media.licdn.com/dms/image/v2/D4E03AQGCCX0Y0uzXXQ/profile-displayphoto-shrink_"
+                  },
+                  "distance": "DISTANCE_1",
+                  "profileFrameA11yContent": null,
+                  "pronoun": null,
+                  "_type": "com.linkedin.messenger.MemberParticipantInfo",
+                  "_recipeType": "com.linkedin.ce7ce78fa0d2c2786e244cdaa791db2f",
+                  "headline": {
+                    "_type": "com.linkedin.pemberly.text.AttributedText",
+                    "attributes": [],
+                    "text": "Product Engineer | Automating FedRAMP authorization + 20x continuous monitoring",
+                    "_recipeType": "com.linkedin.b917855ca9b708b5b9351f5fdc9f2838"
+                  }
+                },
+                "agent": null,
+                "custom": null,
+                "organization": null
+              },
+              "_recipeType": "com.linkedin.034d0c196d99e5714fecd218cb6eced7",
+              "backendUrn": "urn:li:member:185969061"
+            },
+            "_recipeType": "com.linkedin.07373ca202c5d2f397a5b7c760e10c8b",
+            "conversation": {
+              "_recipeType": "com.linkedin.ebeb52f7913db76e8e5ddc911a09e714",
+              "_type": "com.linkedin.messenger.Conversation",
+              "entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoAACjaA8EBg8_h2HECXJns5An6ZSrcFNH35OA,2-NDk4MTM2ODEtYTdlYy00OWY3LWE2ZGQtZDgzZTQzYmI1ODRiXzEwMA==)"
+            }
+          },
+          "_recipeType": "com.linkedin.e34f57e9dad2fa46eed1526c2ec42e4c",
+          "_type": "com.linkedin.restli.common.ActionResponse"
+        }
+      },
+      "$metadata": {}
+    },
+    "trackingId": "2:ìò\u000fÂ5þ\u001c0â·\f\u001b"
+  }
+}
