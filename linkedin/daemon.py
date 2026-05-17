@@ -437,6 +437,10 @@ def run_daemon(session):
 
     freemium = _FreemiumRotator(every=2)
 
+    # Realtime listener supervisor — owns the listener child process.
+    from linkedin.realtime.supervisor import ListenerSupervisor
+    listener_supervisor = ListenerSupervisor()
+
     # Single-threaded: one task at a time, no concurrent enqueuing,
     # so sleeping until the next scheduled_at is safe.
     while True:
@@ -446,40 +450,31 @@ def run_daemon(session):
 
         pause = seconds_until_active()
         if pause > 0:
-            # Off-hours: close the listener tab so the account doesn't hold
-            # a live LinkedIn realtime connection overnight (a mild bot
-            # signal). The next startup catch-up reconciles the gap.
-            from linkedin.realtime.listener import stop_realtime_listener
-            stop_realtime_listener(session)
+            # Off-hours: kill the listener child so the account isn't
+            # holding a live LinkedIn realtime connection overnight.
+            listener_supervisor.stop()
             h, m = int(pause // 3600), int(pause % 3600 // 60)
             logger.info("Outside active hours — sleeping %dh%02dm", h, m)
             connections.close_all()
             time.sleep(pause)
             continue
 
-        # Active hours: ensure the listener tab is up (creates it on first
-        # iteration, recovers it after a browser relaunch). Degrades to
-        # polling if it can't start.
-        from linkedin.realtime.listener import ensure_realtime_listener
-        listener = ensure_realtime_listener(session, operator=our_operator)
+        # Active hours: ensure the listener child process is running.
+        if ENABLE_REALTIME_LISTENER:
+            listener_supervisor.ensure_running()
 
         task = Task.objects.claim_next(operator=our_operator)
         if task is None:
             wait = Task.objects.seconds_to_next(operator=our_operator)
             if wait is None:
                 logger.info("Queue empty — nothing to do")
+                listener_supervisor.stop()
                 return
             if wait > 0:
                 h, m = int(wait // 3600), int(wait % 3600 // 60)
                 logger.info("Next task in %dh%02dm — sleeping", h, m)
                 connections.close_all()
-                # Chunked Playwright-pumping wait so CDP callbacks fire
-                # promptly during the idle window. Falls back to a plain
-                # sleep if the listener isn't available.
-                if listener is not None and listener.is_alive:
-                    listener.pump(wait)
-                else:
-                    time.sleep(wait)
+                time.sleep(wait)
             continue
 
         # Account-wide tasks (e.g. sweep_connections) span all campaigns and
