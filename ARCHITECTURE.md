@@ -166,6 +166,45 @@ CDP Network.dataReceived (base64 chunk)
 
 `--skip-prereq-gate` bypasses the interactive staleness prompt inside `backfill_messages` so it can be called non-interactively.
 
+## Phone Enrichment (`linkedin/enrichment/`)
+
+Background phone-number enrichment, gated by `ENABLE_PHONE_ENRICHMENT`
+(`conf.py`, default off).
+
+**Trigger.** The realtime listener's handler (`linkedin/realtime/handler.py`),
+on a persisted inbound reply, enqueues an `enrich_phone` `Task` —
+`payload={lead_id, bettercontact_request_id}`. It skips leads already
+enriched (`phone_enriched_at` set), disqualified, or with an existing
+`PENDING`/`RUNNING` `enrich_phone` task (dedup — prevents double provider
+billing when a lead sends several messages before the worker runs).
+
+**Worker.** `EnrichmentWorker` (`worker.py`) is a single background thread
+`run_daemon` spawns alongside the listener supervisor. It claims
+`enrich_phone` tasks via `Task.objects.next_enrichment()` — the outbound loop
+excludes `ENRICH_PHONE` from `claim_next`/`seconds_to_next`, and `heal_tasks`
+excludes it from the stale-`RUNNING` reset, so the two never race. The worker
+reclaims its own stale `RUNNING` tasks at `start()` (the daemon has no clean
+shutdown — this is the crash-recovery path). HTTP-only, so it is not gated on
+active hours. Single-threaded is load-bearing: `next_enrichment` is a plain
+read, not a locking claim.
+
+**Waterfall.** `run_waterfall` (`waterfall.py`) iterates `PROVIDER_CHAIN` —
+BetterContact → LeadMagic → Prospeo. `FOUND`/`NOT_FOUND` is terminal
+(BetterContact's `NOT_FOUND` is authoritative — it is itself a 20+ provider
+waterfall); `API_FAILURE` escalates. BetterContact is async (submit → poll,
+resumable via the persisted `bettercontact_request_id`) and short-circuits to
+`API_FAILURE` when the lead lacks the `last_name`/`company_name` its submit
+needs. LeadMagic and Prospeo are synchronous and LinkedIn-URL native.
+Providers implement the `PhoneProvider` protocol (`base.py`); transport
+failures raise `HttpError` (→ `API_FAILURE`), malformed responses raise
+`EnrichmentError`.
+
+**Outcome.** `handle_enrich_phone` (`linkedin/tasks/enrich_phone.py`) writes
+`Lead.phone` + stamps `phone_enriched_at` on `FOUND`; stamps only on
+`NOT_FOUND`; writes nothing on all-`API_FAILURE` (so the next reply
+re-attempts). `FOUND`/`NOT_FOUND` post a Slack message via
+`notify_phone_enriched`; all-failed posts nothing and marks the task `failed`.
+
 ## Configuration
 
 - **`.env`** (project root) — `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
