@@ -43,7 +43,8 @@ _HEALTHY_CONNECTION_SECONDS = 60
 
 
 def run_listener(*, operator: str, username: str, cdp_port: int | None = None) -> int:
-    """Listener process main loop. Returns a process exit code.
+    """Listener process main loop. Returns a process exit code (0 never —
+    it loops until the cap is hit, then returns 1).
 
     Maintains a CDP connection to the daemon's browser; on any drop,
     reconnects after a short delay. Exits 1 only after
@@ -66,7 +67,7 @@ def run_listener(*, operator: str, username: str, cdp_port: int | None = None) -
                     "listener: connect attempt failed (%d/%d): %s",
                     failures, _MAX_CONSECUTIVE_FAILURES, e,
                 )
-        time.sleep(_RECONNECT_DELAY_SECONDS)
+            time.sleep(_RECONNECT_DELAY_SECONDS)
     logger.error("listener: gave up after %d failed reconnects — exiting", failures)
     return 1
 
@@ -77,7 +78,7 @@ def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
     exception propagates to `run_listener`'s reconnect loop).
     """
     buffer = RealtimeSSEBuffer()
-    stream_request_ids: set = set()
+    stream_request_ids: set[str] = set()
 
     with sync_playwright() as pw:
         browser = pw.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
@@ -85,55 +86,58 @@ def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
             raise RuntimeError("no shared browser context available over CDP")
         context = browser.contexts[0]
         page = context.new_page()
-        cdp = context.new_cdp_session(page)
-        cdp.send("Network.enable")
+        try:
+            cdp = context.new_cdp_session(page)
+            cdp.send("Network.enable")
 
-        def _dispatch(data_b64: str) -> None:
+            def _dispatch(data_b64: str) -> None:
+                try:
+                    text = base64.b64decode(data_b64).decode("utf-8", errors="replace")
+                except Exception as e:
+                    logger.warning("listener: undecodable stream chunk dropped: %s", e)
+                    return
+                for event in buffer.feed(text):
+                    handle_realtime_event(event, operator=operator)
+
+            def _on_request(params: dict) -> None:
+                url = (params.get("request") or {}).get("url", "")
+                rid = params.get("requestId")
+                if rid and _REALTIME_CONNECT_PATH in url:
+                    stream_request_ids.add(rid)
+
+            def _on_response(params: dict) -> None:
+                rid = params.get("requestId")
+                if rid not in stream_request_ids:
+                    return
+                try:
+                    result = cdp.send("Network.streamResourceContent", {"requestId": rid})
+                except Exception as e:
+                    logger.warning("listener: streamResourceContent failed: %s", e)
+                    return
+                buffered = result.get("bufferedData")
+                if buffered:
+                    _dispatch(buffered)
+
+            def _on_data(params: dict) -> None:
+                if params.get("requestId") not in stream_request_ids:
+                    return
+                data_b64 = params.get("data")
+                if data_b64:
+                    _dispatch(data_b64)
+
+            cdp.on("Network.requestWillBeSent", _on_request)
+            cdp.on("Network.responseReceived", _on_response)
+            cdp.on("Network.dataReceived", _on_data)
+
+            page.goto(MESSAGING_URL, wait_until="domcontentloaded")
+            logger.info("listener: connected over CDP, observing %s", _REALTIME_CONNECT_PATH)
+
+            slice_ms = LISTENER_PUMP_SLICE_SECONDS * 1000
+            while True:
+                page.wait_for_timeout(slice_ms)
+                write_heartbeat(username)
+        finally:
             try:
-                text = base64.b64decode(data_b64).decode("utf-8", errors="replace")
-            except Exception as e:
-                logger.warning("listener: undecodable stream chunk dropped: %s", e)
-                return
-            for event in buffer.feed(text):
-                handle_realtime_event(event, operator=operator)
-
-        def _on_request(params: dict) -> None:
-            url = (params.get("request") or {}).get("url", "")
-            rid = params.get("requestId")
-            if rid and _REALTIME_CONNECT_PATH in url:
-                stream_request_ids.add(rid)
-
-        def _on_response(params: dict) -> None:
-            rid = params.get("requestId")
-            if rid not in stream_request_ids:
-                return
-            try:
-                result = cdp.send("Network.streamResourceContent", {"requestId": rid})
-            except Exception as e:
-                logger.warning("listener: streamResourceContent failed: %s", e)
-                return
-            buffered = result.get("bufferedData")
-            if buffered:
-                _dispatch(buffered)
-
-        def _on_data(params: dict) -> None:
-            if params.get("requestId") not in stream_request_ids:
-                return
-            data_b64 = params.get("data")
-            if data_b64:
-                _dispatch(data_b64)
-
-        cdp.on("Network.requestWillBeSent", _on_request)
-        cdp.on("Network.responseReceived", _on_response)
-        cdp.on("Network.dataReceived", _on_data)
-
-        page.goto(MESSAGING_URL, wait_until="domcontentloaded")
-        logger.info("listener: connected over CDP, observing %s", _REALTIME_CONNECT_PATH)
-
-        # Pump loop — keeps the Playwright event loop turning so CDP
-        # callbacks fire, and refreshes the heartbeat each slice. A dropped
-        # connection makes wait_for_timeout raise → propagates out.
-        slice_ms = LISTENER_PUMP_SLICE_SECONDS * 1000
-        while True:
-            page.wait_for_timeout(slice_ms)
-            write_heartbeat(username)
+                page.close()
+            except Exception:
+                pass
