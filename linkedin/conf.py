@@ -176,6 +176,12 @@ LISTENER_CATCHUP_GAP_MINUTES = int(os.getenv("LISTENER_CATCHUP_GAP_MINUTES") or 
 # the heartbeat file is refreshed each slice.
 LISTENER_PUMP_SLICE_SECONDS = int(os.getenv("LISTENER_PUMP_SLICE_SECONDS") or 30)
 
+# Fixed CDP port the daemon exposes on its Chromium (`--remote-debugging-port`)
+# and the realtime listener child process connects to (`connect_over_cdp`).
+# Localhost-only. The daemon only opens the port when ENABLE_REALTIME_LISTENER
+# is on; the listener connects to it.
+LISTENER_CDP_PORT = int(os.getenv("LISTENER_CDP_PORT") or 9222)
+
 # Post-accept follow-up message content lives in `linkedin/icp_messages.json`
 # (rigid per-ICP templates, `{first_name}` substitution only). The daemon's
 # `linkedin.tasks.follow_up.handle_follow_up` resolves the lead's ROLE via

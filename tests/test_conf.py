@@ -50,3 +50,19 @@ class TestRealtimeListenerConfig:
         assert conf.LISTENER_CATCHUP_GAP_MINUTES == 30
         assert conf.LISTENER_PUMP_SLICE_SECONDS == 30
         importlib.reload(conf)
+
+    def test_cdp_port_has_default(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        monkeypatch.delenv("LISTENER_CDP_PORT", raising=False)
+        importlib.reload(conf)
+        assert conf.LISTENER_CDP_PORT == 9222
+        importlib.reload(conf)
+
+    def test_cdp_port_env_override(self, monkeypatch):
+        import importlib
+        import linkedin.conf as conf
+        monkeypatch.setenv("LISTENER_CDP_PORT", "9444")
+        importlib.reload(conf)
+        assert conf.LISTENER_CDP_PORT == 9444
+        importlib.reload(conf)
