@@ -73,8 +73,12 @@ class TestPhoneEnrichmentConfig:
         import importlib
         import linkedin.conf as conf
         monkeypatch.delenv("ENABLE_PHONE_ENRICHMENT", raising=False)
+        # conf.py runs load_dotenv() on import — stub it so the reload below
+        # reflects the process env (the delenv above), not the on-disk .env.
+        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
         importlib.reload(conf)
         assert conf.ENABLE_PHONE_ENRICHMENT is False
+        monkeypatch.undo()
         importlib.reload(conf)
 
     def test_flag_truthy_strings_enable(self, monkeypatch):
@@ -106,8 +110,12 @@ class TestPhoneEnrichmentConfig:
         import linkedin.conf as conf
         for var in ("BETTERCONTACT_API_KEY", "LEADMAGIC_API_KEY", "PROSPEO_API_KEY"):
             monkeypatch.delenv(var, raising=False)
+        # conf.py runs load_dotenv() on import — stub it so the reload below
+        # reflects the process env (the delenv above), not the on-disk .env.
+        monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
         importlib.reload(conf)
         assert conf.BETTERCONTACT_API_KEY == ""
         assert conf.LEADMAGIC_API_KEY == ""
         assert conf.PROSPEO_API_KEY == ""
+        monkeypatch.undo()
         importlib.reload(conf)
