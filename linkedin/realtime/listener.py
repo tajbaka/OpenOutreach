@@ -1,23 +1,18 @@
-"""Realtime listener tab: a second page in the daemon's existing browser
-context, observing LinkedIn's own realtime stream via CDP.
+"""Realtime listener — runs as a child process spawned by the daemon.
 
-LinkedIn's web client opens a long-lived streaming fetch to
-/realtime/connect (text/event-stream) when /messaging/ is loaded. It is
-NOT a native EventSource, so CDP's Network.eventSourceMessageReceived
-never fires. The listener instead:
-  - watches Network.requestWillBeSent for the /realtime/connect URL,
-  - on Network.responseReceived calls Network.streamResourceContent for
-    that request — after which Network.dataReceived events carry the body
-    bytes as base64 (and the call's result holds whatever was buffered),
-  - decodes those bytes, frames them with RealtimeSSEBuffer, and feeds
-    each decoded event to handle_realtime_event.
+Connects to the daemon's already-running Chromium over CDP (the daemon
+launches a persistent context with a fixed --remote-debugging-port),
+shares that one context (= one device, one cookie jar), opens its own
+/messaging/ tab, and streams LinkedIn's realtime feed via CDP
+Network.streamResourceContent.
 
-Same browser context = same cookies, fingerprint, TLS, and IP as the
-daemon. We open nothing LinkedIn's own client wouldn't.
+Because this runs in a SEPARATE process from the daemon, it has its own
+Playwright/asyncio loop — the sync-API greenlet corruption that killed the
+in-process design cannot occur here. This is the topology the capture
+spike proved out.
 
-The listener enqueues no tasks. Its callbacks fire whenever Python is
-parked inside any Playwright call — including the daemon's chunked idle
-pump() and (for free) during connect/follow-up task execution.
+The daemon's supervisor (linkedin/realtime/supervisor.py) spawns and
+restarts this process; the entrypoint is `manage.py listen_realtime`.
 """
 from __future__ import annotations
 
@@ -25,168 +20,120 @@ import base64
 import logging
 import time
 
-from linkedin.conf import ENABLE_REALTIME_LISTENER, LISTENER_PUMP_SLICE_SECONDS
+from playwright.sync_api import sync_playwright
+
+from linkedin.conf import LISTENER_CDP_PORT, LISTENER_PUMP_SLICE_SECONDS
 from linkedin.realtime.handler import handle_realtime_event
+from linkedin.realtime.heartbeat import write_heartbeat
 from linkedin.realtime.sse import RealtimeSSEBuffer
 
 logger = logging.getLogger(__name__)
 
 MESSAGING_URL = "https://www.linkedin.com/messaging/"
 _REALTIME_CONNECT_PATH = "/realtime/connect"
+_RECONNECT_DELAY_SECONDS = 10
+# After this many quick consecutive connect failures the daemon's browser
+# is presumed genuinely gone; the process exits non-zero and the daemon's
+# supervisor decides whether to respawn.
+_MAX_CONSECUTIVE_FAILURES = 30
+# A connection that survived at least this long counts as "worked, then
+# dropped" — the failure counter resets so a long-lived listener that
+# reconnects across daemon browser-relaunches never exhausts the cap.
+_HEALTHY_CONNECTION_SECONDS = 60
 
 
-class RealtimeListener:
-    """Owns the listener tab + CDP session for one AccountSession."""
+def run_listener(*, operator: str, username: str, cdp_port: int | None = None) -> int:
+    """Listener process main loop. Returns a process exit code.
 
-    def __init__(self, session, *, operator: str = ""):
-        self.session = session
-        self.operator = operator
-        self.page = None
-        self.cdp = None
-        self._buffer = RealtimeSSEBuffer()
-        self._stream_request_ids: set = set()
-
-    @property
-    def is_alive(self) -> bool:
-        return self.page is not None and not self.page.is_closed()
-
-    def start(self) -> None:
-        """Open the listener tab, attach CDP, subscribe. Raises on failure —
-        the caller (ensure_realtime_listener) degrades gracefully."""
-        context = self.session.context
-        self.page = context.new_page()
-        self.cdp = context.new_cdp_session(self.page)
-        self.cdp.send("Network.enable")
-        self.cdp.on("Network.requestWillBeSent", self._on_request)
-        self.cdp.on("Network.responseReceived", self._on_response)
-        self.cdp.on("Network.dataReceived", self._on_data)
-        self.page.goto(MESSAGING_URL, wait_until="domcontentloaded")
-        logger.info("Realtime listener tab opened — observing %s", _REALTIME_CONNECT_PATH)
-
-    def _on_request(self, params: dict) -> None:
-        url = (params.get("request") or {}).get("url", "")
-        request_id = params.get("requestId")
-        if request_id and _REALTIME_CONNECT_PATH in url:
-            self._stream_request_ids.add(request_id)
-
-    def _on_response(self, params: dict) -> None:
-        request_id = params.get("requestId")
-        if request_id not in self._stream_request_ids:
-            return
-        # Enable body streaming for the realtime connection. The result
-        # carries whatever was already buffered; subsequent dataReceived
-        # events then carry the live chunks.
-        try:
-            result = self.cdp.send(
-                "Network.streamResourceContent", {"requestId": request_id},
-            )
-        except Exception as e:
-            logger.warning("streamResourceContent failed for %s: %s", request_id, e)
-            return
-        buffered = result.get("bufferedData")
-        if buffered:
-            self._dispatch(buffered)
-
-    def _on_data(self, params: dict) -> None:
-        if params.get("requestId") not in self._stream_request_ids:
-            return
-        data_b64 = params.get("data")
-        if data_b64:
-            self._dispatch(data_b64)
-
-    def _dispatch(self, data_b64: str) -> None:
-        """Decode a base64 stream chunk, frame it, handle each event.
-
-        Never raises — handle_realtime_event is itself try/except wrapped,
-        and a bad chunk here is logged and dropped.
-        """
-        try:
-            text = base64.b64decode(data_b64).decode("utf-8", errors="replace")
-        except Exception as e:
-            logger.warning("realtime: undecodable stream chunk dropped: %s", e)
-            return
-        for event in self._buffer.feed(text):
-            handle_realtime_event(event, operator=self.operator)
-
-    def pump(self, seconds: float) -> None:
-        """Sleep `seconds` in slices via the listener page, refreshing the
-        heartbeat each slice. Keeps the Playwright event loop pumped so CDP
-        callbacks fire promptly. Used in place of the daemon's idle sleep.
-
-        If the listener page dies mid-pump, falls back to a plain sleep for
-        the remaining time — a dead tab must never unwind the daemon loop.
-        """
-        from linkedin.realtime.heartbeat import write_heartbeat
-
-        username = self.session.linkedin_profile.linkedin_username
-        remaining = seconds
-        while remaining > 0:
-            chunk = min(LISTENER_PUMP_SLICE_SECONDS, remaining)
-            try:
-                self.page.wait_for_timeout(int(chunk * 1000))
-            except Exception as e:
-                logger.warning(
-                    "Realtime listener page died mid-pump (%s) — falling back "
-                    "to plain sleep for %.0fs", e, remaining,
-                )
-                time.sleep(remaining)
-                return
-            write_heartbeat(username)
-            remaining -= chunk
-
-    def stop(self) -> None:
-        """Detach CDP and close the listener tab. Idempotent, never raises."""
-        was_open = self.page is not None
-        try:
-            if self.cdp is not None:
-                self.cdp.detach()
-        except Exception as e:
-            logger.debug("Realtime listener CDP detach failed: %s", e)
-        try:
-            if self.page is not None and not self.page.is_closed():
-                self.page.close()
-        except Exception as e:
-            logger.debug("Realtime listener tab close failed: %s", e)
-        self.page = self.cdp = None
-        if was_open:
-            logger.info("Realtime listener tab closed")
-
-
-def ensure_realtime_listener(session, *, operator: str = ""):
-    """Return a live RealtimeListener for `session`, creating/recovering it.
-
-    No-op (returns None) when ENABLE_REALTIME_LISTENER is false. A failure
-    to open the tab is logged and swallowed — the daemon continues without
-    realtime (degrades to polling). The listener is cached on
-    `session.realtime_listener`.
+    Maintains a CDP connection to the daemon's browser; on any drop,
+    reconnects after a short delay. Exits 1 only after
+    `_MAX_CONSECUTIVE_FAILURES` quick failures in a row.
     """
-    if not ENABLE_REALTIME_LISTENER:
-        return None
-
-    listener = getattr(session, "realtime_listener", None)
-    if listener is not None and listener.is_alive:
-        return listener
-
-    if listener is not None:
-        listener.stop()  # dead tab — clean up before recreating
-
-    listener = RealtimeListener(session, operator=operator)
-    try:
-        listener.start()
-    except Exception as e:
-        logger.warning(
-            "Realtime listener failed to start — continuing without realtime: %s", e,
-        )
-        session.realtime_listener = None
-        return None
-
-    session.realtime_listener = listener
-    return listener
+    cdp_port = LISTENER_CDP_PORT if cdp_port is None else cdp_port
+    failures = 0
+    while failures < _MAX_CONSECUTIVE_FAILURES:
+        started = time.monotonic()
+        try:
+            _run_one_connection(cdp_port=cdp_port, operator=operator, username=username)
+        except Exception as e:
+            lasted = time.monotonic() - started
+            if lasted >= _HEALTHY_CONNECTION_SECONDS:
+                failures = 0
+                logger.warning("listener: connection dropped after %.0fs — reconnecting", lasted)
+            else:
+                failures += 1
+                logger.warning(
+                    "listener: connect attempt failed (%d/%d): %s",
+                    failures, _MAX_CONSECUTIVE_FAILURES, e,
+                )
+        time.sleep(_RECONNECT_DELAY_SECONDS)
+    logger.error("listener: gave up after %d failed reconnects — exiting", failures)
+    return 1
 
 
-def stop_realtime_listener(session) -> None:
-    """Tear down the session's listener if one exists. Idempotent."""
-    listener = getattr(session, "realtime_listener", None)
-    if listener is not None:
-        listener.stop()
-    session.realtime_listener = None
+def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
+    """One CDP connection lifecycle: connect, wire the stream, pump until
+    the connection drops (at which point a Playwright call raises and the
+    exception propagates to `run_listener`'s reconnect loop).
+    """
+    buffer = RealtimeSSEBuffer()
+    stream_request_ids: set = set()
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+        if not browser.contexts:
+            raise RuntimeError("no shared browser context available over CDP")
+        context = browser.contexts[0]
+        page = context.new_page()
+        cdp = context.new_cdp_session(page)
+        cdp.send("Network.enable")
+
+        def _dispatch(data_b64: str) -> None:
+            try:
+                text = base64.b64decode(data_b64).decode("utf-8", errors="replace")
+            except Exception as e:
+                logger.warning("listener: undecodable stream chunk dropped: %s", e)
+                return
+            for event in buffer.feed(text):
+                handle_realtime_event(event, operator=operator)
+
+        def _on_request(params: dict) -> None:
+            url = (params.get("request") or {}).get("url", "")
+            rid = params.get("requestId")
+            if rid and _REALTIME_CONNECT_PATH in url:
+                stream_request_ids.add(rid)
+
+        def _on_response(params: dict) -> None:
+            rid = params.get("requestId")
+            if rid not in stream_request_ids:
+                return
+            try:
+                result = cdp.send("Network.streamResourceContent", {"requestId": rid})
+            except Exception as e:
+                logger.warning("listener: streamResourceContent failed: %s", e)
+                return
+            buffered = result.get("bufferedData")
+            if buffered:
+                _dispatch(buffered)
+
+        def _on_data(params: dict) -> None:
+            if params.get("requestId") not in stream_request_ids:
+                return
+            data_b64 = params.get("data")
+            if data_b64:
+                _dispatch(data_b64)
+
+        cdp.on("Network.requestWillBeSent", _on_request)
+        cdp.on("Network.responseReceived", _on_response)
+        cdp.on("Network.dataReceived", _on_data)
+
+        page.goto(MESSAGING_URL, wait_until="domcontentloaded")
+        logger.info("listener: connected over CDP, observing %s", _REALTIME_CONNECT_PATH)
+
+        # Pump loop — keeps the Playwright event loop turning so CDP
+        # callbacks fire, and refreshes the heartbeat each slice. A dropped
+        # connection makes wait_for_timeout raise → propagates out.
+        slice_ms = LISTENER_PUMP_SLICE_SECONDS * 1000
+        while True:
+            page.wait_for_timeout(slice_ms)
+            write_heartbeat(username)

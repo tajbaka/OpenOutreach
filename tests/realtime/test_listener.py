@@ -1,81 +1,52 @@
-"""Unit coverage for RealtimeListener — pump, is_alive, and the SSE
-dispatch path. The browser/CDP tab wiring (start/stop) is integration-
-tested by hand (see the plan's Task 12).
+"""Tests for the realtime listener process — the reconnect control loop.
+
+The CDP/browser path (_run_one_connection) needs a live browser and is
+covered by the deferred manual integration test, not here.
 """
 from __future__ import annotations
 
-import base64
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from linkedin.realtime.listener import RealtimeListener
-
-
-class _FakePage:
-    def __init__(self):
-        self.total_waited_ms = 0
-        self._closed = False
-
-    def wait_for_timeout(self, ms):
-        self.total_waited_ms += ms
-
-    def is_closed(self):
-        return self._closed
+from linkedin.realtime import listener
 
 
-def _listener_with_fake_page():
-    session = MagicMock()
-    session.linkedin_profile.linkedin_username = "arian@x.com"
-    listener = RealtimeListener(session, operator="Arian")
-    listener.page = _FakePage()
-    return listener
+def test_run_listener_gives_up_after_max_quick_failures(monkeypatch):
+    """Quick consecutive connect failures exhaust the cap → exit code 1."""
+    monkeypatch.setattr(listener, "_RECONNECT_DELAY_SECONDS", 0)
+    calls = {"n": 0}
+
+    def always_fail(**kwargs):
+        calls["n"] += 1
+        raise RuntimeError("no browser on CDP port")
+
+    with patch.object(listener, "_run_one_connection", side_effect=always_fail), \
+         patch.object(listener.time, "sleep"):
+        code = listener.run_listener(operator="Arian", username="a@x.com", cdp_port=9222)
+
+    assert code == 1
+    assert calls["n"] == listener._MAX_CONSECUTIVE_FAILURES
 
 
-def test_pump_waits_the_full_duration(monkeypatch):
-    monkeypatch.setattr("linkedin.realtime.listener.LISTENER_PUMP_SLICE_SECONDS", 30)
-    listener = _listener_with_fake_page()
-    with patch("linkedin.realtime.heartbeat.write_heartbeat") as mock_hb:
-        listener.pump(70)
-    assert listener.page.total_waited_ms == 70_000
-    # 30 + 30 + 10 → three slices → three heartbeat writes
-    assert mock_hb.call_count == 3
+def test_run_listener_resets_failures_after_a_real_connection(monkeypatch):
+    """A connection that lasted a while (then dropped) resets the failure
+    count — a long-lived listener that reconnects forever never exits."""
+    monkeypatch.setattr(listener, "_RECONNECT_DELAY_SECONDS", 0)
+    monkeypatch.setattr(listener, "_MAX_CONSECUTIVE_FAILURES", 3)
+    state = {"n": 0}
+    times = iter([0.0, 999.0, 999.0,   # call 1: lasted 999s → reset
+                  1000.0, 1001.0,      # call 2: lasted 1s → failure 1
+                  1002.0, 1003.0,      # call 3: 1s → failure 2
+                  1004.0, 1005.0])     # call 4: 1s → failure 3 → give up
 
+    def conn(**kwargs):
+        state["n"] += 1
+        raise RuntimeError("dropped")
 
-def test_pump_zero_or_negative_is_noop(monkeypatch):
-    monkeypatch.setattr("linkedin.realtime.listener.LISTENER_PUMP_SLICE_SECONDS", 30)
-    listener = _listener_with_fake_page()
-    with patch("linkedin.realtime.heartbeat.write_heartbeat") as mock_hb:
-        listener.pump(0)
-        listener.pump(-5)
-    assert listener.page.total_waited_ms == 0
-    mock_hb.assert_not_called()
+    monkeypatch.setattr(listener.time, "monotonic", lambda: next(times))
+    with patch.object(listener, "_run_one_connection", side_effect=conn), \
+         patch.object(listener.time, "sleep"):
+        code = listener.run_listener(operator="Arian", username="a@x.com", cdp_port=9222)
 
-
-def test_is_alive_false_when_no_page():
-    listener = RealtimeListener(MagicMock())
-    assert listener.is_alive is False
-
-
-def test_dispatch_decodes_frames_and_calls_handler():
-    """_dispatch: base64 → SSE framing → one handle_realtime_event per event."""
-    listener = RealtimeListener(MagicMock(), operator="Arian")
-    sse_text = 'data: {"a": 1}\n\ndata: {"b": 2}\n\n'
-    chunk_b64 = base64.b64encode(sse_text.encode("utf-8")).decode("ascii")
-    with patch("linkedin.realtime.listener.handle_realtime_event") as mock_handle:
-        listener._dispatch(chunk_b64)
-    assert mock_handle.call_count == 2
-    assert mock_handle.call_args_list[0].args[0] == {"a": 1}
-    assert mock_handle.call_args_list[1].args[0] == {"b": 2}
-    assert mock_handle.call_args_list[1].kwargs == {"operator": "Arian"}
-
-
-def test_dispatch_buffers_event_split_across_chunks():
-    """An event split across two stream chunks is handled once, on completion."""
-    listener = RealtimeListener(MagicMock(), operator="Arian")
-    part1 = base64.b64encode(b'data: {"a":').decode("ascii")
-    part2 = base64.b64encode(b' 1}\n\n').decode("ascii")
-    with patch("linkedin.realtime.listener.handle_realtime_event") as mock_handle:
-        listener._dispatch(part1)
-        assert mock_handle.call_count == 0
-        listener._dispatch(part2)
-        assert mock_handle.call_count == 1
-        assert mock_handle.call_args.args[0] == {"a": 1}
+    assert code == 1
+    # call 1 reset the counter, so it took 1 (reset) + 3 (fail) = 4 attempts
+    assert state["n"] == 4
