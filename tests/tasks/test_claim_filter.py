@@ -121,3 +121,33 @@ def test_seconds_to_next_respects_operator_filter():
     # 600s task, Chuka's is the 30s task.
     assert chuka_wait < 100
     assert arian_wait > 500
+
+
+@pytest.mark.django_db
+def test_claim_next_excludes_enrich_phone():
+    """The outbound loop must never claim an enrichment task — that is the
+    EnrichmentWorker's job."""
+    enrich = Task.objects.create(
+        task_type=Task.TaskType.ENRICH_PHONE,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=60),
+        payload={"lead_id": 1},
+    )
+    # Even with nothing else queued and the task overdue, claim_next skips it.
+    assert Task.objects.claim_next() is None
+    assert Task.objects.claim_next(operator="Arian") is None
+    # And it does not dictate the outbound loop's sleep.
+    assert Task.objects.seconds_to_next() is None
+    # But the dedicated query finds it.
+    assert Task.objects.next_enrichment().pk == enrich.pk
+
+
+@pytest.mark.django_db
+def test_next_enrichment_returns_none_when_not_due():
+    Task.objects.create(
+        task_type=Task.TaskType.ENRICH_PHONE,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() + timedelta(hours=1),
+        payload={"lead_id": 1},
+    )
+    assert Task.objects.next_enrichment() is None

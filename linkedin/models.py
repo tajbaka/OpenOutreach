@@ -216,7 +216,7 @@ class TaskQuerySet(models.QuerySet):
         """
         from django.db.models import Q
 
-        qs = self.due()
+        qs = self.due().exclude(task_type=Task.TaskType.ENRICH_PHONE)
         if operator:
             not_follow_up = ~Q(task_type=Task.TaskType.FOLLOW_UP)
             mine_or_legacy = Q(task_type=Task.TaskType.FOLLOW_UP) & (
@@ -237,7 +237,9 @@ class TaskQuerySet(models.QuerySet):
         """
         from django.db.models import Q
 
-        qs = self.pending().only("scheduled_at", "task_type", "payload")
+        qs = self.pending().exclude(task_type=Task.TaskType.ENRICH_PHONE).only(
+            "scheduled_at", "task_type", "payload",
+        )
         if operator:
             not_follow_up = ~Q(task_type=Task.TaskType.FOLLOW_UP)
             mine_or_legacy = Q(task_type=Task.TaskType.FOLLOW_UP) & (
@@ -250,6 +252,16 @@ class TaskQuerySet(models.QuerySet):
         if next_task is None:
             return None
         return max((next_task.scheduled_at - timezone.now()).total_seconds(), 0)
+
+    def next_enrichment(self) -> "Task | None":
+        """The next due ENRICH_PHONE task — the EnrichmentWorker's claim query.
+
+        Separate from `claim_next` (which excludes ENRICH_PHONE) so the
+        outbound task loop and the single enrichment worker thread never
+        compete for the same row. NOTE: this is a plain ordered read, not a
+        locking claim — safe only because exactly one worker thread calls it.
+        """
+        return self.due().filter(task_type=Task.TaskType.ENRICH_PHONE).first()
 
 
 class Task(models.Model):
