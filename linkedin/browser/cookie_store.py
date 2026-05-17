@@ -42,6 +42,19 @@ def cookie_path_for(username: str) -> Path:
     return ROOT_DIR / "data" / f"cookies-{safe}.json"
 
 
+def profile_dir_for(username: str) -> Path:
+    """Return the persistent-context profile directory for a LinkedIn username.
+
+    Convention mirrors `cookie_path_for`: `data/profile-<safe_username>/`.
+    Used by the daemon's `launch_persistent_context` (the listener child
+    process shares this context over CDP).
+    """
+    safe = _SAFE_NAME_RE.sub("-", (username or "").lower()).strip("-")
+    if not safe:
+        raise ValueError("cannot derive profile dir from empty username")
+    return ROOT_DIR / "data" / f"profile-{safe}"
+
+
 def load_cookies(path: Path) -> dict | None:
     """Read cached Playwright storage_state from disk, or None on miss / corrupt."""
     if not path.exists():
