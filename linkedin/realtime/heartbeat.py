@@ -2,8 +2,8 @@
 
 One JSON file per LinkedIn username at
 data/listener-heartbeat-<safe_username>.json — same data/ + safe-name
-convention as the cookie store. Refreshed every pump slice while the
-listener runs; read once at daemon startup by the catch-up.
+convention as the cookie store. Refreshed periodically by the listener
+while it runs; read once at daemon startup by the catch-up.
 """
 from __future__ import annotations
 
@@ -36,15 +36,22 @@ def heartbeat_path_for(username: str) -> Path:
 def write_heartbeat(username: str) -> None:
     """Stamp the heartbeat file with the current time. Best-effort."""
     path = heartbeat_path_for(username)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"last_alive": timezone.now().isoformat()}),
-        encoding="utf-8",
-    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"last_alive": timezone.now().isoformat()}),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logger.warning("Failed to write heartbeat file %s: %s", path, e)
 
 
 def read_heartbeat(username: str) -> datetime | None:
-    """Return the last-alive datetime, or None if missing / unreadable."""
+    """Return the last-alive datetime, or None if missing / unreadable.
+
+    The returned datetime is timezone-aware (guaranteed by USE_TZ=True +
+    isoformat()), so callers can safely subtract timezone.now().
+    """
     path = heartbeat_path_for(username)
     if not path.exists():
         return None
