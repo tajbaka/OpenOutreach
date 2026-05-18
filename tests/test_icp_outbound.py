@@ -59,7 +59,7 @@ def test_fill_message_substitutes_first_name_and_brand():
     out = icp_outbound.fill_message(
         sender="Arian",
         icp="CSPs",
-        channel="linkedin",
+        channel="linkedin_connect_followup",
         first_name="Jane",
         variant_index=0,
     )
@@ -74,14 +74,14 @@ def test_fill_message_variant_index_picks_explicit_variant():
     state since we mirror the single Sheets template per ICP. The
     variant-rotation feature still works (try `variant_index=1` against a
     multi-variant entry), but there's nothing to assert against here."""
-    variants = icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin"]
+    variants = icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin_connect_followup"]
     if len(variants) < 2:
         pytest.skip("Only one variant per channel — rotation not testable.")
     a = icp_outbound.fill_message(
-        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", variant_index=0,
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", variant_index=0,
     )
     b = icp_outbound.fill_message(
-        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", variant_index=1,
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", variant_index=1,
     )
     assert a != b  # different variants → different output
 
@@ -90,10 +90,10 @@ def test_fill_message_lead_id_stable_across_calls():
     """Same lead_id → same variant. Operator can re-render the sheet
     and lead 42 always gets the same opener."""
     a = icp_outbound.fill_message(
-        sender="Arian", icp="CSPs", channel="linkedin", first_name="Jane", lead_id=42,
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="Jane", lead_id=42,
     )
     b = icp_outbound.fill_message(
-        sender="Arian", icp="CSPs", channel="linkedin", first_name="Jane", lead_id=42,
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="Jane", lead_id=42,
     )
     assert a == b
 
@@ -101,12 +101,12 @@ def test_fill_message_lead_id_stable_across_calls():
 def test_fill_message_lead_id_modulo_wraps():
     """lead_id 5 with 3 variants → variant index 2. Confirms the modulo
     math doesn't crash on a lead_id larger than variant count."""
-    variants_count = len(icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin"])
+    variants_count = len(icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin_connect_followup"])
     out_a = icp_outbound.fill_message(
-        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", lead_id=variants_count,
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", lead_id=variants_count,
     )
     out_b = icp_outbound.fill_message(
-        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", lead_id=0,
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", lead_id=0,
     )
     assert out_a == out_b  # lead_id N and 0 both land on variant 0
 
@@ -119,7 +119,7 @@ def test_fill_message_unknown_icp_raises():
         icp_outbound.fill_message(
             sender="Arian",
             icp="NotAnICP",
-            channel="linkedin",
+            channel="linkedin_connect_followup",
             first_name="Jane",
         )
 
@@ -140,7 +140,7 @@ def test_fill_message_unknown_sender_raises():
         icp_outbound.fill_message(
             sender="Nobody",
             icp="CSPs",
-            channel="linkedin",
+            channel="linkedin_connect_followup",
             first_name="Jane",
         )
 
@@ -175,7 +175,7 @@ def test_fill_message_missing_first_name_renders_empty():
     out = icp_outbound.fill_message(
         sender="Arian",
         icp="CSPs",
-        channel="linkedin",
+        channel="linkedin_connect_followup",
         first_name="",
         variant_index=0,
     )
@@ -210,7 +210,7 @@ def test_fill_for_lead_resolves_role_to_icp():
         out = icp_outbound.fill_for_lead(
             sender="Arian",
             role=role,
-            channel="linkedin",
+            channel="linkedin_connect_followup",
             lead=StubLead(lid=1),
         )
         assert expected.lower() in out.body.lower(), (
@@ -230,6 +230,6 @@ def test_fill_for_lead_unknown_role_raises():
         icp_outbound.fill_for_lead(
             sender="Arian",
             role="CTO",
-            channel="linkedin",
+            channel="linkedin_connect_followup",
             lead=StubLead(),
         )
