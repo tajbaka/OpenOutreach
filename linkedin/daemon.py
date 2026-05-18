@@ -21,7 +21,7 @@ from linkedin.conf import (
     ENABLE_AUTO_DISCOVERY,
     ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
-    ENABLE_PHONE_ENRICHMENT,
+    ENABLE_AUTO_PHONE_ENRICHMENT,
     ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
@@ -450,10 +450,12 @@ def run_daemon(session):
     # Phone-enrichment worker — a background thread claiming enrich_phone
     # tasks. HTTP-only, so (unlike the listener) it is NOT gated on active
     # hours; it runs whenever the daemon is up.
+    # Always spawn the enrichment worker — the Slack select menu is always
+    # available, so enrich_phone tasks must always be processable. The worker
+    # is a cheap idle DB poll when no tasks exist.
     from linkedin.enrichment.worker import EnrichmentWorker
     enrichment_worker = EnrichmentWorker()
-    if ENABLE_PHONE_ENRICHMENT:
-        enrichment_worker.start()
+    enrichment_worker.start()
 
     # Single-threaded: one task at a time, no concurrent enqueuing,
     # so sleeping until the next scheduled_at is safe.
@@ -481,7 +483,7 @@ def run_daemon(session):
         if task is None:
             wait = Task.objects.seconds_to_next(operator=our_operator)
             if wait is None:
-                if ENABLE_PHONE_ENRICHMENT and Task.objects.filter(
+                if Task.objects.filter(
                     task_type=Task.TaskType.ENRICH_PHONE,
                     status__in=[Task.Status.PENDING, Task.Status.RUNNING],
                 ).exists():

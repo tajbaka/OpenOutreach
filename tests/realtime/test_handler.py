@@ -112,7 +112,7 @@ def test_inbound_enqueues_enrichment_when_enabled(db):
     lead = _seed_lead(db)
     with patch("linkedin.realtime.handler.parse_realtime_event", return_value=_inbound(lead)), \
          patch("linkedin.realtime.handler.notify_message_received"), \
-         patch("linkedin.realtime.handler.ENABLE_PHONE_ENRICHMENT", True):
+         patch("linkedin.realtime.handler.ENABLE_AUTO_PHONE_ENRICHMENT", True):
         handle_realtime_event({"data": "x"}, operator="Arian")
 
     tasks = Task.objects.filter(task_type=Task.TaskType.ENRICH_PHONE)
@@ -126,7 +126,7 @@ def test_inbound_does_not_enqueue_when_disabled(db):
     lead = _seed_lead(db)
     with patch("linkedin.realtime.handler.parse_realtime_event", return_value=_inbound(lead)), \
          patch("linkedin.realtime.handler.notify_message_received"), \
-         patch("linkedin.realtime.handler.ENABLE_PHONE_ENRICHMENT", False):
+         patch("linkedin.realtime.handler.ENABLE_AUTO_PHONE_ENRICHMENT", False):
         handle_realtime_event({"data": "x"}, operator="Arian")
 
     assert Task.objects.filter(task_type=Task.TaskType.ENRICH_PHONE).count() == 0
@@ -141,7 +141,7 @@ def test_enrichment_not_enqueued_for_already_enriched_lead(db):
     lead.save(update_fields=["phone_enriched_at"])
     with patch("linkedin.realtime.handler.parse_realtime_event", return_value=_inbound(lead)), \
          patch("linkedin.realtime.handler.notify_message_received"), \
-         patch("linkedin.realtime.handler.ENABLE_PHONE_ENRICHMENT", True):
+         patch("linkedin.realtime.handler.ENABLE_AUTO_PHONE_ENRICHMENT", True):
         handle_realtime_event({"data": "x"}, operator="Arian")
 
     assert Task.objects.filter(task_type=Task.TaskType.ENRICH_PHONE).count() == 0
@@ -169,7 +169,7 @@ def test_enrichment_deduped_against_existing_task(db):
     )
     with patch("linkedin.realtime.handler.parse_realtime_event", return_value=second), \
          patch("linkedin.realtime.handler.notify_message_received"), \
-         patch("linkedin.realtime.handler.ENABLE_PHONE_ENRICHMENT", True):
+         patch("linkedin.realtime.handler.ENABLE_AUTO_PHONE_ENRICHMENT", True):
         handle_realtime_event({"data": "x"}, operator="Arian")
 
     assert Task.objects.filter(task_type=Task.TaskType.ENRICH_PHONE).count() == 1

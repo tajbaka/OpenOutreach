@@ -185,14 +185,14 @@ LISTENER_CDP_PORT = int(os.getenv("LISTENER_CDP_PORT") or 9222)
 # ----------------------------------------------------------------------
 # Phone enrichment (multi-provider waterfall — see linkedin/enrichment/)
 # ----------------------------------------------------------------------
-# Kill-switch for the phone-enrichment worker. When true, the daemon spawns
-# a background thread that enriches a lead's mobile number (via BetterContact
-# → LeadMagic → Prospeo) after the realtime listener detects an inbound reply.
-# Default OFF — enrichment is an enhancement; with it disabled the daemon
-# behaves exactly as before. Mirrors the existing ENABLE_* gates.
-ENABLE_PHONE_ENRICHMENT = os.getenv("ENABLE_PHONE_ENRICHMENT", "false").strip().lower() in {
-    "1", "true", "yes", "on",
-}
+# Gates ONLY the realtime listener's auto-enqueue of an enrich_phone task on
+# every inbound reply. Default OFF — the operator triggers enrichment on
+# demand from the Slack select menu instead (see api/slack_enrich.py). The
+# EnrichmentWorker itself is NOT gated by this: it always runs, because the
+# select menu is always present so enrichment must always be processable.
+ENABLE_AUTO_PHONE_ENRICHMENT = os.getenv(
+    "ENABLE_AUTO_PHONE_ENRICHMENT", "false",
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # Hard cap on a single BetterContact submit→poll cycle. Past this the provider
 # returns API_FAILURE and the waterfall fails over to the next provider.

@@ -72,12 +72,12 @@ class TestPhoneEnrichmentConfig:
     def test_flag_defaults_off(self, monkeypatch):
         import importlib
         import linkedin.conf as conf
-        monkeypatch.delenv("ENABLE_PHONE_ENRICHMENT", raising=False)
+        monkeypatch.delenv("ENABLE_AUTO_PHONE_ENRICHMENT", raising=False)
         # conf.py runs load_dotenv() on import — stub it so the reload below
         # reflects the process env (the delenv above), not the on-disk .env.
         monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
         importlib.reload(conf)
-        assert conf.ENABLE_PHONE_ENRICHMENT is False
+        assert conf.ENABLE_AUTO_PHONE_ENRICHMENT is False
         monkeypatch.undo()
         importlib.reload(conf)
 
@@ -85,9 +85,9 @@ class TestPhoneEnrichmentConfig:
         import importlib
         import linkedin.conf as conf
         for raw in ("1", "true", "YES", "on"):
-            monkeypatch.setenv("ENABLE_PHONE_ENRICHMENT", raw)
+            monkeypatch.setenv("ENABLE_AUTO_PHONE_ENRICHMENT", raw)
             importlib.reload(conf)
-            assert conf.ENABLE_PHONE_ENRICHMENT is True
+            assert conf.ENABLE_AUTO_PHONE_ENRICHMENT is True
         importlib.reload(conf)
 
     def test_tuning_constants_have_defaults(self, monkeypatch):
