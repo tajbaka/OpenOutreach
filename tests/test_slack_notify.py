@@ -290,7 +290,8 @@ class TestNotifyPhoneEnriched:
                 ),
             )
         body = mock_open.call_args[0][0].data.decode("utf-8")
-        assert "+14155550199" in body
+        # Rendered in NANP display format, not the raw E.164 string.
+        assert "+1 (415) 555-0199" in body
         assert "leadmagic" in body
 
     def test_not_found_posts_no_number(self, monkeypatch):
@@ -310,3 +311,15 @@ class TestNotifyPhoneEnriched:
             )
         body = mock_open.call_args[0][0].data.decode("utf-8")
         assert "No phone number found" in body
+
+
+def test_format_phone_display():
+    from linkedin.notifications.slack import format_phone_display
+
+    # NANP — with and without the leading +1 / formatting.
+    assert format_phone_display("+12566558960") == "+1 (256) 655-8960"
+    assert format_phone_display("2566558960") == "+1 (256) 655-8960"
+    assert format_phone_display("+1 (256) 655-8960") == "+1 (256) 655-8960"
+    # Non-NANP and empty are returned unchanged.
+    assert format_phone_display("+447911123456") == "+447911123456"
+    assert format_phone_display("") == ""

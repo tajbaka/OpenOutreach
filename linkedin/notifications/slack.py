@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import traceback
 from contextlib import contextmanager
@@ -228,6 +229,19 @@ def notify_message_received(
         logger.warning("Slack message-received webhook failed for %s: %s", full_name, e)
 
 
+def format_phone_display(raw: str) -> str:
+    """Human-readable phone format for Slack messages. A NANP number renders
+    as '+1 (905) 569-6193'; anything non-NANP is returned unchanged."""
+    digits = re.sub(r"\D", "", raw or "")
+    if len(digits) == 11 and digits[0] == "1":
+        d = digits[1:]
+    elif len(digits) == 10:
+        d = digits
+    else:
+        return raw or ""
+    return f"+1 ({d[0:3]}) {d[3:6]}-{d[6:10]}"
+
+
 def notify_phone_enriched(*, lead, result) -> None:
     """Post a 'phone enriched' notification. No-op if SLACK_WEBHOOK_URL unset.
 
@@ -248,8 +262,9 @@ def notify_phone_enriched(*, lead, result) -> None:
     name_md = f"<{profile_url}|{full_name}>" if profile_url else full_name
 
     if result.phone:
-        action_line = f":telephone_receiver: Phone found for *{name_md}*: `{result.phone}`"
-        fallback = f":telephone_receiver: Phone found for {full_name}: {result.phone}"
+        phone_fmt = format_phone_display(result.phone)
+        action_line = f":telephone_receiver: Phone found for *{name_md}*: `{phone_fmt}`"
+        fallback = f":telephone_receiver: Phone found for {full_name}: {phone_fmt}"
     else:
         action_line = f":telephone_receiver: No phone number found for *{name_md}*"
         fallback = f":telephone_receiver: No phone number found for {full_name}"
