@@ -32,6 +32,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 # replay guard on our side.
 _MAX_SKEW_SECONDS = 60 * 5
 
+# The status line we add/update after a pick carries the set of requested
+# providers in its block_id ("enrich_status:bettercontact,leadmagic") — a
+# machine-readable place to accumulate state across picks, since Slack echoes
+# the message blocks back on the next interaction.
+_STATUS_PREFIX = "enrich_status"
+
 
 def verify_signature(
     body: str,
@@ -62,11 +68,15 @@ def verify_signature(
     return hmac.compare_digest(expected, signature)
 
 
-def parse_interaction(body: str) -> tuple[int, str]:
-    """Extract (lead_id, provider) from a Slack block-actions POST body.
+def parse_interaction(body: str) -> tuple[int, str, list]:
+    """Extract (lead_id, provider, original_blocks) from a Slack block-actions
+    POST body.
 
     Slack sends application/x-www-form-urlencoded with a single `payload`
-    field holding URL-encoded JSON. Raises ValueError on anything malformed.
+    field holding URL-encoded JSON. `original_blocks` is the Block Kit list
+    of the message the operator interacted with — re-posted (menu and all)
+    so the dropdown survives the click. Raises ValueError on anything
+    malformed.
     """
     fields = parse_qs(body)
     raw = (fields.get("payload") or [None])[0]
@@ -80,7 +90,47 @@ def parse_interaction(body: str) -> tuple[int, str]:
     if not value or ":" not in value:
         raise ValueError(f"unparseable action value: {value!r}")
     lead_part, provider = value.rsplit(":", 1)
-    return int(lead_part), provider
+    original_blocks = (payload.get("message") or {}).get("blocks") or []
+    return int(lead_part), provider, original_blocks
+
+
+def render_response_blocks(original_blocks: list, provider: str) -> list:
+    """Rebuild the notification's blocks after a provider pick.
+
+    Keeps every original block — crucially the `actions` select menu — so the
+    operator can pick another provider on the same message, and accumulates a
+    status line listing every provider requested so far. This is what makes
+    the menu multi-use instead of one-shot.
+    """
+    requested: set[str] = set()
+    for b in original_blocks:
+        bid = b.get("block_id", "")
+        if bid.startswith(_STATUS_PREFIX + ":"):
+            requested |= {p for p in bid.split(":", 1)[1].split(",") if p}
+    requested.add(provider)
+    ordered = sorted(requested)
+    status = {
+        "type": "section",
+        "block_id": _STATUS_PREFIX + ":" + ",".join(ordered),
+        "text": {
+            "type": "mrkdwn",
+            "text": ":hourglass_flowing_sand: *Enrichment requested:* "
+                    + ", ".join(ordered)
+                    + " — results post as they arrive.",
+        },
+    }
+    out: list = []
+    inserted = False
+    for b in original_blocks:
+        if b.get("block_id", "").startswith(_STATUS_PREFIX):
+            continue  # drop the old status line; the rebuilt one replaces it
+        if b.get("type") == "actions" and not inserted:
+            out.append(status)  # status sits just above the still-live menu
+            inserted = True
+        out.append(b)
+    if not inserted:
+        out.append(status)
+    return out
 
 
 def enqueue_task(conn, lead_id: int, provider: str) -> bool:
@@ -136,23 +186,21 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            lead_id, provider = parse_interaction(body)
+            lead_id, provider, original_blocks = parse_interaction(body)
         except (ValueError, json.JSONDecodeError):
             self._respond_text(400, "malformed interaction")
             return
 
         try:
             with psycopg.connect(DATABASE_URL) as conn:
-                inserted = enqueue_task(conn, lead_id, provider)
+                enqueue_task(conn, lead_id, provider)
         except Exception:  # noqa: BLE001 — surface any DB failure as a 500
             self._respond_text(500, "database error")
             return
 
-        if inserted:
-            text = f"⏳ Fetching phone number via {provider}…"
-        else:
-            text = "⏳ Enrichment already queued for this lead."
-        self._respond_message(text)
+        # Re-post the message with the select menu intact so the operator can
+        # request another provider on the same notification.
+        self._respond_blocks(render_response_blocks(original_blocks, provider))
 
     def _respond_text(self, code: int, text: str) -> None:
         body = text.encode("utf-8")
@@ -162,14 +210,13 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _respond_message(self, text: str) -> None:
-        """200 with a Slack message-replacement body — swaps the menu out."""
+    def _respond_blocks(self, blocks: list) -> None:
+        """200 with a Slack message-replacement body — keeps the select menu
+        live so the operator can request more providers."""
         body = json.dumps({
             "replace_original": True,
-            "text": text,
-            "blocks": [
-                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
-            ],
+            "text": "Phone enrichment requested",
+            "blocks": blocks,
         }).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

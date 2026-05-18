@@ -63,19 +63,42 @@ def test_verify_signature_rejects_missing_headers():
     ) is False
 
 
-def _interaction_body(value: str) -> str:
+def _interaction_body(value: str, message_blocks=None) -> str:
     payload = {"actions": [{"selected_option": {"value": value}}]}
+    if message_blocks is not None:
+        payload["message"] = {"blocks": message_blocks}
     return urlencode({"payload": json.dumps(payload)})
 
 
-def test_parse_interaction_extracts_lead_and_provider():
+_MENU_BLOCK = {
+    "type": "actions",
+    "block_id": "enrich_phone_actions",
+    "elements": [{
+        "type": "static_select", "action_id": "enrich_phone_select",
+        "options": [],
+    }],
+}
+
+
+def test_parse_interaction_extracts_lead_provider_and_blocks():
     body = _interaction_body("42:leadmagic")
-    assert slack_enrich.parse_interaction(body) == (42, "leadmagic")
+    lead_id, provider, blocks = slack_enrich.parse_interaction(body)
+    assert (lead_id, provider) == (42, "leadmagic")
+    assert blocks == []  # no message echoed → empty
 
 
 def test_parse_interaction_handles_waterfall():
     body = _interaction_body("7:waterfall")
-    assert slack_enrich.parse_interaction(body) == (7, "waterfall")
+    lead_id, provider, _ = slack_enrich.parse_interaction(body)
+    assert (lead_id, provider) == (7, "waterfall")
+
+
+def test_parse_interaction_returns_echoed_message_blocks():
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]
+    body = _interaction_body("5:prospeo", message_blocks=blocks)
+    lead_id, provider, original = slack_enrich.parse_interaction(body)
+    assert (lead_id, provider) == (5, "prospeo")
+    assert original == blocks
 
 
 def test_parse_interaction_rejects_missing_payload():
@@ -123,3 +146,44 @@ def test_enqueue_task_dedup_select_keys_on_lead_and_provider():
     # Dedup is per (lead, provider) so two providers can queue at once.
     assert select_params == (42, "bettercontact")
     assert "payload->>'provider'" in select_sql
+
+
+def test_render_response_keeps_menu_and_adds_status():
+    original = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": "reply"}},
+        _MENU_BLOCK,
+    ]
+    out = slack_enrich.render_response_blocks(original, "bettercontact")
+    # the select menu survives the click — multi-use, not one-shot
+    assert any(b.get("type") == "actions" for b in out)
+    status = [b for b in out if b.get("block_id", "").startswith("enrich_status")]
+    assert len(status) == 1
+    assert "bettercontact" in status[0]["text"]["text"]
+    # status sits directly above the still-live menu
+    actions_idx = next(i for i, b in enumerate(out) if b.get("type") == "actions")
+    assert out[actions_idx - 1]["block_id"].startswith("enrich_status")
+
+
+def test_render_response_accumulates_providers_across_picks():
+    original = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": "reply"}},
+        _MENU_BLOCK,
+    ]
+    after_first = slack_enrich.render_response_blocks(original, "bettercontact")
+    after_second = slack_enrich.render_response_blocks(after_first, "leadmagic")
+    status = [
+        b for b in after_second
+        if b.get("block_id", "").startswith("enrich_status")
+    ]
+    assert len(status) == 1  # one status line, not stacked
+    text = status[0]["text"]["text"]
+    assert "bettercontact" in text and "leadmagic" in text
+    # menu still present for a third pick
+    assert any(b.get("type") == "actions" for b in after_second)
+
+
+def test_render_response_dedups_repeated_provider():
+    once = slack_enrich.render_response_blocks([_MENU_BLOCK], "leadmagic")
+    twice = slack_enrich.render_response_blocks(once, "leadmagic")
+    status = [b for b in twice if b.get("block_id", "").startswith("enrich_status")]
+    assert status[0]["block_id"] == "enrich_status:leadmagic"
