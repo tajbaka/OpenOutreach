@@ -23,21 +23,32 @@ def _stub_brand(monkeypatch):
 
 
 def test_load_icp_messages_returns_known_buckets():
-    """The buckets the workflow's FU_ROLE_TO_ICP maps to must exist."""
-    messages = icp_outbound.load_icp_messages()
-    for icp in ("CSPs", "3PAOs/Assessors", "Advisors"):
-        assert icp in messages
+    """The buckets the workflow's FU_ROLE_TO_ICP maps to must exist
+    under each sender's block."""
+    for sender in ("Arian", "Chuka"):
+        messages = icp_outbound.load_icp_messages(sender)
+        for icp in ("CSPs", "3PAOs/Assessors", "Advisors"):
+            assert icp in messages, f"{sender} missing {icp}"
 
 
 def test_load_icp_messages_returns_lists_of_variants():
     """Each channel must be a list of variant strings — the random-but-
     stable variant selection in fill_message assumes list shape."""
-    messages = icp_outbound.load_icp_messages()
-    for icp, channels in messages.items():
-        for channel, variants in channels.items():
-            assert isinstance(variants, list), f"{icp}.{channel} should be list"
-            assert len(variants) >= 1, f"{icp}.{channel} needs ≥1 variant"
-            assert all(isinstance(v, str) for v in variants)
+    for sender in ("Arian", "Chuka"):
+        messages = icp_outbound.load_icp_messages(sender)
+        for icp, channels in messages.items():
+            for channel, variants in channels.items():
+                assert isinstance(variants, list), f"{sender}.{icp}.{channel} should be list"
+                assert len(variants) >= 1, f"{sender}.{icp}.{channel} needs ≥1 variant"
+                assert all(isinstance(v, str) for v in variants)
+
+
+def test_load_icp_messages_unknown_sender_raises():
+    """An operator handle absent from the JSON must crash loud — no
+    shared default, per the project's no-silent-fallback rule. Sending
+    under another operator's copy is worse than crashing the run."""
+    with pytest.raises(SheetsError, match="sender 'NotAnOperator'"):
+        icp_outbound.load_icp_messages("NotAnOperator")
 
 
 def test_fill_message_substitutes_first_name_and_brand():
@@ -46,6 +57,7 @@ def test_fill_message_substitutes_first_name_and_brand():
     `BrandCo` / `https://brand.co/` by the autouse `_stub_brand` fixture
     so the assertion doesn't drift with operator-side env edits."""
     out = icp_outbound.fill_message(
+        sender="Arian",
         icp="CSPs",
         channel="linkedin",
         first_name="Jane",
@@ -62,14 +74,14 @@ def test_fill_message_variant_index_picks_explicit_variant():
     state since we mirror the single Sheets template per ICP. The
     variant-rotation feature still works (try `variant_index=1` against a
     multi-variant entry), but there's nothing to assert against here."""
-    variants = icp_outbound.load_icp_messages()["CSPs"]["linkedin"]
+    variants = icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin"]
     if len(variants) < 2:
         pytest.skip("Only one variant per channel — rotation not testable.")
     a = icp_outbound.fill_message(
-        icp="CSPs", channel="linkedin", first_name="X", variant_index=0,
+        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", variant_index=0,
     )
     b = icp_outbound.fill_message(
-        icp="CSPs", channel="linkedin", first_name="X", variant_index=1,
+        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", variant_index=1,
     )
     assert a != b  # different variants → different output
 
@@ -78,10 +90,10 @@ def test_fill_message_lead_id_stable_across_calls():
     """Same lead_id → same variant. Operator can re-render the sheet
     and lead 42 always gets the same opener."""
     a = icp_outbound.fill_message(
-        icp="CSPs", channel="linkedin", first_name="Jane", lead_id=42,
+        sender="Arian", icp="CSPs", channel="linkedin", first_name="Jane", lead_id=42,
     )
     b = icp_outbound.fill_message(
-        icp="CSPs", channel="linkedin", first_name="Jane", lead_id=42,
+        sender="Arian", icp="CSPs", channel="linkedin", first_name="Jane", lead_id=42,
     )
     assert a == b
 
@@ -89,12 +101,12 @@ def test_fill_message_lead_id_stable_across_calls():
 def test_fill_message_lead_id_modulo_wraps():
     """lead_id 5 with 3 variants → variant index 2. Confirms the modulo
     math doesn't crash on a lead_id larger than variant count."""
-    variants_count = len(icp_outbound.load_icp_messages()["CSPs"]["linkedin"])
+    variants_count = len(icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin"])
     out_a = icp_outbound.fill_message(
-        icp="CSPs", channel="linkedin", first_name="X", lead_id=variants_count,
+        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", lead_id=variants_count,
     )
     out_b = icp_outbound.fill_message(
-        icp="CSPs", channel="linkedin", first_name="X", lead_id=0,
+        sender="Arian", icp="CSPs", channel="linkedin", first_name="X", lead_id=0,
     )
     assert out_a == out_b  # lead_id N and 0 both land on variant 0
 
@@ -105,6 +117,7 @@ def test_fill_message_unknown_icp_raises():
     error-handling rule."""
     with pytest.raises(SheetsError, match="ICP 'NotAnICP'"):
         icp_outbound.fill_message(
+            sender="Arian",
             icp="NotAnICP",
             channel="linkedin",
             first_name="Jane",
@@ -114,16 +127,53 @@ def test_fill_message_unknown_icp_raises():
 def test_fill_message_unknown_channel_raises():
     with pytest.raises(SheetsError, match="'sms' channel"):
         icp_outbound.fill_message(
+            sender="Arian",
             icp="CSPs",
             channel="sms",
             first_name="Jane",
         )
 
 
+def test_fill_message_unknown_sender_raises():
+    """An unknown sender propagates the SheetsError out of fill_message."""
+    with pytest.raises(SheetsError, match="sender 'Nobody'"):
+        icp_outbound.fill_message(
+            sender="Nobody",
+            icp="CSPs",
+            channel="linkedin",
+            first_name="Jane",
+        )
+
+
+def test_known_senders_lists_operator_blocks():
+    """known_senders() exposes the JSON's top-level operator keys — the
+    daemon's startup check verifies an account against this set."""
+    senders = icp_outbound.known_senders()
+    assert "Arian" in senders
+    assert "Chuka" in senders
+
+
+def test_missing_sender_block_none_for_known_operator():
+    """A LinkedIn username whose resolved handle has a block → covered,
+    so missing_sender_block returns None (account safe to run outbound)."""
+    # `ariant@tryfedrampgpt.com` resolves (via operators.py) to "Arian".
+    assert icp_outbound.missing_sender_block("ariant@tryfedrampgpt.com") is None
+
+
+def test_missing_sender_block_returns_handle_for_unknown():
+    """An un-onboarded account → resolve_operator falls through to the raw
+    string, which has no block → returned as the handle to add."""
+    assert (
+        icp_outbound.missing_sender_block("nobody@example.com")
+        == "nobody@example.com"
+    )
+
+
 def test_fill_message_missing_first_name_renders_empty():
     """Empty first_name doesn't crash — renders awkward but recoverable.
     Better than a crash mid-batch that wipes the rest of the run."""
     out = icp_outbound.fill_message(
+        sender="Arian",
         icp="CSPs",
         channel="linkedin",
         first_name="",
@@ -158,6 +208,7 @@ def test_fill_for_lead_resolves_role_to_icp():
     }
     for role, expected in role_to_expected_substring.items():
         out = icp_outbound.fill_for_lead(
+            sender="Arian",
             role=role,
             channel="linkedin",
             lead=StubLead(lid=1),
@@ -177,6 +228,7 @@ def test_fill_for_lead_unknown_role_raises():
 
     with pytest.raises(SheetsError, match="ROLE 'CTO'"):
         icp_outbound.fill_for_lead(
+            sender="Arian",
             role="CTO",
             channel="linkedin",
             lead=StubLead(),

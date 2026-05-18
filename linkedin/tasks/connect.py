@@ -28,20 +28,26 @@ from linkedin.db.leads import disqualify_lead
 from linkedin.models import ActionLog, Task
 from linkedin.enums import ProfileState
 from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
+from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
 
 MAX_CONNECT_ATTEMPTS = 3
 
 
-def build_connection_note(lead_id: int | None) -> str:
+def build_connection_note(lead_id: int | None, sender: str) -> str:
     """Build a connection note for the lead, ICP-keyed via `icp_messages.json`.
+
+    `sender` is the operator's canonical handle (`linkedin.operators.
+    resolve_operator`) — it selects the top-level template block, so
+    each operator can ship a different connect note.
 
     `Lead.icp` resolves to a bucket with a `linkedin_connect_note` channel
     → pick a variant from that bucket. Source of truth: CSV `ICP` column
     stamped at `add_seeds` time, or `resolve_icp()` backfill at first
-    scrape. If the lead has no resolvable ICP, or the template is missing,
-    return "" — a note-less connection request is fine.
+    scrape. If the lead has no resolvable ICP, the sender is unknown, or
+    the template is missing, return "" — a note-less connection request
+    is fine.
 
     Variant selection within a bucket: random (defeats templated-text
     detection across batches).
@@ -64,9 +70,10 @@ def build_connection_note(lead_id: int | None) -> str:
         icp = resolve_icp(lead)
         if icp:
             try:
-                bucket = load_icp_messages().get(icp, {})
+                bucket = load_icp_messages(sender).get(icp, {})
             except Exception as e:
-                # Don't let a malformed JSON kill the send — fall back.
+                # Don't let a malformed JSON or an unknown sender kill the
+                # send — fall back to a note-less connection request.
                 logger.warning("build_connection_note: load_icp_messages failed → %s", e)
                 bucket = {}
             variants = bucket.get("linkedin_connect_note") or []
@@ -235,7 +242,6 @@ def handle_connect(task, session, qualifiers):
 
         if status == ProfileState.CONNECTED:
             set_profile_state(session, public_id, status.value)
-            from linkedin.operators import resolve_operator
             enqueue_follow_up(
                 campaign_id,
                 public_id,
@@ -255,7 +261,10 @@ def handle_connect(task, session, qualifiers):
             enqueue_connect(campaign_id, delay_seconds=10)
             return
 
-        note = build_connection_note(candidate.get("lead_id"))
+        note = build_connection_note(
+            candidate.get("lead_id"),
+            sender=resolve_operator(session.linkedin_profile.linkedin_username),
+        )
         new_state = send_connection_request(session=session, profile=profile, note=note)
 
         if new_state == ProfileState.QUALIFIED:
@@ -282,7 +291,6 @@ def handle_connect(task, session, qualifiers):
                 ).update(sent_note=note)
                 enqueue_sweep_connections()
             elif new_state == ProfileState.CONNECTED:
-                from linkedin.operators import resolve_operator
                 enqueue_follow_up(
                     campaign_id,
                     public_id,

@@ -207,7 +207,8 @@ def handle_follow_up(task, session, qualifiers):
     # `_send_with_attachments_or_text` below.
     role = classify_role(deal.lead)
     filled = fill_for_lead(
-        role=role, channel="linkedin", lead=deal.lead, my_name=our_operator,
+        sender=our_operator, role=role, channel="linkedin",
+        lead=deal.lead, my_name=our_operator,
     )
     # If the template included {add <filename>} placeholders, send via
     # the media path (first attachment only — LinkedIn's message form

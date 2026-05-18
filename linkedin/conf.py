@@ -217,8 +217,9 @@ LEADMAGIC_API_KEY = os.getenv("LEADMAGIC_API_KEY", "").strip()
 PROSPEO_API_KEY = os.getenv("PROSPEO_API_KEY", "").strip()
 
 # Post-accept follow-up message content lives in `linkedin/icp_messages.json`
-# (rigid per-ICP templates, `{first_name}` substitution only). The daemon's
-# `linkedin.tasks.follow_up.handle_follow_up` resolves the lead's ROLE via
+# (rigid templates keyed `{sender: {icp: {channel: [...]}}}`, `{first_name}`
+# substitution only). The daemon's `linkedin.tasks.follow_up.handle_follow_up`
+# resolves the sending operator + the lead's ROLE via
 # `linkedin.icp_outbound.classify_role()` and pulls the matching template.
 # Previously this section held `POST_ACCEPT_VIDEO_LINK` /
 # `POST_ACCEPT_MESSAGE_TEMPLATE` / `FOLLOW_UP_MEDIA_PATH` env vars +

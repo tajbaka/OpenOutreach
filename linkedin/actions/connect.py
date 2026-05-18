@@ -235,7 +235,9 @@ if __name__ == "__main__":
         from linkedin.db.urls import public_id_to_url
         lead = Lead.objects.filter(linkedin_url=public_id_to_url(args.profile)).first()
         from linkedin.tasks.connect import build_connection_note
-        note = args.note or build_connection_note(lead.pk if lead else None)
+        from linkedin.operators import resolve_operator
+        sender = resolve_operator(session.linkedin_profile.linkedin_username)
+        note = args.note or build_connection_note(lead.pk if lead else None, sender=sender)
         print(f"Note: {note}")
         status = send_connection_request(session=session, profile=test_profile, note=note)
         print(f"Finished → Status: {status.value}")

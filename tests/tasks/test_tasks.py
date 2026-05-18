@@ -298,6 +298,11 @@ class TestHandleFollowUp:
         # substitution; an `icp_outbound.*` patch wouldn't (no such attr).
         monkeypatch.setattr("linkedin.conf.OUR_COMPANY_NAME", "BrandCo")
         monkeypatch.setattr("linkedin.conf.OUR_WEBSITE_URL", "https://brand.co/")
+        # icp_messages.json is keyed by operator (sender) at the top level
+        # and has no shared default — give the daemon's account a username
+        # that `resolve_operator` maps to a real sender block ("Arian"), so
+        # `fill_for_lead` finds templates instead of raising SheetsError.
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
         _make_connected(fake_session)
         # Seed an outbound so the "no-thread" guard doesn't short-circuit.
         # We're testing the happy path: connection note was sent, lead never
@@ -404,6 +409,9 @@ class TestHandleFollowUp:
         block this operator's own first follow-up."""
         from crm.models import Lead, Message
         _make_connected(fake_session)
+        # icp_messages.json is keyed by operator (sender); give the daemon's
+        # account a username `resolve_operator` maps to a real sender block.
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
         lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
         me = fake_session.linkedin_profile.linkedin_username
         # This operator owns the thread (a non-daemon-send outbound) so the
@@ -443,6 +451,9 @@ class TestHandleFollowUp:
     ):
         from crm.models import Lead, Message
         _make_connected(fake_session)
+        # icp_messages.json is keyed by operator (sender); give the daemon's
+        # account a username `resolve_operator` maps to a real sender block.
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
         # Same seed as the happy-path test — we want to reach the send.
         lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
         Message.objects.create(

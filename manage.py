@@ -37,6 +37,45 @@ for _name in ("urllib3", "httpx", "langchain", "openai", "playwright",
 logger = logging.getLogger(__name__)
 
 
+def _verify_sender_templates(running_profile):
+    """Fail fast if the daemon's own LinkedIn account has no template block.
+
+    Outbound templates in `linkedin/icp_messages.json` are keyed by sender
+    (operator handle). Without a block for the account this daemon runs
+    as, follow-up DMs raise `SheetsError` and re-enqueue every 24h
+    forever, and connection notes silently go note-less. Catch it here
+    with one clear message instead of a slow per-lead failure. Other
+    active accounts only warn — they are a different daemon's problem,
+    not a reason to block this one.
+    """
+    from linkedin.icp_outbound import known_senders, missing_sender_block
+    from linkedin.models import LinkedInProfile
+
+    missing = missing_sender_block(running_profile.linkedin_username)
+    if missing:
+        logger.error(
+            "LinkedIn account %r resolves to sender %r, which has no template "
+            "block in linkedin/icp_messages.json (known: %s). Add a block for "
+            "%r (and, ideally, an alias in linkedin/operators.py) before "
+            "running the daemon.",
+            running_profile.linkedin_username, missing,
+            sorted(known_senders()), missing,
+        )
+        sys.exit(1)
+
+    for prof in LinkedInProfile.objects.filter(active=True).exclude(
+        pk=running_profile.pk
+    ):
+        other = missing_sender_block(prof.linkedin_username)
+        if other:
+            logger.warning(
+                "Active LinkedIn account %r (sender %r) has no template block "
+                "in linkedin/icp_messages.json — its daemon will crash-loop "
+                "follow-ups until a block is added.",
+                prof.linkedin_username, other,
+            )
+
+
 def _run_daemon():
     from linkedin.api.newsletter import ensure_newsletter_subscription
     from linkedin.daemon import run_daemon
@@ -71,6 +110,10 @@ def _run_daemon():
         logger.error("No campaigns found for this user.")
         sys.exit(1)
     session.campaign = first_campaign
+
+    # Outbound templates are keyed by sender — verify this account (and
+    # warn on any other active account) before launching a browser.
+    _verify_sender_templates(session.linkedin_profile)
 
     session.ensure_browser()
     profile = ensure_self_profile(session)

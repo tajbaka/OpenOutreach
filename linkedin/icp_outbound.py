@@ -12,11 +12,18 @@ only the first name filled in.
 
 This module is the rigid alternative. Templates live in
 `linkedin/icp_messages.json` (checked into the repo). The shape is
-`{icp: {channel: [variant1, variant2, ...]}}` — multiple variants per
+`{sender: {icp: {channel: [variant1, variant2, ...]}}}` — the top level
+is keyed by the operator's canonical handle (`linkedin.operators.
+resolve_operator`, e.g. "Arian" / "Chuka") so each sender gets a fully
+independent template block. Under each sender, multiple variants per
 ICP × channel so the batch doesn't look templated when scanned
 top-to-bottom. The only substitution is `{first_name}`; product name,
 URLs, signature, everything else is hardcoded literally in the message
 body. To change the wording, edit the JSON.
+
+There is no shared default sender: a sender absent from the JSON raises
+`SheetsError` rather than falling back, so a misconfigured operator
+handle fails loud instead of blasting another operator's copy.
 
 Variant selection is seeded on `lead.id` so the same lead always gets
 the same variant across re-runs — useful when the operator edits a
@@ -39,6 +46,7 @@ from pathlib import Path
 from linkedin.conf import ROOT_DIR
 from linkedin.exceptions import SheetsError
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP
+from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
 
@@ -183,17 +191,55 @@ def classify_role(lead) -> str:
     return "CSP"
 
 
-def load_icp_messages() -> dict[str, dict[str, list[str]]]:
-    """Return `{icp: {channel: [variant, ...]}}` from the JSON file.
+def load_icp_messages(sender: str) -> dict[str, dict[str, list[str]]]:
+    """Return one sender's `{icp: {channel: [variant, ...]}}` block.
+
+    The JSON file is `{sender: {icp: {channel: [...]}}}` — each operator
+    (canonical handle from `linkedin.operators.resolve_operator`) gets a
+    full, independent template block. There is no shared default: an
+    unknown `sender` raises `SheetsError` per the project's no-silent-
+    fallback rule — sending under another operator's copy is a worse
+    outcome than crashing the run.
 
     Loaded fresh on every call so an operator edit of the file takes
     effect on the next followup run without needing a process restart.
     """
-    return json.loads(_MESSAGES_PATH.read_text())
+    by_sender = json.loads(_MESSAGES_PATH.read_text())
+    if sender not in by_sender:
+        raise SheetsError(
+            f"icp_outbound: sender {sender!r} has no template block in "
+            f"{_MESSAGES_PATH.name} (known senders: {sorted(by_sender)})"
+        )
+    return by_sender[sender]
+
+
+def known_senders() -> set[str]:
+    """Return the set of operator handles with a block in icp_messages.json.
+
+    Just the top-level keys of the JSON file. Used by the daemon's
+    startup check to verify a LinkedIn account has templates before the
+    task loop begins.
+    """
+    return set(json.loads(_MESSAGES_PATH.read_text()))
+
+
+def missing_sender_block(linkedin_username: str) -> str | None:
+    """Return the resolved sender handle if it has *no* template block.
+
+    `linkedin_username` is a `LinkedInProfile.linkedin_username`; it is
+    run through `resolve_operator` exactly as the send paths do. Returns
+    None when the sender is covered — the account is safe to run
+    outbound for. A non-None result is the handle the operator must add
+    to `icp_messages.json` (and ideally alias in `linkedin/operators.py`)
+    before follow-up DMs will work for that account.
+    """
+    sender = resolve_operator(linkedin_username)
+    return None if sender in known_senders() else sender
 
 
 def fill_message(
     *,
+    sender: str,
     icp: str,
     channel: str,
     first_name: str,
@@ -221,13 +267,16 @@ def fill_message(
       2. `lead_id` mod len(variants) — stable across re-runs for a lead.
       3. Index 0 — fallback when neither is supplied.
 
-    Missing ICP or channel raises `SheetsError` per the project's
-    no-silent-fallback rule; sending a wrong-bucket message in
+    `sender` is the operator's canonical handle (`linkedin.operators.
+    resolve_operator`) — it selects the top-level template block.
+
+    Missing sender, ICP, or channel raises `SheetsError` per the
+    project's no-silent-fallback rule; sending a wrong-bucket message in
     production is a worse outcome than crashing the run.
     """
     from linkedin.conf import OUR_COMPANY_NAME, OUR_WEBSITE_URL
 
-    messages = load_icp_messages()
+    messages = load_icp_messages(sender)
     if icp not in messages:
         raise SheetsError(
             f"icp_outbound: ICP {icp!r} has no rigid template "
@@ -307,6 +356,7 @@ def _resolve_attachment(filename: str) -> Path | None:
 
 def fill_for_lead(
     *,
+    sender: str,
     role: str,
     channel: str,
     lead,
@@ -314,16 +364,18 @@ def fill_for_lead(
 ) -> str:
     """Convenience wrapper — resolves ROLE → ICP and pulls lead fields.
 
-    Equivalent to `fill_message(icp=FU_ROLE_TO_ICP[role], channel=channel,
-    first_name=lead.first_name, last_name=lead.last_name,
+    Equivalent to `fill_message(sender=sender, icp=FU_ROLE_TO_ICP[role],
+    channel=channel, first_name=lead.first_name, last_name=lead.last_name,
     company_name=lead.company_name, my_name=my_name,
     lead_id=lead.id)`. Used by the daemon's follow_up handler so
     callers can stay in lead-space without thinking about the ICP key
     or variant rotation.
 
-    `my_name` is the operator's canonical handle ("Arian" / "Chuka")
-    used only by email-channel templates (signature block). LinkedIn
-    templates have no signature, so passing it has no effect there.
+    `sender` is the operator's canonical handle ("Arian" / "Chuka") —
+    it selects the top-level template block in `icp_messages.json`.
+    `my_name` is the same handle, but used only by email-channel
+    templates (signature block); LinkedIn templates have no signature,
+    so passing it has no effect there.
     """
     icp = FU_ROLE_TO_ICP.get(role)
     if not icp:
@@ -332,6 +384,7 @@ def fill_for_lead(
             f"FU_ROLE_TO_ICP (known ROLEs: {sorted(FU_ROLE_TO_ICP)})"
         )
     return fill_message(
+        sender=sender,
         icp=icp,
         channel=channel,
         first_name=lead.first_name or "",
