@@ -226,6 +226,30 @@ class TestNotifyMessageReceived:
         assert "Bad Actor" in body
 
 
+    def test_includes_provider_select_block(self, db, slack_url):
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="Ada", last_name="Lovelace",
+            linkedin_url="https://www.linkedin.com/in/ada/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="hi", operator="Arian",
+            )
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        actions = [b for b in sent["blocks"] if b.get("type") == "actions"]
+        assert len(actions) == 1
+        select = actions[0]["elements"][0]
+        assert select["type"] == "static_select"
+        assert select["action_id"] == "enrich_phone_select"
+        values = [opt["value"] for opt in select["options"]]
+        assert values == [
+            f"{lead.id}:waterfall", f"{lead.id}:bettercontact",
+            f"{lead.id}:leadmagic", f"{lead.id}:prospeo",
+        ]
+
+
 class TestNotifyPhoneEnriched:
     def _lead(self):
         from types import SimpleNamespace

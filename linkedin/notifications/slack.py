@@ -166,6 +166,49 @@ def notify_message_received(
     if elements:
         blocks.append({"type": "context", "elements": elements})
 
+    # Operator-triggered phone enrichment — Slack POSTs the picked option to
+    # the api/slack_enrich.py Vercel function. Each value encodes
+    # "<lead_id>:<provider>". Always rendered (no feature flag).
+    blocks.append({
+        "type": "actions",
+        "block_id": "enrich_phone_actions",
+        "elements": [
+            {
+                "type": "static_select",
+                "action_id": "enrich_phone_select",
+                "placeholder": {
+                    "type": "plain_text", "text": "📞 Get phone number",
+                },
+                "options": [
+                    {
+                        "text": {
+                            "type": "plain_text",
+                            "text": "📞 All providers (waterfall)",
+                        },
+                        "value": f"{lead.id}:waterfall",
+                    },
+                    {
+                        "text": {
+                            "type": "plain_text", "text": "BetterContact only",
+                        },
+                        "value": f"{lead.id}:bettercontact",
+                    },
+                    {
+                        "text": {
+                            "type": "plain_text",
+                            "text": "LeadMagic only (cheapest)",
+                        },
+                        "value": f"{lead.id}:leadmagic",
+                    },
+                    {
+                        "text": {"type": "plain_text", "text": "Prospeo only"},
+                        "value": f"{lead.id}:prospeo",
+                    },
+                ],
+            },
+        ],
+    })
+
     payload = {"text": fallback, "blocks": blocks}
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
