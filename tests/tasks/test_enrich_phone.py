@@ -113,6 +113,36 @@ def test_duplicate_number_not_appended_but_provider_recorded():
     assert lead.phone_providers_tried == ["leadmagic", "bettercontact"]
 
 
+def test_normalize_phone_collapses_formatting():
+    from linkedin.tasks.enrich_phone import _normalize_phone
+
+    assert _normalize_phone("+1 904 945 0716") == "+19049450716"
+    assert _normalize_phone("+19049450716") == "+19049450716"
+    assert _normalize_phone("(904) 945-0716") == "+9049450716"
+    assert _normalize_phone("") == ""
+    assert _normalize_phone(None) == ""
+
+
+@pytest.mark.django_db
+def test_same_number_different_format_is_deduped():
+    lead = _lead(
+        phones=[{"number": "+1 904 945 0716", "provider": "bettercontact",
+                 "found_at": "x"}],
+        phone_providers_tried=["bettercontact"],
+    )
+    task = _task(lead, "leadmagic")
+    found = EnrichmentResult(
+        status=EnrichmentStatus.FOUND, provider="leadmagic", phone="+19049450716",
+    )
+    with patch("linkedin.tasks.enrich_phone.run_waterfall", return_value=found), \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
+        handle_enrich_phone(task)
+    lead.refresh_from_db()
+    # Same number, different formatting → one entry, but leadmagic recorded.
+    assert len(lead.phones) == 1
+    assert lead.phone_providers_tried == ["bettercontact", "leadmagic"]
+
+
 @pytest.mark.django_db
 def test_single_provider_already_tried_is_skipped():
     lead = _lead(phone_providers_tried=["leadmagic"])

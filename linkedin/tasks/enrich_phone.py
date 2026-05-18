@@ -14,6 +14,7 @@ and stays retryable.
 from __future__ import annotations
 
 import logging
+import re
 
 from django.utils import timezone
 
@@ -26,6 +27,16 @@ from linkedin.enrichment.waterfall import (
 from linkedin.notifications.slack import notify_phone_enriched
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_phone(raw: str) -> str:
+    """Canonical comparison/storage key for a phone number — a leading '+'
+    followed by digits only. Collapses provider formatting differences
+    ('+1 904 945 0716' vs '+19049450716') so the same number from two
+    providers dedups to a single entry instead of two look-alike rows.
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    return f"+{digits}" if digits else ""
 
 
 def handle_enrich_phone(task) -> EnrichmentResult | None:
@@ -88,10 +99,13 @@ def handle_enrich_phone(task) -> EnrichmentResult | None:
         update_fields = ["phone_providers_tried"]
 
         if result.status == EnrichmentStatus.FOUND and result.phone:
-            existing = {e.get("number") for e in lead.phones}
-            if result.phone not in existing:
+            # Store and dedup on the normalized form so the same number from
+            # two providers collapses to one entry.
+            number = _normalize_phone(result.phone)
+            existing = {_normalize_phone(e.get("number", "")) for e in lead.phones}
+            if number and number not in existing:
                 lead.phones = list(lead.phones) + [{
-                    "number": result.phone,
+                    "number": number,
                     "provider": result.provider,
                     "found_at": timezone.now().isoformat(),
                 }]
