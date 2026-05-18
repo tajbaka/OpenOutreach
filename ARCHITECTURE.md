@@ -168,18 +168,29 @@ CDP Network.dataReceived (base64 chunk)
 
 ## Phone Enrichment (`linkedin/enrichment/`)
 
-Background phone-number enrichment, gated by `ENABLE_PHONE_ENRICHMENT`
-(`conf.py`, default off).
+Phone-number enrichment, **operator-triggered from Slack**. The
+`EnrichmentWorker` always runs; auto-enqueue on every inbound reply is
+opt-in via `ENABLE_AUTO_PHONE_ENRICHMENT` (`conf.py`, default off).
 
-**Trigger.** The realtime listener's handler (`linkedin/realtime/handler.py`),
-on a persisted inbound reply, enqueues an `enrich_phone` `Task` —
-`payload={lead_id, bettercontact_request_id}`. It skips leads already
-enriched (`phone_enriched_at` set), disqualified, or with an existing
-`PENDING`/`RUNNING` `enrich_phone` task (dedup — prevents double provider
-billing when a lead sends several messages before the worker runs).
+**Trigger.** Every inbound-reply Slack notification (`notify_message_received`)
+carries a "📞 Get phone number" `static_select` menu — waterfall (default) /
+bettercontact / leadmagic / prospeo. The operator's pick is POSTed by Slack to
+a Vercel serverless function (`api/slack_enrich.py`), which verifies the Slack
+request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256), parses the chosen
+`(lead_id, provider)`, and INSERTs an `enrich_phone` `Task` into Neon with raw
+`psycopg` (no Django import). The `Task` table is the entire contract between
+the function and the daemon — they never talk directly. The function dedups
+against an existing `PENDING`/`RUNNING` `enrich_phone` task for the lead
+(best-effort — a duplicate is harmless). Separately, the realtime listener's
+handler (`linkedin/realtime/handler.py`) can still auto-enqueue on a persisted
+inbound reply when `ENABLE_AUTO_PHONE_ENRICHMENT` is on, with the same per-lead
+dedup. Either path writes `payload={lead_id, bettercontact_request_id,
+provider}`.
 
 **Worker.** `EnrichmentWorker` (`worker.py`) is a single background thread
-`run_daemon` spawns alongside the listener supervisor. It claims
+`run_daemon` always spawns alongside the listener supervisor (no longer
+flag-gated — the Slack menu is always available so enrichment must always be
+processable). It claims
 `enrich_phone` tasks via `Task.objects.next_enrichment()` — the outbound loop
 excludes `ENRICH_PHONE` from `claim_next`/`seconds_to_next`, and `heal_tasks`
 excludes it from the stale-`RUNNING` reset, so the two never race. The worker
@@ -188,8 +199,12 @@ shutdown — this is the crash-recovery path). HTTP-only, so it is not gated on
 active hours. Single-threaded is load-bearing: `next_enrichment` is a plain
 read, not a locking claim.
 
-**Waterfall.** `run_waterfall` (`waterfall.py`) iterates `PROVIDER_CHAIN` —
-BetterContact → LeadMagic → Prospeo. `FOUND`/`NOT_FOUND` is terminal
+**Waterfall.** `run_waterfall` (`waterfall.py`) iterates a provider chain.
+`handle_enrich_phone` routes on the task payload's `provider` field: the
+default `"waterfall"` runs the full `PROVIDER_CHAIN`; a specific provider name
+(looked up in `PROVIDERS_BY_NAME`) runs that provider only, with **no
+failover** — an unrecognized name logs a warning and falls back to the full
+chain. The full chain is BetterContact → LeadMagic → Prospeo. `FOUND`/`NOT_FOUND` is terminal
 (BetterContact's `NOT_FOUND` is authoritative — it is itself a 20+ provider
 waterfall); `API_FAILURE` escalates. BetterContact is async (submit → poll,
 resumable via the persisted `bettercontact_request_id`) and short-circuits to
