@@ -24,6 +24,10 @@ PROVIDER_CHAIN = [
     ProspeoProvider(),
 ]
 
+# Name → provider, for single-provider routing (the Slack "X only" options).
+# See linkedin/tasks/enrich_phone.py and api/slack_enrich.py.
+PROVIDERS_BY_NAME = {p.name: p for p in PROVIDER_CHAIN}
+
 
 def run_waterfall(lead, task, chain=None) -> EnrichmentResult:
     """Run the provider chain for one lead. `chain` is injectable for tests."""

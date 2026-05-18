@@ -53,3 +53,11 @@ def test_default_chain_has_three_providers():
     from linkedin.enrichment.waterfall import PROVIDER_CHAIN
 
     assert [p.name for p in PROVIDER_CHAIN] == ["bettercontact", "leadmagic", "prospeo"]
+
+def test_providers_by_name_maps_every_chain_provider():
+    from linkedin.enrichment.waterfall import PROVIDER_CHAIN, PROVIDERS_BY_NAME
+
+    assert set(PROVIDERS_BY_NAME) == {"bettercontact", "leadmagic", "prospeo"}
+    for name, provider in PROVIDERS_BY_NAME.items():
+        assert provider.name == name
+        assert provider in PROVIDER_CHAIN

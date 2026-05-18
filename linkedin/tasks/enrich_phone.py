@@ -12,7 +12,7 @@ import logging
 from django.utils import timezone
 
 from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
-from linkedin.enrichment.waterfall import run_waterfall
+from linkedin.enrichment.waterfall import PROVIDERS_BY_NAME, run_waterfall
 from linkedin.notifications.slack import notify_phone_enriched
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,19 @@ def handle_enrich_phone(task) -> EnrichmentResult | None:
         logger.info("enrich_phone: lead %s disqualified — skipping", lead_id)
         return None
 
-    result = run_waterfall(lead, task)
+    provider = task.payload.get("provider", "waterfall")
+    if provider == "waterfall":
+        result = run_waterfall(lead, task)
+    else:
+        chosen = PROVIDERS_BY_NAME.get(provider)
+        if chosen is None:
+            logger.warning(
+                "enrich_phone: unknown provider %r — running full waterfall",
+                provider,
+            )
+            result = run_waterfall(lead, task)
+        else:
+            result = run_waterfall(lead, task, chain=[chosen])
 
     if result.status == EnrichmentStatus.FOUND:
         lead.phone = result.phone or ""

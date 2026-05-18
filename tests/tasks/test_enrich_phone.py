@@ -104,3 +104,70 @@ def test_missing_lead_is_skipped():
         result = handle_enrich_phone(task)
     assert result is None
     mock_wf.assert_not_called()
+
+
+def _task_with_provider(lead, provider):
+    return Task.objects.create(
+        task_type=Task.TaskType.ENRICH_PHONE,
+        scheduled_at=timezone.now(),
+        payload={
+            "lead_id": lead.id,
+            "bettercontact_request_id": "",
+            "provider": provider,
+        },
+    )
+
+
+@pytest.mark.django_db
+def test_waterfall_provider_runs_full_chain():
+    lead = _lead()
+    task = _task_with_provider(lead, "waterfall")
+    found = EnrichmentResult(
+        status=EnrichmentStatus.FOUND, provider="bettercontact", phone="+1",
+    )
+    with patch("linkedin.tasks.enrich_phone.run_waterfall", return_value=found) as wf, \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
+        handle_enrich_phone(task)
+    assert wf.call_count == 1
+    assert "chain" not in wf.call_args.kwargs
+
+
+@pytest.mark.django_db
+def test_absent_provider_runs_full_chain():
+    lead = _lead()
+    task = _task(lead)  # legacy payload — no "provider" key
+    found = EnrichmentResult(
+        status=EnrichmentStatus.FOUND, provider="bettercontact", phone="+1",
+    )
+    with patch("linkedin.tasks.enrich_phone.run_waterfall", return_value=found) as wf, \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
+        handle_enrich_phone(task)
+    assert "chain" not in wf.call_args.kwargs
+
+
+@pytest.mark.django_db
+def test_single_provider_runs_one_element_chain():
+    from linkedin.enrichment.waterfall import PROVIDERS_BY_NAME
+
+    lead = _lead()
+    task = _task_with_provider(lead, "leadmagic")
+    found = EnrichmentResult(
+        status=EnrichmentStatus.FOUND, provider="leadmagic", phone="+1",
+    )
+    with patch("linkedin.tasks.enrich_phone.run_waterfall", return_value=found) as wf, \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
+        handle_enrich_phone(task)
+    assert wf.call_args.kwargs["chain"] == [PROVIDERS_BY_NAME["leadmagic"]]
+
+
+@pytest.mark.django_db
+def test_unknown_provider_falls_back_to_full_chain():
+    lead = _lead()
+    task = _task_with_provider(lead, "bogus")
+    found = EnrichmentResult(
+        status=EnrichmentStatus.FOUND, provider="bettercontact", phone="+1",
+    )
+    with patch("linkedin.tasks.enrich_phone.run_waterfall", return_value=found) as wf, \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
+        handle_enrich_phone(task)
+    assert "chain" not in wf.call_args.kwargs
