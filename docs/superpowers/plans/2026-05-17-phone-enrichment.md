@@ -14,7 +14,77 @@
 
 ---
 
+## As-Built Amendment (2026-05-18) — READ FIRST
+
+**Status: IMPLEMENTED and shipped to `main`.** This plan was executed Tasks 1–17,
+then the feature pivoted mid-build. The plan below is preserved as the original
+execution record; this amendment is the source of truth for what actually
+shipped. Tasks marked **SUPERSEDED** or **CORRECTED** carry a banner pointing
+here.
+
+### What shipped that this plan does NOT describe
+
+After Task 17, the feature was extended into an **operator-triggered,
+multi-number** enrichment system. The original "auto-enrich on inbound reply,
+one phone per lead, `phone_enriched_at` = done forever" model was replaced:
+
+1. **Multi-number schema (supersedes Task 1).** `crm.Lead.phone` /
+   `phone_enriched_at` were removed and replaced with `phones` (JSONField list
+   of `{number, provider, ...}`) and `phone_providers_tried` (JSONField list).
+   Migration `0013_lead_multi_phone` `RemoveField`s the Task 1 columns. A lead
+   can now hold several numbers, each attributed to the provider that found it;
+   "never re-enrich" is now per-provider (`phone_providers_tried`), not a single
+   timestamp. Commits `42022bb`, `f6445fd` (number normalization + dedup).
+2. **Per-provider routing.** `Task.payload` carries a `provider` field; an
+   `enrich_phone` task can run a single named provider instead of the full
+   waterfall (`PROVIDERS_BY_NAME` lookup). Commit `92cbab5`.
+3. **Slack-triggered enrichment.** `api/slack_enrich.py` — a Vercel serverless
+   function (HMAC-verified Slack interaction payload → raw `psycopg` INSERT of
+   an `enrich_phone` Task). The reply notification now renders a provider
+   **select menu**; picking a provider enqueues a single-provider task, and the
+   menu stays live so multiple providers can be run per lead. Commits `dd42b7d`,
+   `8682847`, `1e555f1`, `143cd99`, `bda3081`, `087c86c`. Tested in
+   `tests/test_slack_enrich.py`. Design: `specs/...slack-triggered-enrichment...`.
+4. **Worker is always-on (supersedes Task 14).** `ENABLE_PHONE_ENRICHMENT` was
+   split: `ENABLE_AUTO_PHONE_ENRICHMENT` now gates **only** the listener
+   auto-enqueue; the `EnrichmentWorker` thread is spawned unconditionally (Slack
+   can enqueue tasks even when auto-enrich is off). Commit `7ab2693`. The
+   queue-empty exit guard uses a dedicated `ENRICHMENT_WAIT_POLL_SECONDS`
+   constant (commit `62e6b3e`), not `LISTENER_PUMP_SLICE_SECONDS` as Task 14
+   states.
+
+### Provider contract corrections (Tasks 6–8)
+
+The plan's provider code blocks predate the design doc's "Provider contract
+fixes" section and are **wrong as written**. Executing Tasks 6/7/8 literally
+ships four production bugs. Fixed in commits `f2d46de` and `aa45a75`:
+
+- **BetterContact** — auth is the `X-API-Key` **header** on submit *and* poll,
+  not the `?api_key=` query param the plan uses. Also sends a `User-Agent`
+  (Cloudflare 403s a missing one).
+- **LeadMagic** — endpoint is `https://api.leadmagic.io/v1/people/mobile-finder`;
+  the plan's `/mobile-finder` 404s.
+- **Prospeo** — `enrich-person` returns `person` at the **top level** (no
+  `response` wrapper); the submit body must set `enrich_mobile: true` (else the
+  number is masked); a 400 / `error_code: NO_MATCH` is a clean `NOT_FOUND`, and
+  `HttpError` carries `status` + parsed `body` so the provider can detect it.
+
+### Task disposition
+
+| Tasks | Status |
+|---|---|
+| 2–5, 9, 12, 13, 16, 17 | Followed as written |
+| 6, 7, 8 | **CORRECTED** — see provider corrections above |
+| 1, 11, 14, 15 | **SUPERSEDED** — see multi-number / always-on changes above |
+| 10 | **EXTENDED** — `notify_phone_enriched` shipped, plus an off-plan provider select menu |
+
+All 75 enrichment-surface tests pass (`tests/enrichment/`, `tests/tasks/test_enrich_phone.py`, `tests/test_phone_enrichment_schema.py`, `tests/test_slack_enrich.py`).
+
+---
+
 ### Task 1: Schema — add `phone` / `phone_enriched_at` to `crm.Lead`
+
+> **SUPERSEDED** — these fields were later removed (migration `0013_lead_multi_phone`) and replaced with the `phones` / `phone_providers_tried` multi-number JSON model. See As-Built Amendment.
 
 **Files:**
 - Modify: `crm/models/lead.py:16` (after the `email` field)
@@ -587,6 +657,8 @@ git commit -m "Add enrichment HTTP helper"
 
 ### Task 6: BetterContact provider
 
+> **CORRECTED** — the code below uses `?api_key=` query-param auth and sends no `User-Agent`; the shipped provider uses the `X-API-Key` header (submit + poll) and a `User-Agent`. See As-Built Amendment.
+
 > **Before implementing:** the request/response field names below are the
 > documented BetterContact v2 async API as of this plan. Make one real
 > `curl` call with a test `BETTERCONTACT_API_KEY` and confirm the submit
@@ -860,6 +932,8 @@ git commit -m "Add BetterContact enrichment provider"
 
 ### Task 7: LeadMagic provider
 
+> **CORRECTED** — the endpoint below (`/mobile-finder`) 404s; the shipped URL is `https://api.leadmagic.io/v1/people/mobile-finder`. See As-Built Amendment.
+
 > **Before implementing:** confirm with one `curl` call that LeadMagic's
 > `POST /mobile-finder` takes a `profile_url` body with an `X-API-Key` header
 > and returns the number under `mobile_number`. Adjust Step 3 if the live
@@ -997,6 +1071,8 @@ git commit -m "Add LeadMagic enrichment provider"
 ---
 
 ### Task 8: Prospeo provider
+
+> **CORRECTED** — `person` is top-level (no `response` wrapper); the body must set `enrich_mobile: true`; a 400/`NO_MATCH` is a clean `NOT_FOUND`. See As-Built Amendment.
 
 > **Before implementing:** the verification pass found Prospeo retired
 > `POST /mobile-finder` on 2026-03-01. The current endpoint is
@@ -1291,6 +1367,8 @@ git commit -m "Add enrichment provider waterfall"
 
 ### Task 10: `notify_phone_enriched` Slack notification
 
+> **EXTENDED** — `notify_phone_enriched` shipped as written; the reply notification also gained an off-plan provider select menu (`tests/test_slack_enrich.py`). See As-Built Amendment.
+
 **Files:**
 - Modify: `linkedin/notifications/slack.py` (append a function; update the module docstring)
 - Test: `tests/test_slack_notify.py` (append)
@@ -1446,6 +1524,8 @@ git commit -m "Add notify_phone_enriched Slack notification"
 ---
 
 ### Task 11: `handle_enrich_phone` task handler
+
+> **SUPERSEDED** — the shipped handler appends to `Lead.phones`, skips per-provider via `phone_providers_tried`, and routes to a single provider when `payload.provider` is set. It does not use `phone_enriched_at`. See As-Built Amendment.
 
 **Files:**
 - Create: `linkedin/tasks/enrich_phone.py`
@@ -1983,6 +2063,8 @@ git commit -m "Add EnrichmentWorker thread"
 
 ### Task 14: Daemon wiring — spawn the worker, guard `heal_tasks` and the exit path
 
+> **SUPERSEDED** — the worker is spawned unconditionally (not `ENABLE_PHONE_ENRICHMENT`-gated); the exit guard uses `ENRICHMENT_WAIT_POLL_SECONDS`. See As-Built Amendment. (`heal_tasks` exclude shipped as written.)
+
 **Files:**
 - Modify: `linkedin/daemon.py` (`heal_tasks` stale-reset; `run_daemon` worker spawn + exit guard)
 - Test: `tests/test_daemon_resilience.py` (append)
@@ -2116,6 +2198,8 @@ git commit -m "Wire EnrichmentWorker into the daemon and guard heal_tasks"
 ---
 
 ### Task 15: Listener enqueues `enrich_phone` on inbound replies
+
+> **SUPERSEDED** — listener auto-enqueue is gated by `ENABLE_AUTO_PHONE_ENRICHMENT` (renamed); enrichment can also be triggered operator-side from the Slack provider select menu. See As-Built Amendment.
 
 **Files:**
 - Modify: `linkedin/realtime/handler.py`
