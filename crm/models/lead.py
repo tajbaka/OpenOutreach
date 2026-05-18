@@ -14,8 +14,14 @@ class Lead(models.Model):
     company_name = models.CharField(max_length=200, blank=True, default="")
     linkedin_url = models.URLField(max_length=200, blank=True, default="", unique=True)
     email = models.EmailField(max_length=200, blank=True, default="", db_index=True)
-    phone = models.CharField(max_length=32, blank=True, default="")
-    phone_enriched_at = models.DateTimeField(null=True, blank=True)
+    # Phone enrichment — a lead can carry multiple numbers, one per provider
+    # that returned a hit. Each entry: {"number", "provider", "found_at"}.
+    # See linkedin/enrichment/ and linkedin/tasks/enrich_phone.py.
+    phones = models.JSONField(default=list, blank=True)
+    # Provider names that returned a definitive result (FOUND or NOT_FOUND)
+    # for this lead — used to skip re-running a provider that already
+    # answered. API_FAILURE is not recorded here, so it stays retryable.
+    phone_providers_tried = models.JSONField(default=list, blank=True)
     public_identifier = models.CharField(max_length=200, blank=True, default="")
     description = models.TextField(blank=True, default="")
     embedding = models.BinaryField(null=True, blank=True)
@@ -36,6 +42,11 @@ class Lead(models.Model):
         if self.company_name:
             return f"{name}, {self.company_name}"
         return name or self.public_identifier or self.linkedin_url
+
+    @property
+    def phone_numbers(self) -> list[str]:
+        """Just the number strings from `phones`, in discovery order."""
+        return [e["number"] for e in self.phones if e.get("number")]
 
     @property
     def full_name(self):

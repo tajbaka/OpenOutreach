@@ -180,12 +180,13 @@ request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256), parses the chosen
 `(lead_id, provider)`, and INSERTs an `enrich_phone` `Task` into Neon with raw
 `psycopg` (no Django import). The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
-against an existing `PENDING`/`RUNNING` `enrich_phone` task for the lead
-(best-effort — a duplicate is harmless). Separately, the realtime listener's
-handler (`linkedin/realtime/handler.py`) can still auto-enqueue on a persisted
-inbound reply when `ENABLE_AUTO_PHONE_ENRICHMENT` is on, with the same per-lead
-dedup. Either path writes `payload={lead_id, bettercontact_request_id,
-provider}`.
+against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
+`(lead, provider)` (best-effort — a duplicate is harmless); two *different*
+providers can be queued for one lead at once. Separately, the realtime
+listener's handler (`linkedin/realtime/handler.py`) can still auto-enqueue a
+`waterfall` task on a persisted inbound reply when `ENABLE_AUTO_PHONE_ENRICHMENT`
+is on, with the same per-`(lead, provider)` dedup. Either path writes
+`payload={lead_id, bettercontact_request_id, provider}`.
 
 **Worker.** `EnrichmentWorker` (`worker.py`) is a single background thread
 `run_daemon` always spawns alongside the listener supervisor (no longer
@@ -214,11 +215,17 @@ Providers implement the `PhoneProvider` protocol (`base.py`); transport
 failures raise `HttpError` (→ `API_FAILURE`), malformed responses raise
 `EnrichmentError`.
 
-**Outcome.** `handle_enrich_phone` (`linkedin/tasks/enrich_phone.py`) writes
-`Lead.phone` + stamps `phone_enriched_at` on `FOUND`; stamps only on
-`NOT_FOUND`; writes nothing on all-`API_FAILURE` (so the next reply
-re-attempts). `FOUND`/`NOT_FOUND` post a Slack message via
-`notify_phone_enriched`; all-failed posts nothing and marks the task `failed`.
+**Outcome (multi-number).** `handle_enrich_phone` (`linkedin/tasks/enrich_phone.py`)
+lets a lead carry many numbers. `Lead.phones` is a JSON list of
+`{number, provider, found_at}` — `FOUND` appends one entry (deduping a number
+already present); `Lead.phone_numbers` is a bare-string convenience property.
+`Lead.phone_providers_tried` records every provider that returned a definitive
+result (`FOUND` or `NOT_FOUND`); `API_FAILURE` is not recorded, so it stays
+retryable. Skip is per-provider — a single-provider task skips if that
+provider is already in `phone_providers_tried`; a waterfall task skips only
+once every provider is. `FOUND`/`NOT_FOUND` post a Slack message via
+`notify_phone_enriched`; all-`API_FAILURE` posts nothing and marks the task
+`failed`.
 
 ## Configuration
 

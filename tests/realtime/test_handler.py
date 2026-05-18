@@ -132,13 +132,12 @@ def test_inbound_does_not_enqueue_when_disabled(db):
     assert Task.objects.filter(task_type=Task.TaskType.ENRICH_PHONE).count() == 0
 
 
-def test_enrichment_not_enqueued_for_already_enriched_lead(db):
-    from django.utils import timezone as _tz
+def test_enrichment_not_enqueued_when_all_providers_tried(db):
     from linkedin.models import Task
 
     lead = _seed_lead(db)
-    lead.phone_enriched_at = _tz.now()
-    lead.save(update_fields=["phone_enriched_at"])
+    lead.phone_providers_tried = ["bettercontact", "leadmagic", "prospeo"]
+    lead.save(update_fields=["phone_providers_tried"])
     with patch("linkedin.realtime.handler.parse_realtime_event", return_value=_inbound(lead)), \
          patch("linkedin.realtime.handler.notify_message_received"), \
          patch("linkedin.realtime.handler.ENABLE_AUTO_PHONE_ENRICHMENT", True):
@@ -158,7 +157,8 @@ def test_enrichment_deduped_against_existing_task(db):
         task_type=Task.TaskType.ENRICH_PHONE,
         status=Task.Status.PENDING,
         scheduled_at=_tz.now(),
-        payload={"lead_id": lead.id, "bettercontact_request_id": ""},
+        payload={"lead_id": lead.id, "bettercontact_request_id": "",
+                 "provider": "waterfall"},
     )
     # A new inbound event with a fresh entity_urn so persist_thread accepts it.
     second = ParsedRealtimeMessage(

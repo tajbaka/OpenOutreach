@@ -84,21 +84,25 @@ def parse_interaction(body: str) -> tuple[int, str]:
 
 
 def enqueue_task(conn, lead_id: int, provider: str) -> bool:
-    """INSERT an enrich_phone Task for `lead_id` unless one is already
-    pending/running. Returns True if a row was inserted, False if deduped.
+    """INSERT an enrich_phone Task for `(lead_id, provider)` unless one is
+    already pending/running. Returns True if a row was inserted, False if
+    deduped.
 
-    Dedup is best-effort (a TOCTOU window exists across concurrent function
+    Dedup is per (lead, provider) — BetterContact and LeadMagic can be
+    queued for the same lead at once, just not two of the same provider. It
+    is best-effort (a TOCTOU window exists across concurrent function
     invocations) — a duplicate Task is harmless: the single-threaded
-    EnrichmentWorker runs tasks in series and the second sees
-    phone_enriched_at already set, or re-attempts an unbilled API_FAILURE.
+    EnrichmentWorker runs tasks in series and the second sees the provider
+    already in phone_providers_tried, or re-attempts an unbilled API_FAILURE.
     """
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM linkedin_task "
             "WHERE task_type = 'enrich_phone' "
             "AND status IN ('pending', 'running') "
-            "AND (payload->>'lead_id')::int = %s LIMIT 1",
-            (lead_id,),
+            "AND (payload->>'lead_id')::int = %s "
+            "AND payload->>'provider' = %s LIMIT 1",
+            (lead_id, provider),
         )
         if cur.fetchone() is not None:
             return False

@@ -114,3 +114,12 @@ def test_enqueue_task_dedups_when_one_is_pending():
     # Only the dedup SELECT ran — no INSERT.
     assert cur.execute.call_count == 1
     conn.commit.assert_not_called()
+
+
+def test_enqueue_task_dedup_select_keys_on_lead_and_provider():
+    conn, cur = _mock_conn(existing=False)
+    slack_enrich.enqueue_task(conn, 42, "bettercontact")
+    select_sql, select_params = cur.execute.call_args_list[0][0]
+    # Dedup is per (lead, provider) so two providers can queue at once.
+    assert select_params == (42, "bettercontact")
+    assert "payload->>'provider'" in select_sql

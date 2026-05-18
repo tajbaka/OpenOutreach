@@ -34,27 +34,33 @@ def handle_realtime_event(event: dict, *, operator: str = "") -> None:
 
 
 def _maybe_enqueue_enrichment(lead) -> None:
-    """Enqueue a phone-enrichment task for a freshly-replied lead.
+    """Enqueue a waterfall phone-enrichment task for a freshly-replied lead.
 
     Gated by ENABLE_AUTO_PHONE_ENRICHMENT (default off — operators normally
     trigger enrichment from the Slack select menu). Skipped when the lead is
-    already enriched, disqualified, or already has a PENDING/RUNNING
-    enrich_phone task — the last guard prevents duplicate provider billing
-    when a lead sends several messages before the EnrichmentWorker runs (the
-    phone_enriched_at check alone cannot catch that — it is still None for
-    both events).
+    disqualified, every provider has already been tried, or a PENDING/RUNNING
+    waterfall enrich_phone task already exists — the last guard prevents
+    duplicate provider billing when a lead sends several messages before the
+    EnrichmentWorker runs.
     """
     if not ENABLE_AUTO_PHONE_ENRICHMENT:
         return
-    if lead.phone_enriched_at is not None or lead.disqualified:
+    if lead.disqualified:
         return
 
+    from linkedin.enrichment.waterfall import PROVIDER_CHAIN
     from linkedin.models import Task
+
+    tried = lead.phone_providers_tried or []
+    if all(p.name in tried for p in PROVIDER_CHAIN):
+        logger.debug("All phone providers already tried for %s — skipping", lead)
+        return
 
     already = Task.objects.filter(
         task_type=Task.TaskType.ENRICH_PHONE,
         status__in=[Task.Status.PENDING, Task.Status.RUNNING],
         payload__lead_id=lead.id,
+        payload__provider="waterfall",
     ).exists()
     if already:
         logger.debug("Phone enrichment already queued for %s — skipping", lead)
