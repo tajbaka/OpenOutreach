@@ -18,3 +18,4 @@ secrets/
 leasebreak_*.json
 /followups
 .DS_Store
+.vercel

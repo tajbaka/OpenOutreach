@@ -1,0 +1,14 @@
+# The Vercel deploy only needs api/ and vercel.json. The CLI does not respect
+# .gitignore, so the heavy local-only dirs must be listed explicitly here or
+# they get uploaded (and blow the free-tier file-count limit).
+.venv/
+data/
+.git/
+node_modules/
+__pycache__/
+.pytest_cache/
+leads/
+docs/
+tests/
+*.pyc
+*.sqlite3
