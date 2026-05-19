@@ -74,10 +74,10 @@
   "Leili": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nWe built {our_company_name}, an easier way to transition to FedRAMP 20x.\n\nGiven your experience in this space, I'd love to connect and get your feedback."
+        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "3PAOs/Assessors": {
@@ -110,10 +110,10 @@
   "Athena": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nWe built {our_company_name}, an easier way to transition to FedRAMP 20x.\n\nGiven your experience in this space, I'd love to connect and get your feedback.\n\nWebsite: {our_website_url}\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "3PAOs/Assessors": {
