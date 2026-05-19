@@ -362,13 +362,8 @@ with open("/tmp/followup_pre_meeting.json","w") as f: json.dump(cohort_pre_meeti
 # ICP Goals snapshot — per-ICP strategic Goal from the operator's
 # `ICP Goals` tab, plus the canonical ROLE→ICP mapping. Phase 5
 # reads `goal` only — it's strategic context (what each ICP's draft is
-# angling for). The `linkedin_template` / `email_template` columns are
-# preserved here for the operator's own reference in Google Sheets, but
-# the drafter does NOT copy them verbatim into outputs (retired 2026-05-13
-# after the verbatim chassis produced too-generic pitch-shaped drafts
-# across ICPs that needed cohort-specific shapes instead). Dumping here
-# (vs. relying on Phase 5 to call read_icp_goals() itself)
-# ensures `goal` is a hard input dependency.
+# angling for). Dumping here (vs. relying on Phase 5 to call
+# read_icp_goals() itself) ensures `goal` is a hard input dependency.
 _icp_goals = {}
 try:
     _icp_goals = read_icp_goals()
@@ -391,7 +386,7 @@ The output splits into four cohort files plus the templates snapshot:
 - `/tmp/followup_pre_meeting.json` — leads with Outreach status `Wants Meeting` or `Meeting Booked`. Drafter resurfaces time slots or sends pre-meeting confirms. Never deliverable-first.
 - `/tmp/followup_active_in_flight.json` — visibility only. Listed in the SUMMARY/ACTIVE section of the output file with a one-line state, no draft. These are the leads that under the old freshness filter would have silently disappeared.
 - `/tmp/followup_met.json` — post-meeting follow-up cohort. Sourced from the People tab's Outreach status (Wants Meeting / Meeting Booked / Had Meeting). Each entry carries an `outreach_status` field so Phase 5 can pick the right post-meeting frame (pre-meeting confirm, post-meeting deliverable, etc.). These land in 🤝 MET with `Cohort = "Met"` in Phase 6.
-- `/tmp/icp_goals.json` — snapshot of the operator's `ICP Goals` tab plus the canonical ROLE→ICP mapping. Shape: `{"role_to_icp": {ROLE: ICP}, "templates": {ICP: {"linkedin_template": str, "email_template": str, "goal": str}}}`. Phase 5 reads **`goal` only** — it tells the drafter what strategic outcome each ICP's draft is angling for (e.g., advisors → referral-into-CSP-clients, CSPs → design-partner/beta). `linkedin_template` / `email_template` are preserved in the file for the operator's own sheet-side reference and are not copied verbatim into generated drafts (retired 2026-05-13).
+- `/tmp/icp_goals.json` — snapshot of the operator's `ICP Goals` tab plus the canonical ROLE→ICP mapping. Shape: `{"role_to_icp": {ROLE: ICP}, "templates": {ICP: {"goal": str}}}`. Phase 5 reads **`goal` only** — it tells the drafter what strategic outcome each ICP's draft is angling for (e.g., advisors → referral-into-CSP-clients, CSPs → design-partner/beta).
 
 Leads with zero inbound messages no longer surface here — the daemon (`linkedin/tasks/follow_up.py`) DMs them rigidly from `linkedin/icp_messages.json` on its own schedule. The classifier still walks them so the per-row build doesn't fail, but the `'no_inbound'` branch in `classify()` drops them before any cohort accumulator.
 
@@ -504,14 +499,13 @@ Phase 1 already dumped `/tmp/icp_goals.json` for you. Open it before drafting:
 import json
 icp = json.load(open("/tmp/icp_goals.json"))
 role_to_icp = icp["role_to_icp"]    # {ROLE: ICP-bucket}
-templates = icp["templates"]        # {ICP: {"linkedin_template", "email_template", "goal"}}
+templates = icp["templates"]        # {ICP: {"goal": str}}
 ```
 
-**What to use vs. ignore:**
+**What to use:**
 
 1. For every lead, resolve `ICP = role_to_icp[ROLE]` → grab `entry = templates[ICP]`.
 2. Read `entry["goal"]` — this is the strategic outcome the draft is angling for (e.g., advisors → "introduce us to ONE of their CSP clients", CSPs → "design-partner / beta track"). The draft must serve this goal, not just be a generic pitch.
-3. **Ignore `entry["linkedin_template"]` and `entry["email_template"]` for drafting.** Those columns exist in the Google Sheet for the operator's own reference (so they can hand-edit a reusable chassis if they want), but the drafter writes free-form per the cohort-specific frames in this Phase 5 section. They were retired as a load-bearing input on 2026-05-13: the verbatim chassis was producing too-generic pitch-shaped drafts for cohorts (Met, Scheduling, Replied) that needed fundamentally different shapes, and the bullet-list / referral-CTA verbatim block was the same for every ICP under the chassis, defeating the whole point of per-ICP framing.
 
 **Use `goal` like this:**
 
@@ -559,7 +553,7 @@ After every draft is written, run the `humanizer` skill (installed at `~/.claude
 
 The humanizer pass works on the in-memory list of row dicts (the input to Phase 6's `write_followups()` call). For each row, pass BOTH `row["Draft Email"]` and `row["Draft LinkedIn"]` through the humanizer (independently — the email draft can stay slightly longer and more formal than the DM draft) and replace the fields with the humanized outputs. ROLE / PRIORITY / CONVO / Cohort / Email Link / LinkedIn Message Url / Sent toggles are structural metadata — never rewrite those. Active-in-flight rows have empty drafts on both columns and should be skipped entirely.
 
-**All drafts are free-form as of 2026-05-13** — no verbatim chassis to preserve, so the humanizer can rewrite the whole body. (Historical note: prior to 2026-05-13 the replied cohort was assembled from a verbatim ICP template chassis with one `{Add personal message …}` hole, and the humanizer had to confine its rewrites to that hole. That contract is retired — `linkedin_template` / `email_template` columns are now operator-only reference, not drafter inputs.)
+**All drafts are free-form as of 2026-05-13** — no verbatim chassis to preserve, so the humanizer can rewrite the whole body. (Historical note: prior to 2026-05-13 the replied cohort was assembled from a verbatim ICP template chassis with one `{Add personal message …}` hole. That contract is retired; `goal` is the only load-bearing ICP input now.)
 
 **Top tells to watch for in this workflow's drafts specifically** (observed in past runs):
 

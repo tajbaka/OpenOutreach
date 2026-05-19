@@ -1,8 +1,8 @@
 """Rigid ICP-keyed outbound message templates for high-volume cohorts.
 
 Companion to `linkedin.notifications.sheets.read_icp_goals()` —
-that helper reads operator-editable goals/templates from the `ICP Goals`
-Sheets tab, which carry a freeform `{Add personal message ...}` span that
+that helper reads operator-editable per-ICP goals from the `ICP Goals`
+Sheets tab, which guide the Claude-run warm-cohort drafting flow while
 the followup drafter fills with an AI-generated 1-2 sentence hook per
 lead. That path is right for warm cohorts (ball-on-us, met, cold-thread,
 pre-meeting) where personalization is the lift, but it's overkill for

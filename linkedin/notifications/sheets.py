@@ -1210,38 +1210,25 @@ def linkedin_message_hyperlink(
 
 
 ICP_GOALS_TAB = "ICP Goals"
-FOLLOWUP_TEMPLATES_TAB = "Followup Templates"  # legacy tab name
 ICP_MESSAGES_TAB_SUFFIX = "ICP Messages"
 
 
 def read_icp_goals() -> dict[str, dict[str, str]]:
-    """Return `{ICP: {"linkedin_template", "email_template", "goal"}}` from
-    the operator's `ICP Goals` tab.
+    """Return `{ICP: {"goal": str}}` from the operator's `ICP Goals` tab.
 
     Columns are matched by header name (case-insensitive, trimmed) so the
-    operator can reorder columns or insert extras without breaking the
-    read. Headers recognized:
+    operator can reorder columns without breaking the read. Headers
+    recognized:
       - "ICP" (or "ICP Name" / "Name")           → bucket key
-      - "LinkedIn Template" (or "LinkedIn")      → verbatim LI body
-      - "Email Template" (or "Email")            → verbatim email body
       - "Goal" (or "Goals")                      → strategic-direction prose
 
-    Missing values for any field return as empty strings — the drafter
-    falls back to the workflow doc's default ROLE framing when a template
-    is empty. Missing tab returns an empty dict.
-
-    Template syntax: text outside `{curly braces}` is copied verbatim into
-    the draft. Text inside `{curly braces}` is an instruction to the drafter
-    to generate that fragment dynamically (e.g. `Hi {first_name},` or
-    `{one-line hook from their LinkedIn headline}`). See Phase 5 of
-    docs/followup-generation-workflow.md for full semantics.
+    Missing goal values return as empty strings — the drafter falls back
+    to the workflow doc's default ROLE framing when a goal is empty.
+    Missing tab returns an empty dict.
     """
     try:
         sh = _gspread_client()
-        try:
-            ws = sh.worksheet(ICP_GOALS_TAB)
-        except WorksheetNotFound:
-            ws = sh.worksheet(FOLLOWUP_TEMPLATES_TAB)
+        ws = sh.worksheet(ICP_GOALS_TAB)
     except WorksheetNotFound:
         return {}
     except APIError as e:
@@ -1268,8 +1255,6 @@ def read_icp_goals() -> dict[str, dict[str, str]]:
     icp_idx = col_idx("icp", "icp name", "name")
     if icp_idx is None:
         icp_idx = 0  # legacy layout — assume ICP is column A
-    li_idx = col_idx("linkedin template", "linkedin")
-    email_idx = col_idx("email template", "email")
     goal_idx = col_idx("goal", "goals")
 
     def cell(row: list[str], idx: int | None) -> str:
@@ -1283,16 +1268,9 @@ def read_icp_goals() -> dict[str, dict[str, str]]:
         if not icp:
             continue
         out[icp] = {
-            "linkedin_template": cell(row, li_idx),
-            "email_template":    cell(row, email_idx),
-            "goal":              cell(row, goal_idx),
+            "goal": cell(row, goal_idx),
         }
     return out
-
-
-def read_followup_templates() -> dict[str, dict[str, str]]:
-    """Backward-compatible alias for the renamed `read_icp_goals()` helper."""
-    return read_icp_goals()
 
 
 def icp_messages_tab_name(sender: str) -> str:
