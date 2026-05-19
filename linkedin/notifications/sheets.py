@@ -66,14 +66,24 @@ PROGRESSION_RANK = {
 
 
 def deal_to_stage(deal) -> str:
-    """Map Deal.state to a Stage."""
+    """Map Deal.state to a Stage.
+
+    COMPLETED is the daemon's automation-finished state, not a won deal —
+    the stage is derived from engagement (had a meeting > replied > neither).
+    Won is human-set only; the auto-mapping never produces it.
+    """
+    from crm.models import Meeting
     from linkedin.enums import ProfileState
 
     state = deal.state
-    if state == ProfileState.COMPLETED:
-        return STAGE_WON
     if state == ProfileState.FAILED:
         return STAGE_LOST
+    if state == ProfileState.COMPLETED:
+        if Meeting.objects.filter(lead_id=deal.lead_id).exists():
+            return STAGE_MEETING
+        if deal.last_reply_at is not None:
+            return STAGE_QUALIFICATION
+        return STAGE_PROSPECTING
     if state == ProfileState.CONNECTED and deal.last_reply_at is not None:
         return STAGE_QUALIFICATION
     return STAGE_PROSPECTING
@@ -145,14 +155,25 @@ PRE_MEETING_STATUSES: set[str] = {
 
 
 def deal_to_outreach_status(deal) -> str:
-    """Map Deal.state to a per-person Outreach status (auto-managed values only)."""
+    """Map Deal.state to a per-person Outreach status (auto-managed values only).
+
+    COMPLETED is the daemon's automation-finished state (invite accepted +
+    rigid follow-up DM sent), NOT a closed-won deal — it is derived from
+    engagement signal (had a meeting > replied > neither). Won is a sales
+    outcome and is human-set only; the auto-mapping never produces it.
+    """
+    from crm.models import Meeting
     from linkedin.enums import ProfileState
 
     state = deal.state
-    if state == ProfileState.COMPLETED:
-        return STATUS_WON
     if state == ProfileState.FAILED:
         return STATUS_LOST
+    if state == ProfileState.COMPLETED:
+        if Meeting.objects.filter(lead_id=deal.lead_id).exists():
+            return STATUS_HAD_MEETING
+        if deal.last_reply_at is not None:
+            return STATUS_REPLIED
+        return STATUS_CONNECTED
     if state == ProfileState.CONNECTED:
         return STATUS_REPLIED if deal.last_reply_at is not None else STATUS_CONNECTED
     return STATUS_INVITE_SENT

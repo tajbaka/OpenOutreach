@@ -100,7 +100,7 @@ def _normalize_csv_icp(raw: str) -> str:
 def parse_csv_leads(text: str) -> list[dict]:
     """Parse CSV text into a list of lead dicts with url, first_name, last_name, company_name, icp.
 
-    Raises ValueError if 'profile url' column is missing. The `ICP`
+    Raises ValueError if no LinkedIn profile URL column is present. The `ICP`
     column is optional \u2014 when present, values are normalized to one of
     `LEAD_ICP_BUCKETS` and stamped on `Lead.icp` at import. When absent,
     `icp` field stays "" and `linkedin.icp_outbound.resolve_icp` will
@@ -114,10 +114,10 @@ def parse_csv_leads(text: str) -> list[dict]:
 
     col_map = _normalize_columns(reader.fieldnames)
 
-    url_col = col_map.get("profile url")
+    url_col = col_map.get("profile url") or col_map.get("linkedin url")
     if not url_col:
         raise ValueError(
-            "CSV must have a 'Profile URL' column. "
+            "CSV must have a 'Profile URL' or 'LinkedIn URL' column. "
             f"Found columns: {', '.join(reader.fieldnames)}"
         )
 
