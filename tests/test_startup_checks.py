@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -201,6 +202,21 @@ class TestEnvSpec:
         for var in env_spec.ENV_VARS:
             assert var.group, f"{var.name} missing group"
             assert var.description, f"{var.name} missing description"
+
+    def test_dotenv_example_matches_registry(self):
+        example_path = Path(".env.example")
+        assert example_path.exists(), ".env.example is missing"
+
+        example_names = []
+        for line in example_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            name = stripped.split("=", 1)[0].strip()
+            example_names.append(name)
+
+        registry_names = [var.name for var in env_spec.ENV_VARS]
+        assert example_names == registry_names
 
 
 class TestCheckEnvVars:
