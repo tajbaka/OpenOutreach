@@ -141,6 +141,14 @@ if __name__ == "__main__":
         # before re-raising so an operator sees the crash even when the
         # process logs scroll off. KeyboardInterrupt / SystemExit pass
         # through untouched.
+        #
+        # Startup integrity checks run first, before migrations: the update
+        # check may exit so the process restarts on freshly pulled code.
+        from linkedin.version_check import check_for_updates
+        from linkedin.env_check import check_env_vars
+
+        check_for_updates()
+        check_env_vars()
         from linkedin.notifications.slack import notify_on_error
         _ensure_db()
         with notify_on_error("daemon:startup"):
