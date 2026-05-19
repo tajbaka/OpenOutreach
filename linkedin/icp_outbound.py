@@ -66,7 +66,8 @@ _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
 # Python `follow_up` task module) and `assets/followup` (no separator).
 # Trailing "" = ROOT_DIR itself for legacy callers.
 _ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
-ICP_MESSAGES_HEADERS = ["ICP", "Channel", "Variant", "Message"]
+ICP_MESSAGES_HEADERS = ["ICP", "Connect Message", "Followup Message"]
+ICP_MESSAGES_SHEET_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors")
 
 
 @dataclass
@@ -225,28 +226,27 @@ def known_senders() -> set[str]:
 
 
 def icp_messages_rows(sender: str) -> list[list[str]]:
-    """Flatten one sender's JSON block into sheet rows.
+    """Flatten one sender's core JSON block into one row per ICP.
 
-    Row schema matches `ICP_MESSAGES_HEADERS` with one row per variant.
-    Variant numbers are 1-based so operators can reorder/edit them in
-    Sheets without thinking about Python indexing.
+    The sheet is intentionally operator-friendly rather than lossless:
+    it surfaces the three core ICP buckets only, and only the first
+    variant for the connect note / follow-up. Extra ICPs (e.g. Channel)
+    and extra variants remain in JSON and are preserved on pull.
     """
     rows: list[list[str]] = [list(ICP_MESSAGES_HEADERS)]
-    for icp, channels in load_icp_messages(sender).items():
-        for channel, variants in channels.items():
-            for idx, message in enumerate(variants, start=1):
-                rows.append([icp, channel, str(idx), message])
+    messages = load_icp_messages(sender)
+    for icp in ICP_MESSAGES_SHEET_BUCKETS:
+        channels = messages.get(icp, {})
+        rows.append([
+            icp,
+            ((channels.get("linkedin_connect_note") or [""])[0] or "").strip(),
+            ((channels.get("linkedin_connect_followup") or [""])[0] or "").strip(),
+        ])
     return rows
 
 
 def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[str]]]:
-    """Parse sheet rows back into one sender's JSON block.
-
-    Accepts the header row plus data rows. Columns are matched by header
-    name so operators can reorder them in the tab. Duplicate
-    ICP/channel/variant tuples raise `SheetsError` rather than silently
-    overwriting a variant.
-    """
+    """Parse sheet rows back into one sender's core JSON block."""
     if not rows:
         raise SheetsError("ICP messages tab is empty")
     header_lower = [str(h).strip().lower() for h in rows[0]]
@@ -260,61 +260,51 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
             ) from e
 
     icp_idx = col_idx("ICP")
-    channel_idx = col_idx("Channel")
-    variant_idx = col_idx("Variant")
-    message_idx = col_idx("Message")
+    connect_idx = col_idx("Connect Message")
+    followup_idx = col_idx("Followup Message")
 
-    bucketed: dict[tuple[str, str], list[tuple[int, str]]] = {}
-    seen: set[tuple[str, str, int]] = set()
+    out: dict[str, dict[str, list[str]]] = {}
     for row_num, row in enumerate(rows[1:], start=2):
         def cell(idx: int) -> str:
             return row[idx].strip() if idx < len(row) and row[idx] is not None else ""
 
         icp = cell(icp_idx)
-        channel = cell(channel_idx)
-        variant_raw = cell(variant_idx)
-        message = cell(message_idx)
-        if not any((icp, channel, variant_raw, message)):
+        connect_message = cell(connect_idx)
+        followup_message = cell(followup_idx)
+        if not any((icp, connect_message, followup_message)):
             continue
-        if not icp or not channel or not variant_raw or not message:
+        if not icp or not connect_message or not followup_message:
             raise SheetsError(
-                f"ICP messages row {row_num} must include ICP, Channel, Variant, and Message"
+                f"ICP messages row {row_num} must include ICP, Connect Message, and Followup Message"
             )
-        try:
-            variant = int(variant_raw)
-        except ValueError as e:
+        if icp not in ICP_MESSAGES_SHEET_BUCKETS:
             raise SheetsError(
-                f"ICP messages row {row_num} has non-integer Variant {variant_raw!r}"
-            ) from e
-        if variant < 1:
-            raise SheetsError(
-                f"ICP messages row {row_num} has invalid Variant {variant}; must be >= 1"
+                f"ICP messages row {row_num} has unsupported ICP {icp!r}; "
+                f"expected one of {list(ICP_MESSAGES_SHEET_BUCKETS)}"
             )
-        dedupe_key = (icp, channel, variant)
-        if dedupe_key in seen:
-            raise SheetsError(
-                f"ICP messages row {row_num} duplicates {icp}/{channel} variant {variant}"
-            )
-        seen.add(dedupe_key)
-        bucketed.setdefault((icp, channel), []).append((variant, message))
-
-    out: dict[str, dict[str, list[str]]] = {}
-    for (icp, channel), variants in bucketed.items():
-        ordered = [message for _, message in sorted(variants, key=lambda pair: pair[0])]
-        out.setdefault(icp, {})[channel] = ordered
+        if icp in out:
+            raise SheetsError(f"ICP messages row {row_num} duplicates ICP {icp!r}")
+        out[icp] = {
+            "linkedin_connect_note": [connect_message],
+            "linkedin_connect_followup": [followup_message],
+        }
     if not out:
         raise SheetsError("ICP messages tab has no message rows")
     return out
 
 
 def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> None:
-    """Replace one sender's block in `icp_messages.json`.
+    """Merge one sender's edited core ICPs into `icp_messages.json`.
 
-    Keeps the rest of the file untouched and preserves top-level sender
-    order when updating an existing sender.
+    Only buckets present in `block` are replaced. Other ICPs and extra
+    variants for untouched buckets remain as-is.
     """
     by_sender = json.loads(_MESSAGES_PATH.read_text())
-    by_sender[sender] = block
+    existing = by_sender.get(sender, {})
+    merged = dict(existing)
+    for icp, channels in block.items():
+        merged[icp] = channels
+    by_sender[sender] = merged
     _MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
 
 

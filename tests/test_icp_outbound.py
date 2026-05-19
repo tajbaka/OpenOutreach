@@ -174,16 +174,19 @@ def test_missing_sender_block_returns_handle_for_unknown():
 def test_icp_messages_rows_round_trip_for_sender():
     rows = icp_outbound.icp_messages_rows("Leili")
     parsed = icp_outbound.parse_icp_messages_rows(rows)
-    assert parsed == icp_outbound.load_icp_messages("Leili")
+    assert parsed == {
+        icp: icp_outbound.load_icp_messages("Leili")[icp]
+        for icp in icp_outbound.ICP_MESSAGES_SHEET_BUCKETS
+    }
 
 
-def test_parse_icp_messages_rows_rejects_duplicate_variant():
+def test_parse_icp_messages_rows_rejects_duplicate_icp():
     rows = [
         list(icp_outbound.ICP_MESSAGES_HEADERS),
-        ["CSPs", "linkedin_connect_note", "1", "first"],
-        ["CSPs", "linkedin_connect_note", "1", "dupe"],
+        ["CSPs", "first connect", "first followup"],
+        ["CSPs", "dupe connect", "dupe followup"],
     ]
-    with pytest.raises(SheetsError, match="duplicates .* variant 1"):
+    with pytest.raises(SheetsError, match="duplicates ICP 'CSPs'"):
         icp_outbound.parse_icp_messages_rows(rows)
 
 
@@ -191,18 +194,22 @@ def test_save_icp_messages_replaces_one_sender_block(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
     path.write_text(json.dumps({
         "Arian": {"CSPs": {"linkedin_connect_note": ["a"]}},
-        "Leili": {"CSPs": {"linkedin_connect_note": ["old"]}},
+        "Leili": {
+            "CSPs": {"linkedin_connect_note": ["old"], "linkedin_connect_followup": ["oldf"]},
+            "Channel": {"linkedin_connect_note": ["keep"], "linkedin_connect_followup": ["keepf"]},
+        },
     }, indent=2) + "\n")
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
 
     icp_outbound.save_icp_messages(
         "Leili",
-        {"CSPs": {"linkedin_connect_note": ["new"]}},
+        {"CSPs": {"linkedin_connect_note": ["new"], "linkedin_connect_followup": ["newf"]}},
     )
 
     saved = json.loads(path.read_text())
     assert saved["Arian"]["CSPs"]["linkedin_connect_note"] == ["a"]
     assert saved["Leili"]["CSPs"]["linkedin_connect_note"] == ["new"]
+    assert saved["Leili"]["Channel"]["linkedin_connect_note"] == ["keep"]
 
 
 def test_fill_message_missing_first_name_renders_empty():

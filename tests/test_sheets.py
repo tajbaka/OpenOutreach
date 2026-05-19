@@ -259,8 +259,8 @@ def test_write_icp_messages_tab_creates_and_overwrites(monkeypatch):
     monkeypatch.setattr(sheets, "_gspread_client", lambda: sh)
 
     rows = [
-        ["ICP", "Channel", "Variant", "Message"],
-        ["CSPs", "linkedin_connect_note", "1", "hello"],
+        ["ICP", "Connect Message", "Followup Message"],
+        ["CSPs", "hello", "follow up"],
     ]
     sheets.write_icp_messages_tab("Leili", rows)
 
@@ -274,8 +274,8 @@ def test_read_icp_messages_tab_returns_raw_rows(monkeypatch):
     sh = _FakeSpreadsheet()
     ws = _FakeWorksheet()
     ws.rows = [
-        ["ICP", "Channel", "Variant", "Message"],
-        ["Advisors", "linkedin_connect_followup", "1", "body"],
+        ["ICP", "Connect Message", "Followup Message"],
+        ["Advisors", "connect", "body"],
     ]
     sh.tabs["Leili ICP Messages"] = ws
     monkeypatch.setattr(sheets, "_gspread_client", lambda: sh)
