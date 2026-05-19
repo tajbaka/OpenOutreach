@@ -126,12 +126,9 @@ ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip()
 #
 # SLACK_REPLIES_WEBHOOK_URL is the "replies" channel — inbound DM detections
 # from the realtime listener (notify_message_received) and phone-enrichment
-# results (notify_phone_enriched). When unset it falls back to
-# SLACK_WEBHOOK_URL so reply notifications are never silently dropped.
+# results (notify_phone_enriched). Empty disables those notifications.
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
-SLACK_REPLIES_WEBHOOK_URL = (
-    os.getenv("SLACK_REPLIES_WEBHOOK_URL", "").strip() or SLACK_WEBHOOK_URL
-)
+SLACK_REPLIES_WEBHOOK_URL = os.getenv("SLACK_REPLIES_WEBHOOK_URL", "").strip()
 
 # Google Sheets CRM sync. GOOGLE_SHEETS_ID is the spreadsheet id from the
 # URL (https://docs.google.com/spreadsheets/d/<id>/edit). CREDENTIALS_PATH

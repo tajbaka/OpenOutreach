@@ -32,7 +32,8 @@ Routing across two channels:
     (replies: a lead replied, and the enrichment results that follow).
 
 Each surface no-ops when its target webhook is unset, so callers don't need
-to guard. SLACK_REPLIES_WEBHOOK_URL falls back to SLACK_WEBHOOK_URL (see conf).
+to guard. The two webhooks are independent — an unset SLACK_REPLIES_WEBHOOK_URL
+silently drops reply/enrichment notifications rather than routing them to ops.
 """
 from __future__ import annotations
 
