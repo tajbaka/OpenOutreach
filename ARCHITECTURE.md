@@ -6,9 +6,18 @@ Detailed module documentation for OpenOutreach. See `CLAUDE.md` for rules and qu
 
 `manage.py` (Django bootstrap + auto-migrate + CRM setup):
 - Suppresses Pydantic serialization warning from langchain-openai. Configures logging: DEBUG level, suppresses noisy third-party loggers.
-- No args → runs daemon: `ensure_onboarding()` → validate `LLM_API_KEY` → `get_or_create_session(handle)` → set default campaign → `session.ensure_browser()` → `ensure_self_profile()` → GDPR newsletter override (marker-guarded) → `ensure_newsletter_subscription()` → `run_daemon(session)`.
+- No args → runs daemon: startup checks → `ensure_onboarding()` → validate `LLM_API_KEY` → `get_or_create_session(handle)` → set default campaign → `session.ensure_browser()` → `ensure_self_profile()` → GDPR newsletter override (marker-guarded) → `ensure_newsletter_subscription()` → `run_daemon(session)`.
 - With `runserver` arg → auto-migrates, then delegates to Django CLI.
 - Other args → delegates directly to `execute_from_command_line`.
+
+### Startup Integrity Checks
+
+Before the daemon does any work, `manage.py`'s no-args branch runs two
+checks, both before `_ensure_db()`:
+
+- `linkedin/version_check.py` — `check_for_updates()` runs `git fetch` and compares local `HEAD` to the current branch's upstream `@{u}`. When behind, a TTY session is prompted to pull and a headless run auto-pulls. A successful `git pull --ff-only` exits 0 because the process must restart on the newly pulled code; a failed pull logs loudly, posts `notify_error`, and exits 1. Non-git deployments are a silent no-op.
+- `linkedin/env_check.py` — `check_env_vars()` logs one grouped summary of missing environment variables. Advisory only; never aborts startup.
+- `linkedin/env_spec.py` — declared `EnvVar` registry consumed by `check_env_vars()`. This is the single source of truth for project-owned env vars.
 
 ## Onboarding (`onboarding.py`)
 

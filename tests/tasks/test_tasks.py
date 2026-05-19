@@ -275,6 +275,42 @@ class TestHandleSweepConnections:
             status=Task.Status.PENDING,
         ).exclude(pk=task.pk).exists()
 
+    @patch("linkedin.tasks.sweep_connections.notify_sweep_summary")
+    @patch("linkedin.tasks.sweep_connections.scrape_connections")
+    def test_posts_connect_runs_and_qualified_counts(
+        self, mock_scrape, mock_notify, fake_session,
+    ):
+        mock_scrape.return_value = []
+        _make_qualified(fake_session, "alice")
+        _make_qualified(fake_session, "bob")
+
+        today = timezone.now()
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.COMPLETED,
+            scheduled_at=today,
+            started_at=today,
+            completed_at=today,
+            payload={"campaign_id": fake_session.campaign.pk},
+        )
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.COMPLETED,
+            scheduled_at=today,
+            started_at=today,
+            completed_at=today,
+            payload={"campaign_id": fake_session.campaign.pk},
+        )
+
+        task = _make_task(Task.TaskType.SWEEP_CONNECTIONS, {})
+        qualifiers = _build_context(fake_session)
+        handle_sweep_connections(task, fake_session, qualifiers)
+
+        mock_notify.assert_called_once()
+        kwargs = mock_notify.call_args.kwargs
+        assert kwargs["connect_runs_today"] == 2
+        assert kwargs["qualified"] == 2
+
 
 # ── handle_follow_up tests ─────────────────────────────────────
 #

@@ -377,7 +377,8 @@ class TestNotifySweepSummary:
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             slack_mod.notify_sweep_summary(
                 sender="Leili", newly_connected=3, connects_today=18,
-                followups_today=5, pending=12, connected=47, failed=9,
+                connect_runs_today=22, followups_today=5, qualified=4,
+                pending=12, connected=47, failed=9,
             )
         mock_open.assert_not_called()
 
@@ -386,13 +387,17 @@ class TestNotifySweepSummary:
             mock_open.return_value.__enter__.return_value.status = 200
             slack_mod.notify_sweep_summary(
                 sender="Leili", newly_connected=3, connects_today=18,
-                followups_today=5, pending=12, connected=47, failed=9,
+                connect_runs_today=22, followups_today=5, qualified=4,
+                pending=12, connected=47, failed=9,
             )
         mock_open.assert_called_once()
         body = mock_open.call_args[0][0].data.decode("utf-8")
         assert "Leili" in body
         assert "18 invites" in body
         assert "5 follow-ups" in body
+        assert "22 runs" in body
+        assert "4 ready to send" in body
+        assert "4 qualified" in body
         assert "12 pending" in body
         assert "47 connected" in body
         assert "9 failed" in body

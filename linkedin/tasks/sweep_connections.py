@@ -208,8 +208,14 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
             action_type=ActionLog.ActionType.FOLLOW_UP,
             created_at__gte=today_start,
         ).count()
+        connect_runs_today = Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            payload__campaign_id__in=[c.pk for c in session.campaigns],
+            started_at__gte=today_start,
+        ).count()
 
         deals = Deal.objects.filter(campaign__in=session.campaigns)
+        qualified = deals.filter(state=ProfileState.QUALIFIED).count()
         pending = deals.filter(state=ProfileState.PENDING).count()
         connected = deals.filter(state=ProfileState.CONNECTED).count()
         failed = deals.filter(
@@ -221,7 +227,9 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
             sender=resolve_operator(session.linkedin_profile.linkedin_username),
             newly_connected=newly_connected,
             connects_today=connects_today,
+            connect_runs_today=connect_runs_today,
             followups_today=followups_today,
+            qualified=qualified,
             pending=pending,
             connected=connected,
             failed=failed,
