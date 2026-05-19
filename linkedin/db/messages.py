@@ -64,6 +64,11 @@ def persist_thread(
     """
     lead_full = f"{lead.first_name or ''} {lead.last_name or ''}".strip().lower()
     lead_first = (lead.first_name or "").strip().lower()
+    known_connect_notes = {
+        note.strip()
+        for note in lead.deal_set.exclude(sent_note="").values_list("sent_note", flat=True)
+        if note and note.strip()
+    }
 
     created = 0
     with transaction.atomic():
@@ -81,6 +86,13 @@ def persist_thread(
                 (lead_full and sender == lead_full)
                 or (lead_first and sender.startswith(lead_first + " "))
             )
+            text = (m.get("text") or "").strip()
+            # LinkedIn conversation payloads sometimes echo our own connection
+            # note back with the lead's name as sender. When the body exactly
+            # matches a Deal.sent_note we know it was our outbound invite note,
+            # not a real reply from the lead.
+            if text and text in known_connect_notes:
+                is_inbound = False
             direction = (
                 Message.Direction.INBOUND if is_inbound
                 else Message.Direction.OUTBOUND

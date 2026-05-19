@@ -12,6 +12,7 @@ import pytest
 from django.db import IntegrityError
 
 from crm.models import Lead, Message
+from linkedin.models import Campaign
 from linkedin.db.messages import persist_thread
 
 
@@ -151,6 +152,38 @@ def test_persist_thread_handles_unparseable_timestamp(db):
     assert msg.sent_at is not None  # fell back to now()
 
 
+def test_persist_thread_treats_matching_sent_note_as_outbound(db, django_user_model):
+    lead = Lead.objects.create(
+        first_name="Joseph W. Giusti",
+        last_name="MBA, MS (Cybersecurity), Veteran, TS/SCI",
+        linkedin_url="https://www.linkedin.com/in/josephwgiusti/",
+    )
+    user = django_user_model.objects.create(username="chukyjack")
+    campaign = Campaign.objects.create(name="FedRampGPT test", user=user)
+    campaign.deals.create(
+        lead=lead,
+        state="Pending",
+        sent_note=(
+            "Hi Joseph W. Giusti, we built FedrampGPT around FedRAMP "
+            "authorization + 20x continuous monitoring. Would love to connect."
+        ),
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:note-echo",
+        "sender": "Joseph W. Giusti MBA, MS (Cybersecurity), Veteran, TS/SCI",
+        "text": (
+            "Hi Joseph W. Giusti, we built FedrampGPT around FedRAMP "
+            "authorization + 20x continuous monitoring. Would love to connect."
+        ),
+        "timestamp": "2026-05-19 19:42",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed)
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.OUTBOUND
+
+
 # ---------------------------------------------------------------------------
 # B.4 — get_conversation hook persists matched-Lead threads
 # ---------------------------------------------------------------------------
@@ -159,9 +192,10 @@ def test_persist_thread_handles_unparseable_timestamp(db):
 @patch("linkedin.actions.conversations.fetch_messages")
 @patch("linkedin.actions.conversations.find_conversation_urn")
 @patch("linkedin.actions.conversations.find_conversation_urn_via_navigation")
+@patch("linkedin.actions.conversations.PlaywrightLinkedinAPI")
 @patch("linkedin.db.leads.resolve_urn")
 def test_get_conversation_persists_messages_when_lead_exists(
-    mock_resolve, mock_nav, mock_find, mock_fetch, fake_session,
+    mock_resolve, mock_api, mock_nav, mock_find, mock_fetch, fake_session,
 ):
     from linkedin.actions.conversations import get_conversation
 
