@@ -665,7 +665,7 @@ FU_SENT_LINKEDIN_COL_0 = FU_HEADER_INDEX_0[FU_COL_SENT_LINKEDIN]
 FU_QUALIFY_COL_0 = FU_HEADER_INDEX_0[FU_COL_QUALIFY]
 FU_NAME_COL_0 = FU_HEADER_INDEX_0[FU_COL_NAME]
 
-# ROLE → ICP-template bucket mapping. The "Followup Templates" tab keys
+# ROLE → ICP-template bucket mapping. The "ICP Goals" tab keys
 # rows by ICP, but the followup row carries a finer-grained ROLE; this maps
 # one to the other so the drafter can look up the right Goal cell.
 #
@@ -1205,17 +1205,18 @@ def linkedin_message_hyperlink(
 
 
 # ----------------------------------------------------------------------
-# Followup Templates tab — read the operator's per-ICP Goal cells.
+# ICP Goals tab — read the operator's per-ICP Goal cells.
 # ----------------------------------------------------------------------
 
 
-FOLLOWUP_TEMPLATES_TAB = "Followup Templates"
+ICP_GOALS_TAB = "ICP Goals"
+FOLLOWUP_TEMPLATES_TAB = "Followup Templates"  # legacy tab name
 ICP_MESSAGES_TAB_SUFFIX = "ICP Messages"
 
 
-def read_followup_templates() -> dict[str, dict[str, str]]:
+def read_icp_goals() -> dict[str, dict[str, str]]:
     """Return `{ICP: {"linkedin_template", "email_template", "goal"}}` from
-    the operator's `Followup Templates` tab.
+    the operator's `ICP Goals` tab.
 
     Columns are matched by header name (case-insensitive, trimmed) so the
     operator can reorder columns or insert extras without breaking the
@@ -1237,16 +1238,19 @@ def read_followup_templates() -> dict[str, dict[str, str]]:
     """
     try:
         sh = _gspread_client()
-        ws = sh.worksheet(FOLLOWUP_TEMPLATES_TAB)
+        try:
+            ws = sh.worksheet(ICP_GOALS_TAB)
+        except WorksheetNotFound:
+            ws = sh.worksheet(FOLLOWUP_TEMPLATES_TAB)
     except WorksheetNotFound:
         return {}
     except APIError as e:
-        raise SheetsError(f"failed opening Followup Templates: {e}") from e
+        raise SheetsError(f"failed opening ICP Goals: {e}") from e
 
     try:
         rows = ws.get_all_values()
     except APIError as e:
-        raise SheetsError(f"failed reading Followup Templates: {e}") from e
+        raise SheetsError(f"failed reading ICP Goals: {e}") from e
 
     if len(rows) < 2:
         return {}
@@ -1284,6 +1288,11 @@ def read_followup_templates() -> dict[str, dict[str, str]]:
             "goal":              cell(row, goal_idx),
         }
     return out
+
+
+def read_followup_templates() -> dict[str, dict[str, str]]:
+    """Backward-compatible alias for the renamed `read_icp_goals()` helper."""
+    return read_icp_goals()
 
 
 def icp_messages_tab_name(sender: str) -> str:

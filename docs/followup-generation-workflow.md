@@ -359,28 +359,28 @@ with open("/tmp/followup_active_in_flight.json","w") as f: json.dump(cohort_acti
 with open("/tmp/followup_met.json","w") as f: json.dump(cohort_met, f, indent=2)
 with open("/tmp/followup_pre_meeting.json","w") as f: json.dump(cohort_pre_meeting, f, indent=2)
 
-# Followup Templates snapshot — per-ICP strategic Goal from the operator's
-# `Followup Templates` tab, plus the canonical ROLE→ICP mapping. Phase 5
+# ICP Goals snapshot — per-ICP strategic Goal from the operator's
+# `ICP Goals` tab, plus the canonical ROLE→ICP mapping. Phase 5
 # reads `goal` only — it's strategic context (what each ICP's draft is
 # angling for). The `linkedin_template` / `email_template` columns are
 # preserved here for the operator's own reference in Google Sheets, but
 # the drafter does NOT copy them verbatim into outputs (retired 2026-05-13
 # after the verbatim chassis produced too-generic pitch-shaped drafts
 # across ICPs that needed cohort-specific shapes instead). Dumping here
-# (vs. relying on Phase 5 to call read_followup_templates() itself)
+# (vs. relying on Phase 5 to call read_icp_goals() itself)
 # ensures `goal` is a hard input dependency.
-_followup_templates = {}
+_icp_goals = {}
 try:
-    _followup_templates = read_followup_templates()
+    _icp_goals = read_icp_goals()
 except Exception as _e:
-    print(f"warning: could not load Followup Templates tab: {_e}")
-with open("/tmp/followup_templates.json","w") as f:
-    json.dump({"role_to_icp": FU_ROLE_TO_ICP, "templates": _followup_templates}, f, indent=2)
+    print(f"warning: could not load ICP Goals tab: {_e}")
+with open("/tmp/icp_goals.json","w") as f:
+    json.dump({"role_to_icp": FU_ROLE_TO_ICP, "templates": _icp_goals}, f, indent=2)
 
 print(
     f"drafts: {len(cohort_drafts)}, active-in-flight: {len(cohort_active_in_flight)}, "
     f"met: {len(cohort_met)}, pre-meeting: {len(cohort_pre_meeting)}, "
-    f"icp-buckets: {len(_followup_templates)}"
+    f"icp-buckets: {len(_icp_goals)}"
 )
 EOF
 ```
@@ -391,7 +391,7 @@ The output splits into four cohort files plus the templates snapshot:
 - `/tmp/followup_pre_meeting.json` — leads with Outreach status `Wants Meeting` or `Meeting Booked`. Drafter resurfaces time slots or sends pre-meeting confirms. Never deliverable-first.
 - `/tmp/followup_active_in_flight.json` — visibility only. Listed in the SUMMARY/ACTIVE section of the output file with a one-line state, no draft. These are the leads that under the old freshness filter would have silently disappeared.
 - `/tmp/followup_met.json` — post-meeting follow-up cohort. Sourced from the People tab's Outreach status (Wants Meeting / Meeting Booked / Had Meeting). Each entry carries an `outreach_status` field so Phase 5 can pick the right post-meeting frame (pre-meeting confirm, post-meeting deliverable, etc.). These land in 🤝 MET with `Cohort = "Met"` in Phase 6.
-- `/tmp/followup_templates.json` — snapshot of the operator's `Followup Templates` tab plus the canonical ROLE→ICP mapping. Shape: `{"role_to_icp": {ROLE: ICP}, "templates": {ICP: {"linkedin_template": str, "email_template": str, "goal": str}}}`. Phase 5 reads **`goal` only** — it tells the drafter what strategic outcome each ICP's draft is angling for (e.g., advisors → referral-into-CSP-clients, CSPs → design-partner/beta). `linkedin_template` / `email_template` are preserved in the file for the operator's own sheet-side reference and are not copied verbatim into generated drafts (retired 2026-05-13).
+- `/tmp/icp_goals.json` — snapshot of the operator's `ICP Goals` tab plus the canonical ROLE→ICP mapping. Shape: `{"role_to_icp": {ROLE: ICP}, "templates": {ICP: {"linkedin_template": str, "email_template": str, "goal": str}}}`. Phase 5 reads **`goal` only** — it tells the drafter what strategic outcome each ICP's draft is angling for (e.g., advisors → referral-into-CSP-clients, CSPs → design-partner/beta). `linkedin_template` / `email_template` are preserved in the file for the operator's own sheet-side reference and are not copied verbatim into generated drafts (retired 2026-05-13).
 
 Leads with zero inbound messages no longer surface here — the daemon (`linkedin/tasks/follow_up.py`) DMs them rigidly from `linkedin/icp_messages.json` on its own schedule. The classifier still walks them so the per-row build doesn't fail, but the `'no_inbound'` branch in `classify()` drops them before any cohort accumulator.
 
@@ -496,13 +496,13 @@ Each row in the followups tab has TWO draft cells (`Draft Email`, `Draft LinkedI
 - **Both populated** — for leads with substantive convo on each channel, both columns get a draft. The unified context is the same merged-timeline view (the email draft can reference what was said on LinkedIn and vice versa); the medium-specific phrasing is what differs. Operator decides which channel(s) to fire and toggles the corresponding `Sent ...` cell on send.
 - **Neither populated** — only when the cohort row is `Active in-flight` (visibility-only, no draft regardless of medium).
 
-**Per-ICP Goal (from the `Followup Templates` tab) — MANDATORY input:**
+**Per-ICP Goal (from the `ICP Goals` tab) — MANDATORY input:**
 
-Phase 1 already dumped `/tmp/followup_templates.json` for you. Open it before drafting:
+Phase 1 already dumped `/tmp/icp_goals.json` for you. Open it before drafting:
 
 ```python
 import json
-icp = json.load(open("/tmp/followup_templates.json"))
+icp = json.load(open("/tmp/icp_goals.json"))
 role_to_icp = icp["role_to_icp"]    # {ROLE: ICP-bucket}
 templates = icp["templates"]        # {ICP: {"linkedin_template", "email_template", "goal"}}
 ```
@@ -717,7 +717,7 @@ Tier 2 leads don't get individual drafts; they share a name-personalized templat
 Some calendar attendees had meetings but aren't yet reflected in the People tab's Outreach status (e.g., Lauren@ResilientTech, Oreale Kouo). They show up in the replied cohort as "looks like never had a meeting" but actually did. Cross-reference against `/tmp/cal_meetings.json` from the data-sync workflow before drafting.
 
 ### File path conventions
-- Generation scratch: `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, `/tmp/followup_pre_meeting.json`, `/tmp/followup_templates.json`, `/tmp/polite_no_candidates.json`
+- Generation scratch: `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, `/tmp/followup_pre_meeting.json`, `/tmp/icp_goals.json`, `/tmp/polite_no_candidates.json`
 - Final output: `Arian - Followups` and `Chuka - Followups` tabs in the Google Sheet (via `linkedin.notifications.sheets.write_followups()`)
 - Optional archive: `followups/YYYY-MM-DD/raw.json` (per-run snapshot of rows + classifier state, for history only)
 - Tone exemplar: `followups.txt` at repo root (manual reference, do not overwrite)
