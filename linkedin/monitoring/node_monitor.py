@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from django.db import connections
+from django.db import connection
 from django.db.models import Q
 from django.utils import timezone
 from datetime import timedelta
@@ -146,5 +146,5 @@ class NodeMonitor:
                 # This thread owns its own thread-local Neon connection;
                 # close it each tick so Neon's idle timeout can't hand us a
                 # dead socket across the interval sleep.
-                connections.close_all()
+                connection.close()
             self._stop.wait(conf.MONITOR_INTERVAL_SECONDS)
