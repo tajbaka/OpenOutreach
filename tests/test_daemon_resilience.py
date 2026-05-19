@@ -24,11 +24,14 @@ from linkedin.models import Task
 
 def _make_pending_task(fake_session, task_type=Task.TaskType.FOLLOW_UP):
     """Minimal task row that mark_failed can act on."""
+    payload = {"campaign_id": fake_session.campaign.pk, "public_id": "x"}
+    if task_type == Task.TaskType.FOLLOW_UP:
+        payload["operator"] = "Arian"
     return Task.objects.create(
         task_type=task_type,
         status=Task.Status.PENDING,
         scheduled_at=__import__("django").utils.timezone.now(),
-        payload={"campaign_id": fake_session.campaign.pk, "public_id": "x"},
+        payload=payload,
     )
 
 

@@ -353,22 +353,22 @@ def enqueue_follow_up(
     campaign_id: int,
     public_id: str,
     *,
-    operator: str = "",
+    operator: str,
     delay_seconds: float = 10,
 ):
     """Enqueue a follow_up Task.
 
     `operator` is the canonical handle (`linkedin.operators.resolve_operator`)
-    of the LinkedIn account that owns the thread to this lead — empty
-    when unknown (legacy callers). Stamped on `Task.payload.operator`
-    so `Task.objects.claim_next(operator=...)` can pre-filter, keeping
-    cross-account leaks (Travis-class, 2026-05-12) from ever being
-    popped by the wrong daemon.
+    of the LinkedIn account that owns the thread to this lead. Required:
+    pending/running follow_up Tasks are ownership-scoped and invalid
+    without it.
     """
     from linkedin.conf import ENABLE_FOLLOW_UP
 
     if not ENABLE_FOLLOW_UP:
         return
+    if not operator:
+        raise ValueError("enqueue_follow_up requires a non-empty operator")
     _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,
         payload={"campaign_id": campaign_id, "public_id": public_id, "operator": operator},

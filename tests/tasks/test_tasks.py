@@ -70,6 +70,9 @@ def _make_old_deal(session, days):
 
 def _make_task(task_type, payload, **kwargs):
     """Create a task and mark it RUNNING (matching daemon behavior)."""
+    payload = dict(payload)
+    if task_type == Task.TaskType.FOLLOW_UP and not payload.get("operator"):
+        payload["operator"] = "Arian"
     return Task.objects.create(
         task_type=task_type,
         status=Task.Status.RUNNING,

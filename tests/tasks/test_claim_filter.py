@@ -1,26 +1,30 @@
-"""Task.objects.claim_next(operator=...) — operator-scoping filter tests.
+"""Task.objects.claim_next(operator=..., campaign_ids=...) — task-scoping tests.
 
-The Travis incident (2026-05-12): daemon logged in as Arian popped a
-follow_up Task for one of Chuka's connections and would have DM'd from
-the wrong account. The fix has two layers:
-  1. Enqueue stamps `payload.operator` with the canonical handle of
-     whichever LinkedIn account owns the thread.
-  2. claim_next filters follow_up Tasks to those matching the daemon's
-     operator (with empty/missing payload.operator passing through for
-     legacy Tasks enqueued before this field existed).
+A daemon must only claim work for the LinkedIn account it is logged in
+as. Two real leaks motivated this scoping:
 
-These tests cover layer 2.
+  - Travis incident (2026-05-12): a daemon logged in as Arian popped a
+    follow_up Task for one of Chuka's connections.
+  - Cross-account connect / legacy-followup leak (Apr–May 2026): a daemon
+    logged in as Arian ran 418 connect Tasks + 32 operator-less follow_up
+    Tasks for Chuka's campaign, sending invites/DMs from the wrong
+    account.
+
+`claim_next` / `seconds_to_next` filter the queue via `_operator_scope_q`:
+  - follow_up  → payload.operator must match;
+  - connect    → payload.campaign_id must be one the daemon owns;
+  - sweep_connections → account-agnostic.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.utils import timezone as dj_tz
 
 from linkedin.models import Task
 
 
-def _mk(task_type: str, *, operator: str | None = None, payload_extra: dict | None = None,
-        scheduled_offset_s: int = 0) -> Task:
+def _mk(task_type, *, operator=None, payload_extra=None, scheduled_offset_s=0):
     payload = {"campaign_id": 1, "public_id": "alice"}
     if operator is not None:
         payload["operator"] = operator
@@ -45,82 +49,72 @@ def test_claim_next_without_operator_arg_returns_anything():
 
 
 @pytest.mark.django_db
-def test_claim_next_with_operator_filters_to_matching_followup():
-    # Both tasks scheduled in the past so `due()` returns both. Order
-    # would normally be Chuka first (earlier scheduled_at) under no
-    # filter — the operator filter is what swaps which one pops.
+def test_claim_next_filters_followup_to_matching_operator():
     chuka_t = _mk(Task.TaskType.FOLLOW_UP, operator="Chuka", scheduled_offset_s=-10)
     arian_t = _mk(Task.TaskType.FOLLOW_UP, operator="Arian", scheduled_offset_s=-5)
 
-    # Daemon logged in as Arian should never see Chuka's follow_up.
-    claimed = Task.objects.claim_next(operator="Arian")
-    assert claimed is not None
-    assert claimed.pk == arian_t.pk
+    # A daemon never sees another operator's follow_up.
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+    assert claimed is not None and claimed.pk == arian_t.pk
 
-    # And vice-versa.
-    claimed = Task.objects.claim_next(operator="Chuka")
-    assert claimed is not None
-    assert claimed.pk == chuka_t.pk
+    claimed = Task.objects.claim_next(operator="Chuka", campaign_ids=[1])
+    assert claimed is not None and claimed.pk == chuka_t.pk
 
 
 @pytest.mark.django_db
-def test_claim_next_with_operator_lets_legacy_unstamped_tasks_through():
-    """Tasks enqueued before payload.operator existed (or by code paths
-    that don't stamp it yet) shouldn't get stranded — they fall through
-    the filter so the daemon still picks them up. The in-handler
-    `lead_outbound_operators` guard catches cross-account leaks among
-    these."""
-    legacy = Task.objects.create(
-        task_type=Task.TaskType.FOLLOW_UP,
-        status=Task.Status.PENDING,
-        scheduled_at=dj_tz.now(),
-        payload={"campaign_id": 1, "public_id": "alice"},  # no operator key
-    )
-    claimed = Task.objects.claim_next(operator="Arian")
-    assert claimed.pk == legacy.pk
+def test_connect_task_scoped_to_owning_campaign():
+    """A connect Task is claimable only by a daemon that owns its
+    campaign — the invite goes out from that account. This is the
+    418-invite cross-account leak (Apr–May 2026)."""
+    mine = _mk(Task.TaskType.CONNECT, payload_extra={"campaign_id": 3},
+               scheduled_offset_s=-10)
+    # A foreign campaign's connect Task, scheduled earlier — must be skipped.
+    _mk(Task.TaskType.CONNECT, payload_extra={"campaign_id": 99},
+        scheduled_offset_s=-20)
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[3])
+    assert claimed is not None and claimed.pk == mine.pk
 
 
 @pytest.mark.django_db
-def test_claim_next_with_operator_lets_empty_string_operator_through():
-    """payload.operator='' (set by enqueue_follow_up when caller didn't
-    supply one) also falls through — same rationale as missing key."""
-    t = _mk(Task.TaskType.FOLLOW_UP, operator="")
-    claimed = Task.objects.claim_next(operator="Arian")
-    assert claimed.pk == t.pk
+def test_connect_task_for_unowned_campaign_is_never_claimed():
+    _mk(Task.TaskType.CONNECT, payload_extra={"campaign_id": 99}, scheduled_offset_s=-5)
+    assert Task.objects.claim_next(operator="Chuka", campaign_ids=[1]) is None
 
 
 @pytest.mark.django_db
-def test_claim_next_with_operator_does_not_filter_other_task_types():
-    """connect / sweep_connections Tasks are account-agnostic — they
-    don't carry per-lead identity, so the operator filter shouldn't
-    apply. (Only the daemon running them needs to be the right one;
-    that's controlled by which LinkedInProfile is active, not the
-    task payload.)"""
+def test_sweep_connections_stays_account_agnostic():
+    """sweep_connections has no per-account identity — its handler only
+    touches the claiming daemon's own campaigns — so it passes the
+    filter for any operator."""
     sweep_t = _mk(Task.TaskType.SWEEP_CONNECTIONS, scheduled_offset_s=-1)
-    chuka_followup = _mk(Task.TaskType.FOLLOW_UP, operator="Chuka")  # noqa: F841
+    _mk(Task.TaskType.FOLLOW_UP, operator="Chuka")  # not Arian's — filtered out
 
-    # Arian's daemon shouldn't get Chuka's follow-up, but SWEEP comes
-    # through. SWEEP is scheduled earlier so it pops first.
-    claimed = Task.objects.claim_next(operator="Arian")
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[2])
     assert claimed.pk == sweep_t.pk
 
 
 @pytest.mark.django_db
 def test_seconds_to_next_respects_operator_filter():
-    """Sleep wait should also be scoped — otherwise the daemon would
-    snooze waiting on a Task it would never claim. Chuka's task is
-    earlier in the future than Arian's; the unfiltered call would return
-    Chuka's wait, the Arian-scoped call should return Arian's."""
+    """Sleep wait is scoped too — the daemon must not snooze on a Task it
+    would never claim."""
     _mk(Task.TaskType.FOLLOW_UP, operator="Chuka", scheduled_offset_s=30)
     _mk(Task.TaskType.FOLLOW_UP, operator="Arian", scheduled_offset_s=600)
 
-    arian_wait = Task.objects.seconds_to_next(operator="Arian")
-    chuka_wait = Task.objects.seconds_to_next(operator="Chuka")
+    arian_wait = Task.objects.seconds_to_next(operator="Arian", campaign_ids=[1])
+    chuka_wait = Task.objects.seconds_to_next(operator="Chuka", campaign_ids=[1])
     assert arian_wait is not None and chuka_wait is not None
-    # Operator scoping should give different waits — Arian's is the
-    # 600s task, Chuka's is the 30s task.
     assert chuka_wait < 100
     assert arian_wait > 500
+
+
+@pytest.mark.django_db
+def test_seconds_to_next_scopes_connect_to_owned_campaign():
+    """The sleep wait ignores connect Tasks for campaigns we don't own."""
+    _mk(Task.TaskType.CONNECT, payload_extra={"campaign_id": 99}, scheduled_offset_s=30)
+    _mk(Task.TaskType.CONNECT, payload_extra={"campaign_id": 3}, scheduled_offset_s=600)
+    wait = Task.objects.seconds_to_next(operator="Arian", campaign_ids=[3])
+    assert wait is not None and wait > 500
 
 
 @pytest.mark.django_db
@@ -133,12 +127,9 @@ def test_claim_next_excludes_enrich_phone():
         scheduled_at=dj_tz.now() - timedelta(seconds=60),
         payload={"lead_id": 1},
     )
-    # Even with nothing else queued and the task overdue, claim_next skips it.
     assert Task.objects.claim_next() is None
-    assert Task.objects.claim_next(operator="Arian") is None
-    # And it does not dictate the outbound loop's sleep.
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
     assert Task.objects.seconds_to_next() is None
-    # But the dedicated query finds it.
     assert Task.objects.next_enrichment().pk == enrich.pk
 
 
@@ -151,3 +142,25 @@ def test_next_enrichment_returns_none_when_not_due():
         payload={"lead_id": 1},
     )
     assert Task.objects.next_enrichment() is None
+
+
+@pytest.mark.django_db
+def test_pending_followup_requires_non_empty_operator():
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={"campaign_id": 1, "public_id": "alice"},
+        )
+
+
+@pytest.mark.django_db
+def test_pending_connect_requires_campaign_id():
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={},
+        )

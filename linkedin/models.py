@@ -5,6 +5,7 @@ import logging
 from datetime import date, timedelta
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -191,6 +192,34 @@ class ActionLog(models.Model):
         return f"{self.action_type} by {self.linkedin_profile} at {self.created_at}"
 
 
+def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
+    """Q filter restricting the task queue to work a daemon owns.
+
+    Every per-account task is scoped so a daemon can only claim work for
+    the LinkedIn account it is logged in as. This closed a real leak:
+    between Apr–May 2026 a daemon logged in as Arian sent 418 connection
+    requests and 32 follow-up DMs for Chuka's campaign, from the wrong
+    account.
+
+    - follow_up: claimable when `payload.operator` matches.
+    - connect: claimable only when `payload.campaign_id` is one of this
+      daemon's campaigns — the connection request goes out from the
+      account that owns the campaign.
+    - sweep_connections: account-agnostic; its handler only touches the
+      claiming daemon's own campaigns regardless of which task it pops.
+    """
+    from django.db.models import Q
+
+    owned = list(campaign_ids or [])
+    in_owned = Q(payload__campaign_id__in=owned)
+    mine_followup = Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator)
+    mine_connect = Q(task_type=Task.TaskType.CONNECT) & in_owned
+    account_agnostic = ~Q(
+        task_type__in=[Task.TaskType.FOLLOW_UP, Task.TaskType.CONNECT]
+    )
+    return mine_followup | mine_connect | account_agnostic
+
+
 class TaskQuerySet(models.QuerySet):
     def pending(self):
         return self.filter(status=Task.Status.PENDING).order_by("scheduled_at")
@@ -198,56 +227,51 @@ class TaskQuerySet(models.QuerySet):
     def due(self):
         return self.pending().filter(scheduled_at__lte=timezone.now())
 
-    def claim_next(self, operator: str | None = None) -> "Task | None":
-        """Pop the next due Task, optionally filtered to the current operator.
+    def claim_next(
+        self,
+        operator: str | None = None,
+        campaign_ids: "list[int] | None" = None,
+    ) -> "Task | None":
+        """Pop the next due Task, scoped to the work this daemon owns.
 
         `operator` is the canonical handle of the LinkedIn account the
-        daemon is logged in as. When supplied, follow_up Tasks are
-        pre-filtered to those whose `payload.operator` matches (or is
-        empty/missing, for legacy Tasks enqueued before the field
-        existed). Other task types (connect / sweep_connections) are
-        account-agnostic — they pass through regardless.
+        daemon is logged in as; `campaign_ids` are the pks of the
+        campaigns that account owns. When `operator` is supplied:
 
-        Without this filter, a daemon logged in as Arian could pop a
-        follow_up Task for one of Chuka's connections and try to send
-        from the wrong account (Travis incident, 2026-05-12). The
-        in-handler `lead_outbound_operators` guard catches it as a
-        second line of defense.
+          - follow_up Tasks are filtered to those whose `payload.operator`
+            matches;
+          - connect Tasks are filtered to those whose
+            `payload.campaign_id` is one of `campaign_ids` — a connection
+            request must go out from the account that owns the campaign;
+          - sweep_connections passes through (account-agnostic).
+
+        Without this, a daemon logged in as Arian could pop a follow_up
+        Task for one of Chuka's connections (Travis incident,
+        2026-05-12), or a daemon logged in as Chuka could pop a connect
+        Task for Arian's campaign and invite from the wrong account
+        (2026-05-19). See `_operator_scope_q`.
         """
-        from django.db.models import Q
-
         qs = self.due().exclude(task_type=Task.TaskType.ENRICH_PHONE)
         if operator:
-            not_follow_up = ~Q(task_type=Task.TaskType.FOLLOW_UP)
-            mine_or_legacy = Q(task_type=Task.TaskType.FOLLOW_UP) & (
-                Q(payload__operator=operator)
-                | Q(payload__operator__isnull=True)
-                | Q(payload__operator="")
-            )
-            qs = qs.filter(not_follow_up | mine_or_legacy)
+            qs = qs.filter(_operator_scope_q(operator, campaign_ids))
         return qs.first()
 
-    def seconds_to_next(self, operator: str | None = None) -> float | None:
+    def seconds_to_next(
+        self,
+        operator: str | None = None,
+        campaign_ids: "list[int] | None" = None,
+    ) -> float | None:
         """Seconds until the next pending task (optionally operator-scoped).
 
         Mirrors `claim_next`'s filter so a daemon doesn't sleep waiting
-        on a task it would never pop. Without the filter, a follow_up
-        Task scheduled for another operator would dictate the sleep
-        duration even though this daemon will skip it.
+        on a task it would never pop — a follow_up for another operator,
+        or a connect for a campaign this daemon's account doesn't own.
         """
-        from django.db.models import Q
-
         qs = self.pending().exclude(task_type=Task.TaskType.ENRICH_PHONE).only(
             "scheduled_at", "task_type", "payload",
         )
         if operator:
-            not_follow_up = ~Q(task_type=Task.TaskType.FOLLOW_UP)
-            mine_or_legacy = Q(task_type=Task.TaskType.FOLLOW_UP) & (
-                Q(payload__operator=operator)
-                | Q(payload__operator__isnull=True)
-                | Q(payload__operator="")
-            )
-            qs = qs.filter(not_follow_up | mine_or_legacy)
+            qs = qs.filter(_operator_scope_q(operator, campaign_ids))
         next_task = qs.first()
         if next_task is None:
             return None
@@ -297,6 +321,36 @@ class Task(models.Model):
 
     def __str__(self):
         return f"{self.task_type} [{self.status}] scheduled={self.scheduled_at}"
+
+    def clean(self):
+        super().clean()
+        payload = self.payload or {}
+        errors: list[str] = []
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.CONNECT
+            and "campaign_id" not in payload
+        ):
+            errors.append("connect tasks require payload.campaign_id")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.FOLLOW_UP
+        ):
+            if "campaign_id" not in payload:
+                errors.append("follow_up tasks require payload.campaign_id")
+            if not payload.get("public_id"):
+                errors.append("follow_up tasks require payload.public_id")
+            if not payload.get("operator"):
+                errors.append("follow_up tasks require non-empty payload.operator")
+
+        if errors:
+            raise ValidationError({"payload": errors})
+
+    def save(self, *args, **kwargs):
+        self.full_clean(exclude=["payload"])
+        return super().save(*args, **kwargs)
 
     def mark_running(self):
         self.status = self.Status.RUNNING

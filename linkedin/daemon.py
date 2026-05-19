@@ -427,14 +427,16 @@ def run_daemon(session):
         logger.error("No campaigns found — cannot start daemon")
         return
 
-    # Operator scoping — derived once at startup. Used by Task.claim_next
-    # and seconds_to_next so this daemon process never pops a follow_up
-    # Task belonging to a different LinkedIn account (Travis incident,
-    # 2026-05-12). The canonical handle lookup also handles the case
-    # where LINKEDIN_USERNAME and the LinkedInProfile row use different
-    # surface forms ("ariantajbakh@gmail.com" vs "Arian Taj" etc.).
+    # Operator scoping — derived once at startup. Passed to Task.claim_next
+    # and seconds_to_next so this daemon never pops a follow_up Task for
+    # another account (Travis incident, 2026-05-12) or a connect Task for
+    # a campaign it doesn't own (cross-account connect leak, 2026-05-19).
+    # The canonical handle lookup also handles the case where
+    # LINKEDIN_USERNAME and the LinkedInProfile row use different surface
+    # forms ("ariantajbakh@gmail.com" vs "Arian Taj" etc.).
     from linkedin.operators import resolve_operator
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+    our_campaign_ids = [c.pk for c in campaigns]
 
     logger.info(
         colored("Daemon started", "green", attrs=["bold"])
@@ -503,9 +505,13 @@ def run_daemon(session):
                 our_operator, session.linkedin_profile.linkedin_username,
             )
 
-        task = Task.objects.claim_next(operator=our_operator)
+        task = Task.objects.claim_next(
+            operator=our_operator, campaign_ids=our_campaign_ids,
+        )
         if task is None:
-            wait = Task.objects.seconds_to_next(operator=our_operator)
+            wait = Task.objects.seconds_to_next(
+                operator=our_operator, campaign_ids=our_campaign_ids,
+            )
             if wait is None:
                 if Task.objects.filter(
                     task_type=Task.TaskType.ENRICH_PHONE,
