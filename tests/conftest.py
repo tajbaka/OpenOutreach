@@ -31,11 +31,16 @@ def _silence_slack(monkeypatch):
     untouched.
     """
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "")
-    # Module-level constant is read at import time, so also patch the
-    # imported reference and any cached copies in callers.
+    monkeypatch.setenv("SLACK_REPLIES_WEBHOOK_URL", "")
+    # Module-level constants are read at import time, so also patch the
+    # imported references and any cached copies in callers.
     monkeypatch.setattr("linkedin.conf.SLACK_WEBHOOK_URL", "")
+    monkeypatch.setattr("linkedin.conf.SLACK_REPLIES_WEBHOOK_URL", "")
     monkeypatch.setattr(
         "linkedin.notifications.slack.SLACK_WEBHOOK_URL", "",
+    )
+    monkeypatch.setattr(
+        "linkedin.notifications.slack.SLACK_REPLIES_WEBHOOK_URL", "",
     )
 
 

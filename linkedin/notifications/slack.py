@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Four surfaces:
+Six surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
@@ -18,8 +18,21 @@ Four surfaces:
    the lead's name and profile link, a quoted snippet of the message body,
    and a context block identifying the owning operator.
 4. `notify_phone_enriched` — fires when the enrichment worker finishes a lead.
+5. `notify_degraded` — fires from the monitoring layer when a peer node
+   looks down, or this node is alive but failing (task-failure streak,
+   stale realtime listener).
+6. `notify_sweep_summary` — fires once per connection sweep with a lean
+   per-sender analytics snapshot (sends today, pipeline state counts).
 
-All four no-op when SLACK_WEBHOOK_URL is unset, so callers don't need to guard.
+Routing across two channels:
+  - `notify_connection_accepted` + `notify_error` + `notify_degraded`
+    + `notify_sweep_summary`
+    → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
+  - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
+    (replies: a lead replied, and the enrichment results that follow).
+
+Each surface no-ops when its target webhook is unset, so callers don't need
+to guard. SLACK_REPLIES_WEBHOOK_URL falls back to SLACK_WEBHOOK_URL (see conf).
 """
 from __future__ import annotations
 
@@ -32,7 +45,7 @@ from contextlib import contextmanager
 from urllib import request
 from urllib.error import URLError
 
-from linkedin.conf import SLACK_WEBHOOK_URL
+from linkedin.conf import SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +55,31 @@ logger = logging.getLogger(__name__)
 # 50 times in 30 seconds during a real burst.
 _RECENT_ERRORS: dict[tuple[str, str, str], float] = {}
 _DEDUPE_WINDOW_SECONDS = 300  # 5 min
+
+
+def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
+    """POST a Block Kit payload to a Slack incoming webhook.
+
+    Silent no-op when `webhook_url` is empty. `label` identifies the surface
+    in log messages. Network failures are logged and swallowed — a Slack
+    outage must never mask the caller's real work (notify_error's caller
+    re-raises the original exception regardless of what happens here).
+    """
+    if not webhook_url:
+        return
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        webhook_url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                logger.warning("Slack webhook returned %d for %s", resp.status, label)
+    except (URLError, TimeoutError) as e:
+        logger.warning("Slack webhook failed for %s: %s", label, e)
 
 
 def notify_connection_accepted(
@@ -103,22 +141,7 @@ def notify_connection_accepted(
         ]
 
     payload = {"text": fallback, "blocks": blocks}
-
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        SLACK_WEBHOOK_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with request.urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                logger.warning(
-                    "Slack webhook returned %d for %s", resp.status, full_name
-                )
-    except (URLError, TimeoutError) as e:
-        logger.warning("Slack webhook failed for %s: %s", full_name, e)
+    _post_to_slack(SLACK_WEBHOOK_URL, payload, f"connection-accepted ({full_name})")
 
 
 def notify_message_received(
@@ -133,8 +156,11 @@ def notify_message_received(
     and freshly persisted. `lead` is the crm.Lead; `text` is the message
     body; `operator` is the canonical handle of the account that owns the
     lead (rendered so the team knows whose lead replied).
+
+    Posts to SLACK_REPLIES_WEBHOOK_URL — the channel where the team triages
+    replies and decides whether to run phone enrichment.
     """
-    if not SLACK_WEBHOOK_URL:
+    if not SLACK_REPLIES_WEBHOOK_URL:
         return
 
     full_name = (
@@ -211,22 +237,9 @@ def notify_message_received(
     })
 
     payload = {"text": fallback, "blocks": blocks}
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        SLACK_WEBHOOK_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    _post_to_slack(
+        SLACK_REPLIES_WEBHOOK_URL, payload, f"message-received ({full_name})"
     )
-    try:
-        with request.urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                logger.warning(
-                    "Slack webhook returned %d for message-received (%s)",
-                    resp.status, full_name,
-                )
-    except (URLError, TimeoutError) as e:
-        logger.warning("Slack message-received webhook failed for %s: %s", full_name, e)
 
 
 def format_phone_display(raw: str) -> str:
@@ -243,14 +256,17 @@ def format_phone_display(raw: str) -> str:
 
 
 def notify_phone_enriched(*, lead, result) -> None:
-    """Post a 'phone enriched' notification. No-op if SLACK_WEBHOOK_URL unset.
+    """Post a 'phone enriched' notification. No-op if no replies webhook set.
 
     `result` is an enrichment EnrichmentResult. A FOUND result renders the
     number and the winning provider; a NOT_FOUND renders 'no number found'.
     API_FAILURE never reaches here — the enrichment worker marks the task
     failed without notifying.
+
+    Posts to SLACK_REPLIES_WEBHOOK_URL — enrichment is the follow-on step
+    from a reply, so the result lands in the same channel as the reply.
     """
-    if not SLACK_WEBHOOK_URL:
+    if not SLACK_REPLIES_WEBHOOK_URL:
         return
 
     full_name = (
@@ -279,23 +295,81 @@ def notify_phone_enriched(*, lead, result) -> None:
         {"type": "context", "elements": elements},
     ]
     payload = {"text": fallback, "blocks": blocks}
-
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        SLACK_WEBHOOK_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    _post_to_slack(
+        SLACK_REPLIES_WEBHOOK_URL, payload, f"phone-enriched ({full_name})"
     )
-    try:
-        with request.urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                logger.warning(
-                    "Slack phone-enriched webhook returned %d for %s",
-                    resp.status, full_name,
-                )
-    except (URLError, TimeoutError) as e:
-        logger.warning("Slack phone-enriched webhook failed for %s: %s", full_name, e)
+
+
+def notify_degraded(*, sender: str, title: str, detail: str) -> None:
+    """Post a monitoring alert to the ops channel (SLACK_WEBHOOK_URL).
+
+    Used by `linkedin/monitoring/` for two kinds of problem:
+      - a peer node looks down (the daemon for `sender` stopped beating);
+      - this node is alive but degraded (consecutive task failures, a
+        stalled realtime listener).
+
+    `sender` is the affected node's operator handle. Silent no-op when the
+    ops webhook is unset. Dedup/cooldown is the caller's responsibility —
+    in-process for degraded checks, DB-claimed (`down_alerted_at`) for
+    peer-down — so this function always posts when called.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    summary_line = f":warning: *{title}*"
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": summary_line}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+        {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f"*Node:* {sender}"},
+        ]},
+    ]
+    payload = {"text": f":warning: {title}", "blocks": blocks}
+    _post_to_slack(SLACK_WEBHOOK_URL, payload, f"degraded ({sender})")
+
+
+def notify_sweep_summary(
+    *,
+    sender: str,
+    newly_connected: int,
+    connects_today: int,
+    followups_today: int,
+    pending: int,
+    connected: int,
+    failed: int,
+) -> None:
+    """Post a lean per-sender analytics snapshot to the ops channel.
+
+    Fired once per connection sweep (cadence = CONNECTION_SWEEP_INTERVAL_HOURS)
+    by `handle_sweep_connections`. `sender` is the operator handle of the
+    account that ran the sweep — all counts are scoped to that sender.
+    Silent no-op when the ops webhook is unset.
+
+      - newly_connected — invites accepted, detected by *this* sweep
+      - connects_today / followups_today — actions sent today (ActionLog)
+      - pending / connected / failed — Deal-state counts across the
+        sender's campaigns (`failed` = connect genuinely could not go
+        through; LLM-rejected leads are excluded)
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    headline = f":bar_chart: *Connection sweep — {sender}*"
+    body = (
+        f"*This sweep:* {newly_connected} newly accepted\n"
+        f"*Sent today:* {connects_today} invites · {followups_today} follow-ups\n"
+        f"*Pipeline:* {pending} pending · {connected} connected · {failed} failed"
+    )
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": headline}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": body}},
+    ]
+    fallback = (
+        f":bar_chart: Sweep ({sender}): {newly_connected} new, "
+        f"{connects_today} invites/{followups_today} follow-ups today"
+    )
+    payload = {"text": fallback, "blocks": blocks}
+    _post_to_slack(SLACK_WEBHOOK_URL, payload, f"sweep-summary ({sender})")
 
 
 def notify_error(
@@ -360,24 +434,7 @@ def notify_error(
         blocks.append({"type": "context", "elements": elements})
 
     payload = {"text": fallback, "blocks": blocks}
-
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        SLACK_WEBHOOK_URL,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with request.urlopen(req, timeout=10) as resp:
-            if resp.status != 200:
-                logger.warning(
-                    "Slack error webhook returned %d for %s", resp.status, workflow
-                )
-    except (URLError, TimeoutError) as e:
-        # Never let a Slack outage mask the real exception — the caller's
-        # re-raise will still take the process down with the right traceback.
-        logger.warning("Slack error webhook failed for %s: %s", workflow, e)
+    _post_to_slack(SLACK_WEBHOOK_URL, payload, f"error ({workflow})")
 
 
 @contextmanager

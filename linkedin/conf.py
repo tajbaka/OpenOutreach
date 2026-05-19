@@ -117,11 +117,21 @@ ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip()
     "1", "true", "yes", "on",
 }
 
-# Slack incoming-webhook URL. When set, a notification is posted whenever
-# the daemon's sweep_connections task detects a newly accepted invite.
-# Empty disables Slack entirely. Get one at:
+# Slack incoming-webhook URLs. Get one at:
 #   https://api.slack.com/messaging/webhooks
+#
+# SLACK_WEBHOOK_URL is the "ops" channel — workflow crashes (notify_error)
+# and newly accepted connection invites (notify_connection_accepted).
+# Empty disables those notifications.
+#
+# SLACK_REPLIES_WEBHOOK_URL is the "replies" channel — inbound DM detections
+# from the realtime listener (notify_message_received) and phone-enrichment
+# results (notify_phone_enriched). When unset it falls back to
+# SLACK_WEBHOOK_URL so reply notifications are never silently dropped.
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
+SLACK_REPLIES_WEBHOOK_URL = (
+    os.getenv("SLACK_REPLIES_WEBHOOK_URL", "").strip() or SLACK_WEBHOOK_URL
+)
 
 # Google Sheets CRM sync. GOOGLE_SHEETS_ID is the spreadsheet id from the
 # URL (https://docs.google.com/spreadsheets/d/<id>/edit). CREDENTIALS_PATH
@@ -215,6 +225,39 @@ ENRICHMENT_WAIT_POLL_SECONDS = int(os.getenv("ENRICHMENT_WAIT_POLL_SECONDS") or 
 BETTERCONTACT_API_KEY = os.getenv("BETTERCONTACT_API_KEY", "").strip()
 LEADMAGIC_API_KEY = os.getenv("LEADMAGIC_API_KEY", "").strip()
 PROSPEO_API_KEY = os.getenv("PROSPEO_API_KEY", "").strip()
+
+# ----------------------------------------------------------------------
+# Node monitoring (peer-node liveness + degraded-state — see linkedin/monitoring/)
+# ----------------------------------------------------------------------
+# Peer monitoring needs no third-party service: each daemon is a "node"
+# that stamps its DaemonHeartbeat row and watches the other nodes' rows,
+# Slack-alerting (ops channel) when a peer goes silent. Coverage needs
+# >=2 daemons running — a lone daemon has no peer to watch it.
+ENABLE_NODE_MONITOR = os.getenv("ENABLE_NODE_MONITOR", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+# Cadence of the NodeMonitor background thread: how often it re-stamps its
+# own heartbeat and scans peers. Runs in its own thread, so it keeps
+# beating through the daemon's off-hours sleeps.
+MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS") or 300)
+
+# A peer whose heartbeat is older than this is considered down. Must be
+# comfortably larger than MONITOR_INTERVAL_SECONDS to absorb one missed beat.
+PEER_STALE_MINUTES = int(os.getenv("PEER_STALE_MINUTES") or 15)
+
+# Re-alert cooldown for a persistent problem (peer-down and in-daemon
+# degraded conditions alike): alert once, then stay quiet this many hours
+# even if still broken, so a long outage spams once, not every cycle.
+DEGRADED_REALERT_HOURS = int(os.getenv("DEGRADED_REALERT_HOURS") or 6)
+
+# The realtime listener is "stuck" if its heartbeat file is older than this
+# while the listener is enabled. Checked once per active-hours loop.
+LISTENER_HEARTBEAT_STALE_MINUTES = int(os.getenv("LISTENER_HEARTBEAT_STALE_MINUTES") or 30)
+
+# Consecutive task failures (in-process streak) before the daemon flags
+# itself degraded — "alive but every task is failing".
+TASK_FAILURE_STREAK_THRESHOLD = int(os.getenv("TASK_FAILURE_STREAK_THRESHOLD") or 5)
 
 # Post-accept follow-up message content lives in `linkedin/icp_messages.json`
 # (rigid templates keyed `{sender: {icp: {channel: [...]}}}`, `{first_name}`

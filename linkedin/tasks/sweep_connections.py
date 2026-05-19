@@ -21,7 +21,11 @@ from linkedin.db.deals import set_profile_state
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
 from linkedin.models import ActionLog, Task
-from linkedin.notifications.slack import latest_reply_from_lead, notify_connection_accepted
+from linkedin.notifications.slack import (
+    latest_reply_from_lead,
+    notify_connection_accepted,
+    notify_sweep_summary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +152,10 @@ def handle_sweep_connections(task, session, qualifiers):
         pending_deals.count(), matched, len(entries),
     )
 
+    # Lean per-sender analytics snapshot to the ops channel — one post per
+    # sweep, so its cadence is CONNECTION_SWEEP_INTERVAL_HOURS for free.
+    _post_sweep_summary(session, newly_connected=matched)
+
     # Self-reschedule.
     enqueue_sweep_connections(delay_seconds=CONNECTION_SWEEP_INTERVAL_HOURS * 3600)
 
@@ -170,3 +178,53 @@ def enqueue_sweep_connections(delay_seconds: float | None = None):
         scheduled_at=timezone.now() + timedelta(seconds=delay_seconds),
         payload={},
     )
+
+
+def _post_sweep_summary(session, newly_connected: int) -> None:
+    """Gather a lean per-sender analytics snapshot and post it to the ops
+    Slack channel. Best-effort — any failure here is logged and never
+    disturbs the sweep (the sweep's real work is already done).
+
+    All counts are scoped to the account that ran this sweep:
+      - sends today from ActionLog (this LinkedInProfile);
+      - Deal-state counts across this sender's campaigns. `failed` counts
+        only connect-genuinely-failed Deals (closing_reason FAILED) —
+        LLM-rejected leads (closing_reason DISQUALIFIED) are excluded.
+    """
+    from crm.models import ClosingReason, Deal
+    from linkedin.operators import resolve_operator
+
+    try:
+        today_start = timezone.now().replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        connects_today = ActionLog.objects.filter(
+            linkedin_profile=session.linkedin_profile,
+            action_type=ActionLog.ActionType.CONNECT,
+            created_at__gte=today_start,
+        ).count()
+        followups_today = ActionLog.objects.filter(
+            linkedin_profile=session.linkedin_profile,
+            action_type=ActionLog.ActionType.FOLLOW_UP,
+            created_at__gte=today_start,
+        ).count()
+
+        deals = Deal.objects.filter(campaign__in=session.campaigns)
+        pending = deals.filter(state=ProfileState.PENDING).count()
+        connected = deals.filter(state=ProfileState.CONNECTED).count()
+        failed = deals.filter(
+            state=ProfileState.FAILED,
+            closing_reason=ClosingReason.FAILED,
+        ).count()
+
+        notify_sweep_summary(
+            sender=resolve_operator(session.linkedin_profile.linkedin_username),
+            newly_connected=newly_connected,
+            connects_today=connects_today,
+            followups_today=followups_today,
+            pending=pending,
+            connected=connected,
+            failed=failed,
+        )
+    except Exception as e:
+        logger.warning("sweep summary post failed: %s", e)

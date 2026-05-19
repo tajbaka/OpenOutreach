@@ -32,7 +32,7 @@ Persistent queue backed by `Task` model. Worker loop in `daemon.py`: `seconds_un
 Task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, qualifiers)`):
 
 1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3).
-2. **`handle_sweep_connections`** — Account-wide. Scrapes `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`, cross-references PENDING Deals by `public_id`, transitions matches to CONNECTED and enqueues `follow_up`. Replaces the legacy per-profile `check_pending` flow.
+2. **`handle_sweep_connections`** — Account-wide. Scrapes `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`, cross-references PENDING Deals by `public_id`, transitions matches to CONNECTED and enqueues `follow_up`. Replaces the legacy per-profile `check_pending` flow. On completion posts a lean per-sender analytics snapshot to the ops Slack channel via `_post_sweep_summary` → `notify_sweep_summary` (sends today, pending/connected/failed Deal counts) — best-effort, never blocks the sweep.
 3. **`handle_follow_up`** — Per-profile. Runs agentic follow-up via `run_follow_up_agent()`. Safety net re-enqueues in 72h.
 
 ## Qualification ML Pipeline
@@ -151,7 +151,7 @@ CDP Network.dataReceived (base64 chunk)
   → handle_realtime_event()
       → resolve_lead_for_realtime()  → Lead | None
       → persist_thread()             → crm.Message (idempotent)
-      → notify_message_received()    → Slack webhook
+      → notify_message_received()    → Slack (replies webhook)
 ```
 
 ### Lifecycle
@@ -227,11 +227,57 @@ once every provider is. `FOUND`/`NOT_FOUND` post a Slack message via
 `notify_phone_enriched`; all-`API_FAILURE` posts nothing and marks the task
 `failed`.
 
+## Node Monitoring (`linkedin/monitoring/`)
+
+Liveness + degraded-state monitoring with no third-party service. Each
+daemon is a "node"; the design relies only on Neon and the ops Slack
+webhook. Gated by `ENABLE_NODE_MONITOR` (default on).
+
+**Peer liveness — "is the daemon process alive".** A dead daemon cannot
+report its own death, so peers report it. The `NodeMonitor` background
+thread (`node_monitor.py`, same start/stop pattern as `EnrichmentWorker`)
+runs every `MONITOR_INTERVAL_SECONDS`:
+
+1. **Heartbeat** — `write_heartbeat()` stamps this node's `DaemonHeartbeat`
+   row (`linkedin` app; one row per sender, keyed by the resolved operator
+   handle) with `last_alive = now()` and clears `down_alerted_at`.
+2. **Peer scan** — `check_peers()` reads every *other* node's row; a peer
+   whose `last_alive` is older than `PEER_STALE_MINUTES` is reported down
+   to the ops Slack channel via `notify_degraded`.
+
+The thread runs through the daemon's off-hours sleeps (separate thread),
+so the heartbeat reflects "process alive", not "actively working".
+`down_alerted_at` is an atomic claim+cooldown marker: the peer that wins
+the `filter(...).update(down_alerted_at=now)` posts (so N peers don't all
+alert for one outage), and the row is re-claimable only after
+`DEGRADED_REALERT_HOURS`. `last_alive = NULL` means intentionally stopped —
+the daemon calls `clear_heartbeat()` on a clean empty-queue exit so peers
+don't false-alarm. **Coverage needs ≥2 daemons running**: a lone daemon
+has no peer to watch it (an accepted limitation).
+
+**Degraded detection — "alive but not working".** Runs inside the daemon,
+which is the only thing that can observe its own state (`degraded.py`):
+
+- **`TaskFailureTracker`** — an in-process consecutive-failure counter
+  wired into the daemon's task-dispatch loop (`record_success()` /
+  `record_failure()` around each handler call). One instance per process,
+  so it is sender-scoped by construction — no DB query, no `Task.operator`
+  column. `TASK_FAILURE_STREAK_THRESHOLD` failures in a row → one alert.
+- **`check_listener_heartbeat()`** — called once per active-hours loop;
+  flags a realtime listener whose `listener-heartbeat-*.json` is older
+  than `LISTENER_HEARTBEAT_STALE_MINUTES` while the listener is enabled.
+
+Both degraded checks share an in-process re-alert cooldown
+(`DEGRADED_REALERT_HOURS`). All monitoring alerts route to the ops Slack
+channel (`SLACK_WEBHOOK_URL`). Monitoring is an enhancement — tick
+exceptions are logged and never crash the outreach daemon.
+
 ## Configuration
 
 - **`.env`** (project root) — `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
 - **`conf.py` schedule** — `ACTIVE_START_HOUR` (9), `ACTIVE_END_HOUR` (17), `ACTIVE_TIMEZONE` ("UTC"), `REST_DAYS` ((5, 6) = Sat+Sun). Daemon sleeps outside this window.
 - **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30).
+- **`conf.py` node monitoring** — `ENABLE_NODE_MONITOR` (default `true`), `MONITOR_INTERVAL_SECONDS` (300), `PEER_STALE_MINUTES` (15), `DEGRADED_REALERT_HOURS` (6), `LISTENER_HEARTBEAT_STALE_MINUTES` (30), `TASK_FAILURE_STREAK_THRESHOLD` (5).
 - **`conf.py:CAMPAIGN_CONFIG`** — `min_ready_to_connect_prob` (0.9), `min_positive_pool_prob` (0.20), `connect_delay_seconds` (10), `connect_no_candidate_delay_seconds` (300), `check_pending_recheck_after_hours` (24), `check_pending_jitter_factor` (0.2), `qualification_n_mc_samples` (100), `enrich_min_interval` (1), `min_action_interval` (120), `embedding_model` ("BAAI/bge-small-en-v1.5").
 - **Prompt templates** (at `linkedin/templates/prompts/`) — `qualify_lead.j2` (temp 0.7), `search_keywords.j2` (temp 0.9), `follow_up_agent.j2`.
 - **`requirements/`** — `base.txt`, `local.txt`, `production.txt`, `crm.txt` (empty — DjangoCRM installed via `--no-deps`).

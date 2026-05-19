@@ -356,3 +356,33 @@ class WorkflowRun(models.Model):
     def __str__(self):
         op = f"({self.operator}) " if self.operator else ""
         return f"{self.name} {op}@ {self.completed_at:%Y-%m-%d %H:%M}"
+
+
+class DaemonHeartbeat(models.Model):
+    """One row per daemon node, keyed by sender (the resolved operator
+    handle — "Arian" / "Chuka").
+
+    Peer-node liveness monitoring: each daemon's `NodeMonitor` thread
+    stamps `last_alive` every `MONITOR_INTERVAL_SECONDS` and reads every
+    other node's row. A node whose `last_alive` is older than
+    `PEER_STALE_MINUTES` is considered down, and a peer posts a Slack
+    alert. `down_alerted_at` is the claim+cooldown marker: the peer that
+    wins the atomic UPDATE posts (so N peers don't all alert), and it is
+    re-claimable only after `DEGRADED_REALERT_HOURS`.
+
+    `last_alive = NULL` means "intentionally stopped" — a daemon clears
+    its own row on a clean exit (empty queue) so peers don't false-alarm.
+    Revival re-stamps `last_alive` and clears `down_alerted_at`.
+    """
+
+    sender = models.CharField(max_length=100, unique=True)
+    last_alive = models.DateTimeField(null=True, blank=True)
+    down_alerted_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+
+    def __str__(self):
+        state = self.last_alive.isoformat() if self.last_alive else "stopped"
+        return f"{self.sender} — {state}"

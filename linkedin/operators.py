@@ -33,6 +33,14 @@ _OPERATOR_ALIASES: dict[str, str] = {
     "ariantajbaka@gmail.com": "Arian",
     "ariant2013@gmail.com": "Arian",
     "ariant@tryfedrampgpt.com": "Arian",
+
+    # Leili
+    "leili": "Leili",
+    "leili.ash2011@yahoo.com": "Leili",
+
+    # Athena
+    "athena": "Athena",
+    "athenaaghdami@gmail.com": "Athena",
 }
 
 

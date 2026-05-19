@@ -34,12 +34,21 @@ def _reset_dedupe_state():
 def slack_url(monkeypatch):
     """Override the `_silence_slack` autouse fixture for tests that need a
     webhook value. Patches both the env var and the imported module-level
-    constant so callers see the URL even though imports happened earlier."""
+    constants so callers see the URL even though imports happened earlier.
+
+    Sets both the ops webhook (SLACK_WEBHOOK_URL — errors, connection
+    accepts) and the replies webhook (SLACK_REPLIES_WEBHOOK_URL — inbound
+    messages, phone enrichment) to the same test URL."""
     url = "https://hooks.slack.com/services/T000/B000/test"
     monkeypatch.setenv("SLACK_WEBHOOK_URL", url)
+    monkeypatch.setenv("SLACK_REPLIES_WEBHOOK_URL", url)
     monkeypatch.setattr("linkedin.conf.SLACK_WEBHOOK_URL", url)
+    monkeypatch.setattr("linkedin.conf.SLACK_REPLIES_WEBHOOK_URL", url)
     monkeypatch.setattr(
         "linkedin.notifications.slack.SLACK_WEBHOOK_URL", url,
+    )
+    monkeypatch.setattr(
+        "linkedin.notifications.slack.SLACK_REPLIES_WEBHOOK_URL", url,
     )
     return url
 
@@ -262,7 +271,9 @@ class TestNotifyPhoneEnriched:
         from linkedin.notifications.slack import notify_phone_enriched
         from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
 
-        monkeypatch.setattr("linkedin.notifications.slack.SLACK_WEBHOOK_URL", "")
+        monkeypatch.setattr(
+            "linkedin.notifications.slack.SLACK_REPLIES_WEBHOOK_URL", "",
+        )
         # urlopen must never be called when the webhook is unset.
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             notify_phone_enriched(
@@ -278,7 +289,8 @@ class TestNotifyPhoneEnriched:
         from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
 
         monkeypatch.setattr(
-            "linkedin.notifications.slack.SLACK_WEBHOOK_URL", "https://hooks.test/x",
+            "linkedin.notifications.slack.SLACK_REPLIES_WEBHOOK_URL",
+            "https://hooks.test/x",
         )
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             mock_open.return_value.__enter__.return_value.status = 200
@@ -299,7 +311,8 @@ class TestNotifyPhoneEnriched:
         from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
 
         monkeypatch.setattr(
-            "linkedin.notifications.slack.SLACK_WEBHOOK_URL", "https://hooks.test/x",
+            "linkedin.notifications.slack.SLACK_REPLIES_WEBHOOK_URL",
+            "https://hooks.test/x",
         )
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             mock_open.return_value.__enter__.return_value.status = 200
@@ -323,3 +336,64 @@ def test_format_phone_display():
     # Non-NANP and empty are returned unchanged.
     assert format_phone_display("+447911123456") == "+447911123456"
     assert format_phone_display("") == ""
+
+
+class TestNotifyDegraded:
+    """notify_degraded posts monitoring alerts to the ops webhook."""
+
+    def test_noop_when_webhook_unset(self):
+        """conftest._silence_slack clears the ops webhook — must not POST."""
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            slack_mod.notify_degraded(
+                sender="Arian", title="X looks down", detail="no heartbeat",
+            )
+        mock_open.assert_not_called()
+
+    def test_posts_to_ops_webhook(self, slack_url):
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_degraded(
+                sender="Chuka",
+                title="Chuka's daemon looks down",
+                detail="No heartbeat for 120 min.",
+            )
+        mock_open.assert_called_once()
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        body = json.dumps(sent)
+        assert "Chuka's daemon looks down" in body
+        assert "120 min" in body
+        # Sender rendered in the context block.
+        ctx = [b for b in sent["blocks"] if b.get("type") == "context"]
+        assert ctx and "Chuka" in " ".join(
+            e["text"] for e in ctx[0]["elements"]
+        )
+
+
+class TestNotifySweepSummary:
+    """notify_sweep_summary posts the per-sweep analytics to the ops webhook."""
+
+    def test_noop_when_webhook_unset(self):
+        """conftest._silence_slack clears the ops webhook — must not POST."""
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            slack_mod.notify_sweep_summary(
+                sender="Leili", newly_connected=3, connects_today=18,
+                followups_today=5, pending=12, connected=47, failed=9,
+            )
+        mock_open.assert_not_called()
+
+    def test_posts_to_ops_webhook(self, slack_url):
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_sweep_summary(
+                sender="Leili", newly_connected=3, connects_today=18,
+                followups_today=5, pending=12, connected=47, failed=9,
+            )
+        mock_open.assert_called_once()
+        body = mock_open.call_args[0][0].data.decode("utf-8")
+        assert "Leili" in body
+        assert "18 invites" in body
+        assert "5 follow-ups" in body
+        assert "12 pending" in body
+        assert "47 connected" in body
+        assert "9 failed" in body
+        assert "3 newly accepted" in body

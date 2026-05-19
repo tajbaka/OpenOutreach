@@ -1,0 +1,105 @@
+"""Tests for peer-node liveness monitoring (linkedin/monitoring/node_monitor.py).
+
+Covers the heartbeat read/write/clear helpers and `check_peers` — including
+the atomic `down_alerted_at` claim that makes exactly one peer alert per
+outage and re-alert only after the cooldown.
+"""
+from __future__ import annotations
+
+from datetime import timedelta
+from unittest.mock import patch
+
+import pytest
+from django.utils import timezone
+
+from linkedin.models import DaemonHeartbeat
+from linkedin.monitoring import node_monitor as nm
+
+
+@pytest.fixture
+def patched_notify():
+    """Patch the Slack post so tests assert on calls, not network."""
+    with patch("linkedin.monitoring.node_monitor.notify_degraded") as m:
+        yield m
+
+
+class TestWriteHeartbeat:
+    def test_creates_row(self, db):
+        nm.write_heartbeat("Arian")
+        row = DaemonHeartbeat.objects.get(sender="Arian")
+        assert row.last_alive is not None
+        assert row.down_alerted_at is None
+
+    def test_updates_and_clears_down_marker(self, db):
+        old = timezone.now() - timedelta(hours=2)
+        DaemonHeartbeat.objects.create(
+            sender="Arian", last_alive=old, down_alerted_at=old,
+        )
+        nm.write_heartbeat("Arian")
+        row = DaemonHeartbeat.objects.get(sender="Arian")
+        assert row.last_alive > old
+        # A beating node is alive — any prior down-claim is voided.
+        assert row.down_alerted_at is None
+
+
+class TestClearHeartbeat:
+    def test_nulls_last_alive(self, db):
+        DaemonHeartbeat.objects.create(
+            sender="Arian", last_alive=timezone.now(),
+        )
+        nm.clear_heartbeat("Arian")
+        row = DaemonHeartbeat.objects.get(sender="Arian")
+        assert row.last_alive is None
+        assert row.down_alerted_at is None
+
+
+class TestCheckPeers:
+    def _peer(self, sender, age_minutes=None, down_alerted_at=None):
+        """Create a peer row. age_minutes=None ⇒ last_alive NULL (stopped)."""
+        last_alive = (
+            None if age_minutes is None
+            else timezone.now() - timedelta(minutes=age_minutes)
+        )
+        return DaemonHeartbeat.objects.create(
+            sender=sender, last_alive=last_alive, down_alerted_at=down_alerted_at,
+        )
+
+    def test_alerts_on_stale_peer(self, db, patched_notify):
+        self._peer("Chuka", age_minutes=120)
+        nm.check_peers("Arian")
+        patched_notify.assert_called_once()
+        assert patched_notify.call_args.kwargs["sender"] == "Chuka"
+
+    def test_no_alert_on_fresh_peer(self, db, patched_notify):
+        self._peer("Chuka", age_minutes=1)
+        nm.check_peers("Arian")
+        patched_notify.assert_not_called()
+
+    def test_ignores_self(self, db, patched_notify):
+        # Our own row may be stale mid-write — never alert on self.
+        self._peer("Arian", age_minutes=120)
+        nm.check_peers("Arian")
+        patched_notify.assert_not_called()
+
+    def test_ignores_stopped_peer(self, db, patched_notify):
+        # last_alive=NULL ⇒ intentionally stopped (clean exit).
+        self._peer("Chuka", age_minutes=None)
+        nm.check_peers("Arian")
+        patched_notify.assert_not_called()
+
+    def test_claim_dedupes_repeat_alert(self, db, patched_notify):
+        self._peer("Chuka", age_minutes=120)
+        nm.check_peers("Arian")
+        nm.check_peers("Arian")  # still stale, but already claimed
+        patched_notify.assert_called_once()
+        assert DaemonHeartbeat.objects.get(sender="Chuka").down_alerted_at is not None
+
+    def test_realerts_after_cooldown(self, db, patched_notify):
+        peer = self._peer("Chuka", age_minutes=120)
+        nm.check_peers("Arian")
+        # Push the claim marker past DEGRADED_REALERT_HOURS.
+        DaemonHeartbeat.objects.filter(pk=peer.pk).update(
+            down_alerted_at=timezone.now() - timedelta(hours=24),
+        )
+        nm.check_peers("Arian")
+        assert patched_notify.call_count == 2

@@ -22,6 +22,7 @@ from linkedin.conf import (
     ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
     ENABLE_AUTO_PHONE_ENRICHMENT,
+    ENABLE_NODE_MONITOR,
     ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
@@ -457,6 +458,22 @@ def run_daemon(session):
     enrichment_worker = EnrichmentWorker()
     enrichment_worker.start()
 
+    # Node monitoring — a background thread that beats this daemon's
+    # DaemonHeartbeat row and watches peers, plus an in-process
+    # consecutive-failure tracker for the dispatch loop. Both alert the ops
+    # Slack channel. Gated by ENABLE_NODE_MONITOR; the listener-staleness
+    # degraded check self-guards on ENABLE_REALTIME_LISTENER.
+    from linkedin.monitoring import (
+        NodeMonitor,
+        TaskFailureTracker,
+        check_listener_heartbeat,
+        clear_heartbeat,
+    )
+    node_monitor = NodeMonitor(our_operator) if ENABLE_NODE_MONITOR else None
+    if node_monitor is not None:
+        node_monitor.start()
+    failure_tracker = TaskFailureTracker(our_operator)
+
     # Single-threaded: one task at a time, no concurrent enqueuing,
     # so sleeping until the next scheduled_at is safe.
     while True:
@@ -479,6 +496,13 @@ def run_daemon(session):
         if ENABLE_REALTIME_LISTENER:
             listener_supervisor.ensure_running()
 
+        # Degraded check: a listener that is enabled but whose heartbeat
+        # has gone stale. No-op when the listener is disabled.
+        if ENABLE_NODE_MONITOR:
+            check_listener_heartbeat(
+                our_operator, session.linkedin_profile.linkedin_username,
+            )
+
         task = Task.objects.claim_next(operator=our_operator)
         if task is None:
             wait = Task.objects.seconds_to_next(operator=our_operator)
@@ -494,6 +518,11 @@ def run_daemon(session):
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()
                 enrichment_worker.stop()
+                # Clean exit: clear our heartbeat so peers don't false-alarm
+                # on a daemon that stopped on purpose, then stop the monitor.
+                if node_monitor is not None:
+                    clear_heartbeat(our_operator)
+                    node_monitor.stop()
                 return
             if wait > 0:
                 h, m = int(wait // 3600), int(wait % 3600 // 60)
@@ -538,6 +567,7 @@ def run_daemon(session):
                 handler(task, session, qualifiers)
         except Exception as exc:
             _safe_mark_failed(task, traceback.format_exc())
+            failure_tracker.record_failure()
             logger.exception("Task %s failed", task)
             notify_error(
                 f"daemon:{task.task_type}",
@@ -558,4 +588,5 @@ def run_daemon(session):
             continue
 
         task.mark_completed()
+        failure_tracker.record_success()
         freemium.maybe_log()
