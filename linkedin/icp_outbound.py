@@ -66,6 +66,7 @@ _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
 # Python `follow_up` task module) and `assets/followup` (no separator).
 # Trailing "" = ROOT_DIR itself for legacy callers.
 _ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
+ICP_MESSAGES_HEADERS = ["ICP", "Channel", "Variant", "Message"]
 
 
 @dataclass
@@ -221,6 +222,100 @@ def known_senders() -> set[str]:
     task loop begins.
     """
     return set(json.loads(_MESSAGES_PATH.read_text()))
+
+
+def icp_messages_rows(sender: str) -> list[list[str]]:
+    """Flatten one sender's JSON block into sheet rows.
+
+    Row schema matches `ICP_MESSAGES_HEADERS` with one row per variant.
+    Variant numbers are 1-based so operators can reorder/edit them in
+    Sheets without thinking about Python indexing.
+    """
+    rows: list[list[str]] = [list(ICP_MESSAGES_HEADERS)]
+    for icp, channels in load_icp_messages(sender).items():
+        for channel, variants in channels.items():
+            for idx, message in enumerate(variants, start=1):
+                rows.append([icp, channel, str(idx), message])
+    return rows
+
+
+def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[str]]]:
+    """Parse sheet rows back into one sender's JSON block.
+
+    Accepts the header row plus data rows. Columns are matched by header
+    name so operators can reorder them in the tab. Duplicate
+    ICP/channel/variant tuples raise `SheetsError` rather than silently
+    overwriting a variant.
+    """
+    if not rows:
+        raise SheetsError("ICP messages tab is empty")
+    header_lower = [str(h).strip().lower() for h in rows[0]]
+
+    def col_idx(name: str) -> int:
+        try:
+            return header_lower.index(name.lower())
+        except ValueError as e:
+            raise SheetsError(
+                f"ICP messages tab missing required {name!r} column"
+            ) from e
+
+    icp_idx = col_idx("ICP")
+    channel_idx = col_idx("Channel")
+    variant_idx = col_idx("Variant")
+    message_idx = col_idx("Message")
+
+    bucketed: dict[tuple[str, str], list[tuple[int, str]]] = {}
+    seen: set[tuple[str, str, int]] = set()
+    for row_num, row in enumerate(rows[1:], start=2):
+        def cell(idx: int) -> str:
+            return row[idx].strip() if idx < len(row) and row[idx] is not None else ""
+
+        icp = cell(icp_idx)
+        channel = cell(channel_idx)
+        variant_raw = cell(variant_idx)
+        message = cell(message_idx)
+        if not any((icp, channel, variant_raw, message)):
+            continue
+        if not icp or not channel or not variant_raw or not message:
+            raise SheetsError(
+                f"ICP messages row {row_num} must include ICP, Channel, Variant, and Message"
+            )
+        try:
+            variant = int(variant_raw)
+        except ValueError as e:
+            raise SheetsError(
+                f"ICP messages row {row_num} has non-integer Variant {variant_raw!r}"
+            ) from e
+        if variant < 1:
+            raise SheetsError(
+                f"ICP messages row {row_num} has invalid Variant {variant}; must be >= 1"
+            )
+        dedupe_key = (icp, channel, variant)
+        if dedupe_key in seen:
+            raise SheetsError(
+                f"ICP messages row {row_num} duplicates {icp}/{channel} variant {variant}"
+            )
+        seen.add(dedupe_key)
+        bucketed.setdefault((icp, channel), []).append((variant, message))
+
+    out: dict[str, dict[str, list[str]]] = {}
+    for (icp, channel), variants in bucketed.items():
+        ordered = [message for _, message in sorted(variants, key=lambda pair: pair[0])]
+        out.setdefault(icp, {})[channel] = ordered
+    if not out:
+        raise SheetsError("ICP messages tab has no message rows")
+    return out
+
+
+def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> None:
+    """Replace one sender's block in `icp_messages.json`.
+
+    Keeps the rest of the file untouched and preserves top-level sender
+    order when updating an existing sender.
+    """
+    by_sender = json.loads(_MESSAGES_PATH.read_text())
+    by_sender[sender] = block
+    _MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
 
 
 def missing_sender_block(linkedin_username: str) -> str | None:

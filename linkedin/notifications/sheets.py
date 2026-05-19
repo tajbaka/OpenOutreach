@@ -1210,6 +1210,7 @@ def linkedin_message_hyperlink(
 
 
 FOLLOWUP_TEMPLATES_TAB = "Followup Templates"
+ICP_MESSAGES_TAB_SUFFIX = "ICP Messages"
 
 
 def read_followup_templates() -> dict[str, dict[str, str]]:
@@ -1283,6 +1284,44 @@ def read_followup_templates() -> dict[str, dict[str, str]]:
             "goal":              cell(row, goal_idx),
         }
     return out
+
+
+def icp_messages_tab_name(sender: str) -> str:
+    """Human-readable worksheet title for one sender's rigid ICP messages."""
+    return f"{sender} {ICP_MESSAGES_TAB_SUFFIX}"
+
+
+def write_icp_messages_tab(sender: str, rows: list[list[str]]) -> None:
+    """Overwrite one sender's ICP-message worksheet with flattened rows."""
+    sh = _gspread_client()
+    title = icp_messages_tab_name(sender)
+    try:
+        ws = sh.worksheet(title)
+    except WorksheetNotFound:
+        ws = sh.add_worksheet(
+            title=title,
+            rows=max(len(rows) + 10, 50),
+            cols=max(len(rows[0]) if rows else 4, 4),
+        )
+    try:
+        ws.clear()
+        ws.update(values=rows, range_name="A1", value_input_option="USER_ENTERED")
+    except APIError as e:
+        raise SheetsError(f"failed writing {title}: {e}") from e
+
+
+def read_icp_messages_tab(sender: str) -> list[list[str]]:
+    """Return raw rows from one sender's ICP-message worksheet."""
+    sh = _gspread_client()
+    title = icp_messages_tab_name(sender)
+    try:
+        ws = sh.worksheet(title)
+    except WorksheetNotFound as e:
+        raise SheetsError(f"{title} tab not found") from e
+    try:
+        return ws.get_all_values()
+    except APIError as e:
+        raise SheetsError(f"failed reading {title}: {e}") from e
 
 
 def _serialize_cell(v) -> str:

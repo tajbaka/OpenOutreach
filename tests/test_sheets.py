@@ -254,6 +254,35 @@ def test_coalesce_runs_handles_empty_and_unsorted():
     assert sheets._coalesce_runs([4, 2, 5, 1]) == [(1, 3), (4, 6)]
 
 
+def test_write_icp_messages_tab_creates_and_overwrites(monkeypatch):
+    sh = _FakeSpreadsheet()
+    monkeypatch.setattr(sheets, "_gspread_client", lambda: sh)
+
+    rows = [
+        ["ICP", "Channel", "Variant", "Message"],
+        ["CSPs", "linkedin_connect_note", "1", "hello"],
+    ]
+    sheets.write_icp_messages_tab("Leili", rows)
+
+    ws = sh.tabs["Leili ICP Messages"]
+    assert ws.cleared is True
+    assert ws.updated_values["range_name"] == "A1"
+    assert ws.updated_values["values"] == rows
+
+
+def test_read_icp_messages_tab_returns_raw_rows(monkeypatch):
+    sh = _FakeSpreadsheet()
+    ws = _FakeWorksheet()
+    ws.rows = [
+        ["ICP", "Channel", "Variant", "Message"],
+        ["Advisors", "linkedin_connect_followup", "1", "body"],
+    ]
+    sh.tabs["Leili ICP Messages"] = ws
+    monkeypatch.setattr(sheets, "_gspread_client", lambda: sh)
+
+    assert sheets.read_icp_messages_tab("Leili") == ws.rows
+
+
 # ---------------------------------------------------------------------------
 # Sent-row preservation across runs
 # ---------------------------------------------------------------------------
@@ -348,12 +377,44 @@ class _FakeWorksheet:
     def __init__(self):
         self.appended_batches: list[list[list[str]]] = []
         self.batch_updates: list[list[dict]] = []
+        self.cleared = False
+        self.updated_values = None
+        self.rows: list[list[str]] = []
 
     def append_rows(self, rows, value_input_option=None, table_range=None):
         self.appended_batches.append(list(rows))
 
     def batch_update(self, updates, value_input_option=None):
         self.batch_updates.append(list(updates))
+
+    def clear(self):
+        self.cleared = True
+
+    def update(self, values=None, range_name=None, value_input_option=None):
+        self.updated_values = {
+            "values": values,
+            "range_name": range_name,
+            "value_input_option": value_input_option,
+        }
+        self.rows = list(values or [])
+
+    def get_all_values(self):
+        return self.rows
+
+
+class _FakeSpreadsheet:
+    def __init__(self):
+        self.tabs: dict[str, _FakeWorksheet] = {}
+
+    def worksheet(self, title):
+        if title not in self.tabs:
+            raise sheets.WorksheetNotFound(title)
+        return self.tabs[title]
+
+    def add_worksheet(self, title, rows, cols):
+        ws = _FakeWorksheet()
+        self.tabs[title] = ws
+        return ws
 
 
 def _index_with_existing_row(**overrides):

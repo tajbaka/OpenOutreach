@@ -5,6 +5,8 @@ no-reply cohort. Substitution covers `{first_name}` plus the env-driven
 `{our_company_name}` / `{our_website_url}` so a rebrand only needs an
 .env edit (no JSON / code change).
 """
+import json
+
 import pytest
 
 from linkedin import icp_outbound
@@ -167,6 +169,40 @@ def test_missing_sender_block_returns_handle_for_unknown():
         icp_outbound.missing_sender_block("nobody@example.com")
         == "nobody@example.com"
     )
+
+
+def test_icp_messages_rows_round_trip_for_sender():
+    rows = icp_outbound.icp_messages_rows("Leili")
+    parsed = icp_outbound.parse_icp_messages_rows(rows)
+    assert parsed == icp_outbound.load_icp_messages("Leili")
+
+
+def test_parse_icp_messages_rows_rejects_duplicate_variant():
+    rows = [
+        list(icp_outbound.ICP_MESSAGES_HEADERS),
+        ["CSPs", "linkedin_connect_note", "1", "first"],
+        ["CSPs", "linkedin_connect_note", "1", "dupe"],
+    ]
+    with pytest.raises(SheetsError, match="duplicates .* variant 1"):
+        icp_outbound.parse_icp_messages_rows(rows)
+
+
+def test_save_icp_messages_replaces_one_sender_block(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {"CSPs": {"linkedin_connect_note": ["a"]}},
+        "Leili": {"CSPs": {"linkedin_connect_note": ["old"]}},
+    }, indent=2) + "\n")
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    icp_outbound.save_icp_messages(
+        "Leili",
+        {"CSPs": {"linkedin_connect_note": ["new"]}},
+    )
+
+    saved = json.loads(path.read_text())
+    assert saved["Arian"]["CSPs"]["linkedin_connect_note"] == ["a"]
+    assert saved["Leili"]["CSPs"]["linkedin_connect_note"] == ["new"]
 
 
 def test_fill_message_missing_first_name_renders_empty():
