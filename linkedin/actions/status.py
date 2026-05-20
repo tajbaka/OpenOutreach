@@ -10,7 +10,12 @@ logger = logging.getLogger(__name__)
 
 SELECTORS = {
     "pending_button": '[aria-label*="Pending"]',
-    "invite_to_connect": 'button[aria-label*="Invite"][aria-label*="to connect"]:visible, button[aria-label*="Connect with"]:visible',
+    "invite_to_connect": (
+        'button[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'button[aria-label*="Connect with"]:visible, '
+        'button:has-text("Connect"):visible, '
+        '[role="button"]:has-text("Connect"):visible'
+    ),
 }
 
 

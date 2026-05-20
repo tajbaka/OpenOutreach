@@ -19,3 +19,5 @@ leasebreak_*.json
 /followups
 .DS_Store
 .vercel
+temp_*.tsx
+temp_*.txt

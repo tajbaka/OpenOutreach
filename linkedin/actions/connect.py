@@ -10,12 +10,25 @@ logger = logging.getLogger(__name__)
 
 SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
-    "invite_to_connect": '[aria-label*="Invite"][aria-label*="to connect"]:visible, [aria-label*="Connect with"]:visible',
+    "invite_to_connect": (
+        'button[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'button[aria-label*="Connect with"]:visible, '
+        'button:has-text("Connect"):visible, '
+        '[role="button"]:has-text("Connect"):visible'
+    ),
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
-    "more_button": 'button[id*="overflow"]:visible, button[aria-label*="More actions"]:visible, button[aria-label="More"]:visible',
+    "more_button": (
+        'button[id*="overflow"]:visible, '
+        'button[aria-label*="More actions"]:visible, '
+        'button[aria-label="More"]:visible, '
+        'button:has-text("More"):visible, '
+        '[role="button"]:has-text("More"):visible'
+    ),
     "connect_option": (
         'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], '
         'div[role="button"][aria-label*="Connect with"], '
+        'button:has-text("Connect"), '
+        'div[role="button"]:has-text("Connect"), '
         'div[role="listbox"] span:text-is("Connect"), '
         'ul[role="list"] span:text-is("Connect"), '
         'li span:text-is("Connect"), '
