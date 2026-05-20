@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Six surfaces:
+Seven surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
@@ -23,10 +23,12 @@ Six surfaces:
    stale realtime listener).
 6. `notify_sweep_summary` — fires once per connection sweep with a lean
    per-sender analytics snapshot (sends today, pipeline state counts).
+7. `notify_connect_button_missing` — fires when the connect workflow lands
+   on a profile that looks not-connected but no Connect CTA can be found.
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
-    + `notify_sweep_summary`
+    + `notify_sweep_summary` + `notify_connect_button_missing`
     → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
     (replies: a lead replied, and the enrichment results that follow).
@@ -143,6 +145,49 @@ def notify_connection_accepted(
 
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"connection-accepted ({full_name})")
+
+
+def notify_connect_button_missing(
+    *,
+    full_name: str,
+    profile_url: str,
+    campaign_name: str,
+    operator: str = "",
+    attempt: int | None = None,
+    max_attempts: int | None = None,
+) -> None:
+    """Post a 'Connect button missing' alert to the ops channel.
+
+    Fired from the connect task when a lead still appears eligible for
+    outreach, but the browser cannot find any usable Connect CTA. This is
+    primarily an operator/debugging signal for selector drift or unusual
+    profile surfaces.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    operator_clean = (operator or "").strip()
+    name_md = f"<{profile_url}|{full_name}>" if profile_url else full_name
+    attempt_text = ""
+    if attempt is not None and max_attempts is not None:
+        attempt_text = f" (attempt {attempt}/{max_attempts})"
+
+    action_line = f":mag: Connect button missing for *{name_md}*{attempt_text}"
+    fallback = f":mag: Connect button missing for {full_name}{attempt_text}"
+
+    elements: list[dict] = []
+    if operator_clean:
+        elements.append({"type": "mrkdwn", "text": f"*Lead for:* {operator_clean}"})
+    elements.append({"type": "mrkdwn", "text": f"*Campaign:* {campaign_name}"})
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
+        {"type": "context", "elements": elements},
+    ]
+    payload = {"text": fallback, "blocks": blocks}
+    _post_to_slack(
+        SLACK_WEBHOOK_URL, payload, f"connect-button-missing ({full_name})"
+    )
 
 
 def notify_message_received(
