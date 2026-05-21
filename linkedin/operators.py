@@ -18,6 +18,7 @@ from __future__ import annotations
 _OPERATOR_ALIASES: dict[str, str] = {
     # Chuka
     "chuka": "Chuka",
+    "chuka agu": "Chuka",
     "chukwuka": "Chuka",
     "chukwuka agu": "Chuka",
     "chuka eddy jack": "Chuka",
