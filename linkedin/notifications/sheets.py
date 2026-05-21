@@ -591,8 +591,8 @@ def _col_letter(n: int) -> str:
 # generation workflow (see docs/followup-generation-workflow.md). Two tabs:
 # `<Operator> - Followups`. Each tab has:
 #   - Frozen header row (14 columns)
-#   - Section dividers per cohort (Met / Replied / Connected, no reply /
-#     Active in-flight / Sent)
+#   - Section dividers per workflow lane (Met / Scheduling / Replied /
+#     Active in-flight / Sent history)
 #   - One row per Lead within each section
 #   - Sent? checkbox column the operator ticks after dispatching
 #
@@ -601,32 +601,46 @@ def _col_letter(n: int) -> str:
 # ======================================================================
 
 
-# Cohort labels used by the Claude task's classifier. Stored verbatim in
-# the Cohort column so per-cohort filtering / sorting works in the sheet.
-COHORT_MET = "Met"
-COHORT_SCHEDULING = "Scheduling"  # pre-meeting — Wants Meeting / Meeting Booked
-COHORT_BALL_ON_US = "Ball on us"
-COHORT_COLD_THREAD = "Cold thread"
-COHORT_ACTIVE_IN_FLIGHT = "Active in-flight"
-COHORT_SENT = "Sent"
+# State labels used by the Claude task's classifier. Unlike the section
+# headers below, these are outbound-state labels shown in the State column.
+# Met / Scheduling / Sent are workflow lanes, not cohorts — the operator
+# wanted the cell value to answer "where are we with this outbound?" rather
+# than "which section is this row parked in?".
+STATE_BALL_ON_US = "Ball on us"
+STATE_COLD_THREAD = "Cold thread"
+STATE_BALL_ON_THEM = "Ball on them"
 
-# Section ordering within each tab. Each section bundles one or more
-# cohorts; the Cohort column distinguishes them within a section.
-# Order = operator scan priority (top = most time-sensitive revenue).
+# Legacy values kept only for back-compat when reading stale rows / payloads.
+STATE_MET_LEGACY = "Met"
+STATE_SCHEDULING_LEGACY = "Scheduling"
+STATE_SENT_LEGACY = "Sent"
+STATE_ACTIVE_IN_FLIGHT_LEGACY = "Active in-flight"
+
+# Section ordering within each tab. Sections are derived from row Status
+# plus preserved-sent state, not from the Cohort cell.
 #
 # Note: the "Connected, no reply" cohort was removed 2026-05-12. The
 # daemon now handles those leads programmatically via
 # `linkedin/tasks/follow_up.py` + the rigid ICP templates in
 # `linkedin/icp_messages.json` — surfacing them in the Followups tab
 # for manual drafting was redundant work the operator no longer needs.
-# Cohorts left in this list are conversation-driven (Met / Scheduling /
-# Replied / Active in-flight / Sent).
+# Rows land in:
+#   - 🤝 MET when Status is post-meeting
+#   - 📅 SCHEDULING when Status is pre-meeting
+#   - 💬 REPLIED / 🌊 ACTIVE IN-FLIGHT based on State for everybody else
+#   - ✅ SENT when preserved from a prior run with a Sent toggle = Yes
+SECTION_MET = "met"
+SECTION_SCHEDULING = "scheduling"
+SECTION_REPLIED = "replied"
+SECTION_ACTIVE_IN_FLIGHT = "active_in_flight"
+SECTION_SENT = "sent"
+
 FU_SECTIONS = [
-    ("🤝 MET",                  [COHORT_MET]),
-    ("📅 SCHEDULING",           [COHORT_SCHEDULING]),
-    ("💬 REPLIED",              [COHORT_BALL_ON_US, COHORT_COLD_THREAD]),
-    ("🌊 ACTIVE IN-FLIGHT",     [COHORT_ACTIVE_IN_FLIGHT]),
-    ("✅ SENT",                 [COHORT_SENT]),
+    ("🤝 MET", SECTION_MET),
+    ("📅 SCHEDULING", SECTION_SCHEDULING),
+    ("💬 REPLIED", SECTION_REPLIED),
+    ("🌊 ACTIVE IN-FLIGHT", SECTION_ACTIVE_IN_FLIGHT),
+    ("✅ SENT", SECTION_SENT),
 ]
 
 # ROLE / PRIORITY dropdown vocabulary (mirrors the workflow doc).
@@ -648,7 +662,7 @@ DEFAULT_SENT = "No"
 # HYPERLINK formulas that open the conversation in Gmail / LinkedIn.
 FU_COL_NAME = "Name"
 FU_COL_STATUS = "Status"
-FU_COL_COHORT = "Cohort"
+FU_COL_STATE = "State"
 FU_COL_ROLE = "ROLE"
 FU_COL_PRIORITY = "PRIORITY"
 FU_COL_DAYS_SINCE = "Days since"
@@ -669,7 +683,7 @@ FU_COL_SENT_LINKEDIN = "Sent LinkedIn (manual toggle)"
 FU_COL_QUALIFY = "Qualify/Disqualify"
 
 FU_HEADERS = [
-    FU_COL_NAME, FU_COL_STATUS, FU_COL_COHORT, FU_COL_ROLE,
+    FU_COL_NAME, FU_COL_STATUS, FU_COL_STATE, FU_COL_ROLE,
     FU_COL_PRIORITY, FU_COL_DAYS_SINCE, FU_COL_DAYS_SINCE_CONNECTION,
     FU_COL_CONVO,
     FU_COL_DRAFT_EMAIL, FU_COL_EMAIL_LINK, FU_COL_SENT_EMAIL,
@@ -680,7 +694,7 @@ QUALIFY_VALUES = ["Qualify", "Disqualify"]
 DEFAULT_QUALIFY = "Qualify"
 FU_HEADER_INDEX_0 = {h: i for i, h in enumerate(FU_HEADERS)}
 FU_PRIORITY_COL_0 = FU_HEADER_INDEX_0[FU_COL_PRIORITY]
-FU_COHORT_COL_0 = FU_HEADER_INDEX_0[FU_COL_COHORT]
+FU_STATE_COL_0 = FU_HEADER_INDEX_0[FU_COL_STATE]
 FU_SENT_EMAIL_COL_0 = FU_HEADER_INDEX_0[FU_COL_SENT_EMAIL]
 FU_SENT_LINKEDIN_COL_0 = FU_HEADER_INDEX_0[FU_COL_SENT_LINKEDIN]
 FU_QUALIFY_COL_0 = FU_HEADER_INDEX_0[FU_COL_QUALIFY]
@@ -730,6 +744,32 @@ CSV_ICP_TO_LEAD_ICP = {
 
 def _followup_tab_name(operator: str) -> str:
     return f"{operator} - Followups"
+
+
+def _followup_section_key(row: dict, *, preserved_sent: bool = False) -> str | None:
+    """Map a followup row into one of the sheet sections.
+
+    Section placement is primarily driven by Status (meeting-track rows) and
+    secondarily by State (reply / active rows). Preserved sent rows always go
+    to the history section regardless of their current State cell value.
+    """
+    if preserved_sent:
+        return SECTION_SENT
+
+    status = (row.get(FU_COL_STATUS) or "").strip()
+    state = (row.get(FU_COL_STATE) or row.get("Cohort") or "").strip()
+
+    if status in MET_STATUSES or state == STATE_MET_LEGACY:
+        return SECTION_MET
+    if status in PRE_MEETING_STATUSES or state == STATE_SCHEDULING_LEGACY:
+        return SECTION_SCHEDULING
+    if state in {STATE_BALL_ON_US, STATE_COLD_THREAD}:
+        return SECTION_REPLIED
+    if state in {STATE_BALL_ON_THEM, STATE_ACTIVE_IN_FLIGHT_LEGACY}:
+        return SECTION_ACTIVE_IN_FLIGHT
+    if state == STATE_SENT_LEGACY:
+        return SECTION_SENT
+    return None
 
 
 def _gspread_client():
@@ -838,11 +878,11 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
     """Wipe and rebuild each operator's Followups tab with fresh rows.
 
     Rows from a prior run that had Sent? = TRUE are preserved verbatim and
-    surfaced under a `✅ SENT` section at the bottom — the Claude task is
-    expected to also exclude their LinkedIn URLs from `rows_by_operator` so
-    they don't get re-drafted on top of themselves. Any LinkedIn URL appearing
-    in BOTH the preserved Sent set AND the fresh payload will keep the new
-    payload (caller's data wins — the Claude task explicitly chose to redraft).
+    surfaced under a `✅ SENT` history section at the bottom — the Claude task
+    is expected to also exclude them from `rows_by_operator` so they don't get
+    re-drafted on top of themselves. Any Name appearing in BOTH the preserved
+    Sent set AND the fresh payload will keep the new payload (caller's data
+    wins — the Claude task explicitly chose to redraft).
 
     `rows_by_operator` is `{"Arian": [row, ...], "Chuka": [row, ...]}`. Each
     row is a dict with the keys in FU_HEADERS (case-sensitive). The two
@@ -882,10 +922,6 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
             p for p in preserved
             if (p.get(FU_COL_NAME) or "").strip() not in fresh_names
         ]
-        # Force preserved rows into the Sent cohort.
-        for p in preserved:
-            p[FU_COL_COHORT] = COHORT_SENT
-
         # 2. Drop and recreate the tab so we control layout fully.
         title = operator_titles[operator]
         for w in sh.worksheets():
@@ -896,11 +932,15 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
         sheet_id = ws.id
 
         # 3. Group all rows (fresh + preserved) by section.
-        by_cohort: dict[str, list[dict]] = {}
+        by_section: dict[str, list[dict]] = {}
         for r in fresh_rows:
-            by_cohort.setdefault(r.get(FU_COL_COHORT) or "", []).append(r)
+            section = _followup_section_key(r)
+            if section is None:
+                logger.warning("skipping followup row with unknown section: %s", r)
+                continue
+            by_section.setdefault(section, []).append(r)
         for r in preserved:
-            by_cohort.setdefault(COHORT_SENT, []).append(r)
+            by_section.setdefault(SECTION_SENT, []).append(r)
 
         # 4. Sort within each cohort: priority desc, then days_since desc.
         def _sort_key(row: dict) -> tuple:
@@ -915,8 +955,8 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
         all_rows: list[list[str]] = [list(FU_HEADERS)]
         section_header_row_idx_0: list[int] = []
         section_total = 0
-        for label, cohorts in FU_SECTIONS:
-            section_rows = [r for c in cohorts for r in by_cohort.get(c, [])]
+        for label, section_key in FU_SECTIONS:
+            section_rows = by_section.get(section_key, [])
             section_rows.sort(key=_sort_key)
             count = len(section_rows)
             section_total += count
@@ -976,8 +1016,8 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
         # Data validation dropdowns on Cohort, ROLE, PRIORITY, plus
         # Yes/No on the two Sent toggles.
         for col0, options, strict in [
-            (FU_COHORT_COL_0,
-             [c for _, cohs in FU_SECTIONS for c in cohs], False),
+            (FU_STATE_COL_0,
+             [STATE_BALL_ON_US, STATE_COLD_THREAD, STATE_BALL_ON_THEM], False),
             (FU_HEADER_INDEX_0[FU_COL_ROLE], FU_ROLES, False),
             (FU_PRIORITY_COL_0, FU_PRIORITIES, False),
             (FU_SENT_EMAIL_COL_0, SENT_VALUES, True),
@@ -1015,17 +1055,15 @@ def write_followups(rows_by_operator: dict[str, list[dict]]) -> dict[str, int]:
                 sheet_id, FU_PRIORITY_COL_0, value, fg, bold,
             ))
 
-        # Conditional formatting on Cohort column.
-        cohort_text_colors = [
-            (COHORT_MET,              _rgb255(13, 122, 42),   True),
-            (COHORT_BALL_ON_US,       _rgb255(204, 17, 34),   True),    # red — most urgent
-            (COHORT_COLD_THREAD,      _rgb255(221, 102, 34),  False),   # orange
-            (COHORT_ACTIVE_IN_FLIGHT, _rgb255(0, 102, 204),   False),   # blue
-            (COHORT_SENT,             _rgb255(108, 117, 125), False),   # gray
+        # Conditional formatting on State column.
+        state_text_colors = [
+            (STATE_BALL_ON_US,    _rgb255(204, 17, 34),   True),    # red — most urgent
+            (STATE_COLD_THREAD,   _rgb255(221, 102, 34),  False),   # orange
+            (STATE_BALL_ON_THEM,  _rgb255(0, 102, 204),   False),   # blue
         ]
-        for value, fg, bold in cohort_text_colors:
+        for value, fg, bold in state_text_colors:
             requests.append(_text_cond_rule(
-                sheet_id, FU_COHORT_COL_0, value, fg, bold,
+                sheet_id, FU_STATE_COL_0, value, fg, bold,
             ))
 
         # Color the Qualify/Disqualify column so scanning is fast.

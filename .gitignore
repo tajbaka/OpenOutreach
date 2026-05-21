@@ -21,3 +21,4 @@ leasebreak_*.json
 .vercel
 temp_*.tsx
 temp_*.txt
+local_notes/

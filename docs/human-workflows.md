@@ -26,14 +26,14 @@ The automation gathers raw signal. The human workflows turn that signal into out
 
 **Purpose:** generate per-prospect follow-up drafts you can copy/paste into LinkedIn or Gmail.
 
-**Output:** Two Google Sheets tabs — `Arian - Followups` and `Chuka - Followups` — each divided into five sections (Met / Replied / Connected, no reply / Active in-flight / Sent). One row per Lead with the draft + ROLE + PRIORITY + MEDIUM + CONVO + a `Sent?` checkbox the operator ticks after dispatching. The `Sent` section preserves rows across runs so you have history.
+**Output:** Two Google Sheets tabs — `Arian - Followups` and `Chuka - Followups` — each divided into five sections (Met / Scheduling / Replied / Active in-flight / Sent history). One row per Lead with the draft + ROLE + PRIORITY + MEDIUM + CONVO + a `Sent?` checkbox the operator ticks after dispatching. The bottom `Sent` section preserves prior sent rows as history, but `Sent` is no longer a Cohort value.
 
 **Cohorts (set by the ball-on-court classifier in Phase 1):**
 - **Ball on us** — they replied, we owe an answer (most time-sensitive)
 - **Cold thread** — they replied once and we've been silent ≥ 5 days
 - **Active in-flight** — we sent something < 5 days ago, ball on them (visibility-only, no draft)
 - **No reply yet** — accepted invite, never replied (different angle than original)
-- **Met** — had a Google Meet, follow-up depends on what was discussed
+- **Met / Scheduling are sections, not Cohort values** — those rows are grouped by People-tab `Outreach status`, while the `Cohort` cell stays focused on outbound state (`Ball on us`, `Cold thread`, `Active in-flight`)
 
 **When to run:** safe to run daily. Ball-on-court classifier prevents drafting on top of fresh outbound.
 

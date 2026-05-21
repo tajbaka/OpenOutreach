@@ -158,6 +158,13 @@ class TestHandleConnect:
             status=Task.Status.PENDING,
             payload__public_id="alice",
         ).exists()
+        next_connect = Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).exclude(pk=task.pk).first()
+        assert next_connect is not None
+        assert next_connect.scheduled_at <= timezone.now() + timedelta(seconds=1)
 
     @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.status.get_connection_status")

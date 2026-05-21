@@ -250,8 +250,10 @@ def handle_connect(task, session, qualifiers):
                     session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                 ),
             )
-            # No action taken — short delay before next candidate
-            enqueue_connect(campaign_id, delay_seconds=10)
+            # Already-connected profiles are effectively "no connect work
+            # done" from this lane's perspective, so keep moving instead of
+            # consuming the normal connect pacing budget.
+            enqueue_connect(campaign_id, delay_seconds=0)
             return
 
         if status == ProfileState.PENDING:

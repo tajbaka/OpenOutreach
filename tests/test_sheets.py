@@ -171,6 +171,46 @@ def test_followup_cell_passthrough_for_other_columns():
                                  sheets.FU_COL_EMAIL_LINK) == '=HYPERLINK("u","d")'
 
 
+def test_followup_section_key_routes_post_meeting_by_status():
+    row = {
+        sheets.FU_COL_STATUS: sheets.STATUS_HAD_MEETING,
+        sheets.FU_COL_COHORT: sheets.COHORT_BALL_ON_US,
+    }
+    assert sheets._followup_section_key(row) == sheets.SECTION_MET
+
+
+def test_followup_section_key_routes_pre_meeting_by_status():
+    row = {
+        sheets.FU_COL_STATUS: sheets.STATUS_MEETING_BOOKED,
+        sheets.FU_COL_COHORT: sheets.COHORT_ACTIVE_IN_FLIGHT,
+    }
+    assert sheets._followup_section_key(row) == sheets.SECTION_SCHEDULING
+
+
+def test_followup_section_key_routes_reply_lane_by_cohort():
+    row = {
+        sheets.FU_COL_STATUS: sheets.STATUS_REPLIED,
+        sheets.FU_COL_COHORT: sheets.COHORT_COLD_THREAD,
+    }
+    assert sheets._followup_section_key(row) == sheets.SECTION_REPLIED
+
+
+def test_followup_section_key_routes_active_lane_by_cohort():
+    row = {
+        sheets.FU_COL_STATUS: sheets.STATUS_CONNECTED,
+        sheets.FU_COL_COHORT: sheets.COHORT_ACTIVE_IN_FLIGHT,
+    }
+    assert sheets._followup_section_key(row) == sheets.SECTION_ACTIVE_IN_FLIGHT
+
+
+def test_followup_section_key_routes_preserved_rows_to_sent_history():
+    row = {
+        sheets.FU_COL_STATUS: sheets.STATUS_REPLIED,
+        sheets.FU_COL_COHORT: sheets.COHORT_BALL_ON_US,
+    }
+    assert sheets._followup_section_key(row, preserved_sent=True) == sheets.SECTION_SENT
+
+
 # ---------------------------------------------------------------------------
 # HYPERLINK formula construction
 # ---------------------------------------------------------------------------

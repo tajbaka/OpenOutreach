@@ -15,10 +15,10 @@ Drafts land in two **Google Sheets tabs** — one per active sender:
 
 Each tab has 14 columns and is divided into five sections via merged divider rows:
 
-1. **🤝 MET** — `Cohort = Met` (strictly post-meeting: `Had Meeting` / `Manual followup` / `Prospecting to close`)
-2. **📅 SCHEDULING** — `Cohort = Scheduling` (pre-meeting: `Wants Meeting` / `Meeting Booked`)
-3. **💬 REPLIED** — `Cohort ∈ {Ball on us, Cold thread}`
-4. **🌊 ACTIVE IN-FLIGHT** — `Cohort = Active in-flight` (visibility-only, no draft)
+1. **🤝 MET** — rows whose `Status ∈ {Had Meeting, Manual followup, Prospecting to close}`
+2. **📅 SCHEDULING** — rows whose `Status ∈ {Wants Meeting, Meeting Booked}`
+3. **💬 REPLIED** — rows whose `Cohort ∈ {Ball on us, Cold thread}`
+4. **🌊 ACTIVE IN-FLIGHT** — rows whose `Cohort = Active in-flight` (visibility-only, no draft)
 5. **✅ SENT** — preserved from prior runs (rows where the operator toggled either `Sent Email` or `Sent LinkedIn` = `Yes`)
 
 > The "Connected, no reply" cohort was retired 2026-05-12: the daemon's `handle_follow_up` task now DMs those leads rigidly from `linkedin/icp_messages.json`, so surfacing them for manual drafting was duplicate work.
@@ -29,7 +29,7 @@ Schema (in column order):
 |---|---|---|
 | 1 | `Name` | first + last |
 | 2 | `Status` | snapshot of People-tab `Outreach status` |
-| 3 | `Cohort` | dropdown — Met / Ball on us / Cold thread / Active in-flight / Sent |
+| 3 | `Cohort` | dropdown — Ball on us / Cold thread / Active in-flight. This is outbound-state only; it no longer stores Met / Scheduling / Sent. |
 | 4 | `ROLE` | dropdown — CSP / 3PAO / Advisor / Assessor / Channel |
 | 5 | `PRIORITY` | dropdown — HIGH / MEDIUM-HIGH / MEDIUM / LOW / HOLD (conditional-format colored) |
 | 6 | `Days since` | int — `(now - msgs[-1].sent_at).days` on the merged timeline regardless of direction. **Met:** `max(latest_message, latest_meeting.start_at)` so a calendar meeting counts as activity even without a message exchange. |
@@ -52,8 +52,8 @@ Six buckets the workflow generates files / sections for. The drafted ones are sp
 
 | Cohort | Filter | Sheet section / Cohort value | Why follow up |
 |---|---|---|---|
-| **Met (post-meeting)** | People-tab `Outreach status ∈ MET_STATUSES` ({Had Meeting, Manual followup, Prospecting to close}) AND not disqualified | 🤝 MET, `Cohort = Met` | Real post-meeting follow-up. Drafter leads with the deliverable owed from the call (Loom, repo, doc, intro) or a forward-looking question rooted in what was discussed. |
-| **Scheduling (pre-meeting)** | People-tab `Outreach status ∈ PRE_MEETING_STATUSES` ({Wants Meeting, Meeting Booked}) AND not disqualified | 📅 SCHEDULING, `Cohort = Scheduling` | Meeting is on the track but hasn't happened. Drafter resurfaces time slots (Wants Meeting) or sends a light pre-meeting confirm (Meeting Booked). Never deliverable-first — we haven't met yet. |
+| **Met (post-meeting)** | People-tab `Outreach status ∈ MET_STATUSES` ({Had Meeting, Manual followup, Prospecting to close}) AND not disqualified | 🤝 MET section, routed by `Status` | Real post-meeting follow-up. Drafter leads with the deliverable owed from the call (Loom, repo, doc, intro) or a forward-looking question rooted in what was discussed. |
+| **Scheduling (pre-meeting)** | People-tab `Outreach status ∈ PRE_MEETING_STATUSES` ({Wants Meeting, Meeting Booked}) AND not disqualified | 📅 SCHEDULING section, routed by `Status` | Meeting is on the track but hasn't happened. Drafter resurfaces time slots (Wants Meeting) or sends a light pre-meeting confirm (Meeting Booked). Never deliverable-first — we haven't met yet. |
 | **Replied, ball on us** | `Deal.state=Connected` AND latest message is **inbound** AND not in pre-meeting / met sets AND not disqualified | 💬 REPLIED, `Cohort = Ball on us` | They replied last, we owe a response. Most time-sensitive cohort — these need same-day or next-day attention. |
 | **Replied, cold thread (ball on us to nudge)** | `Deal.state=Connected` AND has ≥1 inbound AND latest message is outbound ≥ `NUDGE_AFTER_DAYS` (default 5) old AND not in pre-meeting / met sets AND not disqualified | 💬 REPLIED, `Cohort = Cold thread` | They engaged once and went quiet. Re-engagement nudge needed. |
 | **Active / in-flight** | Latest message is outbound, < `NUDGE_AFTER_DAYS` old | 🌊 ACTIVE IN-FLIGHT, `Cohort = Active in-flight` (no Draft) | They've had a recent reach-out from us; sending again today would step on it. Listed for visibility so they don't disappear from daily runs. |
@@ -385,7 +385,7 @@ The output splits into four cohort files plus the templates snapshot:
 - `/tmp/followup_drafts.json` — leads that need a draft. Mix of "ball on us, draft a reply" and "cold thread, draft a nudge." The `latest_direction` field tells you which kind.
 - `/tmp/followup_pre_meeting.json` — leads with Outreach status `Wants Meeting` or `Meeting Booked`. Drafter resurfaces time slots or sends pre-meeting confirms. Never deliverable-first.
 - `/tmp/followup_active_in_flight.json` — visibility only. Listed in the SUMMARY/ACTIVE section of the output file with a one-line state, no draft. These are the leads that under the old freshness filter would have silently disappeared.
-- `/tmp/followup_met.json` — post-meeting follow-up cohort. Sourced from the People tab's Outreach status (Wants Meeting / Meeting Booked / Had Meeting). Each entry carries an `outreach_status` field so Phase 5 can pick the right post-meeting frame (pre-meeting confirm, post-meeting deliverable, etc.). These land in 🤝 MET with `Cohort = "Met"` in Phase 6.
+- `/tmp/followup_met.json` — post-meeting follow-up cohort. Sourced from the People tab's Outreach status (`Had Meeting` / `Manual followup` / `Prospecting to close`). Each entry carries an `outreach_status` field so Phase 5 can pick the right post-meeting frame. These land in the 🤝 MET section in Phase 6, but the `Cohort` cell should still reflect outbound state rather than `Met`.
 - `/tmp/icp_goals.json` — snapshot of the operator's `ICP Goals` tab plus the canonical ROLE→ICP mapping. Shape: `{"role_to_icp": {ROLE: ICP}, "templates": {ICP: {"goal": str}}}`. Phase 5 reads **`goal` only** — it tells the drafter what strategic outcome each ICP's draft is angling for (e.g., advisors → referral-into-CSP-clients, CSPs → design-partner/beta).
 
 Leads with zero inbound messages no longer surface here — the daemon (`linkedin/tasks/follow_up.py`) DMs them rigidly from `linkedin/icp_messages.json` on its own schedule. The classifier still walks them so the per-row build doesn't fail, but the `'no_inbound'` branch in `classify()` drops them before any cohort accumulator.
@@ -588,7 +588,7 @@ Skip Phase 5b only if you're explicitly running with `--no-humanize` for speed; 
 
 ### Phase 6 — Sheet output
 
-The drafts land in two Google Sheets tabs (`Arian - Followups`, `Chuka - Followups`) via a single helper call. Build a row dict per Lead from **all four** cohort files — `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, and `/tmp/followup_pre_meeting.json` — group by operator, and call `write_followups()`. The `Cohort` field is what routes each row to its section (🤝 MET / 📅 SCHEDULING / 💬 REPLIED / 🌊 ACTIVE IN-FLIGHT). For Met entries, set `Cohort = "Met"`; the row also gets `Status = <outreach_status>` (Wants Meeting / Meeting Booked / Had Meeting) carried verbatim from the People tab so the operator can scan at a glance which sub-state each met lead is in.
+The drafts land in two Google Sheets tabs (`Arian - Followups`, `Chuka - Followups`) via a single helper call. Build a row dict per Lead from **all four** cohort files — `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, and `/tmp/followup_pre_meeting.json` — group by operator, and call `write_followups()`. The `Cohort` field is outbound-state only (`Ball on us`, `Cold thread`, `Active in-flight`). Section routing is handled by `write_followups()`: rows with post-meeting statuses land in 🤝 MET, pre-meeting statuses land in 📅 SCHEDULING, replied rows land in 💬 REPLIED, active rows land in 🌊 ACTIVE IN-FLIGHT, and preserved sent-history rows land in ✅ SENT.
 
 ```python
 from linkedin.notifications.sheets import (
@@ -604,7 +604,7 @@ arian_rows = [
     {
         "Name":     "Jane Doe",
         "Status":   "Replied",        # from People tab Outreach status
-        "Cohort":   "Ball on us",     # see FU_SECTIONS
+        "Cohort":   "Ball on us",     # outbound-state label, not the section header
         "ROLE":     "CSP",            # see FU_ROLES
         "PRIORITY": "HIGH",           # see FU_PRIORITIES
         "Days since": row["days_since"], # int — pre-computed in Phase 1 (msgs[-1].sent_at). Don't re-derive from "last inbound" — see schema note.
@@ -628,10 +628,10 @@ write_followups({"Arian": arian_rows, "Chuka": chuka_rows})
 ```
 
 `write_followups()` does this on each call:
-1. Reads the existing followups tab for each operator. Any row where EITHER `Sent Email` OR `Sent LinkedIn` toggle = `Yes` is captured and **preserved verbatim** under the `✅ SENT` section at the bottom (deduped by Name against the fresh payload — caller's data wins for redraft scenarios).
+1. Reads the existing followups tab for each operator. Any row where EITHER `Sent Email` OR `Sent LinkedIn` toggle = `Yes` is captured and **preserved verbatim** under the `✅ SENT` history section at the bottom (deduped by Name against the fresh payload — caller's data wins for redraft scenarios).
 2. Snapshots `hiddenByUser` column metadata so the operator's hide/show state survives the rewrite.
 3. Drops and recreates the tab with fresh layout (frozen header, section dividers, dropdowns, conditional formatting, `=HYPERLINK` formulas evaluated via `value_input_option=USER_ENTERED`).
-4. Writes fresh rows under the section corresponding to their `Cohort` value.
+4. Writes fresh rows under the section implied by `Status` plus outbound-state `Cohort`.
 5. Sorts within each section by PRIORITY desc, then Days since desc.
 6. Re-applies the snapshotted hidden-column state, coalesced into contiguous ranges.
 7. Returns `{operator: row_count}` for logging.
