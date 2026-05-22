@@ -3,7 +3,7 @@ from django.contrib import admin
 
 from chat.models import ChatMessage
 
-from linkedin.models import ActionLog, Campaign, LinkedInProfile, SearchKeyword, Task
+from linkedin.models import ActionLog, Campaign, ConnectIssueLog, LinkedInProfile, SearchKeyword, Task
 
 
 @admin.register(Campaign)
@@ -33,6 +33,19 @@ class ActionLogAdmin(admin.ModelAdmin):
     raw_id_fields = ("linkedin_profile", "campaign")
     date_hierarchy = "created_at"
     readonly_fields = ("linkedin_profile", "campaign", "action_type", "created_at")
+
+
+@admin.register(ConnectIssueLog)
+class ConnectIssueLogAdmin(admin.ModelAdmin):
+    list_display = ("issue_type", "linkedin_profile", "campaign", "public_id", "created_at")
+    list_filter = ("issue_type", "campaign", "linkedin_profile")
+    search_fields = ("public_id", "profile_url", "reason")
+    raw_id_fields = ("linkedin_profile", "campaign")
+    date_hierarchy = "created_at"
+    readonly_fields = (
+        "linkedin_profile", "campaign", "public_id", "profile_url",
+        "issue_type", "reason", "metadata", "created_at",
+    )
 
 
 @admin.register(Task)

@@ -181,17 +181,13 @@ def enqueue_sweep_connections(delay_seconds: float | None = None):
 
 
 def _post_sweep_summary(session, newly_connected: int) -> None:
-    """Gather a lean per-sender analytics snapshot and post it to the ops
+    """Gather minimal per-sender send counts and post them to the ops
     Slack channel. Best-effort — any failure here is logged and never
-    disturbs the sweep (the sweep's real work is already done).
+    disturbs the sweep.
 
     All counts are scoped to the account that ran this sweep:
-      - sends today from ActionLog (this LinkedInProfile);
-      - Deal-state counts across this sender's campaigns. `failed` counts
-        only connect-genuinely-failed Deals (closing_reason FAILED) —
-        LLM-rejected leads (closing_reason DISQUALIFIED) are excluded.
+      - sends today from ActionLog (this LinkedInProfile).
     """
-    from crm.models import ClosingReason, Deal
     from linkedin.operators import resolve_operator
 
     try:
@@ -214,25 +210,10 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
             started_at__gte=today_start,
         ).count()
 
-        deals = Deal.objects.filter(campaign__in=session.campaigns)
-        qualified = deals.filter(state=ProfileState.QUALIFIED).count()
-        pending = deals.filter(state=ProfileState.PENDING).count()
-        connected = deals.filter(state=ProfileState.CONNECTED).count()
-        failed = deals.filter(
-            state=ProfileState.FAILED,
-            closing_reason=ClosingReason.FAILED,
-        ).count()
-
         notify_sweep_summary(
             sender=resolve_operator(session.linkedin_profile.linkedin_username),
-            newly_connected=newly_connected,
             connects_today=connects_today,
-            connect_runs_today=connect_runs_today,
             followups_today=followups_today,
-            qualified=qualified,
-            pending=pending,
-            connected=connected,
-            failed=failed,
         )
     except Exception as e:
         logger.warning("sweep summary post failed: %s", e)

@@ -11,7 +11,7 @@ from linkedin.models import ActionLog, Task
 from linkedin.ml.qualifier import BayesianQualifier
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
-from linkedin.tasks.connect import ConnectStrategy, handle_connect
+from linkedin.tasks.connect import ConnectStrategy, handle_connect, recommended_action_delay
 from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 
@@ -165,6 +165,38 @@ class TestHandleConnect:
         ).exclude(pk=task.pk).first()
         assert next_connect is not None
         assert next_connect.scheduled_at <= timezone.now() + timedelta(seconds=1)
+
+    @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
+    @patch("linkedin.tasks.connect._actions_sent_today", return_value=10)
+    @patch("linkedin.tasks.connect._active_window_progress_seconds", return_value=(7200.0, 28800.0))
+    @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
+    def test_recommended_action_delay_adjusts_to_remaining_window(
+        self, _window, _sent, _mock_uniform, fake_session,
+    ):
+        fake_session.linkedin_profile.connect_daily_limit = 50
+        delay = recommended_action_delay(
+            fake_session.linkedin_profile, ActionLog.ActionType.CONNECT,
+        )
+
+        # 2h remaining / 40 remaining sends = 180s, jitter lower bound 126s.
+        # min_action_interval floor is 120, so we should land at 126.
+        assert delay == 126
+
+    @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
+    @patch("linkedin.tasks.connect._actions_sent_today", return_value=0)
+    @patch("linkedin.tasks.connect._active_window_progress_seconds", return_value=(28500.0, 28800.0))
+    @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
+    def test_recommended_action_delay_respects_full_window_floor(
+        self, _window, _sent, _mock_uniform, fake_session,
+    ):
+        fake_session.linkedin_profile.connect_daily_limit = 50
+        delay = recommended_action_delay(
+            fake_session.linkedin_profile, ActionLog.ActionType.CONNECT,
+        )
+
+        # Dynamic average would be 570s, but the full-window average floor is
+        # 576s, so the lower jitter bound becomes 403.2s.
+        assert delay == pytest.approx(403.2)
 
     @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.status.get_connection_status")

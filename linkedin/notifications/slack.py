@@ -421,49 +421,34 @@ def notify_degraded(*, sender: str, title: str, detail: str) -> None:
 def notify_sweep_summary(
     *,
     sender: str,
-    newly_connected: int,
     connects_today: int,
-    connect_runs_today: int,
     followups_today: int,
-    qualified: int,
-    pending: int,
-    connected: int,
-    failed: int,
 ) -> None:
-    """Post a lean per-sender analytics snapshot to the ops channel.
+    """Post a minimal per-sender send-count snapshot to the ops channel.
 
     Fired once per connection sweep (cadence = CONNECTION_SWEEP_INTERVAL_HOURS)
     by `handle_sweep_connections`. `sender` is the operator handle of the
     account that ran the sweep — all counts are scoped to that sender.
     Silent no-op when the ops webhook is unset.
 
-      - newly_connected — invites accepted, detected by *this* sweep
       - connects_today / followups_today — actions sent today (ActionLog)
-      - connect_runs_today — connect-task executions today, whether or not
-        an invite was actually sent
-      - qualified — ready-to-send leads still available to this sender
-      - pending / connected / failed — Deal-state counts across the
-        sender's campaigns (`failed` = connect genuinely could not go
-        through; LLM-rejected leads are excluded)
     """
     if not SLACK_WEBHOOK_URL:
         return
 
     headline = f":bar_chart: *Connection sweep — {sender}*"
     body = (
-        f"*This sweep:* {newly_connected} newly accepted\n"
-        f"*Sent today:* {connects_today} invites · {followups_today} follow-ups\n"
-        f"*Connect loop:* {connect_runs_today} runs · {qualified} ready to send\n"
-        f"*Pipeline:* {qualified} qualified · {pending} pending · {connected} connected · {failed} failed"
+        f"*Sent today:* {connects_today} invites\n"
+        f"*Follow-ups today:* {followups_today}"
     )
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": headline}},
         {"type": "section", "text": {"type": "mrkdwn", "text": body}},
     ]
     fallback = (
-        f":bar_chart: Sweep ({sender}): {newly_connected} new, "
-        f"{connects_today} invites/{followups_today} follow-ups today, "
-        f"{connect_runs_today} connect runs, {qualified} qualified"
+        f":bar_chart: Sweep ({sender}): "
+        f"{connects_today} invites sent today, "
+        f"{followups_today} follow-ups sent today"
     )
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"sweep-summary ({sender})")

@@ -192,6 +192,67 @@ class ActionLog(models.Model):
         return f"{self.action_type} by {self.linkedin_profile} at {self.created_at}"
 
 
+class ConnectIssueLog(models.Model):
+    class IssueType(models.TextChoices):
+        CONNECT_BUTTON_MISSING = "connect_button_missing", "Connect Button Missing"
+        MORE_CONNECT_NO_SURFACE = "more_connect_no_surface", "More Connect No Surface"
+        NOTE_UI_MISSING = "note_ui_missing", "Note UI Missing"
+        NOTE_TEXTAREA_MISSING = "note_textarea_missing", "Note Textarea Missing"
+        SEND_BUTTON_MISSING = "send_button_missing", "Send Button Missing"
+        SKIP_PROFILE = "skip_profile", "Skip Profile"
+
+    linkedin_profile = models.ForeignKey(
+        LinkedInProfile,
+        on_delete=models.CASCADE,
+        related_name="connect_issue_logs",
+    )
+    campaign = models.ForeignKey(
+        Campaign,
+        on_delete=models.CASCADE,
+        related_name="connect_issue_logs",
+        null=True,
+        blank=True,
+    )
+    public_id = models.CharField(max_length=200, db_index=True)
+    profile_url = models.URLField(max_length=500, blank=True, default="")
+    issue_type = models.CharField(max_length=40, choices=IssueType.choices)
+    reason = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(fields=["linkedin_profile", "issue_type", "created_at"]),
+            models.Index(fields=["public_id", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.issue_type} for {self.public_id} at {self.created_at}"
+
+
+def log_connect_issue(
+    *,
+    linkedin_profile: LinkedInProfile,
+    campaign: Campaign | None,
+    public_id: str,
+    profile_url: str = "",
+    issue_type: str,
+    reason: str = "",
+    metadata: dict | None = None,
+) -> None:
+    """Persist a queryable connect skip/failure event for later manual cleanup."""
+    ConnectIssueLog.objects.create(
+        linkedin_profile=linkedin_profile,
+        campaign=campaign,
+        public_id=public_id,
+        profile_url=profile_url,
+        issue_type=issue_type,
+        reason=reason,
+        metadata=metadata or {},
+    )
+
+
 def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     """Q filter restricting the task queue to work a daemon owns.
 

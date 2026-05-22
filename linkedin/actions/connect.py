@@ -5,6 +5,7 @@ from typing import Dict, Any
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
 from linkedin.browser.nav import find_top_card
+from linkedin.models import ConnectIssueLog, log_connect_issue
 from linkedin.notifications.slack import notify_connect_send_failed
 from linkedin.operators import resolve_operator
 
@@ -39,6 +40,19 @@ SELECTORS = {
     ),
     "send_invitation": 'button[aria-label*="Send invitation"], button:has-text("Send invitation"), button:has-text("Send")',
 }
+
+
+def _record_connect_issue(session, public_identifier: str, issue_type: str, reason: str = "", **metadata) -> None:
+    profile_url = f"https://www.linkedin.com/in/{public_identifier}/" if public_identifier else ""
+    log_connect_issue(
+        linkedin_profile=session.linkedin_profile,
+        campaign=getattr(session, "campaign", None),
+        public_id=public_identifier or "",
+        profile_url=profile_url,
+        issue_type=issue_type,
+        reason=reason,
+        metadata=metadata or {},
+    )
 
 
 def _dump_page_state(session, tag: str) -> None:
@@ -249,6 +263,13 @@ def _connect_via_more(session):
     # Fallback: More → Connect
     more = _first_visible(top_card.locator(SELECTORS["more_button"]))
     if more is None:
+        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+        _record_connect_issue(
+            session,
+            current_public_id,
+            ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
+            "No More button available for Connect fallback",
+        )
         return False
     more.click()
     time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
@@ -291,6 +312,13 @@ def _connect_via_more(session):
     if connect_option is None:
         _dump_page_state(session, "more-no-connect-option")
         logger.debug("Connect option not found in More dropdown")
+        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+        _record_connect_issue(
+            session,
+            current_public_id,
+            ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
+            "Connect option not found in More dropdown",
+        )
         return False
 
     # Use JS element.click() — the fixed top nav bar often overlaps the
@@ -304,6 +332,13 @@ def _connect_via_more(session):
 
     _dump_page_state(session, "more-connect-no-surface")
     logger.warning("More → Connect clicked but no invite surface appeared")
+    current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+    _record_connect_issue(
+        session,
+        current_public_id,
+        ConnectIssueLog.IssueType.MORE_CONNECT_NO_SURFACE,
+        "More → Connect clicked but no invite surface appeared",
+    )
     return False
 
 
@@ -320,6 +355,13 @@ def _click_with_note(session, note_text: str) -> bool:
         if time.monotonic() > deadline:
             _dump_page_state(session, "no-add-note-no-textarea")
             logger.warning("'Add a note' button + textarea both missing — aborting (artifacts in /tmp/connect-debug/)")
+            current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+            _record_connect_issue(
+                session,
+                current_public_id,
+                ConnectIssueLog.IssueType.NOTE_UI_MISSING,
+                "'Add a note' button + textarea both missing",
+            )
             return False
         time.sleep(0.3)
 
@@ -332,6 +374,13 @@ def _click_with_note(session, note_text: str) -> bool:
     if textarea.count() == 0:
         _dump_page_state(session, "no-textarea-after-add-note")
         logger.warning("Note textarea not found after Add-a-note click — aborting (artifacts in /tmp/connect-debug/)")
+        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+        _record_connect_issue(
+            session,
+            current_public_id,
+            ConnectIssueLog.IssueType.NOTE_TEXTAREA_MISSING,
+            "Note textarea not found after Add-a-note click",
+        )
         return False
 
     textarea.first.fill(note_text)
@@ -356,6 +405,13 @@ def _click_without_note(session) -> bool:
     if send_btn.count() == 0:
         _dump_page_state(session, "no-send-now-button")
         logger.warning("Send-now button missing on no-note flow — aborting (artifacts in /tmp/connect-debug/)")
+        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+        _record_connect_issue(
+            session,
+            current_public_id,
+            ConnectIssueLog.IssueType.SEND_BUTTON_MISSING,
+            "Send-now button missing on no-note flow",
+        )
         return False
     send_btn.first.click(force=True)
     session.wait()

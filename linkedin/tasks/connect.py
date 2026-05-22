@@ -9,6 +9,7 @@ import logging
 import random
 from dataclasses import dataclass
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from linkedin.tasks.sweep_connections import enqueue_sweep_connections
 
@@ -18,6 +19,7 @@ from termcolor import colored
 from linkedin.conf import (
     ACTIVE_END_HOUR,
     ACTIVE_START_HOUR,
+    ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     ENABLE_CONNECT,
     OUR_COMPANY_NAME,
@@ -25,7 +27,7 @@ from linkedin.conf import (
 )
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
 from linkedin.db.leads import disqualify_lead
-from linkedin.models import ActionLog, Task
+from linkedin.models import ActionLog, ConnectIssueLog, Task, log_connect_issue
 from linkedin.enums import ProfileState
 from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
 from linkedin.operators import resolve_operator
@@ -155,13 +157,53 @@ def _seconds_until_tomorrow() -> float:
     return (tomorrow - now).total_seconds()
 
 
+def _active_window_progress_seconds() -> tuple[float, float]:
+    """Return (remaining, total) active-window seconds in ACTIVE_TIMEZONE.
+
+    Outside the active window this returns the full window length as both
+    remaining and total so callers fall back to the window-average pacing.
+    """
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    window_seconds = max((ACTIVE_END_HOUR - ACTIVE_START_HOUR) * 3600, 3600)
+
+    if not (ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR):
+        return float(window_seconds), float(window_seconds)
+
+    end = now.replace(hour=ACTIVE_END_HOUR, minute=0, second=0, microsecond=0)
+    remaining_seconds = max((end - now).total_seconds(), 1.0)
+    return remaining_seconds, float(window_seconds)
+
+
+def _actions_sent_today(profile, action_type: str) -> int:
+    """Count actions of `action_type` for this profile since local midnight."""
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    today_start = timezone.make_aware(
+        now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None),
+        timezone=tz,
+    )
+    return ActionLog.objects.filter(
+        linkedin_profile=profile,
+        action_type=action_type,
+        created_at__gte=today_start,
+    ).count()
+
+
 def recommended_action_delay(profile, action_type: str) -> float:
-    """Spread actions across the (notional) active window instead of firing in bursts.
+    """Spread actions across the remaining active window instead of firing in bursts.
 
     Uses ACTIVE_END_HOUR - ACTIVE_START_HOUR as the window even when
     ENABLE_ACTIVE_HOURS is False — the flag only controls whether the
-    daemon SLEEPS outside hours, not the per-action pacing math. With a
-    9-21 window and CONNECT_DAILY_LIMIT=50 we get ~14 min between connects.
+    daemon SLEEPS outside hours, not the per-action pacing math.
+
+    Unlike the old static average, this adapts to:
+      - the active hours you configured, and
+      - how many actions have already been sent today.
+
+    That means a 9am–5pm window paces more aggressively than 9am–9pm, and
+    the spacing tightens/loosens throughout the day based on actual progress
+    toward the daily cap.
     """
     from linkedin.conf import CONNECT_DAILY_LIMIT, FOLLOW_UP_DAILY_LIMIT
 
@@ -170,9 +212,16 @@ def recommended_action_delay(profile, action_type: str) -> float:
     else:
         daily_limit = max(FOLLOW_UP_DAILY_LIMIT or profile.follow_up_daily_limit or 1, 1)
 
-    active_hours = max(ACTIVE_END_HOUR - ACTIVE_START_HOUR, 1)
-    window_seconds = active_hours * 3600
-    base_delay = window_seconds / daily_limit
+    sent_today = _actions_sent_today(profile, action_type)
+    remaining_actions = max(daily_limit - sent_today, 1)
+    remaining_window_seconds, total_window_seconds = _active_window_progress_seconds()
+
+    # Dynamic target based on what is left in today's window, with a floor
+    # at the full-window average so we never collapse into overly-tight bursts
+    # early in the day.
+    full_window_average = total_window_seconds / daily_limit
+    dynamic_average = remaining_window_seconds / remaining_actions
+    base_delay = max(full_window_average, dynamic_average)
     return max(
         CAMPAIGN_CONFIG["min_action_interval"],
         random.uniform(base_delay * 0.7, base_delay * 1.3),
@@ -309,6 +358,14 @@ def handle_connect(task, session, qualifiers):
         return
     except SkipProfile as e:
         logger.warning("Skipping %s: %s", public_id, e)
+        log_connect_issue(
+            linkedin_profile=session.linkedin_profile,
+            campaign=session.campaign,
+            public_id=public_id,
+            profile_url=f"https://www.linkedin.com/in/{public_id}/",
+            issue_type=ConnectIssueLog.IssueType.SKIP_PROFILE,
+            reason=str(e),
+        )
         set_profile_state(session, public_id, ProfileState.FAILED.value)
 
     _reschedule()
