@@ -2,8 +2,6 @@
 import logging
 import time
 from typing import Dict, Any
-from urllib.parse import urljoin
-
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
 from linkedin.browser.nav import find_top_card
@@ -295,28 +293,14 @@ def _connect_via_more(session):
         logger.debug("Connect option not found in More dropdown")
         return False
 
-    pre_click_url = session.page.url
-    href = ""
-    try:
-        href = connect_option.get_attribute("href") or ""
-    except Exception:
-        href = ""
-    connect_option.click(force=True)
+    # Use JS element.click() — the fixed top nav bar often overlaps the
+    # dropdown item, blocking coordinate-based clicks (even with force=True).
+    # JS click dispatches directly on the DOM node, no hit-testing.
+    connect_option.evaluate("el => el.click()")
     logger.debug("Used 'More → Connect' flow")
 
     if _wait_for_invite_surface(session):
         return True
-
-    # Some LinkedIn variants expose Connect as a preload/custom-invite
-    # anchor but don't reliably transition there on click; navigate
-    # directly as a last resort.
-    if href and "/preload/custom-invite/" in href:
-        target = urljoin("https://www.linkedin.com", href)
-        if "/preload/custom-invite/" not in session.page.url:
-            session.page.goto(target, wait_until="domcontentloaded")
-            logger.debug("Navigated directly to invite route → %s", target)
-            if _wait_for_invite_surface(session):
-                return True
 
     _dump_page_state(session, "more-connect-no-surface")
     logger.warning("More → Connect clicked but no invite surface appeared")
