@@ -25,10 +25,14 @@ Seven surfaces:
    per-sender analytics snapshot (sends today, pipeline state counts).
 7. `notify_connect_button_missing` — fires when the connect workflow lands
    on a profile that looks not-connected but no Connect CTA can be found.
+8. `notify_connect_send_failed` — fires when the connect workflow opens
+   the invite flow but cannot actually submit the request (missing note UI,
+   missing send button, etc.).
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
     + `notify_sweep_summary` + `notify_connect_button_missing`
+    + `notify_connect_send_failed`
     → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
     (replies: a lead replied, and the enrichment results that follow).
@@ -187,6 +191,46 @@ def notify_connect_button_missing(
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(
         SLACK_WEBHOOK_URL, payload, f"connect-button-missing ({full_name})"
+    )
+
+
+def notify_connect_send_failed(
+    *,
+    full_name: str,
+    profile_url: str,
+    campaign_name: str,
+    operator: str = "",
+    reason: str = "",
+) -> None:
+    """Post a 'connect send failed' alert to the ops channel.
+
+    Fired when the workflow positively reaches a connect flow but cannot
+    actually submit the invite request, e.g. the expected note/send UI is
+    missing on a LinkedIn variant we do not yet handle.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    operator_clean = (operator or "").strip()
+    name_md = f"<{profile_url}|{full_name}>" if profile_url else full_name
+    reason_clean = (reason or "").strip() or "Unknown connect-send failure"
+
+    action_line = f":warning: Connect send failed for *{name_md}*"
+    fallback = f":warning: Connect send failed for {full_name}"
+
+    elements: list[dict] = []
+    if operator_clean:
+        elements.append({"type": "mrkdwn", "text": f"*Lead for:* {operator_clean}"})
+    elements.append({"type": "mrkdwn", "text": f"*Campaign:* {campaign_name}"})
+
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": reason_clean}},
+        {"type": "context", "elements": elements},
+    ]
+    payload = {"text": fallback, "blocks": blocks}
+    _post_to_slack(
+        SLACK_WEBHOOK_URL, payload, f"connect-send-failed ({full_name})"
     )
 
 

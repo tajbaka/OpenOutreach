@@ -1,10 +1,13 @@
 # linkedin/actions/connect.py
 import logging
+import time
 from typing import Dict, Any
 
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
 from linkedin.browser.nav import find_top_card
+from linkedin.notifications.slack import notify_connect_send_failed
+from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +28,18 @@ SELECTORS = {
         '[role="button"]:has-text("More"):visible'
     ),
     "connect_option": (
-        'div[role="button"][aria-label^="Invite"][aria-label*=" to connect"], '
-        'div[role="button"][aria-label*="Connect with"], '
-        'button:has-text("Connect"), '
-        'div[role="button"]:has-text("Connect"), '
+        '[href*="/preload/custom-invite/"], '
+        '[aria-label^="Invite"][aria-label*=" to connect"], '
+        '[aria-label*="Connect with"], '
+        'a[role="menuitem"]:has-text("Connect"), '
+        '[role="menuitem"]:has-text("Connect"), '
+        '[role="button"]:has-text("Connect"), '
+        ':text-is("Connect"), '
         'div[role="listbox"] span:text-is("Connect"), '
         'ul[role="list"] span:text-is("Connect"), '
         'li span:text-is("Connect"), '
         'div.artdeco-dropdown__content span:text-is("Connect"), '
-        '[role="menuitem"]:has-text("Connect")'
+        'div.artdeco-dropdown__content :text-is("Connect")'
     ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "add_note": 'button:has-text("Add a note")',
@@ -80,6 +86,19 @@ def _first_visible(locator):
     return None
 
 
+def _invite_surface_visible(session) -> bool:
+    """Whether any known post-Connect invite surface is present."""
+    return any(
+        session.page.locator(selector).count() > 0
+        for selector in (
+            SELECTORS["add_note"],
+            SELECTORS["note_textarea"],
+            SELECTORS["send_now"],
+            SELECTORS["send_invitation"],
+        )
+    )
+
+
 def send_connection_request(
         session: "AccountSession",
         profile: Dict[str, Any],
@@ -92,6 +111,14 @@ def send_connection_request(
     ``get_connection_status`` or ``search_profile`` beforehand).
     """
     public_identifier = profile.get('public_identifier')
+    profile_url = profile.get("url") or f"https://www.linkedin.com/in/{public_identifier}/"
+    full_name = (
+        " ".join(
+            p for p in [profile.get("first_name"), profile.get("last_name")] if p
+        ).strip()
+        or public_identifier
+        or "Unknown lead"
+    )
 
     if not _connect_direct(session) and not _connect_via_more(session):
         logger.debug("Connect button not found for %s — staying at current stage", public_identifier)
@@ -100,9 +127,25 @@ def send_connection_request(
     if note:
         if not _click_with_note(session, note):
             logger.warning("Could not add note for %s — aborting connection request", public_identifier)
+            notify_connect_send_failed(
+                full_name=full_name,
+                profile_url=profile_url,
+                campaign_name=getattr(session.campaign, "name", ""),
+                operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                reason="Could not add note — Add-a-note button and note textarea were both missing",
+            )
             return ProfileState.QUALIFIED
     else:
-        _click_without_note(session)
+        if not _click_without_note(session):
+            logger.warning("Could not send no-note invite for %s — aborting connection request", public_identifier)
+            notify_connect_send_failed(
+                full_name=full_name,
+                profile_url=profile_url,
+                campaign_name=getattr(session.campaign, "name", ""),
+                operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                reason="Could not send invite without note — Send-now / Send-invitation button missing",
+            )
+            return ProfileState.QUALIFIED
 
     _check_weekly_invitation_limit(session)
 
@@ -151,8 +194,21 @@ def _connect_via_more(session):
     visible_connect_option = _first_visible(connect_option)
     if visible_connect_option is None:
         return False
+    pre_click_url = session.page.url
     visible_connect_option.click(force=True)
     logger.debug("Used 'More → Connect' flow")
+
+    # LinkedIn renders multiple invite surfaces here: sometimes a modal,
+    # sometimes a /preload/custom-invite route. Wait for any known
+    # post-click state before declaring the note UI missing.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            if session.page.url != pre_click_url or _invite_surface_visible(session):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.2)
 
     return True
 
@@ -189,15 +245,20 @@ def _click_with_note(session, note_text: str) -> bool:
     return True
 
 
-def _click_without_note(session):
+def _click_without_note(session) -> bool:
     """Click flow: sends connection request instantly without note."""
     session.wait()
 
     # Click "Send now" / "Send without a note"
     send_btn = session.page.locator(SELECTORS["send_now"])
+    if send_btn.count() == 0:
+        _dump_page_state(session, "no-send-now-button")
+        logger.warning("Send-now button missing on no-note flow — aborting (artifacts in /tmp/connect-debug/)")
+        return False
     send_btn.first.click(force=True)
     session.wait()
     logger.debug("Connection request submitted (no note)")
+    return True
 
 
 if __name__ == "__main__":
