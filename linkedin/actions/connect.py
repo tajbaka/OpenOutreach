@@ -28,20 +28,6 @@ SELECTORS = {
         'button:has-text("More"):visible, '
         '[role="button"]:has-text("More"):visible'
     ),
-    "connect_option": (
-        '[href*="/preload/custom-invite/"], '
-        '[aria-label^="Invite"][aria-label*=" to connect"], '
-        '[aria-label*="Connect with"], '
-        'a[role="menuitem"]:has-text("Connect"), '
-        '[role="menuitem"]:has-text("Connect"), '
-        '[role="button"]:has-text("Connect"), '
-        ':text-is("Connect"), '
-        'div[role="listbox"] span:text-is("Connect"), '
-        'ul[role="list"] span:text-is("Connect"), '
-        'li span:text-is("Connect"), '
-        'div.artdeco-dropdown__content span:text-is("Connect"), '
-        'div.artdeco-dropdown__content :text-is("Connect")'
-    ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "send_without_note": 'button:has-text("Send without a note"), button[aria-label*="Send without a note"]',
     "add_note": 'button:has-text("Add a note")',
@@ -205,21 +191,44 @@ def _connect_via_more(session):
     if more is None:
         return False
     more.click()
+    time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
 
-    session.wait()
+    # The dropdown Connect option is typically an <a> whose href contains
+    # /preload/custom-invite/.  Poll briefly — the dropdown auto-dismisses
+    # after a few seconds.  Fall back to broader text/aria-label matches
+    # for LinkedIn variants that render differently.
+    connect_option = None
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        # Preferred: unambiguous href selector
+        loc = session.page.locator('a[href*="/preload/custom-invite/"]:visible')
+        if loc.count() > 0:
+            connect_option = loc.first
+            break
+        # Fallback: menuitem with Connect text (dropdown-scoped)
+        loc = session.page.locator('a[role="menuitem"]:has-text("Connect"):visible')
+        if loc.count() > 0:
+            connect_option = loc.first
+            break
+        # Fallback: any aria-label "Invite...to connect" inside a menuitem
+        loc = session.page.locator('[role="menuitem"] [aria-label*="to connect"]:visible')
+        if loc.count() > 0:
+            connect_option = loc.first
+            break
+        time.sleep(0.15)
 
-    # Search at page level — LinkedIn renders dropdown as a portal outside top_card
-    connect_option = session.page.locator(SELECTORS["connect_option"])
-    visible_connect_option = _first_visible(connect_option)
-    if visible_connect_option is None:
+    if connect_option is None:
+        _dump_page_state(session, "more-no-connect-option")
+        logger.debug("Connect option not found in More dropdown")
         return False
+
     pre_click_url = session.page.url
     href = ""
     try:
-        href = visible_connect_option.get_attribute("href") or ""
+        href = connect_option.get_attribute("href") or ""
     except Exception:
         href = ""
-    visible_connect_option.click(force=True)
+    connect_option.click()
     logger.debug("Used 'More → Connect' flow")
 
     if _wait_for_invite_surface(session):
@@ -236,6 +245,8 @@ def _connect_via_more(session):
             if _wait_for_invite_surface(session):
                 return True
 
+    _dump_page_state(session, "more-connect-no-surface")
+    logger.warning("More → Connect clicked but no invite surface appeared")
     return session.page.url != pre_click_url
 
 
@@ -244,15 +255,19 @@ def _click_with_note(session, note_text: str) -> bool:
     session.wait()
     _wait_for_invite_surface(session)
 
+    # Poll for the invite modal to appear (may be slow after More → Connect)
     textarea = session.page.locator(SELECTORS["note_textarea"])
-
-    # On modal flow, need to click "Add a note" first to reveal textarea
-    if textarea.count() == 0:
-        add_note_btn = session.page.locator(SELECTORS["add_note"])
-        if add_note_btn.count() == 0:
+    add_note_btn = session.page.locator(SELECTORS["add_note"])
+    deadline = time.monotonic() + 5
+    while textarea.count() == 0 and add_note_btn.count() == 0:
+        if time.monotonic() > deadline:
             _dump_page_state(session, "no-add-note-no-textarea")
             logger.warning("'Add a note' button + textarea both missing — aborting (artifacts in /tmp/connect-debug/)")
             return False
+        time.sleep(0.3)
+
+    # On modal flow, need to click "Add a note" first to reveal textarea
+    if textarea.count() == 0:
         add_note_btn.first.click()
         session.wait()
         textarea = session.page.locator(SELECTORS["note_textarea"])
