@@ -182,6 +182,68 @@ def _connect_direct(session):
     return True
 
 
+def _resolve_dropdown_clickable(session, candidate):
+    """Given a candidate element found by text/aria-label, walk up the DOM to
+    find the nearest <a> or <button> ancestor that belongs to a dropdown menu
+    (not a sidebar card).  Returns a Playwright locator or None."""
+    try:
+        # Evaluate in the browser: walk parentElement until we hit <a>, <button>,
+        # or the document body.  Return the element only if it (or an ancestor)
+        # has role="menu" / role="listbox" / is inside an overflow-triggered
+        # dropdown — i.e. NOT a standalone card action.
+        handle = candidate.element_handle(timeout=1000)
+        if handle is None:
+            return None
+        result = handle.evaluate("""el => {
+            // Walk up to nearest <a> or <button>
+            let node = el;
+            while (node && node !== document.body) {
+                const tag = node.tagName?.toLowerCase();
+                if (tag === 'a' || tag === 'button') break;
+                node = node.parentElement;
+            }
+            if (!node || node === document.body) return null;
+            const clickable = node;
+
+            // Verify it lives inside a dropdown-like container
+            // (role=menu, role=listbox, or a sibling of an aria-expanded button)
+            let check = clickable;
+            while (check && check !== document.body) {
+                const role = check.getAttribute?.('role');
+                if (role === 'menu' || role === 'listbox') return true;
+                // Check if a previous sibling is the expanded More button
+                const prev = check.previousElementSibling;
+                if (prev?.getAttribute?.('aria-expanded') === 'true') return true;
+                check = check.parentElement;
+            }
+
+            // Fallback: if the clickable has href containing custom-invite or
+            // role=menuitem, accept it regardless of container
+            if (clickable.getAttribute?.('href')?.includes('/preload/custom-invite/')) return true;
+            if (clickable.getAttribute?.('role') === 'menuitem') return true;
+
+            return null;
+        }""")
+        if result is None:
+            return None
+        # Re-locate the clickable via the same candidate, walking to ancestor
+        # Use xpath to go up to nearest a or button
+        for ancestor_sel in ('xpath=ancestor::a[1]', 'xpath=ancestor::button[1]'):
+            try:
+                ancestor = candidate.locator(ancestor_sel)
+                if ancestor.count() > 0 and ancestor.first.is_visible():
+                    return ancestor.first
+            except Exception:
+                continue
+        # candidate itself might be the <a>/<button>
+        tag = candidate.evaluate("el => el.tagName?.toLowerCase()")
+        if tag in ('a', 'button'):
+            return candidate
+        return None
+    except Exception:
+        return None
+
+
 def _connect_via_more(session):
     session.wait()
     top_card = find_top_card(session)
@@ -193,27 +255,38 @@ def _connect_via_more(session):
     more.click()
     time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
 
-    # The dropdown Connect option is typically an <a> whose href contains
-    # /preload/custom-invite/.  Poll briefly — the dropdown auto-dismisses
-    # after a few seconds.  Fall back to broader text/aria-label matches
-    # for LinkedIn variants that render differently.
+    # Find the dropdown Connect option.  Strategy: broad text-first discovery,
+    # then walk up to the nearest clickable ancestor (<a> or <button>).
+    # The dropdown auto-dismisses quickly so we poll with short sleeps.
     connect_option = None
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
-        # Preferred: unambiguous href selector
-        loc = session.page.locator('a[href*="/preload/custom-invite/"]:visible')
-        if loc.count() > 0:
-            connect_option = loc.first
-            break
-        # Fallback: menuitem with Connect text (dropdown-scoped)
-        loc = session.page.locator('a[role="menuitem"]:has-text("Connect"):visible')
-        if loc.count() > 0:
-            connect_option = loc.first
-            break
-        # Fallback: any aria-label "Invite...to connect" inside a menuitem
-        loc = session.page.locator('[role="menuitem"] [aria-label*="to connect"]:visible')
-        if loc.count() > 0:
-            connect_option = loc.first
+        # Broad: any visible element whose aria-label mentions "to connect"
+        # or whose text is exactly "Connect" — then resolve to a clickable
+        # ancestor so the click actually fires navigation / modal.
+        for selector in (
+            '[href*="/preload/custom-invite/"]:visible',
+            '[aria-label*="to connect"]:visible',
+            ':text-is("Connect"):visible',
+        ):
+            loc = session.page.locator(selector)
+            count = loc.count()
+            for idx in range(count):
+                candidate = loc.nth(idx)
+                try:
+                    if not candidate.is_visible():
+                        continue
+                except Exception:
+                    continue
+                # Walk up to the nearest clickable ancestor (a/button) that
+                # lives inside a dropdown — not a sidebar card.
+                clickable = _resolve_dropdown_clickable(session, candidate)
+                if clickable is not None:
+                    connect_option = clickable
+                    break
+            if connect_option is not None:
+                break
+        if connect_option is not None:
             break
         time.sleep(0.15)
 
@@ -228,7 +301,7 @@ def _connect_via_more(session):
         href = connect_option.get_attribute("href") or ""
     except Exception:
         href = ""
-    connect_option.click()
+    connect_option.click(force=True)
     logger.debug("Used 'More → Connect' flow")
 
     if _wait_for_invite_surface(session):
