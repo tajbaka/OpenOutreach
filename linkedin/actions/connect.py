@@ -308,11 +308,11 @@ def _connect_via_more(session):
         return True
 
     # Some LinkedIn variants expose Connect as a preload/custom-invite
-    # anchor but don't reliably transition there on click; follow the
-    # discovered target directly before giving up.
+    # anchor but don't reliably transition there on click; navigate
+    # directly as a last resort.
     if href and "/preload/custom-invite/" in href:
         target = urljoin("https://www.linkedin.com", href)
-        if session.page.url == pre_click_url:
+        if "/preload/custom-invite/" not in session.page.url:
             session.page.goto(target, wait_until="domcontentloaded")
             logger.debug("Navigated directly to invite route → %s", target)
             if _wait_for_invite_surface(session):
@@ -320,7 +320,7 @@ def _connect_via_more(session):
 
     _dump_page_state(session, "more-connect-no-surface")
     logger.warning("More → Connect clicked but no invite surface appeared")
-    return session.page.url != pre_click_url
+    return False
 
 
 def _click_with_note(session, note_text: str) -> bool:
