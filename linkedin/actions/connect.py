@@ -2,6 +2,7 @@
 import logging
 import time
 from typing import Dict, Any
+from urllib.parse import urljoin
 
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
@@ -42,6 +43,7 @@ SELECTORS = {
         'div.artdeco-dropdown__content :text-is("Connect")'
     ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
+    "send_without_note": 'button:has-text("Send without a note"), button[aria-label*="Send without a note"]',
     "add_note": 'button:has-text("Add a note")',
     "note_textarea": (
         'textarea[name="message"], '
@@ -93,10 +95,27 @@ def _invite_surface_visible(session) -> bool:
         for selector in (
             SELECTORS["add_note"],
             SELECTORS["note_textarea"],
+            SELECTORS["send_without_note"],
             SELECTORS["send_now"],
             SELECTORS["send_invitation"],
         )
     )
+
+
+def _wait_for_invite_surface(session, timeout_seconds: float = 6) -> bool:
+    """Wait for the invite modal/route to appear after clicking Connect."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            if (
+                "/preload/custom-invite/" in session.page.url
+                or _invite_surface_visible(session)
+            ):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return _invite_surface_visible(session)
 
 
 def send_connection_request(
@@ -195,27 +214,35 @@ def _connect_via_more(session):
     if visible_connect_option is None:
         return False
     pre_click_url = session.page.url
+    href = ""
+    try:
+        href = visible_connect_option.get_attribute("href") or ""
+    except Exception:
+        href = ""
     visible_connect_option.click(force=True)
     logger.debug("Used 'More → Connect' flow")
 
-    # LinkedIn renders multiple invite surfaces here: sometimes a modal,
-    # sometimes a /preload/custom-invite route. Wait for any known
-    # post-click state before declaring the note UI missing.
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        try:
-            if session.page.url != pre_click_url or _invite_surface_visible(session):
-                return True
-        except Exception:
-            pass
-        time.sleep(0.2)
+    if _wait_for_invite_surface(session):
+        return True
 
-    return True
+    # Some LinkedIn variants expose Connect as a preload/custom-invite
+    # anchor but don't reliably transition there on click; follow the
+    # discovered target directly before giving up.
+    if href and "/preload/custom-invite/" in href:
+        target = urljoin("https://www.linkedin.com", href)
+        if session.page.url == pre_click_url:
+            session.page.goto(target, wait_until="domcontentloaded")
+            logger.debug("Navigated directly to invite route → %s", target)
+            if _wait_for_invite_surface(session):
+                return True
+
+    return session.page.url != pre_click_url
 
 
 def _click_with_note(session, note_text: str) -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
+    _wait_for_invite_surface(session)
 
     textarea = session.page.locator(SELECTORS["note_textarea"])
 
@@ -248,9 +275,12 @@ def _click_with_note(session, note_text: str) -> bool:
 def _click_without_note(session) -> bool:
     """Click flow: sends connection request instantly without note."""
     session.wait()
+    _wait_for_invite_surface(session)
 
     # Click "Send now" / "Send without a note"
-    send_btn = session.page.locator(SELECTORS["send_now"])
+    send_btn = session.page.locator(
+        f'{SELECTORS["send_without_note"]}, {SELECTORS["send_now"]}'
+    )
     if send_btn.count() == 0:
         _dump_page_state(session, "no-send-now-button")
         logger.warning("Send-now button missing on no-note flow — aborting (artifacts in /tmp/connect-debug/)")
