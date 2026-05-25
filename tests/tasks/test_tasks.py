@@ -178,9 +178,28 @@ class TestHandleConnect:
             fake_session.linkedin_profile, ActionLog.ActionType.CONNECT,
         )
 
-        # 2h remaining / 40 remaining sends = 180s, jitter lower bound 126s.
-        # min_action_interval floor is 120, so we should land at 126.
-        assert delay == 126
+        # Catch-up is off by default, so the full-window floor still applies:
+        # 8h / 50 = 576s, lower jitter bound = 403.2s.
+        assert delay == pytest.approx(403.2)
+
+    @patch("linkedin.tasks.connect.ENABLE_PACING_CATCH_UP", True)
+    @patch("linkedin.tasks.connect.PACING_CATCH_UP_MAX_SPEED_MULTIPLIER", 1.3)
+    @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
+    @patch("linkedin.tasks.connect._actions_sent_today", return_value=10)
+    @patch("linkedin.tasks.connect._active_window_progress_seconds", return_value=(7200.0, 28800.0))
+    @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
+    def test_recommended_action_delay_can_catch_up_when_enabled(
+        self, _window, _sent, _mock_uniform, fake_session,
+    ):
+        fake_session.linkedin_profile.connect_daily_limit = 50
+        delay = recommended_action_delay(
+            fake_session.linkedin_profile, ActionLog.ActionType.CONNECT,
+        )
+
+        # True catch-up would want 180s, but the 30% speed cap limits the
+        # fastest base delay to 576 / 1.3 = 443.0769s, so the lower jitter
+        # bound becomes about 310.1538s.
+        assert delay == pytest.approx(310.1538)
 
     @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
     @patch("linkedin.tasks.connect._actions_sent_today", return_value=0)

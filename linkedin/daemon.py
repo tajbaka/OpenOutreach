@@ -26,6 +26,9 @@ from linkedin.conf import (
     ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
+    ENABLE_ACTIVE_HOURS_SPILLOVER,
+    ENABLE_PACING_CATCH_UP,
+    ACTIVE_SPILLOVER_END_HOUR,
     ENRICHMENT_WAIT_POLL_SECONDS,
     REST_DAYS,
 )
@@ -38,6 +41,7 @@ from linkedin.tasks.connect import (
     enqueue_follow_up,
     handle_connect,
     recommended_action_delay,
+    _is_behind_normal_window_pace,
 )
 from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.sweep_connections import handle_sweep_connections
@@ -151,14 +155,22 @@ def _build_qualifiers(campaigns, cfg, kit_model=None):
 # ------------------------------------------------------------------
 
 
-def seconds_until_active() -> float:
+def seconds_until_active(profile=None) -> float:
     """Return seconds to wait before the next active window, or 0 if active now."""
     if not ENABLE_ACTIVE_HOURS:
         return 0.0
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
+    allow_spillover = (
+        profile is not None
+        and ENABLE_PACING_CATCH_UP
+        and ENABLE_ACTIVE_HOURS_SPILLOVER
+        and ACTIVE_SPILLOVER_END_HOUR > ACTIVE_END_HOUR
+        and _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT)
+    )
+    effective_end_hour = ACTIVE_SPILLOVER_END_HOUR if allow_spillover else ACTIVE_END_HOUR
 
-    if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
+    if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < effective_end_hour:
         return 0.0
 
     # Find the next active start: try today first, then subsequent days
@@ -483,7 +495,7 @@ def run_daemon(session):
         # Neon's idle timeout can kill the SSL socket during any sleep.
         connections.close_all()
 
-        pause = seconds_until_active()
+        pause = seconds_until_active(session.linkedin_profile)
         if pause > 0:
             # Off-hours: kill the listener child so the account isn't
             # holding a live LinkedIn realtime connection overnight.

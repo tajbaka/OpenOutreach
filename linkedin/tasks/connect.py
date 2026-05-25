@@ -22,7 +22,9 @@ from linkedin.conf import (
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     ENABLE_CONNECT,
+    ENABLE_PACING_CATCH_UP,
     OUR_COMPANY_NAME,
+    PACING_CATCH_UP_MAX_SPEED_MULTIPLIER,
     OUR_WEBSITE_URL,
 )
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
@@ -157,22 +159,34 @@ def _seconds_until_tomorrow() -> float:
     return (tomorrow - now).total_seconds()
 
 
-def _active_window_progress_seconds() -> tuple[float, float]:
-    """Return (remaining, total) active-window seconds in ACTIVE_TIMEZONE.
+def _active_window_progress_seconds(profile, action_type: str) -> tuple[float, float, float]:
+    """Return (remaining, normal_window, effective_window) seconds in ACTIVE_TIMEZONE.
 
-    Outside the active window this returns the full window length as both
-    remaining and total so callers fall back to the window-average pacing.
+    The normal window is ACTIVE_START_HOUR → ACTIVE_END_HOUR. When spillover is
+    enabled and the sender is behind pace, the effective window may extend past
+    ACTIVE_END_HOUR so pacing can use that extra time instead of overcompressing
+    inside the main window. Outside the effective window this returns the
+    effective window length as the remaining seconds so callers fall back to the
+    configured average pace.
     """
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
-    window_seconds = max((ACTIVE_END_HOUR - ACTIVE_START_HOUR) * 3600, 3600)
+    normal_window_seconds = max((ACTIVE_END_HOUR - ACTIVE_START_HOUR) * 3600, 3600)
+    use_spillover = (
+        ENABLE_PACING_CATCH_UP
+        and ENABLE_ACTIVE_HOURS_SPILLOVER
+        and ACTIVE_SPILLOVER_END_HOUR > ACTIVE_END_HOUR
+        and _is_behind_normal_window_pace(profile, action_type)
+    )
+    effective_end_hour = ACTIVE_SPILLOVER_END_HOUR if use_spillover else ACTIVE_END_HOUR
+    effective_window_seconds = max((effective_end_hour - ACTIVE_START_HOUR) * 3600, 3600)
 
-    if not (ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR):
-        return float(window_seconds), float(window_seconds)
+    if not (ACTIVE_START_HOUR <= now.hour < effective_end_hour):
+        return float(effective_window_seconds), float(normal_window_seconds), float(effective_window_seconds)
 
-    end = now.replace(hour=ACTIVE_END_HOUR, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=effective_end_hour, minute=0, second=0, microsecond=0)
     remaining_seconds = max((end - now).total_seconds(), 1.0)
-    return remaining_seconds, float(window_seconds)
+    return remaining_seconds, float(normal_window_seconds), float(effective_window_seconds)
 
 
 def _actions_sent_today(profile, action_type: str) -> int:
@@ -188,6 +202,30 @@ def _actions_sent_today(profile, action_type: str) -> int:
         action_type=action_type,
         created_at__gte=today_start,
     ).count()
+
+
+def _is_behind_normal_window_pace(profile, action_type: str) -> bool:
+    """Whether the sender is behind the normal ACTIVE_START→ACTIVE_END pace."""
+    if action_type == ActionLog.ActionType.CONNECT:
+        daily_limit = max(CONNECT_DAILY_LIMIT or profile.connect_daily_limit or 1, 1)
+    else:
+        daily_limit = max(FOLLOW_UP_DAILY_LIMIT or profile.follow_up_daily_limit or 1, 1)
+
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    normal_window_seconds = max((ACTIVE_END_HOUR - ACTIVE_START_HOUR) * 3600, 3600)
+    start = now.replace(hour=ACTIVE_START_HOUR, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=ACTIVE_END_HOUR, minute=0, second=0, microsecond=0)
+    if now <= start:
+        expected_by_now = 0.0
+    elif now >= end:
+        expected_by_now = float(daily_limit)
+    else:
+        elapsed = max((now - start).total_seconds(), 0.0)
+        expected_by_now = daily_limit * (elapsed / normal_window_seconds)
+
+    sent_today = _actions_sent_today(profile, action_type)
+    return sent_today < expected_by_now
 
 
 def recommended_action_delay(profile, action_type: str) -> float:
@@ -214,14 +252,23 @@ def recommended_action_delay(profile, action_type: str) -> float:
 
     sent_today = _actions_sent_today(profile, action_type)
     remaining_actions = max(daily_limit - sent_today, 1)
-    remaining_window_seconds, total_window_seconds = _active_window_progress_seconds()
+    remaining_window_seconds, normal_window_seconds, effective_window_seconds = _active_window_progress_seconds(profile, action_type)
 
-    # Dynamic target based on what is left in today's window, with a floor
-    # at the full-window average so we never collapse into overly-tight bursts
-    # early in the day.
-    full_window_average = total_window_seconds / daily_limit
+    # Dynamic target based on what is left in today's window. By default we
+    # keep a floor at the full-window average so sends do not over-accelerate
+    # early in the day. When ENABLE_PACING_CATCH_UP is on, allow catch-up,
+    # but cap it so the sender runs only modestly faster than the original
+    # window-average pace instead of trying to cram the full quota into a
+    # short remainder of the day.
+    full_window_average = normal_window_seconds / daily_limit
+    effective_window_average = effective_window_seconds / daily_limit
     dynamic_average = remaining_window_seconds / remaining_actions
-    base_delay = max(full_window_average, dynamic_average)
+    if ENABLE_PACING_CATCH_UP:
+        max_speed = max(PACING_CATCH_UP_MAX_SPEED_MULTIPLIER, 1.0)
+        fastest_allowed_delay = full_window_average / max_speed
+        base_delay = max(dynamic_average, fastest_allowed_delay)
+    else:
+        base_delay = max(effective_window_average, dynamic_average)
     return max(
         CAMPAIGN_CONFIG["min_action_interval"],
         random.uniform(base_delay * 0.7, base_delay * 1.3),

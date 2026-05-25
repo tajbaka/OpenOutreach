@@ -63,6 +63,18 @@ FOLLOW_UP_DAILY_LIMIT = int(os.getenv("FOLLOW_UP_DAILY_LIMIT") or 0) or None
 ENABLE_FREEMIUM_CAMPAIGN = os.getenv("ENABLE_FREEMIUM_CAMPAIGN", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
+# When enabled, connect/follow-up pacing can accelerate beyond the full-window
+# average if a sender is behind pace for the current active-hours window.
+# Default OFF so existing rollout behavior stays unchanged unless explicitly
+# opted into via env.
+ENABLE_PACING_CATCH_UP = os.getenv("ENABLE_PACING_CATCH_UP", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+# Upper bound on catch-up speed relative to the normal full-window rate.
+# 1.3 means we can run at most 30% faster than the original schedule.
+PACING_CATCH_UP_MAX_SPEED_MULTIPLIER = float(
+    os.getenv("PACING_CATCH_UP_MAX_SPEED_MULTIPLIER", "1.3") or 1.3,
+)
 
 # ----------------------------------------------------------------------
 # Active-hours schedule (daemon pauses outside this window)
@@ -74,6 +86,14 @@ ENABLE_ACTIVE_HOURS = os.getenv("ENABLE_ACTIVE_HOURS", "true").strip().lower() i
 ACTIVE_START_HOUR = int(os.getenv("ACTIVE_START_HOUR", "9"))   # inclusive, local time
 ACTIVE_END_HOUR = int(os.getenv("ACTIVE_END_HOUR", "17"))     # exclusive, local time
 ACTIVE_TIMEZONE = os.getenv("ACTIVE_TIMEZONE", "America/Toronto")
+# Optional spillover window after normal active hours. When enabled, the daemon
+# may continue working after ACTIVE_END_HOUR up to ACTIVE_SPILLOVER_END_HOUR,
+# which lets a sender finish the day's quota without compressing the pace too
+# aggressively inside the main window.
+ENABLE_ACTIVE_HOURS_SPILLOVER = os.getenv("ENABLE_ACTIVE_HOURS_SPILLOVER", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+ACTIVE_SPILLOVER_END_HOUR = int(os.getenv("ACTIVE_SPILLOVER_END_HOUR", str(ACTIVE_END_HOUR)))
 REST_DAYS = tuple(
     int(day.strip()) for day in os.getenv("REST_DAYS", "5,6").split(",") if day.strip()
 )      # 0=Mon … 6=Sun; default Sat+Sun off

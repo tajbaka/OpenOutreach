@@ -6,7 +6,10 @@ from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
 from linkedin.browser.nav import find_top_card
 from linkedin.models import ConnectIssueLog, log_connect_issue
-from linkedin.notifications.slack import notify_connect_send_failed
+from linkedin.notifications.slack import (
+    notify_connect_button_missing,
+    notify_connect_send_failed,
+)
 from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,24 @@ def _record_connect_issue(session, public_identifier: str, issue_type: str, reas
         reason=reason,
         metadata=metadata or {},
     )
+    campaign_name = getattr(getattr(session, "campaign", None), "name", "")
+    operator = resolve_operator(session.linkedin_profile.linkedin_username)
+    full_name = public_identifier or "Unknown lead"
+    if issue_type == ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING:
+        notify_connect_button_missing(
+            full_name=full_name,
+            profile_url=profile_url,
+            campaign_name=campaign_name,
+            operator=operator,
+        )
+    elif issue_type == ConnectIssueLog.IssueType.MORE_CONNECT_NO_SURFACE:
+        notify_connect_send_failed(
+            full_name=full_name,
+            profile_url=profile_url,
+            campaign_name=campaign_name,
+            operator=operator,
+            reason=reason,
+        )
 
 
 def _dump_page_state(session, tag: str) -> None:
