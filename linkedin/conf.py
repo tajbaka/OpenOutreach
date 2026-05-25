@@ -60,6 +60,7 @@ MAX_TOTAL_DAILY_ACTIONS = int(os.getenv("MAX_TOTAL_DAILY_ACTIONS", "200"))
 CONNECT_DAILY_LIMIT = int(os.getenv("CONNECT_DAILY_LIMIT") or 0) or None
 CONNECT_WEEKLY_LIMIT = int(os.getenv("CONNECT_WEEKLY_LIMIT") or 0) or None
 FOLLOW_UP_DAILY_LIMIT = int(os.getenv("FOLLOW_UP_DAILY_LIMIT") or 0) or None
+CONNECT_LOW_POOL_THRESHOLD = int(os.getenv("CONNECT_LOW_POOL_THRESHOLD", "100"))
 ENABLE_FREEMIUM_CAMPAIGN = os.getenv("ENABLE_FREEMIUM_CAMPAIGN", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }

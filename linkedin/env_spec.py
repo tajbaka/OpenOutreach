@@ -83,6 +83,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Weekly connect-invite cap; unset uses the DB value."),
     EnvVar("FOLLOW_UP_DAILY_LIMIT", False, False, None, "limits",
            "Daily follow-up DM cap; unset uses the DB value."),
+    EnvVar("CONNECT_LOW_POOL_THRESHOLD", False, False, "100", "limits",
+           "Alert when a campaign has this many or fewer connectable leads."),
     EnvVar("CONNECTION_SWEEP_INTERVAL_HOURS", False, False, "2", "limits",
            "Hours between connection sweeps."),
     EnvVar("ACTIVE_START_HOUR", False, False, "9", "schedule",

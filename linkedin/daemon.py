@@ -18,7 +18,9 @@ from linkedin.conf import (
     ACTIVE_START_HOUR,
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
+    CONNECT_LOW_POOL_THRESHOLD,
     ENABLE_AUTO_DISCOVERY,
+    ENABLE_CONNECT,
     ENABLE_FOLLOW_UP,
     ENABLE_FREEMIUM_CAMPAIGN,
     ENABLE_AUTO_PHONE_ENRICHMENT,
@@ -33,7 +35,7 @@ from linkedin.conf import (
 from linkedin.diagnostics import failure_diagnostics
 from linkedin.ml.qualifier import BayesianQualifier, KitQualifier
 from linkedin.models import ActionLog, Task
-from linkedin.notifications.slack import notify_error
+from linkedin.notifications.slack import notify_degraded, notify_error
 from linkedin.tasks.connect import (
     enqueue_connect,
     enqueue_follow_up,
@@ -51,6 +53,8 @@ _HANDLERS = {
     Task.TaskType.FOLLOW_UP: handle_follow_up,
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
 }
+
+_LOW_POOL_ALERTED: set[int] = set()
 
 
 class _FreemiumRotator:
@@ -161,17 +165,17 @@ def seconds_until_active(profile=None) -> float:
     now = timezone.localtime(timezone=tz)
     is_workday = now.weekday() not in REST_DAYS
     is_normal_active = ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR
-    is_catch_up_active = (
-        ACTIVE_END_HOUR <= now.hour
-        and profile is not None
-        and ENABLE_PACING_CATCH_UP
-        and _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT)
-    )
+    is_catch_up_active = bool(_catch_up_task_types(profile, now=now))
 
     if is_workday and (is_normal_active or is_catch_up_active):
         return 0.0
 
-    # Find the next active start: try today first, then subsequent days
+    return _seconds_until_next_active_start(now)
+
+
+def _seconds_until_next_active_start(now=None) -> float:
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = now or timezone.localtime(timezone=tz)
     candidate = timezone.make_aware(
         now.replace(hour=ACTIVE_START_HOUR, minute=0, second=0, microsecond=0, tzinfo=None),
         timezone=tz,
@@ -181,6 +185,41 @@ def seconds_until_active(profile=None) -> float:
     while candidate.weekday() in REST_DAYS:
         candidate += timedelta(days=1)
     return (candidate - now).total_seconds()
+
+
+def _catch_up_task_types(profile=None, *, now=None) -> set[str]:
+    """Task types allowed during after-hours catch-up.
+
+    Empty set means no catch-up lane is active. During normal active hours
+    the daemon can claim all task types; this helper is only for the
+    after-hours exception.
+    """
+    if not ENABLE_ACTIVE_HOURS or not ENABLE_PACING_CATCH_UP or profile is None:
+        return set()
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = now or timezone.localtime(timezone=tz)
+    if now.weekday() in REST_DAYS:
+        return set()
+    if now.hour < ACTIVE_END_HOUR:
+        return set()
+
+    task_types: set[str] = set()
+    if _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT):
+        task_types.add(Task.TaskType.CONNECT)
+    if _is_behind_normal_window_pace(profile, ActionLog.ActionType.FOLLOW_UP):
+        task_types.add(Task.TaskType.FOLLOW_UP)
+    return task_types
+
+
+def _claimable_task_types_now(profile=None):
+    """Return None for normal all-task mode, or a restricted catch-up set."""
+    if not ENABLE_ACTIVE_HOURS:
+        return None
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
+        return None
+    return _catch_up_task_types(profile, now=now)
 
 
 # ------------------------------------------------------------------
@@ -249,11 +288,17 @@ def heal_tasks(session):
     # leave the daemon idle right after startup. Subsequent connects self-pace
     # via recommended_action_delay() in handle_connect's reschedule path.
     for campaign in session.campaigns:
-        _bring_task_forward(
-            Task.TaskType.CONNECT,
-            {"campaign_id": campaign.pk},
-            timezone.now(),
+        from linkedin.operators import resolve_operator
+        _maybe_alert_low_connect_pool(
+            resolve_operator(session.linkedin_profile.linkedin_username),
+            campaign,
         )
+        if _campaign_has_connect_work(campaign):
+            _bring_task_forward(
+                Task.TaskType.CONNECT,
+                {"campaign_id": campaign.pk},
+                timezone.now(),
+            )
 
     # 3. Cancel any legacy per-profile check_pending tasks — superseded by the
     # bulk sweep_connections sweep.
@@ -394,6 +439,90 @@ def _safe_mark_failed(task, error_text: str) -> bool:
             return False
 
 
+def _campaign_has_connect_work(campaign) -> bool:
+    """Whether a campaign still has leads the connect lane can process."""
+    if ENABLE_AUTO_DISCOVERY:
+        # The connect lane can search → qualify → promote, so an empty local
+        # ready pool is not proof that the campaign is exhausted.
+        return True
+    return _campaign_connectable_count(campaign) > 0
+
+
+def _campaign_connectable_count(campaign) -> int:
+    """Count leads the connect lane can process for this campaign."""
+    from crm.models import Deal
+    from linkedin.enums import ProfileState
+
+    states = [ProfileState.READY_TO_CONNECT]
+    # heal_tasks bulk-promotes these on startup, but include QUALIFIED as a
+    # belt-and-suspenders guard for live imports between heal cycles.
+    states.append(ProfileState.QUALIFIED)
+
+    return Deal.objects.filter(
+        campaign=campaign,
+        lead__disqualified=False,
+        state__in=states,
+    ).count()
+
+
+def _ensure_connect_task_for_campaign(campaign, delay_seconds: float = 0) -> bool:
+    """Create a missing pending connect task for an active campaign.
+
+    Normal operation self-reschedules inside ``handle_connect``. This is a
+    recovery net for the rare case where that chain breaks while the daemon is
+    still alive; otherwise the worker can sleep until an unrelated sweep even
+    though the campaign still has ready leads.
+    """
+    if not ENABLE_CONNECT or not _campaign_has_connect_work(campaign):
+        return False
+
+    if Task.objects.filter(
+        task_type=Task.TaskType.CONNECT,
+        status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+        payload__campaign_id=campaign.pk,
+    ).exists():
+        return False
+
+    enqueue_connect(campaign.pk, delay_seconds=delay_seconds)
+    return True
+
+
+def _notify_connect_queue_recovered(sender: str, campaign) -> None:
+    notify_degraded(
+        sender=sender,
+        title=f"{sender}'s connect queue recovered",
+        detail=(
+            f"Campaign {campaign.pk} ({campaign.name}) still had connectable "
+            "leads but no pending connect task. A recovery connect task was "
+            "queued automatically."
+        ),
+    )
+
+
+def _maybe_alert_low_connect_pool(sender: str, campaign) -> None:
+    if (
+        ENABLE_AUTO_DISCOVERY
+        or CONNECT_LOW_POOL_THRESHOLD <= 0
+        or campaign.pk in _LOW_POOL_ALERTED
+    ):
+        return
+
+    remaining = _campaign_connectable_count(campaign)
+    if remaining > CONNECT_LOW_POOL_THRESHOLD:
+        return
+
+    _LOW_POOL_ALERTED.add(campaign.pk)
+    notify_degraded(
+        sender=sender,
+        title=f"{sender}'s connect pool is low",
+        detail=(
+            f"Campaign {campaign.pk} ({campaign.name}) has {remaining} "
+            f"connectable lead(s) remaining "
+            f"(threshold {CONNECT_LOW_POOL_THRESHOLD}). Add more leads soon."
+        ),
+    )
+
+
 def run_daemon(session):
     from linkedin.ml.hub import fetch_kit
     from linkedin.setup.freemium import import_freemium_campaign
@@ -515,14 +644,46 @@ def run_daemon(session):
                 our_operator, session.linkedin_profile.linkedin_username,
             )
 
+        claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
         task = Task.objects.claim_next(
             operator=our_operator, campaign_ids=our_campaign_ids,
+            task_types=claimable_task_types,
         )
         if task is None:
+            recovered_missing_connect = False
+            if (
+                claimable_task_types is None
+                or Task.TaskType.CONNECT in claimable_task_types
+            ):
+                for campaign in campaigns:
+                    if _ensure_connect_task_for_campaign(campaign, delay_seconds=0):
+                        logger.warning(
+                            "[%s] connect queue was empty while work remained — queued recovery task",
+                            campaign,
+                        )
+                        _notify_connect_queue_recovered(our_operator, campaign)
+                        recovered_missing_connect = True
+            if recovered_missing_connect:
+                continue
+
             wait = Task.objects.seconds_to_next(
                 operator=our_operator, campaign_ids=our_campaign_ids,
+                task_types=claimable_task_types,
             )
             if wait is None:
+                if claimable_task_types is not None:
+                    wait = min(
+                        _seconds_until_next_active_start(),
+                        ENRICHMENT_WAIT_POLL_SECONDS,
+                    )
+                    logger.info(
+                        "Catch-up queue empty for %s — sleeping %.0fs",
+                        ", ".join(sorted(claimable_task_types)) or "allowed tasks",
+                        wait,
+                    )
+                    connections.close_all()
+                    time.sleep(wait)
+                    continue
                 if Task.objects.filter(
                     task_type=Task.TaskType.ENRICH_PHONE,
                     status__in=[Task.Status.PENDING, Task.Status.RUNNING],
@@ -604,5 +765,22 @@ def run_daemon(session):
             continue
 
         task.mark_completed()
+        if task.task_type == Task.TaskType.CONNECT:
+            cid = task.payload.get("campaign_id")
+            if cid:
+                campaign = Campaign.objects.filter(pk=cid).first()
+                if campaign:
+                    _maybe_alert_low_connect_pool(our_operator, campaign)
+                    if _ensure_connect_task_for_campaign(
+                        campaign,
+                        delay_seconds=recommended_action_delay(
+                            session.linkedin_profile, ActionLog.ActionType.CONNECT,
+                        ),
+                    ):
+                        logger.warning(
+                            "[%s] connect self-reschedule was missing — queued recovery task",
+                            campaign,
+                        )
+                        _notify_connect_queue_recovered(our_operator, campaign)
         failure_tracker.record_success()
         freemium.maybe_log()

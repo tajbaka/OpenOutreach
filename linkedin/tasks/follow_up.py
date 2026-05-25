@@ -114,6 +114,13 @@ def handle_follow_up(task, session, qualifiers):
             public_id, owning_operators, our_operator,
             session.linkedin_profile.linkedin_username,
         )
+        set_profile_state(
+            session, public_id, "Connected",
+            reason=(
+                "Follow-up skipped: LinkedIn thread belongs to "
+                f"{', '.join(sorted(owning_operators))}"
+            ),
+        )
         return
 
     # No-thread guard. A follow-up presumes there's an existing LinkedIn DM

@@ -240,17 +240,23 @@ def test_lead_outbound_operators_canonicalizes_known_aliases(db):
         first_name="Travis",
         linkedin_url="https://www.linkedin.com/in/travis/",
     )
-    for sender in ("chukwuka agu", "Chuka Eddy Jack", "eddy@tryfedrampgpt.com"):
+    for idx, sender in enumerate((
+        "chukwuka agu",
+        "Chuka Eddy Jack",
+        "eddy@tryfedrampgpt.com",
+        "leili amirshahi",
+        "leili.ash2011@yahoo.com",
+    )):
         Message.objects.create(
             lead=lead,
             source=Message.Source.LINKEDIN,
-            external_id=f"urn:li:msg:{sender[:5]}",
+            external_id=f"urn:li:msg:{idx}",
             direction=Message.Direction.OUTBOUND,
             sender=sender,
             body="hi",
             sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
         )
-    assert lead_outbound_operators(lead) == {"Chuka"}
+    assert lead_outbound_operators(lead) == {"Chuka", "Leili"}
 
 
 def test_lead_outbound_operators_skips_inbound_and_gmail(db):
@@ -274,6 +280,27 @@ def test_lead_outbound_operators_skips_inbound_and_gmail(db):
         sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
     )
     # No qualifying outbound LinkedIn → empty set (no constraint).
+    assert lead_outbound_operators(lead) == set()
+
+
+def test_lead_outbound_operators_ignores_echoed_connection_note_sender(db):
+    """LinkedIn/backfill can echo our connection note as an outbound
+    message while showing the lead's name as sender. That proves a thread
+    exists, but it must not claim thread ownership away from the daemon
+    account that is about to follow up."""
+    from linkedin.db.messages import lead_outbound_operators
+    lead = Lead.objects.create(
+        first_name="Brian",
+        last_name="Pennington",
+        linkedin_url="https://www.linkedin.com/in/bfpennington/",
+    )
+    Message.objects.create(
+        lead=lead, source=Message.Source.LINKEDIN, external_id="m1",
+        direction=Message.Direction.OUTBOUND, sender="brian pennington",
+        body="Hi Brian, saw you checking out Boundera...",
+        sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
+    )
+
     assert lead_outbound_operators(lead) == set()
 
 

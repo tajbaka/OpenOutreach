@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from linkedin.daemon import seconds_until_active
+from linkedin.models import ActionLog, Task
 
 
 def _mock_now(year, month, day, hour, minute=0, tz="UTC"):
@@ -119,6 +120,36 @@ class TestSecondsUntilActive:
     def test_catch_up_keeps_daemon_active_after_end(self, _behind):
         with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 19)):
             assert seconds_until_active(object()) == 0.0
+
+    @patch("linkedin.daemon._is_behind_normal_window_pace")
+    @patch("linkedin.daemon.ENABLE_PACING_CATCH_UP", True)
+    @patch("linkedin.daemon.ACTIVE_START_HOUR", 9)
+    @patch("linkedin.daemon.ACTIVE_END_HOUR", 17)
+    @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
+    @patch("linkedin.daemon.REST_DAYS", (5, 6))
+    def test_followup_catch_up_keeps_daemon_active_after_end(self, behind):
+        def side_effect(_profile, action_type):
+            return action_type == ActionLog.ActionType.FOLLOW_UP
+
+        behind.side_effect = side_effect
+        with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 19)):
+            assert seconds_until_active(object()) == 0.0
+
+    @patch("linkedin.daemon._is_behind_normal_window_pace")
+    @patch("linkedin.daemon.ENABLE_PACING_CATCH_UP", True)
+    @patch("linkedin.daemon.ACTIVE_START_HOUR", 9)
+    @patch("linkedin.daemon.ACTIVE_END_HOUR", 17)
+    @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
+    @patch("linkedin.daemon.REST_DAYS", (5, 6))
+    def test_after_hours_followup_only_catch_up_restricts_claim_types(self, behind):
+        from linkedin.daemon import _claimable_task_types_now
+
+        def side_effect(_profile, action_type):
+            return action_type == ActionLog.ActionType.FOLLOW_UP
+
+        behind.side_effect = side_effect
+        with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 19)):
+            assert _claimable_task_types_now(object()) == {Task.TaskType.FOLLOW_UP}
 
     @patch("linkedin.daemon._is_behind_normal_window_pace", return_value=False)
     @patch("linkedin.daemon.ENABLE_PACING_CATCH_UP", True)

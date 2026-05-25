@@ -34,6 +34,18 @@ def lead_outbound_operators(lead) -> set[str]:
     whoever runs the daemon may proceed.
     """
     from linkedin.operators import resolve_operator
+    lead_full = f"{lead.first_name or ''} {lead.last_name or ''}".strip().lower()
+    lead_first = (lead.first_name or "").strip().lower()
+
+    def _looks_like_lead_sender(sender: str) -> bool:
+        sender = (sender or "").strip().lower()
+        if not sender:
+            return False
+        return bool(
+            (lead_full and sender == lead_full)
+            or (lead_first and sender.startswith(lead_first + " "))
+        )
+
     senders = (
         Message.objects.filter(
             lead=lead,
@@ -44,7 +56,7 @@ def lead_outbound_operators(lead) -> set[str]:
         .values_list("sender", flat=True)
         .distinct()
     )
-    return {resolve_operator(s) for s in senders if s}
+    return {resolve_operator(s) for s in senders if s and not _looks_like_lead_sender(s)}
 
 
 def persist_thread(

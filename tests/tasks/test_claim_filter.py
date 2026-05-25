@@ -83,6 +83,25 @@ def test_connect_task_for_unowned_campaign_is_never_claimed():
 
 
 @pytest.mark.django_db
+def test_claim_next_can_be_restricted_to_followups_only():
+    """After-hours follow-up catch-up can wake the daemon without letting
+    unrelated connect tasks run before the next active window."""
+    followup = _mk(
+        Task.TaskType.FOLLOW_UP,
+        operator="Arian",
+        scheduled_offset_s=-10,
+    )
+    _mk(Task.TaskType.CONNECT, payload_extra={"campaign_id": 1}, scheduled_offset_s=-20)
+
+    claimed = Task.objects.claim_next(
+        operator="Arian",
+        campaign_ids=[1],
+        task_types={Task.TaskType.FOLLOW_UP},
+    )
+    assert claimed is not None and claimed.pk == followup.pk
+
+
+@pytest.mark.django_db
 def test_sweep_connections_stays_account_agnostic():
     """sweep_connections has no per-account identity — its handler only
     touches the claiming daemon's own campaigns — so it passes the

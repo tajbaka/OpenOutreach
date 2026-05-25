@@ -459,6 +459,40 @@ class TestHandleFollowUp:
         assert "BrandCo" in sent_message  # {our_company_name} substituted
         assert "Alice" in sent_message
 
+    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_sends_when_connection_note_echo_has_lead_as_sender(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
+    ):
+        """A backfilled connection-note echo may be stored as outbound but
+        with the lead's own name as sender. It should count as an existing
+        thread while not blocking the current operator's follow-up."""
+        from crm.models import Lead, Message
+
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:echoed-note",
+            direction=Message.Direction.OUTBOUND,
+            sender="alice smith",
+            body="Hi Alice, building Boundera in the FedRAMP space.",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        qualifiers = _build_context(fake_session)
+        handle_follow_up(task, fake_session, qualifiers)
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        assert mock_send.called or mock_send_media.called
+
     @patch("linkedin.actions.message.send_raw_message")
     @patch("linkedin.actions.conversations.get_conversation")
     def test_skips_when_lead_already_replied(
@@ -676,8 +710,12 @@ class TestHandleFollowUp:
 
         mock_send.assert_not_called()
         # State stays CONNECTED — no Completed flip, no re-enqueue. The
-        # right daemon will pick it up when it runs.
+        # right daemon will pick it up when it runs, but the stuck row now
+        # has a visible reason for operators and health checks.
         _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        from crm.models import Deal
+        deal = Deal.objects.get(campaign=fake_session.campaign)
+        assert "belongs to Chuka" in deal.reason
 
     @patch("linkedin.actions.message.send_raw_message")
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)

@@ -3,7 +3,7 @@ import json
 import pytest
 from django.utils import timezone
 
-from linkedin.daemon import heal_tasks
+from linkedin.daemon import _ensure_connect_task_for_campaign, heal_tasks
 from linkedin.db.deals import set_profile_state
 from linkedin.db.leads import create_enriched_lead, promote_lead_to_deal
 from linkedin.models import Task
@@ -32,6 +32,13 @@ def _make_connected(session, public_id="alice"):
     set_profile_state(session, public_id, ProfileState.CONNECTED.value)
 
 
+def _make_ready(session, public_id="alice"):
+    url = f"https://www.linkedin.com/in/{public_id}/"
+    create_enriched_lead(session, url, SAMPLE_PROFILE)
+    promote_lead_to_deal(session, public_id)
+    set_profile_state(session, public_id, ProfileState.READY_TO_CONNECT.value)
+
+
 @pytest.mark.django_db
 class TestHealTasks:
     @pytest.fixture(autouse=True)
@@ -53,10 +60,51 @@ class TestHealTasks:
         ).exists()
 
     def test_seeds_connect_per_campaign(self, fake_session):
+        _make_ready(fake_session, "alice")
         heal_tasks(fake_session)
         assert Task.objects.filter(
             task_type=Task.TaskType.CONNECT,
             status=Task.Status.PENDING,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).count() == 1
+
+    def test_connect_recovery_creates_missing_task_when_work_remains(self, fake_session):
+        _make_ready(fake_session, "alice")
+
+        created = _ensure_connect_task_for_campaign(fake_session.campaign, delay_seconds=0)
+
+        assert created is True
+        assert Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).count() == 1
+
+    def test_connect_recovery_does_not_create_without_work(self, fake_session):
+        created = _ensure_connect_task_for_campaign(fake_session.campaign, delay_seconds=0)
+
+        assert created is False
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).exists()
+
+    def test_connect_recovery_does_not_duplicate_running_task(self, fake_session):
+        _make_ready(fake_session, "alice")
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now(),
+            payload={"campaign_id": fake_session.campaign.pk},
+        )
+
+        created = _ensure_connect_task_for_campaign(fake_session.campaign, delay_seconds=0)
+
+        assert created is False
+        assert Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
             payload__campaign_id=fake_session.campaign.pk,
         ).count() == 1
 
@@ -98,4 +146,3 @@ class TestHealTasks:
         heal_tasks(fake_session)
         count_after = Task.objects.filter(status=Task.Status.PENDING).count()
         assert count_before == count_after
-

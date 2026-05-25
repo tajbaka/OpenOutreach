@@ -292,6 +292,7 @@ class TaskQuerySet(models.QuerySet):
         self,
         operator: str | None = None,
         campaign_ids: "list[int] | None" = None,
+        task_types: "list[str] | set[str] | tuple[str, ...] | None" = None,
     ) -> "Task | None":
         """Pop the next due Task, scoped to the work this daemon owns.
 
@@ -313,6 +314,8 @@ class TaskQuerySet(models.QuerySet):
         (2026-05-19). See `_operator_scope_q`.
         """
         qs = self.due().exclude(task_type=Task.TaskType.ENRICH_PHONE)
+        if task_types is not None:
+            qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
         return qs.first()
@@ -321,6 +324,7 @@ class TaskQuerySet(models.QuerySet):
         self,
         operator: str | None = None,
         campaign_ids: "list[int] | None" = None,
+        task_types: "list[str] | set[str] | tuple[str, ...] | None" = None,
     ) -> float | None:
         """Seconds until the next pending task (optionally operator-scoped).
 
@@ -331,6 +335,8 @@ class TaskQuerySet(models.QuerySet):
         qs = self.pending().exclude(task_type=Task.TaskType.ENRICH_PHONE).only(
             "scheduled_at", "task_type", "payload",
         )
+        if task_types is not None:
+            qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
         next_task = qs.first()
