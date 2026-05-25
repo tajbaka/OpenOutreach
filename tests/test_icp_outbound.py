@@ -227,6 +227,19 @@ def test_fill_message_missing_first_name_renders_empty():
     assert "{" not in out
 
 
+def test_fill_message_sanitizes_greeting_first_name():
+    out = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_note",
+        first_name='Allen "Al"',
+        company_name="Global Defense, Inc.",
+        variant_index=0,
+    )
+    assert out.body.startswith("Hi Allen,")
+    assert 'Allen "Al"' not in out.body
+
+
 def test_fill_for_lead_resolves_role_to_icp():
     """ROLE→ICP routing matches FU_ROLE_TO_ICP. The followup drafter
     holds ROLE on each row, not ICP — this helper closes the gap."""

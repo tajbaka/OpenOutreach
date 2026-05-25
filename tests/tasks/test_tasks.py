@@ -11,7 +11,12 @@ from linkedin.models import ActionLog, Task
 from linkedin.ml.qualifier import BayesianQualifier
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
-from linkedin.tasks.connect import ConnectStrategy, handle_connect, recommended_action_delay
+from linkedin.tasks.connect import (
+    ConnectStrategy,
+    build_connection_note,
+    handle_connect,
+    recommended_action_delay,
+)
 from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 
@@ -102,6 +107,24 @@ class TestHandleConnect:
     @pytest.fixture(autouse=True)
     def _db(self, embeddings_db):
         pass
+
+    def test_build_connection_note_sanitizes_nickname_greeting(self, monkeypatch):
+        from crm.models import Lead
+
+        monkeypatch.setattr("linkedin.tasks.connect.OUR_COMPANY_NAME", "Boundera")
+        lead = Lead.objects.create(
+            first_name='Allen "Al"',
+            last_name="Mayfield",
+            company_name="Global Defense, Inc.",
+            linkedin_url="https://www.linkedin.com/in/allen-r-mayfield/",
+            public_identifier="allen-r-mayfield",
+            icp="CSPs",
+        )
+
+        note = build_connection_note(lead.id, sender="Arian")
+
+        assert note.startswith("Hi Allen,")
+        assert 'Allen "Al"' not in note
 
     def _candidate(self):
         return {"public_identifier": "alice", "url": "https://www.linkedin.com/in/alice/", "profile": SAMPLE_PROFILE}

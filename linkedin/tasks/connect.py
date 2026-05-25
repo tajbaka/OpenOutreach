@@ -34,6 +34,7 @@ from linkedin.db.leads import disqualify_lead
 from linkedin.models import ActionLog, ConnectIssueLog, Task, log_connect_issue
 from linkedin.enums import ProfileState
 from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
+from linkedin.name_utils import greeting_first_name
 from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ def build_connection_note(lead_id: int | None, sender: str) -> str:
     from linkedin.icp_outbound import load_icp_messages, resolve_icp
 
     lead = Lead.objects.filter(pk=lead_id).first() if lead_id else None
-    first_name = lead.first_name.strip() if lead and lead.first_name else ""
+    first_name = greeting_first_name(lead.first_name if lead else "")
 
     # ICP-keyed path. Try only when we have a lead + a resolvable ICP +
     # matching connect-note variants in the JSON. Any missing piece

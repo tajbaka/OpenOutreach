@@ -54,6 +54,37 @@ class TestEnsureLeadEnriched:
         assert lead.description
         assert lead.first_name == "Alice"
 
+    def test_preserves_seeded_name_and_company(self, fake_session):
+        """Scraped profile JSON is stored, but CSV-seeded fields stay canonical."""
+        from crm.models import Lead
+        from linkedin.db.enrichment import ensure_lead_enriched
+
+        lead = Lead.objects.create(
+            linkedin_url="https://www.linkedin.com/in/allen-r-mayfield/",
+            public_identifier="allen-r-mayfield",
+            first_name="Allen",
+            last_name="Mayfield",
+            company_name="GDI",
+        )
+        scraped_profile = {
+            **FAKE_PROFILE,
+            "first_name": 'Allen "Al"',
+            "last_name": "Mayfield    ",
+            "positions": [{"company_name": "Global Defense, Inc."}],
+        }
+
+        with patch(
+            "linkedin.db.enrichment._fetch_profile",
+            return_value=scraped_profile,
+        ):
+            assert ensure_lead_enriched(fake_session, lead.pk, "allen-r-mayfield") is True
+
+        lead.refresh_from_db()
+        assert lead.first_name == "Allen"
+        assert lead.last_name == "Mayfield"
+        assert lead.company_name == "GDI"
+        assert json.loads(lead.description)["first_name"] == 'Allen "Al"'
+
     def test_returns_false_on_api_failure(self, fake_session):
         """Returns False when Voyager API returns (None, None)."""
         from crm.models import Lead

@@ -45,6 +45,7 @@ from pathlib import Path
 
 from linkedin.conf import ROOT_DIR
 from linkedin.exceptions import SheetsError
+from linkedin.name_utils import greeting_first_name
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP
 from linkedin.operators import resolve_operator
 
@@ -387,7 +388,7 @@ def fill_message(
     template = variants[idx]
     stripped, attachments = _extract_attachments(template)
     body = stripped.format(
-        first_name=first_name or "",
+        first_name=greeting_first_name(first_name),
         last_name=last_name or "",
         company_name=company_name or "",
         my_name=my_name or "",
