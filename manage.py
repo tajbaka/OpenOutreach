@@ -148,7 +148,8 @@ if __name__ == "__main__":
         from linkedin.version_check import check_for_updates
         from linkedin.env_check import check_env_vars
 
-        check_for_updates()
+        if os.environ.get("OPENOUTREACH_SUPERVISED") != "1":
+            check_for_updates()
         check_env_vars()
 
         import psutil
