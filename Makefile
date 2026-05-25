@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help attach test docker-test stop build up up-view install setup run admin view
+.PHONY: help attach test docker-test stop build up up-view install setup run run-awake admin view
 
 help:
 	@perl -nle'print $& if m{^[a-zA-Z_-]+:.*?## .*$$}' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -15,6 +15,14 @@ setup: install ## install deps + Playwright browsers + migrate + bootstrap CRM
 
 run: ## run the daemon
 	python manage.py
+
+run-awake: ## run the daemon on macOS without system sleep
+	@if command -v caffeinate >/dev/null 2>&1; then \
+		caffeinate -ims python manage.py; \
+	else \
+		echo "run-awake requires macOS caffeinate; use OS power settings or run: python manage.py"; \
+		exit 1; \
+	fi
 
 test: ## run the test suite
 	.venv/bin/pytest
