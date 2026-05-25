@@ -14,6 +14,7 @@ Below the threshold (a quick restart), do nothing.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 from django.core.management import call_command
@@ -56,6 +57,14 @@ def run_startup_catchup(
 
     hours = gap / 60.0
     gap_desc = "an unknown duration" if gap == float("inf") else f"~{hours:.1f}h"
+
+    if os.getenv("OPENOUTREACH_RESTART_REASON") == "git_pull":
+        logger.info(
+            "Realtime listener was off for %s, but daemon restarted after "
+            "supervisor git pull — skipping interactive backfill prompt",
+            gap_desc,
+        )
+        return
 
     if interactive is None:
         interactive = sys.stdin.isatty()

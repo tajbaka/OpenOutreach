@@ -245,9 +245,13 @@ def _pull_update(*, install: bool, migrate: bool, requirements_file: str) -> boo
         return False
 
 
-def _start_daemon() -> subprocess.Popen:
+def _start_daemon(*, restart_reason: str = "") -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
+    if restart_reason:
+        env["OPENOUTREACH_RESTART_REASON"] = restart_reason
+    else:
+        env.pop("OPENOUTREACH_RESTART_REASON", None)
     logger.warning("Starting daemon child")
     return subprocess.Popen([sys.executable, "manage.py"], cwd=ROOT_DIR, env=env)
 
@@ -290,12 +294,12 @@ def supervise(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    _pull_update(
+    initial_updated = _pull_update(
         install=not args.no_install,
         migrate=not args.no_migrate,
         requirements_file=args.requirements,
     )
-    child = _start_daemon()
+    child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
     next_poll = time.monotonic() + args.poll_seconds
 
     while not stop:
@@ -310,7 +314,7 @@ def supervise(args: argparse.Namespace) -> int:
                 time.sleep(args.restart_delay)
             if stop:
                 break
-            child = _start_daemon()
+            child = _start_daemon(restart_reason="process_exit")
             next_poll = time.monotonic() + args.poll_seconds
             continue
 
@@ -323,7 +327,7 @@ def supervise(args: argparse.Namespace) -> int:
                 _stop_daemon(child)
                 if stop:
                     break
-                child = _start_daemon()
+                child = _start_daemon(restart_reason="git_pull")
             next_poll = time.monotonic() + args.poll_seconds
 
         time.sleep(1)

@@ -66,6 +66,21 @@ def test_large_gap_interactive_no_skips_backfill():
     mock_cmd.assert_not_called()
 
 
+def test_git_pull_restart_bypasses_interactive_prompt(monkeypatch):
+    old = timezone.now() - timedelta(hours=9)
+    monkeypatch.setenv("OPENOUTREACH_RESTART_REASON", "git_pull")
+
+    with patch("linkedin.realtime.catchup.read_heartbeat", return_value=old), \
+         patch("linkedin.realtime.catchup.call_command") as mock_cmd, \
+         patch("builtins.input") as mock_input:
+        catchup.run_startup_catchup(
+            username="arian@x.com", account_label="primary", interactive=True,
+        )
+
+    mock_cmd.assert_not_called()
+    mock_input.assert_not_called()
+
+
 def test_interactive_none_defers_to_tty_detection():
     """interactive=None resolves via sys.stdin.isatty() at call time."""
     old = timezone.now() - timedelta(hours=9)
