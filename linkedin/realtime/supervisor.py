@@ -13,6 +13,8 @@ import logging
 import subprocess
 import sys
 
+from linkedin.conf import ROOT_DIR
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,8 +44,10 @@ class ListenerSupervisor:
 
     def _spawn(self) -> None:
         try:
+            manage_py = ROOT_DIR / "manage.py"
             self._proc = subprocess.Popen(
-                [sys.executable, "manage.py", "listen_realtime"],
+                [sys.executable, str(manage_py), "listen_realtime"],
+                cwd=str(ROOT_DIR),
             )
             self._spawn_failures = 0
             logger.info("Realtime listener child process spawned (pid=%s)", self._proc.pid)

@@ -41,11 +41,49 @@ SELECTORS = {
     "submit": 'button[type="submit"]',
 }
 
+LOGIN_EMAIL_SELECTORS = [
+    'input#username',
+    'input[name="session_key"]',
+    'input[autocomplete*="username"]',
+    'input[type="email"]',
+    'input[aria-label*="Email" i]',
+    'input[placeholder*="Email" i]',
+]
+
+LOGIN_PASSWORD_SELECTORS = [
+    'input#password',
+    'input[name="session_password"]',
+    'input[autocomplete="current-password"]',
+    'input[type="password"]',
+]
+
+LOGIN_SUBMIT_SELECTORS = [
+    'button[type="submit"]',
+    'button:has-text("Sign in")',
+]
+
 # 10-minute window for the operator to complete LinkedIn's 2FA / phone /
 # security verification by hand in the visible browser. Matches the
 # standalone session's timeout — daemon logins from a fresh fingerprint
 # get challenged the same way standalone scripts do.
 _LOGIN_WITH_2FA_TIMEOUT_MS = 10 * 60 * 1000
+
+
+def _first_visible(page, selectors: list[str]):
+    for selector in selectors:
+        locator = page.locator(selector)
+        for i in range(locator.count()):
+            candidate = locator.nth(i)
+            if candidate.is_visible():
+                return candidate
+    return None
+
+
+def _require_visible(page, selectors: list[str], label: str):
+    locator = _first_visible(page, selectors)
+    if locator is None:
+        raise RuntimeError(f"LinkedIn login {label} field not found on {page.url}")
+    return locator
 
 
 def playwright_login(session: "AccountSession"):
@@ -60,16 +98,20 @@ def playwright_login(session: "AccountSession"):
         error_message="Failed to load login page",
     )
 
-    human_type(page.locator(SELECTORS["email"]), lp.linkedin_username)
+    email = _require_visible(page, LOGIN_EMAIL_SELECTORS, "email")
+    password = _require_visible(page, LOGIN_PASSWORD_SELECTORS, "password")
+    submit = _require_visible(page, LOGIN_SUBMIT_SELECTORS, "submit")
+
+    human_type(email, lp.linkedin_username)
     session.wait()
-    human_type(page.locator(SELECTORS["password"]), lp.linkedin_password)
+    human_type(password, lp.linkedin_password)
     session.wait()
 
     # Click submit, then give the operator up to 10 minutes to complete
     # whatever LinkedIn challenges with (2FA, phone verification, captcha,
     # etc.). The standalone session has the same window; daemon login is
     # equally exposed to those challenges on first run / new fingerprint.
-    page.locator(SELECTORS["submit"]).click()
+    submit.click()
     logger.info(
         "Login form submitted. If LinkedIn shows 2FA / verification, complete "
         "it manually in the browser window — waiting up to 10 minutes for "

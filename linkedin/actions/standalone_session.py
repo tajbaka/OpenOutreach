@@ -38,7 +38,14 @@ from linkedin.browser.cookie_store import (
     load_cookies,
     save_cookies,
 )
-from linkedin.browser.login import LINKEDIN_FEED_URL, LINKEDIN_LOGIN_URL, SELECTORS
+from linkedin.browser.login import (
+    LINKEDIN_FEED_URL,
+    LINKEDIN_LOGIN_URL,
+    LOGIN_EMAIL_SELECTORS,
+    LOGIN_PASSWORD_SELECTORS,
+    LOGIN_SUBMIT_SELECTORS,
+    _require_visible,
+)
 from linkedin.browser.nav import human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
@@ -201,9 +208,13 @@ class StandaloneLinkedInSession:
         self.page.goto(LINKEDIN_LOGIN_URL)
         self.page.wait_for_load_state("load")
 
-        human_type(self.page.locator(SELECTORS["email"]), self.username)
-        human_type(self.page.locator(SELECTORS["password"]), self.password)
-        self.page.locator(SELECTORS["submit"]).click()
+        email = _require_visible(self.page, LOGIN_EMAIL_SELECTORS, "email")
+        password = _require_visible(self.page, LOGIN_PASSWORD_SELECTORS, "password")
+        submit = _require_visible(self.page, LOGIN_SUBMIT_SELECTORS, "submit")
+
+        human_type(email, self.username)
+        human_type(password, self.password)
+        submit.click()
 
         logger.info(
             "%s: form submitted. If LinkedIn shows 2FA / verification, "
