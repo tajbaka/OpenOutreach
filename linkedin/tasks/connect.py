@@ -376,6 +376,8 @@ def handle_connect(task, session, qualifiers):
             else:
                 set_profile_state(session, public_id, new_state.value)
                 logger.debug("%s: connect attempt %d/%d — no button found", public_id, attempts, MAX_CONNECT_ATTEMPTS)
+            enqueue_connect(campaign_id, delay_seconds=0)
+            return
         else:
             set_profile_state(session, public_id, new_state.value)
             session.linkedin_profile.record_action(
