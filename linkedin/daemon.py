@@ -667,12 +667,9 @@ def run_daemon(session):
             )
             if wait is None:
                 if claimable_task_types is not None:
-                    wait = min(
-                        _seconds_until_next_active_start(),
-                        ENRICHMENT_WAIT_POLL_SECONDS,
-                    )
+                    wait = _seconds_until_next_active_start()
                     logger.info(
-                        "Catch-up queue empty for %s — sleeping %.0fs",
+                        "Catch-up queue empty for %s — sleeping until next active window (%.0fs)",
                         ", ".join(sorted(claimable_task_types)) or "allowed tasks",
                         wait,
                     )
