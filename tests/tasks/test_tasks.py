@@ -169,6 +169,7 @@ class TestHandleConnect:
     @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
     @patch("linkedin.tasks.connect._actions_sent_today", return_value=10)
     @patch("linkedin.tasks.connect._active_window_progress_seconds", return_value=(7200.0, 28800.0))
+    @patch("linkedin.tasks.connect.ENABLE_PACING_CATCH_UP", False)
     @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
     def test_recommended_action_delay_adjusts_to_remaining_window(
         self, _window, _sent, _mock_uniform, fake_session,
@@ -204,6 +205,7 @@ class TestHandleConnect:
     @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
     @patch("linkedin.tasks.connect._actions_sent_today", return_value=0)
     @patch("linkedin.tasks.connect._active_window_progress_seconds", return_value=(28500.0, 28800.0))
+    @patch("linkedin.tasks.connect.ENABLE_PACING_CATCH_UP", False)
     @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
     def test_recommended_action_delay_respects_full_window_floor(
         self, _window, _sent, _mock_uniform, fake_session,

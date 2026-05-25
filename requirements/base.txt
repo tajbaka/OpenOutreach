@@ -18,3 +18,4 @@ scikit-learn
 huggingface_hub
 gspread
 google-auth
+psutil

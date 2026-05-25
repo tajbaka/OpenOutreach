@@ -22,6 +22,12 @@ SELECTORS = {
         'button:has-text("Connect"):visible, '
         '[role="button"]:has-text("Connect"):visible'
     ),
+    "pending_menuitem": (
+        '[role="menuitem"][aria-label*="Pending"]:visible, '
+        'a[aria-label*="Pending"]:visible, '
+        '[role="menuitem"]:has-text("Pending"):visible, '
+        'a:has-text("Pending"):visible'
+    ),
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
     "more_button": (
         'button[id*="overflow"]:visible, '
@@ -158,9 +164,15 @@ def send_connection_request(
         or "Unknown lead"
     )
 
-    if not _connect_direct(session) and not _connect_via_more(session):
-        logger.debug("Connect button not found for %s — staying at current stage", public_identifier)
-        return ProfileState.QUALIFIED
+    direct_connected = _connect_direct(session)
+    if not direct_connected:
+        more_result = _connect_via_more(session)
+        if more_result == ProfileState.PENDING:
+            logger.debug("Profile %s already has a pending invite in the More menu", public_identifier)
+            return ProfileState.PENDING
+        if not more_result:
+            logger.debug("Connect button not found for %s — staying at current stage", public_identifier)
+            return ProfileState.QUALIFIED
 
     if note:
         if not _click_with_note(session, note):
@@ -277,6 +289,11 @@ def _resolve_dropdown_clickable(session, candidate):
         return None
 
 
+def _pending_surface_visible(session) -> bool:
+    """Whether the More-actions dropdown is showing an existing pending invite."""
+    return session.page.locator(SELECTORS["pending_menuitem"]).count() > 0
+
+
 def _connect_via_more(session):
     session.wait()
     top_card = find_top_card(session)
@@ -294,6 +311,10 @@ def _connect_via_more(session):
         return False
     more.click()
     time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
+
+    if _pending_surface_visible(session):
+        logger.debug("Detected pending invite in More dropdown")
+        return ProfileState.PENDING
 
     # Find the dropdown Connect option.  Strategy: broad text-first discovery,
     # then walk up to the nearest clickable ancestor (<a> or <button>).
@@ -331,6 +352,9 @@ def _connect_via_more(session):
         time.sleep(0.15)
 
     if connect_option is None:
+        if _pending_surface_visible(session):
+            logger.debug("Detected pending invite in More dropdown after connect search")
+            return ProfileState.PENDING
         _dump_page_state(session, "more-no-connect-option")
         logger.debug("Connect option not found in More dropdown")
         current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]

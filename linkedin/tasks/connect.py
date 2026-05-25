@@ -21,8 +21,10 @@ from linkedin.conf import (
     ACTIVE_START_HOUR,
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
+    CONNECT_DAILY_LIMIT,
     ENABLE_CONNECT,
     ENABLE_PACING_CATCH_UP,
+    FOLLOW_UP_DAILY_LIMIT,
     OUR_COMPANY_NAME,
     PACING_CATCH_UP_MAX_SPEED_MULTIPLIER,
     OUR_WEBSITE_URL,
@@ -159,34 +161,30 @@ def _seconds_until_tomorrow() -> float:
     return (tomorrow - now).total_seconds()
 
 
-def _active_window_progress_seconds(profile, action_type: str) -> tuple[float, float, float]:
-    """Return (remaining, normal_window, effective_window) seconds in ACTIVE_TIMEZONE.
+def _active_window_progress_seconds(profile, action_type: str) -> tuple[float, float]:
+    """Return (remaining, normal_window) seconds in ACTIVE_TIMEZONE.
 
-    The normal window is ACTIVE_START_HOUR → ACTIVE_END_HOUR. When spillover is
-    enabled and the sender is behind pace, the effective window may extend past
-    ACTIVE_END_HOUR so pacing can use that extra time instead of overcompressing
-    inside the main window. Outside the effective window this returns the
-    effective window length as the remaining seconds so callers fall back to the
-    configured average pace.
+    The normal window is ACTIVE_START_HOUR → ACTIVE_END_HOUR. Outside that
+    window this returns the normal window length so callers fall back to the
+    configured average pace. During after-hours catch-up, remaining is forced
+    low so catch-up uses the configured max-speed cap.
     """
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
     normal_window_seconds = max((ACTIVE_END_HOUR - ACTIVE_START_HOUR) * 3600, 3600)
-    use_spillover = (
+
+    if ACTIVE_END_HOUR <= now.hour and (
         ENABLE_PACING_CATCH_UP
-        and ENABLE_ACTIVE_HOURS_SPILLOVER
-        and ACTIVE_SPILLOVER_END_HOUR > ACTIVE_END_HOUR
         and _is_behind_normal_window_pace(profile, action_type)
-    )
-    effective_end_hour = ACTIVE_SPILLOVER_END_HOUR if use_spillover else ACTIVE_END_HOUR
-    effective_window_seconds = max((effective_end_hour - ACTIVE_START_HOUR) * 3600, 3600)
+    ):
+        return 1.0, float(normal_window_seconds)
 
-    if not (ACTIVE_START_HOUR <= now.hour < effective_end_hour):
-        return float(effective_window_seconds), float(normal_window_seconds), float(effective_window_seconds)
+    if not (ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR):
+        return float(normal_window_seconds), float(normal_window_seconds)
 
-    end = now.replace(hour=effective_end_hour, minute=0, second=0, microsecond=0)
+    end = now.replace(hour=ACTIVE_END_HOUR, minute=0, second=0, microsecond=0)
     remaining_seconds = max((end - now).total_seconds(), 1.0)
-    return remaining_seconds, float(normal_window_seconds), float(effective_window_seconds)
+    return remaining_seconds, float(normal_window_seconds)
 
 
 def _actions_sent_today(profile, action_type: str) -> int:
@@ -243,8 +241,6 @@ def recommended_action_delay(profile, action_type: str) -> float:
     the spacing tightens/loosens throughout the day based on actual progress
     toward the daily cap.
     """
-    from linkedin.conf import CONNECT_DAILY_LIMIT, FOLLOW_UP_DAILY_LIMIT
-
     if action_type == ActionLog.ActionType.CONNECT:
         daily_limit = max(CONNECT_DAILY_LIMIT or profile.connect_daily_limit or 1, 1)
     else:
@@ -252,7 +248,7 @@ def recommended_action_delay(profile, action_type: str) -> float:
 
     sent_today = _actions_sent_today(profile, action_type)
     remaining_actions = max(daily_limit - sent_today, 1)
-    remaining_window_seconds, normal_window_seconds, effective_window_seconds = _active_window_progress_seconds(profile, action_type)
+    remaining_window_seconds, normal_window_seconds = _active_window_progress_seconds(profile, action_type)
 
     # Dynamic target based on what is left in today's window. By default we
     # keep a floor at the full-window average so sends do not over-accelerate
@@ -261,14 +257,13 @@ def recommended_action_delay(profile, action_type: str) -> float:
     # window-average pace instead of trying to cram the full quota into a
     # short remainder of the day.
     full_window_average = normal_window_seconds / daily_limit
-    effective_window_average = effective_window_seconds / daily_limit
     dynamic_average = remaining_window_seconds / remaining_actions
     if ENABLE_PACING_CATCH_UP:
         max_speed = max(PACING_CATCH_UP_MAX_SPEED_MULTIPLIER, 1.0)
         fastest_allowed_delay = full_window_average / max_speed
         base_delay = max(dynamic_average, fastest_allowed_delay)
     else:
-        base_delay = max(effective_window_average, dynamic_average)
+        base_delay = max(full_window_average, dynamic_average)
     return max(
         CAMPAIGN_CONFIG["min_action_interval"],
         random.uniform(base_delay * 0.7, base_delay * 1.3),

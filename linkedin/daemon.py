@@ -26,9 +26,7 @@ from linkedin.conf import (
     ENABLE_REALTIME_LISTENER,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
-    ENABLE_ACTIVE_HOURS_SPILLOVER,
     ENABLE_PACING_CATCH_UP,
-    ACTIVE_SPILLOVER_END_HOUR,
     ENRICHMENT_WAIT_POLL_SECONDS,
     REST_DAYS,
 )
@@ -161,16 +159,16 @@ def seconds_until_active(profile=None) -> float:
         return 0.0
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
-    allow_spillover = (
-        profile is not None
+    is_workday = now.weekday() not in REST_DAYS
+    is_normal_active = ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR
+    is_catch_up_active = (
+        ACTIVE_END_HOUR <= now.hour
+        and profile is not None
         and ENABLE_PACING_CATCH_UP
-        and ENABLE_ACTIVE_HOURS_SPILLOVER
-        and ACTIVE_SPILLOVER_END_HOUR > ACTIVE_END_HOUR
         and _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT)
     )
-    effective_end_hour = ACTIVE_SPILLOVER_END_HOUR if allow_spillover else ACTIVE_END_HOUR
 
-    if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < effective_end_hour:
+    if is_workday and (is_normal_active or is_catch_up_active):
         return 0.0
 
     # Find the next active start: try today first, then subsequent days

@@ -112,25 +112,21 @@ class TestSecondsUntilActive:
 
     @patch("linkedin.daemon._is_behind_normal_window_pace", return_value=True)
     @patch("linkedin.daemon.ENABLE_PACING_CATCH_UP", True)
-    @patch("linkedin.daemon.ENABLE_ACTIVE_HOURS_SPILLOVER", True)
-    @patch("linkedin.daemon.ACTIVE_SPILLOVER_END_HOUR", 23)
     @patch("linkedin.daemon.ACTIVE_START_HOUR", 9)
     @patch("linkedin.daemon.ACTIVE_END_HOUR", 17)
     @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
     @patch("linkedin.daemon.REST_DAYS", (5, 6))
-    def test_spillover_keeps_daemon_active_after_end(self, _behind):
+    def test_catch_up_keeps_daemon_active_after_end(self, _behind):
         with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 19)):
             assert seconds_until_active(object()) == 0.0
 
-    @patch("linkedin.daemon._is_behind_normal_window_pace", return_value=True)
+    @patch("linkedin.daemon._is_behind_normal_window_pace", return_value=False)
     @patch("linkedin.daemon.ENABLE_PACING_CATCH_UP", True)
-    @patch("linkedin.daemon.ENABLE_ACTIVE_HOURS_SPILLOVER", True)
-    @patch("linkedin.daemon.ACTIVE_SPILLOVER_END_HOUR", 23)
     @patch("linkedin.daemon.ACTIVE_START_HOUR", 9)
     @patch("linkedin.daemon.ACTIVE_END_HOUR", 17)
     @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
     @patch("linkedin.daemon.REST_DAYS", (5, 6))
-    def test_after_spillover_sleeps_until_next_day(self, _behind):
+    def test_after_hours_catch_up_sleeps_when_caught_up(self, _behind):
         with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 23)):
             result = seconds_until_active(object())
             assert result == pytest.approx(10 * 3600, abs=1)

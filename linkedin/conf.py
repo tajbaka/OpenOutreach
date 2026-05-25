@@ -86,14 +86,6 @@ ENABLE_ACTIVE_HOURS = os.getenv("ENABLE_ACTIVE_HOURS", "true").strip().lower() i
 ACTIVE_START_HOUR = int(os.getenv("ACTIVE_START_HOUR", "9"))   # inclusive, local time
 ACTIVE_END_HOUR = int(os.getenv("ACTIVE_END_HOUR", "17"))     # exclusive, local time
 ACTIVE_TIMEZONE = os.getenv("ACTIVE_TIMEZONE", "America/Toronto")
-# Optional spillover window after normal active hours. When enabled, the daemon
-# may continue working after ACTIVE_END_HOUR up to ACTIVE_SPILLOVER_END_HOUR,
-# which lets a sender finish the day's quota without compressing the pace too
-# aggressively inside the main window.
-ENABLE_ACTIVE_HOURS_SPILLOVER = os.getenv("ENABLE_ACTIVE_HOURS_SPILLOVER", "false").strip().lower() in {
-    "1", "true", "yes", "on",
-}
-ACTIVE_SPILLOVER_END_HOUR = int(os.getenv("ACTIVE_SPILLOVER_END_HOUR", str(ACTIVE_END_HOUR)))
 REST_DAYS = tuple(
     int(day.strip()) for day in os.getenv("REST_DAYS", "5,6").split(",") if day.strip()
 )      # 0=Mon … 6=Sun; default Sat+Sun off
