@@ -111,9 +111,15 @@ class SingleInstanceGuard:
 
     def _terminate_legacy_matches(self) -> None:
         victims: list[int] = []
+        own_process_tree = {os.getpid()}
+        try:
+            proc = psutil.Process(os.getpid())
+            own_process_tree.update(parent.pid for parent in proc.parents())
+        except psutil.Error:
+            pass
         for proc in psutil.process_iter(["pid"]):
             try:
-                if proc.pid == os.getpid():
+                if proc.pid in own_process_tree:
                     continue
                 if self._match_process and self._match_process(proc):
                     victims.append(proc.pid)

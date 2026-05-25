@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from shutil import which
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -31,6 +32,22 @@ REQUIREMENT_PATHS = (
 logger = logging.getLogger("daemon_supervisor")
 
 
+def _resolve_executable(name: str) -> str:
+    found = which(name)
+    if found:
+        return found
+
+    if name == "git":
+        for candidate in (
+            Path(os.environ.get("ProgramFiles", "")) / "Git" / "cmd" / "git.exe",
+            Path(os.environ.get("ProgramFiles(x86)", "")) / "Git" / "cmd" / "git.exe",
+        ):
+            if candidate.exists():
+                return str(candidate)
+
+    return name
+
+
 @dataclass
 class CommandResult:
     returncode: int
@@ -39,6 +56,7 @@ class CommandResult:
 
 
 def _run(args: list[str], *, check: bool = False) -> CommandResult:
+    args = [_resolve_executable(args[0]), *args[1:]]
     logger.debug("$ %s", " ".join(args))
     proc = subprocess.run(
         args,
