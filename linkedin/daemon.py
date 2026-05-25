@@ -288,11 +288,6 @@ def heal_tasks(session):
     # leave the daemon idle right after startup. Subsequent connects self-pace
     # via recommended_action_delay() in handle_connect's reschedule path.
     for campaign in session.campaigns:
-        from linkedin.operators import resolve_operator
-        _maybe_alert_low_connect_pool(
-            resolve_operator(session.linkedin_profile.linkedin_username),
-            campaign,
-        )
         if _campaign_has_connect_work(campaign):
             _bring_task_forward(
                 Task.TaskType.CONNECT,
