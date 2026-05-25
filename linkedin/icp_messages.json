@@ -5,7 +5,7 @@
         "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring. \n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Help you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "3PAOs/Assessors": {
@@ -13,7 +13,7 @@
         "Hi {first_name}, saw you checking out {our_company_name}. Is reviewing CSP evidence and turning around FedRAMP assessments slower than it should be? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWe have a referral program that gives 3POAs a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "Advisors": {
@@ -21,7 +21,7 @@
         "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization still tedious and costly for the CSPs you advise? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n\nWe have a referral program that gives advisors a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "Channel": {
@@ -38,36 +38,34 @@
   "Chuka": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
       ]
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is reviewing CSP evidence and turning around FedRAMP assessments slower than it should be? Would love to connect."
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWe have a referral program that gives 3POAs a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
       ]
     },
     "Advisors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization still tedious and costly for the CSPs you advise? Would love to connect."
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate your machine readable SSP\n\nWe have a referral program that gives advisors a percentage of our pilot + first year commission, for any CSPs that they can recommend that sign up with us!\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
       ]
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
-        "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
-        "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} compresses FedRAMP authorization + ConMon work for CSPs. Curious if there's a fit with how you bundle / co-sell to your customers.\n\n- AI drafts SSP narratives + POA&M closure trails\n- Continuous evidence ingest from AWS/Azure/GCP\n- Live demo at {our_website_url}\n\nWe have a channel partner program with commission on CSP customers that sign up through you.\n\nWorth a 2-min chat on partnership angles?\n\n{add demo.gif}"
+        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
       ]
     }
   },
@@ -77,7 +75,7 @@
         "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring. \n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Help you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "3PAOs/Assessors": {
@@ -85,7 +83,7 @@
         "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nWe built {our_company_name}, an easier way to transition to FedRAMP 20x.\n\nGiven your experience in this space, I'd love to connect and get your feedback.\n\nWebsite: {our_website_url}\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "Advisors": {
@@ -93,7 +91,7 @@
         "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nWe built {our_company_name}, an easier way to transition to FedRAMP 20x.\n\nGiven your experience in this space, I'd love to connect and get your feedback.\n\nWebsite: {our_website_url}\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "Channel": {
@@ -113,7 +111,7 @@
         "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\n{our_company_name} is an easy way to transition to FedRamp 20x, or map NIST controls faster.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring. \n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Help you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "3PAOs/Assessors": {
@@ -121,7 +119,7 @@
         "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nWe built {our_company_name}, an easier way to transition to FedRAMP 20x.\n\nGiven your experience in this space, I'd love to connect and get your feedback.\n\nWebsite: {our_website_url}\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "Advisors": {
@@ -129,7 +127,7 @@
         "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nWe built {our_company_name}, an easier way to transition to FedRAMP 20x.\n\nGiven your experience in this space, I'd love to connect and get your feedback.\n\nWebsite: {our_website_url}\n\n{add demo.gif}"
+        "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
       ]
     },
     "Channel": {
