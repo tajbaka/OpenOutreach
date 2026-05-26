@@ -54,8 +54,8 @@ class TestEnsureLeadEnriched:
         assert lead.description
         assert lead.first_name == "Alice"
 
-    def test_preserves_seeded_name_and_company(self, fake_session):
-        """Scraped profile JSON is stored, but CSV-seeded fields stay canonical."""
+    def test_overwrites_seeded_name_and_company(self, fake_session):
+        """Scraped profile data replaces stale seeded lead fields."""
         from crm.models import Lead
         from linkedin.db.enrichment import ensure_lead_enriched
 
@@ -80,9 +80,9 @@ class TestEnsureLeadEnriched:
             assert ensure_lead_enriched(fake_session, lead.pk, "allen-r-mayfield") is True
 
         lead.refresh_from_db()
-        assert lead.first_name == "Allen"
-        assert lead.last_name == "Mayfield"
-        assert lead.company_name == "GDI"
+        assert lead.first_name == 'Allen "Al"'
+        assert lead.last_name == "Mayfield    "
+        assert lead.company_name == "Global Defense, Inc."
         assert json.loads(lead.description)["first_name"] == 'Allen "Al"'
 
     def test_returns_false_on_api_failure(self, fake_session):

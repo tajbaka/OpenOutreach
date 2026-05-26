@@ -177,19 +177,12 @@ def lead_profile_by_id(lead_id: int) -> Optional[dict]:
 
 
 def _update_lead_fields(lead, profile: Dict[str, Any]):
-    """Fill blank Lead fields from parsed LinkedIn profile.
-
-    Seed imports are the operator-curated source for greeting names and
-    company routing. Keep those values when present; store the full scraped
-    profile in ``description`` for audit/debug context.
-    """
-    if not lead.first_name:
-        lead.first_name = profile.get("first_name", "") or ""
-    if not lead.last_name:
-        lead.last_name = profile.get("last_name", "") or ""
+    """Update Lead model fields from parsed LinkedIn profile."""
+    lead.first_name = profile.get("first_name", "") or ""
+    lead.last_name = profile.get("last_name", "") or ""
 
     positions = profile.get("positions", [])
-    if positions and not lead.company_name:
+    if positions:
         lead.company_name = positions[0].get("company_name", "") or ""
 
     lead.description = json.dumps(profile, ensure_ascii=False, default=str)
