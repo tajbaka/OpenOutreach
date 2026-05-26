@@ -673,6 +673,7 @@ def run_daemon(session):
                         ", ".join(sorted(claimable_task_types)) or "allowed tasks",
                         wait,
                     )
+                    listener_supervisor.stop()
                     connections.close_all()
                     time.sleep(wait)
                     continue
