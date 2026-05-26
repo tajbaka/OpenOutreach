@@ -20,7 +20,10 @@ def goto_page(session: "AccountSession",
               url_ok: Callable[[str], bool] | None = None,
               ):
     page = session.page
-    action()
+    try:
+        action()
+    except PlaywrightTimeoutError:
+        logger.warning("Navigation action timed out; checking current URL anyway")
     if not page:
         return
 
