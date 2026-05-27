@@ -36,6 +36,10 @@ SELECTORS = {
         '[role="menuitem"]:has-text("Pending"):visible, '
         'a:has-text("Pending"):visible'
     ),
+    "pending_invite_surface": (
+        '[aria-label*="Pending"][aria-label*="withdraw invitation"]:visible, '
+        '[aria-label*="Pending"][aria-label*="invitation sent"]:visible'
+    ),
     "error_toast": 'div[data-test-artdeco-toast-item-type="error"]',
     "more_button": (
         'button[id*="overflow"]:visible, '
@@ -138,6 +142,7 @@ def _invite_surface_visible(session) -> bool:
             SELECTORS["send_without_note"],
             SELECTORS["send_now"],
             SELECTORS["send_invitation"],
+            SELECTORS["pending_invite_surface"],
         )
     )
 
@@ -192,6 +197,27 @@ def _skip_if_email_required(session, public_identifier: str) -> None:
     raise SkipProfile("LinkedIn requires this member's email address before connecting")
 
 
+def _pending_invite_surface_visible(session, *, full_name: str = "") -> bool:
+    pending = session.page.locator(SELECTORS["pending_invite_surface"])
+    count = pending.count()
+    normalized_name = (full_name or "").strip().lower()
+    require_name_match = bool(normalized_name and " " in normalized_name)
+    for idx in range(count):
+        candidate = pending.nth(idx)
+        try:
+            if not candidate.is_visible():
+                continue
+            aria = (candidate.get_attribute("aria-label") or "").lower()
+            text = (candidate.inner_text() or "").lower()
+            surface_text = f"{aria} {text}"
+            if require_name_match and normalized_name not in surface_text:
+                continue
+            return True
+        except Exception:
+            continue
+    return False
+
+
 def send_connection_request(
         session: "AccountSession",
         profile: Dict[str, Any],
@@ -224,7 +250,7 @@ def send_connection_request(
             return ProfileState.QUALIFIED
 
     if note:
-        if not _click_with_note(session, note):
+        if not _click_with_note(session, note, full_name=full_name):
             logger.warning("Could not add note for %s — aborting connection request", public_identifier)
             notify_connect_send_failed(
                 full_name=full_name,
@@ -235,7 +261,7 @@ def send_connection_request(
             )
             return ProfileState.QUALIFIED
     else:
-        if not _click_without_note(session):
+        if not _click_without_note(session, full_name=full_name):
             logger.warning("Could not send no-note invite for %s — aborting connection request", public_identifier)
             notify_connect_send_failed(
                 full_name=full_name,
@@ -474,18 +500,24 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
     return False
 
 
-def _click_with_note(session, note_text: str) -> bool:
+def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
     _wait_for_invite_surface(session)
     current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
     _skip_if_email_required(session, current_public_id)
+    if _pending_invite_surface_visible(session, full_name=full_name):
+        logger.debug("Detected pending invite surface for %s", current_public_id)
+        raise ExistingPendingInvite(current_public_id)
 
     # Poll for the invite modal to appear (may be slow after More → Connect)
     textarea = session.page.locator(SELECTORS["note_textarea"])
     add_note_btn = session.page.locator(SELECTORS["add_note"])
     deadline = time.monotonic() + 5
     while textarea.count() == 0 and add_note_btn.count() == 0:
+        if _pending_invite_surface_visible(session, full_name=full_name):
+            logger.debug("Detected pending invite surface while waiting for note UI for %s", current_public_id)
+            raise ExistingPendingInvite(current_public_id)
         if time.monotonic() > deadline:
             _dump_page_state(session, "no-add-note-no-textarea")
             logger.warning("'Add a note' button + textarea both missing — aborting (artifacts in /tmp/connect-debug/)")
@@ -502,6 +534,9 @@ def _click_with_note(session, note_text: str) -> bool:
     if textarea.count() == 0:
         add_note_btn.first.click()
         session.wait()
+        if _pending_invite_surface_visible(session, full_name=full_name):
+            logger.debug("Detected pending invite surface after Add-a-note click for %s", current_public_id)
+            raise ExistingPendingInvite(current_public_id)
         textarea = session.page.locator(SELECTORS["note_textarea"])
 
     if textarea.count() == 0:
@@ -526,12 +561,15 @@ def _click_with_note(session, note_text: str) -> bool:
     return True
 
 
-def _click_without_note(session) -> bool:
+def _click_without_note(session, *, full_name: str = "") -> bool:
     """Click flow: sends connection request instantly without note."""
     session.wait()
     _wait_for_invite_surface(session)
     current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
     _skip_if_email_required(session, current_public_id)
+    if _pending_invite_surface_visible(session, full_name=full_name):
+        logger.debug("Detected pending invite surface for %s", current_public_id)
+        raise ExistingPendingInvite(current_public_id)
 
     # Click "Send now" / "Send without a note"
     send_btn = session.page.locator(

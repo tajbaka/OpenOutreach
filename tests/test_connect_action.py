@@ -3,27 +3,46 @@ from unittest.mock import Mock, patch
 import pytest
 
 from linkedin.actions.connect import (
+    ExistingPendingInvite,
     SELECTORS,
     _click_with_note,
     _click_without_note,
     _custom_invite_vanity_name,
     _direct_invite_option,
+    _pending_invite_surface_visible,
     _targets_current_profile,
 )
 from linkedin.exceptions import SkipProfile
 
 
 class _Locator:
-    def __init__(self, count=0):
+    def __init__(self, count=0, *, aria_label="", text="", visible=True):
         self._count = count
+        self.aria_label = aria_label
+        self.text = text
+        self.visible = visible
         self.clicked = False
 
     def count(self):
         return self._count
 
+    def nth(self, idx):
+        return self
+
     @property
     def first(self):
         return self
+
+    def is_visible(self):
+        return self.visible
+
+    def get_attribute(self, name):
+        if name == "aria-label":
+            return self.aria_label
+        return None
+
+    def inner_text(self):
+        return self.text
 
     def click(self, *args, **kwargs):
         self.clicked = True
@@ -88,6 +107,28 @@ def _session_with_email_required_dialog():
     return session, cancel
 
 
+def _session_with_pending_invite_surface():
+    pending = _Locator(
+        count=1,
+        aria_label="Pending, click to withdraw invitation sent to Vincent Lu",
+    )
+    page = Mock()
+    page.url = "https://www.linkedin.com/in/vincent-lu-23974233/"
+
+    def locator(selector):
+        if selector == SELECTORS["pending_invite_surface"]:
+            return pending
+        if selector == SELECTORS["email_required_prompt"]:
+            return _Locator(count=0)
+        if selector in (SELECTORS["note_textarea"], SELECTORS["add_note"]):
+            return _Locator(count=0)
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    session = Mock(page=page)
+    return session
+
+
 def test_invite_selector_supports_current_profile_custom_invite_anchor():
     selector = SELECTORS["invite_to_connect"]
 
@@ -130,6 +171,21 @@ def test_direct_invite_option_ignores_recommendation_connects():
     )
 
     assert option is target
+
+
+def test_pending_invite_surface_matches_current_lead_name():
+    session = _session_with_pending_invite_surface()
+
+    assert _pending_invite_surface_visible(session, full_name="Vincent Lu")
+    assert not _pending_invite_surface_visible(session, full_name="Tiffany Hafez")
+
+
+@patch("linkedin.actions.connect._wait_for_invite_surface", return_value=True)
+def test_click_with_note_raises_existing_pending_invite_from_invite_surface(_wait):
+    session = _session_with_pending_invite_surface()
+
+    with pytest.raises(ExistingPendingInvite):
+        _click_with_note(session, "Hi Vincent, would love to connect.", full_name="Vincent Lu")
 
 
 @patch("linkedin.actions.connect._wait_for_invite_surface", return_value=True)
