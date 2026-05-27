@@ -2,6 +2,7 @@
 import logging
 import time
 from typing import Dict, Any
+from urllib.parse import parse_qs, urlparse
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
 from linkedin.browser.nav import find_top_card
@@ -23,6 +24,8 @@ SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
     "invite_to_connect": (
         'button[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'a[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'a[href*="/preload/custom-invite/"]:visible, '
         'button[aria-label*="Connect with"]:visible, '
         'button:has-text("Connect"):visible, '
         '[role="button"]:has-text("Connect"):visible'
@@ -155,6 +158,23 @@ def _wait_for_invite_surface(session, timeout_seconds: float = 6) -> bool:
     return _invite_surface_visible(session)
 
 
+def _custom_invite_vanity_name(href: str) -> str:
+    if "/preload/custom-invite/" not in (href or ""):
+        return ""
+    query = parse_qs(urlparse(href).query)
+    return (query.get("vanityName") or query.get("vanityname") or [""])[0].strip().lower()
+
+
+def _targets_current_profile(clickable, *, public_identifier: str, full_name: str) -> bool:
+    public_identifier = (public_identifier or "").strip().lower()
+    href = (clickable.get_attribute("href") or "").strip()
+
+    vanity_name = _custom_invite_vanity_name(href)
+    if vanity_name:
+        return bool(public_identifier and vanity_name == public_identifier)
+    return True
+
+
 def _skip_if_email_required(session, public_identifier: str) -> None:
     """LinkedIn sometimes requires the lead's email before sending an invite."""
     prompt = session.page.locator(SELECTORS["email_required_prompt"])
@@ -193,9 +213,9 @@ def send_connection_request(
         or "Unknown lead"
     )
 
-    direct_connected = _connect_direct(session)
+    direct_connected = _connect_direct(session, public_identifier, full_name)
     if not direct_connected:
-        more_result = _connect_via_more(session)
+        more_result = _connect_via_more(session, public_identifier, full_name)
         if more_result == ProfileState.PENDING:
             logger.debug("Profile %s already has a pending invite in the More menu", public_identifier)
             raise ExistingPendingInvite(public_identifier or "")
@@ -238,14 +258,35 @@ def _check_weekly_invitation_limit(session):
         raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
 
 
-def _connect_direct(session):
+def _direct_invite_option(top_card, *, public_identifier: str, full_name: str):
+    direct = top_card.locator(SELECTORS["invite_to_connect"])
+    count = direct.count()
+    for idx in range(count):
+        candidate = direct.nth(idx)
+        try:
+            if candidate.is_visible() and _targets_current_profile(
+                candidate,
+                public_identifier=public_identifier,
+                full_name=full_name,
+            ):
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def _connect_direct(session, public_identifier: str, full_name: str):
     session.wait()
     top_card = find_top_card(session)
-    direct = top_card.locator(SELECTORS["invite_to_connect"])
-    if direct.count() == 0:
+    direct = _direct_invite_option(
+        top_card,
+        public_identifier=public_identifier,
+        full_name=full_name,
+    )
+    if direct is None:
         return False
 
-    direct.first.click()
+    direct.click()
     logger.debug("Clicked direct 'Connect' button")
     session.wait()
 
@@ -256,7 +297,7 @@ def _connect_direct(session):
     return True
 
 
-def _resolve_dropdown_clickable(session, candidate):
+def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, full_name: str):
     """Given a candidate element found by text/aria-label, walk up the DOM to
     find the nearest <a> or <button> ancestor that belongs to a dropdown menu
     (not a sidebar card).  Returns a Playwright locator or None."""
@@ -305,13 +346,25 @@ def _resolve_dropdown_clickable(session, candidate):
         for ancestor_sel in ('xpath=ancestor::a[1]', 'xpath=ancestor::button[1]'):
             try:
                 ancestor = candidate.locator(ancestor_sel)
-                if ancestor.count() > 0 and ancestor.first.is_visible():
+                if (
+                    ancestor.count() > 0
+                    and ancestor.first.is_visible()
+                    and _targets_current_profile(
+                        ancestor.first,
+                        public_identifier=public_identifier,
+                        full_name=full_name,
+                    )
+                ):
                     return ancestor.first
             except Exception:
                 continue
         # candidate itself might be the <a>/<button>
         tag = candidate.evaluate("el => el.tagName?.toLowerCase()")
-        if tag in ('a', 'button'):
+        if tag in ('a', 'button') and _targets_current_profile(
+            candidate,
+            public_identifier=public_identifier,
+            full_name=full_name,
+        ):
             return candidate
         return None
     except Exception:
@@ -323,7 +376,7 @@ def _pending_surface_visible(session) -> bool:
     return session.page.locator(SELECTORS["pending_menuitem"]).count() > 0
 
 
-def _connect_via_more(session):
+def _connect_via_more(session, public_identifier: str, full_name: str):
     session.wait()
     top_card = find_top_card(session)
 
@@ -370,7 +423,12 @@ def _connect_via_more(session):
                     continue
                 # Walk up to the nearest clickable ancestor (a/button) that
                 # lives inside a dropdown — not a sidebar card.
-                clickable = _resolve_dropdown_clickable(session, candidate)
+                clickable = _resolve_dropdown_clickable(
+                    session,
+                    candidate,
+                    public_identifier=public_identifier,
+                    full_name=full_name,
+                )
                 if clickable is not None:
                     connect_option = clickable
                     break
