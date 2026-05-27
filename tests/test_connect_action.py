@@ -10,6 +10,14 @@ from linkedin.actions.connect import (
 from linkedin.exceptions import SkipProfile
 
 
+def test_direct_connect_selector_supports_anchor_invite_variants():
+    selector = SELECTORS["invite_to_connect"]
+
+    assert 'a[aria-label*="Invite"][aria-label*="to connect"]:visible' in selector
+    assert 'a[href*="/preload/custom-invite/"]:visible' in selector
+    assert 'a:has-text("Connect"):visible' in selector
+
+
 class _Locator:
     def __init__(self, count=0):
         self._count = count
