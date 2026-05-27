@@ -4,7 +4,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from linkedin.models import ActionLog
+from linkedin.models import ActionLog, active_day_start
 
 
 @pytest.mark.django_db
@@ -75,6 +75,22 @@ class TestCanExecuteReset:
         # Backdate the action to yesterday
         ActionLog.objects.update(created_at=timezone.now() - timedelta(days=1))
         assert lp.can_execute(ActionLog.ActionType.CONNECT)
+
+    def test_daily_count_uses_active_timezone_midnight(self, fake_session):
+        lp = fake_session.linkedin_profile
+        lp.connect_daily_limit = 1
+        lp.save(update_fields=["connect_daily_limit"])
+
+        today_start = active_day_start()
+        lp.record_action(ActionLog.ActionType.CONNECT, fake_session.campaign)
+        ActionLog.objects.update(created_at=today_start - timedelta(minutes=1))
+        assert lp.can_execute(ActionLog.ActionType.CONNECT)
+
+        lp.record_action(ActionLog.ActionType.CONNECT, fake_session.campaign)
+        ActionLog.objects.filter(created_at__gte=today_start).update(
+            created_at=today_start + timedelta(minutes=1)
+        )
+        assert not lp.can_execute(ActionLog.ActionType.CONNECT)
 
     def test_weekly_reset_via_old_actions(self, fake_session):
         lp = fake_session.linkedin_profile

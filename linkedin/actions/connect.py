@@ -53,6 +53,13 @@ SELECTORS = {
         'textarea[placeholder*="message" i]'
     ),
     "send_invitation": 'button[aria-label*="Send invitation"], button:has-text("Send invitation"), button:has-text("Send")',
+    "email_required_prompt": (
+        'div.artdeco-modal__content:has-text("To verify this member knows you"):has(input[name="email"]), '
+        'label:has-text("To verify this member knows you"):has(input[name="email"]), '
+        'label:has-text("please enter their email to connect"):has(input[type="email"]), '
+        ':text("To verify this member knows you")'
+    ),
+    "invite_cancel": 'div[role="dialog"] button:has-text("Cancel"), button:has-text("Cancel")',
 }
 
 
@@ -146,6 +153,23 @@ def _wait_for_invite_surface(session, timeout_seconds: float = 6) -> bool:
             pass
         time.sleep(0.2)
     return _invite_surface_visible(session)
+
+
+def _skip_if_email_required(session, public_identifier: str) -> None:
+    """LinkedIn sometimes requires the lead's email before sending an invite."""
+    prompt = session.page.locator(SELECTORS["email_required_prompt"])
+    if prompt.count() == 0:
+        return
+
+    logger.info("Skipping %s — LinkedIn requires email verification to connect", public_identifier)
+    cancel = session.page.locator(SELECTORS["invite_cancel"])
+    try:
+        if cancel.count() > 0:
+            cancel.first.click()
+            session.wait()
+    except Exception:
+        logger.debug("Could not dismiss email-required invite dialog for %s", public_identifier)
+    raise SkipProfile("LinkedIn requires this member's email address before connecting")
 
 
 def send_connection_request(
@@ -396,6 +420,8 @@ def _click_with_note(session, note_text: str) -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
     _wait_for_invite_surface(session)
+    current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+    _skip_if_email_required(session, current_public_id)
 
     # Poll for the invite modal to appear (may be slow after More → Connect)
     textarea = session.page.locator(SELECTORS["note_textarea"])
@@ -405,7 +431,6 @@ def _click_with_note(session, note_text: str) -> bool:
         if time.monotonic() > deadline:
             _dump_page_state(session, "no-add-note-no-textarea")
             logger.warning("'Add a note' button + textarea both missing — aborting (artifacts in /tmp/connect-debug/)")
-            current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
             _record_connect_issue(
                 session,
                 current_public_id,
@@ -424,7 +449,6 @@ def _click_with_note(session, note_text: str) -> bool:
     if textarea.count() == 0:
         _dump_page_state(session, "no-textarea-after-add-note")
         logger.warning("Note textarea not found after Add-a-note click — aborting (artifacts in /tmp/connect-debug/)")
-        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
             current_public_id,
@@ -435,6 +459,7 @@ def _click_with_note(session, note_text: str) -> bool:
 
     textarea.first.fill(note_text)
     session.wait()
+    _skip_if_email_required(session, current_public_id)
 
     send_btn = session.page.locator(SELECTORS["send_invitation"])
     send_btn.first.click(force=True)
@@ -447,6 +472,8 @@ def _click_without_note(session) -> bool:
     """Click flow: sends connection request instantly without note."""
     session.wait()
     _wait_for_invite_surface(session)
+    current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+    _skip_if_email_required(session, current_public_id)
 
     # Click "Send now" / "Send without a note"
     send_btn = session.page.locator(
@@ -455,7 +482,6 @@ def _click_without_note(session) -> bool:
     if send_btn.count() == 0:
         _dump_page_state(session, "no-send-now-button")
         logger.warning("Send-now button missing on no-note flow — aborting (artifacts in /tmp/connect-debug/)")
-        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
             current_public_id,

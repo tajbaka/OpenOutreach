@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -10,6 +11,7 @@ from django.db import models
 from django.utils import timezone
 
 from linkedin.conf import (
+    ACTIVE_TIMEZONE,
     CONNECT_DAILY_LIMIT,
     CONNECT_WEEKLY_LIMIT,
     FOLLOW_UP_DAILY_LIMIT,
@@ -29,6 +31,33 @@ _RATE_LIMIT_FIELDS = {
     "connect": ("connect_daily_limit", "connect_weekly_limit"),
     "follow_up": ("follow_up_daily_limit", None),
 }
+
+
+def active_local_date():
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    return timezone.localtime(timezone=tz).date()
+
+
+def active_day_start():
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    return timezone.make_aware(
+        now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None),
+        timezone=tz,
+    )
+
+
+def active_week_start():
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    monday = (now - timedelta(days=now.weekday())).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+        tzinfo=None,
+    )
+    return timezone.make_aware(monday, timezone=tz)
 
 
 class Campaign(models.Model):
@@ -151,7 +180,7 @@ class LinkedInProfile(models.Model):
         """Check if the action is allowed under daily/weekly rate limits."""
         # Reset exhaustion flag on a new day
         exhausted_date = self._exhausted.get(action_type)
-        if exhausted_date is not None and exhausted_date != date.today():
+        if exhausted_date is not None and exhausted_date != active_local_date():
             del self._exhausted[action_type]
         if action_type in self._exhausted:
             return False
@@ -182,31 +211,25 @@ class LinkedInProfile(models.Model):
 
     def mark_exhausted(self, action_type: str) -> None:
         """Mark the action type as externally exhausted for today."""
-        self._exhausted[action_type] = date.today()
+        self._exhausted[action_type] = active_local_date()
         logger.warning("Rate limit: %s externally exhausted for today", action_type)
 
     def _daily_count(self, action_type: str) -> int:
-        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
         return ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
-            created_at__gte=today_start,
+            created_at__gte=active_day_start(),
         ).count()
 
     def _total_daily_count(self) -> int:
-        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
         return ActionLog.objects.filter(
             linkedin_profile=self,
-            created_at__gte=today_start,
+            created_at__gte=active_day_start(),
         ).count()
 
     def _weekly_count(self, action_type: str) -> int:
-        now = timezone.now()
-        monday = (now - timedelta(days=now.weekday())).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-        )
         return ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
-            created_at__gte=monday,
+            created_at__gte=active_week_start(),
         ).count()
 
     def __str__(self):

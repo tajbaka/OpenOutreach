@@ -20,7 +20,7 @@ from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS, ENABLE_SWEEP_CONNECTI
 from linkedin.db.deals import set_profile_state
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
-from linkedin.models import ActionLog, Task
+from linkedin.models import ActionLog, Task, active_day_start
 from linkedin.notifications.slack import (
     latest_reply_from_lead,
     notify_connection_accepted,
@@ -191,9 +191,7 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
     from linkedin.operators import resolve_operator
 
     try:
-        today_start = timezone.now().replace(
-            hour=0, minute=0, second=0, microsecond=0,
-        )
+        today_start = active_day_start()
         connects_today = ActionLog.objects.filter(
             linkedin_profile=session.linkedin_profile,
             action_type=ActionLog.ActionType.CONNECT,
