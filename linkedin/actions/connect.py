@@ -14,6 +14,11 @@ from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
 
+
+class ExistingPendingInvite(Exception):
+    """Raised when LinkedIn shows an invite was already pending before send."""
+
+
 SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
     "invite_to_connect": (
@@ -169,7 +174,7 @@ def send_connection_request(
         more_result = _connect_via_more(session)
         if more_result == ProfileState.PENDING:
             logger.debug("Profile %s already has a pending invite in the More menu", public_identifier)
-            return ProfileState.PENDING
+            raise ExistingPendingInvite(public_identifier or "")
         if not more_result:
             logger.debug("Connect button not found for %s — staying at current stage", public_identifier)
             return ProfileState.QUALIFIED
@@ -516,5 +521,8 @@ if __name__ == "__main__":
         sender = resolve_operator(session.linkedin_profile.linkedin_username)
         note = args.note or build_connection_note(lead.pk if lead else None, sender=sender)
         print(f"Note: {note}")
-        status = send_connection_request(session=session, profile=test_profile, note=note)
+        try:
+            status = send_connection_request(session=session, profile=test_profile, note=note)
+        except ExistingPendingInvite:
+            status = ProfileState.PENDING
         print(f"Finished → Status: {status.value}")

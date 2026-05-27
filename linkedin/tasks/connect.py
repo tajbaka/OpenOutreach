@@ -302,7 +302,7 @@ def recommended_action_delay(profile, action_type: str) -> float:
 
 
 def handle_connect(task, session, qualifiers):
-    from linkedin.actions.connect import send_connection_request
+    from linkedin.actions.connect import ExistingPendingInvite, send_connection_request
     from linkedin.actions.status import get_connection_status
 
     # Read at call-time (via the module attr) so tests can `@patch
@@ -444,6 +444,12 @@ def handle_connect(task, session, qualifiers):
         logger.warning("Rate limited: %s", e)
         session.linkedin_profile.mark_exhausted(ActionLog.ActionType.CONNECT)
         enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
+        return
+    except ExistingPendingInvite:
+        logger.info("%s PENDING (existing invite)", public_id)
+        set_profile_state(session, public_id, ProfileState.PENDING.value)
+        enqueue_sweep_connections()
+        enqueue_connect(campaign_id, delay_seconds=10)
         return
     except SkipProfile as e:
         logger.warning("Skipping %s: %s", public_id, e)

@@ -149,6 +149,29 @@ class TestHandleConnect:
     @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.connect.send_connection_request")
     @patch("linkedin.actions.status.get_connection_status")
+    def test_existing_pending_invite_does_not_record_fresh_send(
+        self, mock_status, mock_send, mock_strategy, fake_session,
+    ):
+        from crm.models import Deal
+        from linkedin.actions.connect import ExistingPendingInvite
+
+        _make_qualified(fake_session)
+        Deal.objects.filter(campaign=fake_session.campaign).update(sent_note="old note")
+        mock_strategy.return_value = _mock_strategy(self._candidate())
+        mock_status.return_value = ProfileState.QUALIFIED
+        mock_send.side_effect = ExistingPendingInvite("alice")
+
+        task = _make_task(Task.TaskType.CONNECT, {"campaign_id": fake_session.campaign.pk})
+        qualifiers = _build_context(fake_session)
+        handle_connect(task, fake_session, qualifiers)
+
+        _assert_deal_state(fake_session, "alice", ProfileState.PENDING)
+        assert ActionLog.objects.filter(action_type=ActionLog.ActionType.CONNECT).count() == 0
+        assert Deal.objects.get(campaign=fake_session.campaign).sent_note == "old note"
+
+    @patch("linkedin.tasks.connect.strategy_for")
+    @patch("linkedin.actions.connect.send_connection_request")
+    @patch("linkedin.actions.status.get_connection_status")
     def test_enqueues_sweep_after_connect(self, mock_status, mock_send, mock_strategy, fake_session):
         _make_qualified(fake_session)
         mock_strategy.return_value = _mock_strategy(self._candidate())
