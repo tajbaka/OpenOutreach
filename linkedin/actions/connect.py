@@ -23,11 +23,8 @@ SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
     "invite_to_connect": (
         'button[aria-label*="Invite"][aria-label*="to connect"]:visible, '
-        'a[aria-label*="Invite"][aria-label*="to connect"]:visible, '
-        'a[href*="/preload/custom-invite/"]:visible, '
         'button[aria-label*="Connect with"]:visible, '
         'button:has-text("Connect"):visible, '
-        'a:has-text("Connect"):visible, '
         '[role="button"]:has-text("Connect"):visible'
     ),
     "pending_menuitem": (
