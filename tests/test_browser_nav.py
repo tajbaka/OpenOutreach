@@ -20,3 +20,20 @@ def test_goto_page_accepts_action_timeout_when_url_matches():
     )
 
     session.wait.assert_called_once()
+
+
+def test_goto_page_accepts_session_wait_timeout_when_url_matches():
+    page = Mock()
+    page.url = "https://www.linkedin.com/in/example/"
+    page.wait_for_url.return_value = None
+    session = Mock(page=page)
+    session.wait.side_effect = PlaywrightTimeoutError("load state timed out")
+
+    goto_page(
+        session,
+        action=Mock(),
+        expected_url_pattern="/in/example",
+        error_message="Failed to navigate",
+    )
+
+    session.wait.assert_called_once()

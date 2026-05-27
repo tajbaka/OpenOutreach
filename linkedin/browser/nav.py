@@ -32,7 +32,10 @@ def goto_page(session: "AccountSession",
     except PlaywrightTimeoutError:
         pass  # we still continue and check URL below
 
-    session.wait()
+    try:
+        session.wait()
+    except PlaywrightTimeoutError:
+        logger.warning("Navigation load wait timed out; checking current URL anyway")
 
     current = unquote(page.url)
     if expected_url_pattern not in current:
