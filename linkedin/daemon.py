@@ -57,6 +57,13 @@ _HANDLERS = {
 _LOW_POOL_ALERTED: set[int] = set()
 
 
+def _active_campaigns(session):
+    """Campaigns this daemon should actively work."""
+    from linkedin.models import Campaign
+
+    return session.campaigns.filter(status=Campaign.Status.ACTIVE)
+
+
 class _FreemiumRotator:
     """Logs rotating freemium messages every *every* task executions."""
 
@@ -275,7 +282,7 @@ def heal_tasks(session):
         from crm.models import Deal
         promoted = Deal.objects.filter(
             state=ProfileState.QUALIFIED,
-            campaign__in=session.campaigns,
+            campaign__in=_active_campaigns(session),
         ).update(state=ProfileState.READY_TO_CONNECT)
         if promoted:
             logger.info(
@@ -287,7 +294,7 @@ def heal_tasks(session):
     # forward to now so a stale long-delayed task from a prior run doesn't
     # leave the daemon idle right after startup. Subsequent connects self-pace
     # via recommended_action_delay() in handle_connect's reschedule path.
-    for campaign in session.campaigns:
+    for campaign in _active_campaigns(session):
         if _campaign_has_connect_work(campaign):
             _bring_task_forward(
                 Task.TaskType.CONNECT,
@@ -347,7 +354,7 @@ def heal_tasks(session):
     from linkedin.operators import resolve_operator
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
 
-    for campaign in session.campaigns:
+    for campaign in _active_campaigns(session):
         session.campaign = campaign
         connected_deals = Deal.objects.filter(
             state=ProfileState.CONNECTED,
@@ -556,9 +563,9 @@ def run_daemon(session):
     # Startup healing
     heal_tasks(session)
 
-    campaigns = list(session.campaigns)
+    campaigns = list(_active_campaigns(session))
     if not campaigns:
-        logger.error("No campaigns found — cannot start daemon")
+        logger.error("No active campaigns found — cannot start daemon")
         return
 
     # Operator scoping — derived once at startup. Passed to Task.claim_next

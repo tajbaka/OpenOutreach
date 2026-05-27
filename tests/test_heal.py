@@ -6,7 +6,7 @@ from django.utils import timezone
 from linkedin.daemon import _ensure_connect_task_for_campaign, heal_tasks
 from linkedin.db.deals import set_profile_state
 from linkedin.db.leads import create_enriched_lead, promote_lead_to_deal
-from linkedin.models import Task
+from linkedin.models import Campaign, Task
 from linkedin.enums import ProfileState
 
 
@@ -67,6 +67,19 @@ class TestHealTasks:
             status=Task.Status.PENDING,
             payload__campaign_id=fake_session.campaign.pk,
         ).count() == 1
+
+    def test_does_not_seed_connect_for_finished_campaign(self, fake_session):
+        fake_session.campaign.status = Campaign.Status.FINISHED
+        fake_session.campaign.save(update_fields=["status"])
+        _make_ready(fake_session, "alice")
+
+        heal_tasks(fake_session)
+
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).exists()
 
     def test_connect_recovery_creates_missing_task_when_work_remains(self, fake_session):
         _make_ready(fake_session, "alice")
@@ -133,6 +146,19 @@ class TestHealTasks:
         _make_connected(fake_session, "alice")
         heal_tasks(fake_session)
         assert Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exists()
+
+    def test_does_not_seed_follow_up_for_finished_campaign(self, fake_session):
+        fake_session.campaign.status = Campaign.Status.FINISHED
+        fake_session.campaign.save(update_fields=["status"])
+        _make_connected(fake_session, "alice")
+
+        heal_tasks(fake_session)
+
+        assert not Task.objects.filter(
             task_type=Task.TaskType.FOLLOW_UP,
             status=Task.Status.PENDING,
             payload__public_id="alice",

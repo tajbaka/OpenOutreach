@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import select
 import sys
 
 from django.core.management import call_command
@@ -24,6 +25,8 @@ from linkedin.conf import LISTENER_CATCHUP_GAP_MINUTES
 from linkedin.realtime.heartbeat import read_heartbeat
 
 logger = logging.getLogger(__name__)
+
+BACKFILL_PROMPT_TIMEOUT_SECONDS = 5
 
 
 def compute_gap_minutes(username: str, now=None) -> float:
@@ -35,11 +38,33 @@ def compute_gap_minutes(username: str, now=None) -> float:
     return (now - last).total_seconds() / 60.0
 
 
+def _prompt_yes_no_default_no(prompt: str, *, timeout_seconds: int) -> str:
+    """Prompt for y/N, defaulting to no after `timeout_seconds`.
+
+    `input()` cannot time out, so use select on stdin for the daemon's TTY
+    startup prompt. In test/non-standard stdin environments where select is not
+    supported, fall back to `input()` so existing mocks still exercise the
+    branch.
+    """
+    print(prompt, end="", flush=True)
+    try:
+        readable, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
+    except (OSError, ValueError):
+        return input().strip().lower()
+
+    if not readable:
+        print("n")
+        return "n"
+
+    return sys.stdin.readline().strip().lower()
+
+
 def run_startup_catchup(
     *,
     username: str,
     account_label: str,
     interactive: bool | None = None,
+    prompt_timeout_seconds: int = BACKFILL_PROMPT_TIMEOUT_SECONDS,
 ) -> None:
     """Surface (and optionally backfill) the listener's missed window.
 
@@ -78,10 +103,11 @@ def run_startup_catchup(
         )
         return
 
-    answer = input(
+    answer = _prompt_yes_no_default_no(
         f"Listener was off {gap_desc}. Run backfill_messages to catch up "
-        f"first? [y/N] "
-    ).strip().lower()
+        f"first? [y/N] ",
+        timeout_seconds=prompt_timeout_seconds,
+    )
     if answer == "y":
         logger.info("Running backfill_messages catch-up for account=%s", account_label)
         call_command(

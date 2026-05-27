@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import random
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -22,12 +23,14 @@ from linkedin.conf import (
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     CONNECT_DAILY_LIMIT,
+    ENABLE_ACTIVE_HOURS,
     ENABLE_CONNECT,
     ENABLE_PACING_CATCH_UP,
     FOLLOW_UP_DAILY_LIMIT,
     OUR_COMPANY_NAME,
     PACING_CATCH_UP_MAX_SPEED_MULTIPLIER,
     OUR_WEBSITE_URL,
+    REST_DAYS,
 )
 from linkedin.db.deals import increment_connect_attempts, set_profile_state
 from linkedin.db.leads import disqualify_lead
@@ -162,6 +165,30 @@ def _seconds_until_tomorrow() -> float:
     return (tomorrow - now).total_seconds()
 
 
+def _seconds_until_next_active_start() -> float:
+    if not ENABLE_ACTIVE_HOURS:
+        return _seconds_until_tomorrow()
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    candidate = timezone.make_aware(
+        now.replace(hour=ACTIVE_START_HOUR, minute=0, second=0, microsecond=0, tzinfo=None),
+        timezone=tz,
+    )
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    while candidate.weekday() in REST_DAYS:
+        candidate += timedelta(days=1)
+    return max((candidate - now).total_seconds(), 0.0)
+
+
+def _outside_active_window() -> bool:
+    if not ENABLE_ACTIVE_HOURS:
+        return False
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.localtime(timezone=tz)
+    return now.weekday() in REST_DAYS or not (ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR)
+
+
 def _active_window_progress_seconds(profile, action_type: str) -> tuple[float, float]:
     """Return (remaining, normal_window) seconds in ACTIVE_TIMEZONE.
 
@@ -265,10 +292,13 @@ def recommended_action_delay(profile, action_type: str) -> float:
         base_delay = max(dynamic_average, fastest_allowed_delay)
     else:
         base_delay = max(full_window_average, dynamic_average)
-    return max(
+    delay = max(
         CAMPAIGN_CONFIG["min_action_interval"],
         random.uniform(base_delay * 0.7, base_delay * 1.3),
     )
+    if _outside_active_window() and not _is_behind_normal_window_pace(profile, action_type):
+        delay = min(delay, _seconds_until_next_active_start())
+    return delay
 
 
 def handle_connect(task, session, qualifiers):
@@ -301,7 +331,7 @@ def handle_connect(task, session, qualifiers):
 
     # --- Rate limit check ---
     if not session.linkedin_profile.can_execute(ActionLog.ActionType.CONNECT):
-        enqueue_connect(campaign_id, delay_seconds=_seconds_until_tomorrow())
+        enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
         return
 
     # --- Get candidate ---
@@ -318,12 +348,26 @@ def handle_connect(task, session, qualifiers):
         strategy.pre_connect(session, public_id)
 
     from linkedin.db.urls import public_id_to_url
-    from crm.models import Deal
+    from crm.models import ClosingReason, Deal
 
     deal = Deal.objects.filter(
         lead__linkedin_url=public_id_to_url(public_id),
         campaign=session.campaign,
-    ).first()
+    ).select_related("lead").first()
+    if deal:
+        from linkedin.suppression import lead_suppression_match
+
+        suppression = lead_suppression_match(deal.lead)
+        if suppression:
+            reason = f"Suppression: {suppression.value}"
+            logger.warning("connect: %s blocked by %s - skipping send", public_id, reason)
+            disqualify_lead(public_id)
+            set_profile_state(session, public_id, ProfileState.FAILED.value, reason=reason)
+            deal.closing_reason = ClosingReason.DISQUALIFIED
+            deal.reason = reason
+            deal.save(update_fields=["closing_reason", "reason"])
+            enqueue_connect(campaign_id, delay_seconds=0)
+            return
     reason = deal.reason if deal else ""
     stats = strategy.qualifier.explain(candidate, session) if strategy.qualifier else ""
     logger.info("[%s] %s", campaign, colored("\u25b6 connect", "cyan", attrs=["bold"]))
@@ -399,7 +443,7 @@ def handle_connect(task, session, qualifiers):
     except ReachedConnectionLimit as e:
         logger.warning("Rate limited: %s", e)
         session.linkedin_profile.mark_exhausted(ActionLog.ActionType.CONNECT)
-        enqueue_connect(campaign_id, delay_seconds=_seconds_until_tomorrow())
+        enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
         return
     except SkipProfile as e:
         logger.warning("Skipping %s: %s", public_id, e)

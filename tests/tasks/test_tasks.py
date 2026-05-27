@@ -1,7 +1,8 @@
 # tests/tasks/test_tasks.py
 import pytest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
+from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
@@ -241,6 +242,28 @@ class TestHandleConnect:
         # Dynamic average would be 570s, but the full-window average floor is
         # 576s, so the lower jitter bound becomes 403.2s.
         assert delay == pytest.approx(403.2)
+
+    @patch("linkedin.tasks.connect.timezone.localtime")
+    @patch("linkedin.tasks.connect.random.uniform", return_value=50_000.0)
+    @patch("linkedin.tasks.connect._actions_sent_today", return_value=50)
+    @patch("linkedin.tasks.connect.ENABLE_ACTIVE_HOURS", True)
+    @patch("linkedin.tasks.connect.ENABLE_PACING_CATCH_UP", True)
+    @patch("linkedin.tasks.connect.ACTIVE_START_HOUR", 9)
+    @patch("linkedin.tasks.connect.ACTIVE_END_HOUR", 17)
+    @patch("linkedin.tasks.connect.ACTIVE_TIMEZONE", "UTC")
+    @patch("linkedin.tasks.connect.REST_DAYS", (5, 6))
+    @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
+    def test_recommended_action_delay_caps_after_hours_at_next_active_start(
+        self, _sent, _mock_uniform, mock_localtime, fake_session,
+    ):
+        mock_localtime.return_value = datetime(2026, 5, 25, 22, 0, tzinfo=ZoneInfo("UTC"))
+        fake_session.linkedin_profile.connect_daily_limit = 50
+
+        delay = recommended_action_delay(
+            fake_session.linkedin_profile, ActionLog.ActionType.CONNECT,
+        )
+
+        assert delay == pytest.approx(11 * 3600)
 
     @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.status.get_connection_status")

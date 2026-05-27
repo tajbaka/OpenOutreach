@@ -3,13 +3,38 @@ from django.contrib import admin
 
 from chat.models import ChatMessage
 
-from linkedin.models import ActionLog, Campaign, ConnectIssueLog, LinkedInProfile, SearchKeyword, Task
+from linkedin.models import (
+    ActionLog,
+    Campaign,
+    ConnectIssueLog,
+    LinkedInProfile,
+    OutreachSuppression,
+    SearchKeyword,
+    Task,
+)
 
 
 @admin.register(Campaign)
 class CampaignAdmin(admin.ModelAdmin):
-    list_display = ("name", "user", "booking_link", "is_freemium", "action_fraction")
+    list_display = (
+        "name", "user", "status", "booking_link", "is_freemium", "action_fraction",
+    )
+    list_filter = ("status", "is_freemium")
     raw_id_fields = ("user",)
+
+
+@admin.register(OutreachSuppression)
+class OutreachSuppressionAdmin(admin.ModelAdmin):
+    list_display = ("kind", "value", "domain", "email", "active", "reason", "updated_at")
+    list_filter = ("kind", "active")
+    search_fields = ("value", "aliases", "domain", "email", "linkedin_url", "public_identifier", "reason")
+    readonly_fields = ("normalized_value", "normalized_aliases", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        from linkedin.suppression import apply_suppression_to_existing_leads
+
+        apply_suppression_to_existing_leads(obj)
 
 
 @admin.register(LinkedInProfile)

@@ -32,11 +32,22 @@ _RATE_LIMIT_FIELDS = {
 
 
 class Campaign(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        DISABLED = "disabled", "Disabled"
+        FINISHED = "finished", "Finished"
+
     name = models.CharField(max_length=200, unique=True)
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="campaigns",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
     )
     product_docs = models.TextField(blank=True)
     campaign_objective = models.TextField(blank=True)
@@ -51,6 +62,65 @@ class Campaign(models.Model):
 
     class Meta:
         app_label = "linkedin"
+
+
+class OutreachSuppression(models.Model):
+    class Kind(models.TextChoices):
+        COMPANY = "company", "Company"
+        LEAD = "lead", "Lead"
+
+    kind = models.CharField(max_length=20, choices=Kind.choices, db_index=True)
+    value = models.CharField(max_length=200)
+    normalized_value = models.CharField(max_length=200, editable=False, db_index=True)
+    aliases = models.JSONField(default=list, blank=True)
+    normalized_aliases = models.JSONField(default=list, blank=True, editable=False)
+    domain = models.CharField(max_length=200, blank=True, default="", db_index=True)
+    email = models.EmailField(max_length=200, blank=True, default="", db_index=True)
+    linkedin_url = models.URLField(max_length=500, blank=True, default="", db_index=True)
+    public_identifier = models.CharField(max_length=200, blank=True, default="", db_index=True)
+    reason = models.TextField(blank=True, default="")
+    active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        from linkedin.suppression import (
+            normalize_company_name,
+            normalize_domain,
+            normalize_person_name,
+        )
+
+        normalizer = (
+            normalize_company_name
+            if self.kind == self.Kind.COMPANY
+            else normalize_person_name
+        )
+        self.normalized_value = normalizer(self.value)
+        self.normalized_aliases = [
+            norm for alias in (self.aliases or [])
+            if (norm := normalizer(str(alias)))
+        ]
+        self.domain = normalize_domain(self.domain)
+        self.email = (self.email or "").strip().lower()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.get_kind_display()}: {self.value}"
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(
+                fields=["active", "kind", "normalized_value"],
+                name="linkedin_ou_active_1d460f_idx",
+            ),
+            models.Index(fields=["active", "domain"], name="linkedin_ou_active_d26b9b_idx"),
+            models.Index(fields=["active", "email"], name="linkedin_ou_active_e27ce4_idx"),
+            models.Index(
+                fields=["active", "public_identifier"],
+                name="linkedin_ou_active_5c24e8_idx",
+            ),
+        ]
 
 
 class LinkedInProfile(models.Model):

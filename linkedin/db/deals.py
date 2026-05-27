@@ -56,6 +56,7 @@ def _deals_at_state(session, state: ProfileState) -> list:
     qs = Deal.objects.filter(
         state=state,
         campaign=session.campaign,
+        lead__disqualified=False,
     ).select_related("lead").order_by("id")
     return [_deal_to_profile_dict(d) for d in qs]
 

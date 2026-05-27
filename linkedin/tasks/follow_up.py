@@ -55,7 +55,7 @@ def handle_follow_up(task, session, qualifiers):
 
     # Lazy imports so unit tests that don't touch the send path don't pull
     # in playwright / browser action modules.
-    from crm.models import Deal
+    from crm.models import ClosingReason, Deal
     from linkedin.actions.message import send_raw_message
     from linkedin.db.messages import lead_outbound_operators
     from linkedin.operators import resolve_operator
@@ -98,6 +98,20 @@ def handle_follow_up(task, session, qualifiers):
     if not deal:
         logger.warning("follow_up: no Deal for %s in campaign %s — skipping",
                        public_id, session.campaign)
+        return
+
+    from linkedin.suppression import lead_suppression_match
+
+    suppression = lead_suppression_match(deal.lead)
+    if suppression:
+        reason = f"Suppression: {suppression.value}"
+        logger.warning("follow_up: %s blocked by %s - skipping send", public_id, reason)
+        deal.lead.disqualified = True
+        deal.lead.save(update_fields=["disqualified"])
+        set_profile_state(session, public_id, "Failed", reason=reason)
+        deal.closing_reason = ClosingReason.DISQUALIFIED
+        deal.reason = reason
+        deal.save(update_fields=["closing_reason", "reason"])
         return
 
     # Owner-scoping guard (second line of defense — claim_next already

@@ -46,7 +46,7 @@ def test_large_gap_interactive_yes_runs_backfill():
     old = timezone.now() - timedelta(hours=9)
     with patch("linkedin.realtime.catchup.read_heartbeat", return_value=old), \
          patch("linkedin.realtime.catchup.call_command") as mock_cmd, \
-         patch("builtins.input", return_value="y"):
+         patch("linkedin.realtime.catchup._prompt_yes_no_default_no", return_value="y"):
         catchup.run_startup_catchup(
             username="arian@x.com", account_label="primary", interactive=True,
         )
@@ -59,7 +59,7 @@ def test_large_gap_interactive_no_skips_backfill():
     old = timezone.now() - timedelta(hours=9)
     with patch("linkedin.realtime.catchup.read_heartbeat", return_value=old), \
          patch("linkedin.realtime.catchup.call_command") as mock_cmd, \
-         patch("builtins.input", return_value="n"):
+         patch("linkedin.realtime.catchup._prompt_yes_no_default_no", return_value="n"):
         catchup.run_startup_catchup(
             username="arian@x.com", account_label="primary", interactive=True,
         )
@@ -72,13 +72,13 @@ def test_git_pull_restart_bypasses_interactive_prompt(monkeypatch):
 
     with patch("linkedin.realtime.catchup.read_heartbeat", return_value=old), \
          patch("linkedin.realtime.catchup.call_command") as mock_cmd, \
-         patch("builtins.input") as mock_input:
+         patch("linkedin.realtime.catchup._prompt_yes_no_default_no") as mock_prompt:
         catchup.run_startup_catchup(
             username="arian@x.com", account_label="primary", interactive=True,
         )
 
     mock_cmd.assert_not_called()
-    mock_input.assert_not_called()
+    mock_prompt.assert_not_called()
 
 
 def test_interactive_none_defers_to_tty_detection():
@@ -87,7 +87,7 @@ def test_interactive_none_defers_to_tty_detection():
     with patch("linkedin.realtime.catchup.read_heartbeat", return_value=old), \
          patch("linkedin.realtime.catchup.call_command") as mock_cmd, \
          patch("sys.stdin.isatty", return_value=True), \
-         patch("builtins.input", return_value="y"):
+         patch("linkedin.realtime.catchup._prompt_yes_no_default_no", return_value="y"):
         catchup.run_startup_catchup(username="arian@x.com", account_label="primary")
     mock_cmd.assert_called_once_with(
         "backfill_messages", account="primary", skip_prereq_gate=True,
