@@ -312,7 +312,7 @@ def _connect_direct(session, public_identifier: str, full_name: str):
     if direct is None:
         return False
 
-    direct.click()
+    _click_connect_option(direct)
     logger.debug("Clicked direct 'Connect' button")
     session.wait()
 
@@ -321,6 +321,17 @@ def _connect_direct(session, public_identifier: str, full_name: str):
         raise SkipProfile(f"{error.inner_text().strip()}")
 
     return True
+
+
+def _click_connect_option(option) -> None:
+    href = option.get_attribute("href") or ""
+    if _custom_invite_vanity_name(href):
+        try:
+            option.evaluate("el => el.click()")
+            return
+        except Exception:
+            logger.debug("JS click failed for custom invite anchor; falling back to normal click")
+    option.click()
 
 
 def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, full_name: str):

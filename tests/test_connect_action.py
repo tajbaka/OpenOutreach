@@ -5,6 +5,7 @@ import pytest
 from linkedin.actions.connect import (
     ExistingPendingInvite,
     SELECTORS,
+    _click_connect_option,
     _click_with_note,
     _click_without_note,
     _custom_invite_vanity_name,
@@ -54,6 +55,7 @@ class _Candidate:
         self.aria_label = aria_label
         self.visible = visible
         self.clicked = False
+        self.js_clicked = False
 
     def is_visible(self):
         return self.visible
@@ -67,6 +69,10 @@ class _Candidate:
 
     def click(self, *args, **kwargs):
         self.clicked = True
+
+    def evaluate(self, script):
+        assert script == "el => el.click()"
+        self.js_clicked = True
 
 
 class _Candidates:
@@ -171,6 +177,17 @@ def test_direct_invite_option_ignores_recommendation_connects():
     )
 
     assert option is target
+
+
+def test_custom_invite_connect_option_uses_js_click():
+    target = _Candidate(
+        href="/preload/custom-invite/?vanityName=cushman"
+    )
+
+    _click_connect_option(target)
+
+    assert target.js_clicked is True
+    assert target.clicked is False
 
 
 def test_pending_invite_surface_matches_current_lead_name():
