@@ -227,27 +227,24 @@ class TestHandleConnect:
         )
 
         # Catch-up is off by default, so the full-window floor still applies:
-        # 8h / 50 = 576s, lower jitter bound = 403.2s.
-        assert delay == pytest.approx(403.2)
+        # 8h / 50 = 576s, lower jitter bound = 518.4s.
+        assert delay == pytest.approx(518.4)
 
     @patch("linkedin.tasks.connect.ENABLE_PACING_CATCH_UP", True)
-    @patch("linkedin.tasks.connect.PACING_CATCH_UP_MAX_SPEED_MULTIPLIER", 1.3)
     @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
+    @patch("linkedin.tasks.connect._expected_actions_by_now", return_value=30.0)
     @patch("linkedin.tasks.connect._actions_sent_today", return_value=10)
     @patch("linkedin.tasks.connect._active_window_progress_seconds", return_value=(7200.0, 28800.0))
     @patch("linkedin.tasks.connect.CONNECT_DAILY_LIMIT", 50)
     def test_recommended_action_delay_can_catch_up_when_enabled(
-        self, _window, _sent, _mock_uniform, fake_session,
+        self, _window, _sent, _expected, _mock_uniform, fake_session,
     ):
         fake_session.linkedin_profile.connect_daily_limit = 50
         delay = recommended_action_delay(
             fake_session.linkedin_profile, ActionLog.ActionType.CONNECT,
         )
 
-        # True catch-up would want 180s, but the 30% speed cap limits the
-        # fastest base delay to 576 / 1.3 = 443.0769s, so the lower jitter
-        # bound becomes about 310.1538s.
-        assert delay == pytest.approx(310.1538)
+        assert delay == pytest.approx(120.0)
 
     @patch("linkedin.tasks.connect.random.uniform", side_effect=lambda a, b: a)
     @patch("linkedin.tasks.connect._actions_sent_today", return_value=0)
@@ -263,8 +260,8 @@ class TestHandleConnect:
         )
 
         # Dynamic average would be 570s, but the full-window average floor is
-        # 576s, so the lower jitter bound becomes 403.2s.
-        assert delay == pytest.approx(403.2)
+        # 576s, so the lower jitter bound becomes 518.4s.
+        assert delay == pytest.approx(518.4)
 
     @patch("linkedin.tasks.connect.timezone.localtime")
     @patch("linkedin.tasks.connect.random.uniform", return_value=50_000.0)

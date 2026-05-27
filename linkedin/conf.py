@@ -71,12 +71,6 @@ ENABLE_FREEMIUM_CAMPAIGN = os.getenv("ENABLE_FREEMIUM_CAMPAIGN", "false").strip(
 ENABLE_PACING_CATCH_UP = os.getenv("ENABLE_PACING_CATCH_UP", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
-# Upper bound on catch-up speed relative to the normal full-window rate.
-# 1.3 means we can run at most 30% faster than the original schedule.
-PACING_CATCH_UP_MAX_SPEED_MULTIPLIER = float(
-    os.getenv("PACING_CATCH_UP_MAX_SPEED_MULTIPLIER", "1.3") or 1.3,
-)
-
 # ----------------------------------------------------------------------
 # Active-hours schedule (daemon pauses outside this window)
 # Set to False to run 24/7.
