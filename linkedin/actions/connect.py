@@ -413,6 +413,16 @@ def _pending_surface_visible(session) -> bool:
     return session.page.locator(SELECTORS["pending_menuitem"]).count() > 0
 
 
+def _pending_invite_visible_before_missing_alert(session, *, full_name: str = "") -> bool:
+    """Last-chance guard before logging a missing Connect button.
+
+    This intentionally uses the explicit withdraw-invitation aria surface, not
+    any visible "Pending" text, so unrelated or stale menus do not suppress
+    real missing-button diagnostics.
+    """
+    return _pending_invite_surface_visible(session, full_name=full_name)
+
+
 def _connect_via_more(session, public_identifier: str, full_name: str):
     session.wait()
     top_card = find_top_card(session)
@@ -420,6 +430,9 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
     # Fallback: More → Connect
     more = _first_visible(top_card.locator(SELECTORS["more_button"]))
     if more is None:
+        if _pending_invite_visible_before_missing_alert(session, full_name=full_name):
+            logger.debug("Detected pending invite before missing-button alert")
+            return ProfileState.PENDING
         current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
@@ -478,6 +491,9 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
     if connect_option is None:
         if _pending_surface_visible(session):
             logger.debug("Detected pending invite in More dropdown after connect search")
+            return ProfileState.PENDING
+        if _pending_invite_visible_before_missing_alert(session, full_name=full_name):
+            logger.debug("Detected pending invite before missing-button alert")
             return ProfileState.PENDING
         _dump_page_state(session, "more-no-connect-option")
         logger.debug("Connect option not found in More dropdown")

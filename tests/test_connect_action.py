@@ -8,11 +8,14 @@ from linkedin.actions.connect import (
     _click_connect_option,
     _click_with_note,
     _click_without_note,
+    _connect_via_more,
     _custom_invite_vanity_name,
     _direct_invite_option,
+    _pending_invite_visible_before_missing_alert,
     _pending_invite_surface_visible,
     _targets_current_profile,
 )
+from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile
 
 
@@ -95,6 +98,12 @@ class _TopCard:
         return self.candidates
 
 
+class _NoMoreTopCard:
+    def locator(self, selector):
+        assert selector == SELECTORS["more_button"]
+        return _Candidates([])
+
+
 def _session_with_email_required_dialog():
     prompt = _Locator(count=1)
     cancel = _Locator(count=1)
@@ -128,6 +137,24 @@ def _session_with_pending_invite_surface():
             return _Locator(count=0)
         if selector in (SELECTORS["note_textarea"], SELECTORS["add_note"]):
             return _Locator(count=0)
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    session = Mock(page=page)
+    return session
+
+
+def _session_with_open_pending_menu():
+    pending = _Locator(
+        count=1,
+        aria_label="Pending, click to withdraw invitation sent to Ayodeji Owonibi",
+    )
+    page = Mock()
+    page.url = "https://www.linkedin.com/in/ayo-owonibi-aso5/"
+
+    def locator(selector):
+        if selector == SELECTORS["pending_invite_surface"]:
+            return pending
         return _Locator(count=0)
 
     page.locator.side_effect = locator
@@ -195,6 +222,27 @@ def test_pending_invite_surface_matches_current_lead_name():
 
     assert _pending_invite_surface_visible(session, full_name="Vincent Lu")
     assert not _pending_invite_surface_visible(session, full_name="Tiffany Hafez")
+
+
+def test_missing_alert_guard_detects_open_pending_invite_surface():
+    session = _session_with_open_pending_menu()
+
+    assert _pending_invite_visible_before_missing_alert(
+        session,
+        full_name="Ayodeji Owonibi",
+    )
+
+
+@patch("linkedin.actions.connect._record_connect_issue")
+@patch("linkedin.actions.connect.find_top_card")
+def test_connect_via_more_returns_pending_before_missing_button_issue_when_more_missing(find_top_card, record_issue):
+    session = _session_with_open_pending_menu()
+    find_top_card.return_value = _NoMoreTopCard()
+
+    status = _connect_via_more(session, "ayo-owonibi-aso5", "Ayodeji Owonibi")
+
+    assert status == ProfileState.PENDING
+    record_issue.assert_not_called()
 
 
 @patch("linkedin.actions.connect._wait_for_invite_surface", return_value=True)
