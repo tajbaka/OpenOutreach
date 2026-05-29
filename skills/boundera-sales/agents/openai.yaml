@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boundera Sales"
+  short_description: "Boundera sales replies and follow-up"
+  default_prompt: "Draft a Boundera sales reply or next-step plan for this prospect using the available CRM/thread context."

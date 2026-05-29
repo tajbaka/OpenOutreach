@@ -334,6 +334,22 @@ def _click_connect_option(option) -> None:
     option.click()
 
 
+def _click_more_button(more) -> bool:
+    """Open LinkedIn's More menu despite transient overlay hit-test blockers."""
+    try:
+        more.click(timeout=5000)
+        return True
+    except Exception as e:
+        logger.debug("Normal More click failed; trying JS click: %s", e)
+
+    try:
+        more.evaluate("el => el.click()")
+        return True
+    except Exception as e:
+        logger.debug("JS More click failed: %s", e)
+        return False
+
+
 def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, full_name: str):
     """Given a candidate element found by text/aria-label, walk up the DOM to
     find the nearest <a> or <button> ancestor that belongs to a dropdown menu
@@ -441,7 +457,15 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
             "No More button available for Connect fallback",
         )
         return False
-    more.click()
+    if not _click_more_button(more):
+        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
+        _record_connect_issue(
+            session,
+            current_public_id,
+            ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
+            "More button click failed",
+        )
+        return False
     time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
 
     if _pending_surface_visible(session):

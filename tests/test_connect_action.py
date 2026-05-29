@@ -6,6 +6,7 @@ from linkedin.actions.connect import (
     ExistingPendingInvite,
     SELECTORS,
     _click_connect_option,
+    _click_more_button,
     _click_with_note,
     _click_without_note,
     _connect_via_more,
@@ -76,6 +77,11 @@ class _Candidate:
     def evaluate(self, script):
         assert script == "el => el.click()"
         self.js_clicked = True
+
+
+class _ClickBlockedCandidate(_Candidate):
+    def click(self, *args, **kwargs):
+        raise RuntimeError("interop-outlet intercepts pointer events")
 
 
 class _Candidates:
@@ -215,6 +221,13 @@ def test_custom_invite_connect_option_uses_js_click():
 
     assert target.js_clicked is True
     assert target.clicked is False
+
+
+def test_more_button_click_falls_back_to_js_when_overlay_intercepts():
+    more = _ClickBlockedCandidate()
+
+    assert _click_more_button(more)
+    assert more.js_clicked is True
 
 
 def test_pending_invite_surface_matches_current_lead_name():

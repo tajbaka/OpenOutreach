@@ -12,6 +12,8 @@ SELECTORS = {
     "pending_button": '[aria-label*="Pending"]',
     "invite_to_connect": (
         'button[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'a[aria-label*="Invite"][aria-label*="to connect"]:visible, '
+        'a[href*="/preload/custom-invite/"]:visible, '
         'button[aria-label*="Connect with"]:visible, '
         'button:has-text("Connect"):visible, '
         '[role="button"]:has-text("Connect"):visible'
@@ -52,6 +54,13 @@ def get_connection_status(
 
     main_text = top_card.inner_text()
 
+    # A visible invite surface beats degree text. Some LinkedIn SDUI cards
+    # can render contradictory snippets such as "1st" and "2nd" while still
+    # showing a custom-invite anchor.
+    if top_card.locator(SELECTORS["invite_to_connect"]).count() > 0:
+        logger.debug("Found 'Connect' invite surface → NOT_CONNECTED")
+        return ProfileState.QUALIFIED
+
     # Text-based indicators, checked in priority order
     TEXT_INDICATORS = [
         (["Pending"], ProfileState.PENDING, "Detected 'Pending' text → PENDING"),
@@ -61,11 +70,6 @@ def get_connection_status(
         if any(kw in main_text for kw in keywords):
             logger.debug(msg)
             return state
-
-    # Connect button or label visible → not connected
-    if top_card.locator(SELECTORS["invite_to_connect"]).count() > 0:
-        logger.debug("Found 'Connect' button → NOT_CONNECTED")
-        return ProfileState.QUALIFIED
 
     if "Connect" in main_text:
         logger.debug("Connect label present → NOT_CONNECTED")
