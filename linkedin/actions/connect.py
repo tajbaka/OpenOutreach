@@ -48,6 +48,16 @@ SELECTORS = {
         'button:has-text("More"):visible, '
         '[role="button"]:has-text("More"):visible'
     ),
+    "open_menu": (
+        '[role="menu"]:visible, '
+        '[role="listbox"]:visible, '
+        '[popover="manual"]:visible'
+    ),
+    "invite_dialog": (
+        'div[role="dialog"]:visible, '
+        'section[role="dialog"]:visible, '
+        'div.artdeco-modal:visible'
+    ),
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "send_without_note": 'button:has-text("Send without a note"), button[aria-label*="Send without a note"]',
     "add_note": 'button:has-text("Add a note")',
@@ -119,6 +129,22 @@ def _dump_page_state(session, tag: str) -> None:
         logger.debug("Could not dump page state for %s: %s", tag, e)
 
 
+def _dump_step_screenshot(session, tag: str) -> None:
+    """Capture a PNG-only checkpoint after a UI step advances."""
+    import os
+    import time as _t
+    out_dir = "/tmp/connect-debug"
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        url_slug = (session.page.url.rsplit("/", 1)[-1] or "page")[:60]
+        stamp = _t.strftime("%Y%m%d-%H%M%S")
+        path = f"{out_dir}/{stamp}-step-{tag}-{url_slug}.png"
+        session.page.screenshot(path=path)
+        logger.info("Saved connect step screenshot: %s", path)
+    except Exception as e:
+        logger.debug("Could not capture step screenshot for %s: %s", tag, e)
+
+
 def _first_visible(locator):
     """Return the first visible Playwright locator match, or None."""
     count = locator.count()
@@ -132,18 +158,37 @@ def _first_visible(locator):
     return None
 
 
+def _invite_dialog_surface_visible(session) -> bool:
+    dialogs = session.page.locator(SELECTORS["invite_dialog"])
+    count = dialogs.count()
+    for idx in range(count):
+        dialog = dialogs.nth(idx)
+        try:
+            if not dialog.is_visible():
+                continue
+            if any(
+                dialog.locator(selector).count() > 0
+                for selector in (
+                    SELECTORS["add_note"],
+                    SELECTORS["note_textarea"],
+                    SELECTORS["send_without_note"],
+                    SELECTORS["send_invitation"],
+                )
+            ):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _invite_surface_visible(session) -> bool:
-    """Whether any known post-Connect invite surface is present."""
-    return any(
-        session.page.locator(selector).count() > 0
-        for selector in (
-            SELECTORS["add_note"],
-            SELECTORS["note_textarea"],
-            SELECTORS["send_without_note"],
-            SELECTORS["send_now"],
-            SELECTORS["send_invitation"],
-            SELECTORS["pending_invite_surface"],
-        )
+    """Whether a real post-Connect invite route/modal is present."""
+    if "/preload/custom-invite/" in session.page.url:
+        return True
+    return (
+        _invite_dialog_surface_visible(session)
+        or session.page.locator(SELECTORS["email_required_prompt"]).count() > 0
+        or session.page.locator(SELECTORS["pending_invite_surface"]).count() > 0
     )
 
 
@@ -170,6 +215,13 @@ def _custom_invite_vanity_name(href: str) -> str:
     return (query.get("vanityName") or query.get("vanityname") or [""])[0].strip().lower()
 
 
+def _profile_public_identifier(href: str) -> str:
+    path_parts = [part for part in urlparse(href or "").path.split("/") if part]
+    if len(path_parts) >= 2 and path_parts[-2] == "in":
+        return path_parts[-1].strip().lower()
+    return ""
+
+
 def _targets_current_profile(clickable, *, public_identifier: str, full_name: str) -> bool:
     public_identifier = (public_identifier or "").strip().lower()
     href = (clickable.get_attribute("href") or "").strip()
@@ -178,6 +230,30 @@ def _targets_current_profile(clickable, *, public_identifier: str, full_name: st
     if vanity_name:
         return bool(public_identifier and vanity_name == public_identifier)
     return True
+
+
+def _candidate_text(candidate) -> str:
+    try:
+        return " ".join((candidate.inner_text() or "").split())
+    except Exception:
+        return ""
+
+
+def _direct_invite_candidate_rank(candidate, *, public_identifier: str, full_name: str) -> int:
+    href = (candidate.get_attribute("href") or "").strip()
+    aria = (candidate.get_attribute("aria-label") or "").strip().lower()
+    text = _candidate_text(candidate).lower()
+
+    vanity_name = _custom_invite_vanity_name(href)
+    if vanity_name and vanity_name == (public_identifier or "").strip().lower():
+        return 0
+    if "invite" in aria and "to connect" in aria:
+        return 1
+    if "connect with" in aria:
+        return 2
+    if text == "connect":
+        return 3
+    return 4
 
 
 def _skip_if_email_required(session, public_identifier: str) -> None:
@@ -201,7 +277,8 @@ def _pending_invite_surface_visible(session, *, full_name: str = "") -> bool:
     pending = session.page.locator(SELECTORS["pending_invite_surface"])
     count = pending.count()
     normalized_name = (full_name or "").strip().lower()
-    require_name_match = bool(normalized_name and " " in normalized_name)
+    if not normalized_name or " " not in normalized_name:
+        return False
     for idx in range(count):
         candidate = pending.nth(idx)
         try:
@@ -210,7 +287,7 @@ def _pending_invite_surface_visible(session, *, full_name: str = "") -> bool:
             aria = (candidate.get_attribute("aria-label") or "").lower()
             text = (candidate.inner_text() or "").lower()
             surface_text = f"{aria} {text}"
-            if require_name_match and normalized_name not in surface_text:
+            if normalized_name not in surface_text:
                 continue
             return True
         except Exception:
@@ -284,9 +361,10 @@ def _check_weekly_invitation_limit(session):
         raise ReachedConnectionLimit("Weekly connection limit pop up appeared")
 
 
-def _direct_invite_option(top_card, *, public_identifier: str, full_name: str):
+def _direct_invite_options(top_card, *, public_identifier: str, full_name: str):
     direct = top_card.locator(SELECTORS["invite_to_connect"])
     count = direct.count()
+    candidates = []
     for idx in range(count):
         candidate = direct.nth(idx)
         try:
@@ -295,32 +373,65 @@ def _direct_invite_option(top_card, *, public_identifier: str, full_name: str):
                 public_identifier=public_identifier,
                 full_name=full_name,
             ):
-                return candidate
+                candidates.append((
+                    _direct_invite_candidate_rank(
+                        candidate,
+                        public_identifier=public_identifier,
+                        full_name=full_name,
+                    ),
+                    idx,
+                    candidate,
+                ))
         except Exception:
             continue
-    return None
+    return [candidate for _, _, candidate in sorted(candidates, key=lambda item: (item[0], item[1]))]
+
+
+def _direct_invite_option(top_card, *, public_identifier: str, full_name: str):
+    options = _direct_invite_options(
+        top_card,
+        public_identifier=public_identifier,
+        full_name=full_name,
+    )
+    return options[0] if options else None
+
+
+def _dismiss_failed_connect_attempt(session) -> None:
+    try:
+        session.page.keyboard.press("Escape")
+    except Exception:
+        logger.debug("Could not dismiss failed direct Connect attempt")
 
 
 def _connect_direct(session, public_identifier: str, full_name: str):
     session.wait()
     top_card = find_top_card(session)
-    direct = _direct_invite_option(
+    direct_options = _direct_invite_options(
         top_card,
         public_identifier=public_identifier,
         full_name=full_name,
     )
-    if direct is None:
+    if not direct_options:
         return False
 
-    _click_connect_option(direct)
-    logger.debug("Clicked direct 'Connect' button")
-    session.wait()
+    for idx, direct in enumerate(direct_options, start=1):
+        _click_connect_option(direct)
+        logger.debug("Clicked direct 'Connect' candidate %s/%s", idx, len(direct_options))
+        session.wait()
+        _dump_step_screenshot(session, f"after-direct-connect-click-{idx}")
 
-    error = session.page.locator(SELECTORS["error_toast"])
-    if error.count() > 0:
-        raise SkipProfile(f"{error.inner_text().strip()}")
+        error = session.page.locator(SELECTORS["error_toast"])
+        if error.count() > 0:
+            raise SkipProfile(f"{error.inner_text().strip()}")
 
-    return True
+        if _wait_for_invite_surface(session, timeout_seconds=3):
+            return True
+
+        _dump_page_state(session, f"direct-connect-no-invite-surface-{idx}")
+        logger.debug("Direct Connect candidate %s did not open invite surface", idx)
+        _dismiss_failed_connect_attempt(session)
+
+    return False
 
 
 def _click_connect_option(option) -> None:
@@ -348,6 +459,33 @@ def _click_more_button(more) -> bool:
     except Exception as e:
         logger.debug("JS More click failed: %s", e)
         return False
+
+
+def _more_menu_visible(session, more) -> bool:
+    try:
+        if (more.get_attribute("aria-expanded") or "").lower() == "true":
+            return True
+    except Exception:
+        pass
+    try:
+        return session.page.locator(SELECTORS["open_menu"]).count() > 0
+    except Exception:
+        return False
+
+
+def _open_more_menu(session, more, *, attempts: int = 3) -> bool:
+    for attempt in range(1, attempts + 1):
+        if not _click_more_button(more):
+            logger.debug("More click attempt %s/%s failed", attempt, attempts)
+            continue
+        time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
+        _dump_step_screenshot(session, f"after-more-click-{attempt}")
+        if _more_menu_visible(session, more):
+            return True
+        logger.debug("More click attempt %s/%s did not show a menu", attempt, attempts)
+        time.sleep(0.2)
+    _dump_page_state(session, "more-menu-not-open")
+    return False
 
 
 def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, full_name: str):
@@ -424,9 +562,39 @@ def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, f
         return None
 
 
-def _pending_surface_visible(session) -> bool:
-    """Whether the More-actions dropdown is showing an existing pending invite."""
-    return session.page.locator(SELECTORS["pending_menuitem"]).count() > 0
+def _pending_surface_visible(session, *, public_identifier: str, full_name: str) -> bool:
+    """Whether the More-actions dropdown shows pending for this profile."""
+    pending = session.page.locator(SELECTORS["pending_menuitem"])
+    count = pending.count()
+    normalized_public_id = (public_identifier or "").strip().lower()
+    normalized_name = (full_name or "").strip().lower()
+    require_name_match = bool(normalized_name and " " in normalized_name)
+
+    for idx in range(count):
+        candidate = pending.nth(idx)
+        try:
+            if not candidate.is_visible():
+                continue
+            href = (candidate.get_attribute("href") or "").strip()
+            if not href:
+                try:
+                    href = candidate.evaluate(
+                        "el => el.closest('a')?.href || el.querySelector('a')?.href || ''"
+                    )
+                except Exception:
+                    href = ""
+            href_public_id = _profile_public_identifier(href)
+            if href_public_id:
+                return bool(normalized_public_id and href_public_id == normalized_public_id)
+
+            aria = (candidate.get_attribute("aria-label") or "").lower()
+            text = (candidate.inner_text() or "").lower()
+            surface_text = f"{aria} {text}"
+            if require_name_match and normalized_name in surface_text:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _pending_invite_visible_before_missing_alert(session, *, full_name: str = "") -> bool:
@@ -457,20 +625,15 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
             "No More button available for Connect fallback",
         )
         return False
-    if not _click_more_button(more):
+    if not _open_more_menu(session, more):
         current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
             current_public_id,
             ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
-            "More button click failed",
+            "More menu did not open",
         )
         return False
-    time.sleep(0.5)  # brief pause for dropdown render — NOT session.wait()
-
-    if _pending_surface_visible(session):
-        logger.debug("Detected pending invite in More dropdown")
-        return ProfileState.PENDING
 
     # Find the dropdown Connect option.  Strategy: broad text-first discovery,
     # then walk up to the nearest clickable ancestor (<a> or <button>).
@@ -513,7 +676,11 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
         time.sleep(0.15)
 
     if connect_option is None:
-        if _pending_surface_visible(session):
+        if _pending_surface_visible(
+            session,
+            public_identifier=public_identifier,
+            full_name=full_name,
+        ):
             logger.debug("Detected pending invite in More dropdown after connect search")
             return ProfileState.PENDING
         if _pending_invite_visible_before_missing_alert(session, full_name=full_name):
@@ -536,7 +703,9 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
     connect_option.evaluate("el => el.click()")
     logger.debug("Used 'More → Connect' flow")
 
-    if _wait_for_invite_surface(session):
+    invite_surface_visible = _wait_for_invite_surface(session)
+    _dump_step_screenshot(session, "after-more-connect-click")
+    if invite_surface_visible:
         return True
 
     _dump_page_state(session, "more-connect-no-surface")
@@ -555,6 +724,7 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
     _wait_for_invite_surface(session)
+    _dump_step_screenshot(session, "invite-surface-before-note")
     current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
     _skip_if_email_required(session, current_public_id)
     if _pending_invite_surface_visible(session, full_name=full_name):
@@ -585,6 +755,7 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     if textarea.count() == 0:
         add_note_btn.first.click()
         session.wait()
+        _dump_step_screenshot(session, "after-add-note-click")
         if _pending_invite_surface_visible(session, full_name=full_name):
             logger.debug("Detected pending invite surface after Add-a-note click for %s", current_public_id)
             raise ExistingPendingInvite(current_public_id)
@@ -603,11 +774,13 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
 
     textarea.first.fill(note_text)
     session.wait()
+    _dump_step_screenshot(session, "after-note-fill")
     _skip_if_email_required(session, current_public_id)
 
     send_btn = session.page.locator(SELECTORS["send_invitation"])
     send_btn.first.click(force=True)
     session.wait()
+    _dump_step_screenshot(session, "after-send-invitation")
     logger.debug("Connection request submitted (with note)")
     return True
 
@@ -638,6 +811,7 @@ def _click_without_note(session, *, full_name: str = "") -> bool:
         return False
     send_btn.first.click(force=True)
     session.wait()
+    _dump_step_screenshot(session, "after-send-without-note")
     logger.debug("Connection request submitted (no note)")
     return True
 

@@ -12,8 +12,12 @@ from linkedin.actions.connect import (
     _connect_via_more,
     _custom_invite_vanity_name,
     _direct_invite_option,
+    _direct_invite_options,
+    _invite_surface_visible,
+    _pending_surface_visible,
     _pending_invite_visible_before_missing_alert,
     _pending_invite_surface_visible,
+    _profile_public_identifier,
     _targets_current_profile,
 )
 from linkedin.enums import ProfileState
@@ -21,10 +25,11 @@ from linkedin.exceptions import SkipProfile
 
 
 class _Locator:
-    def __init__(self, count=0, *, aria_label="", text="", visible=True):
+    def __init__(self, count=0, *, aria_label="", text="", href="", visible=True):
         self._count = count
         self.aria_label = aria_label
         self.text = text
+        self.href = href
         self.visible = visible
         self.clicked = False
 
@@ -44,6 +49,8 @@ class _Locator:
     def get_attribute(self, name):
         if name == "aria-label":
             return self.aria_label
+        if name == "href":
+            return self.href
         return None
 
     def inner_text(self):
@@ -52,11 +59,15 @@ class _Locator:
     def click(self, *args, **kwargs):
         self.clicked = True
 
+    def locator(self, selector):
+        return _Locator(count=0)
+
 
 class _Candidate:
-    def __init__(self, *, href="", aria_label="", visible=True):
+    def __init__(self, *, href="", aria_label="", text="", visible=True):
         self.href = href
         self.aria_label = aria_label
+        self.text = text
         self.visible = visible
         self.clicked = False
         self.js_clicked = False
@@ -73,6 +84,9 @@ class _Candidate:
 
     def click(self, *args, **kwargs):
         self.clicked = True
+
+    def inner_text(self):
+        return self.text
 
     def evaluate(self, script):
         assert script == "el => el.click()"
@@ -168,6 +182,34 @@ def _session_with_open_pending_menu():
     return session
 
 
+def _session_with_pending_menuitem(*, href="", aria_label="", text="Pending"):
+    pending = _Locator(count=1, aria_label=aria_label, text=text, href=href)
+    page = Mock()
+
+    def locator(selector):
+        if selector == SELECTORS["pending_menuitem"]:
+            return pending
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    session = Mock(page=page)
+    return session
+
+
+def _session_with_page_level_send_button_only():
+    page = Mock()
+    page.url = "https://www.linkedin.com/in/maytheforce/"
+
+    def locator(selector):
+        if selector == SELECTORS["send_invitation"]:
+            return _Locator(count=1, text="Send")
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    session = Mock(page=page)
+    return session
+
+
 def test_invite_selector_supports_current_profile_custom_invite_anchor():
     selector = SELECTORS["invite_to_connect"]
 
@@ -195,6 +237,40 @@ def test_custom_invite_vanity_name_must_match_current_profile():
     )
 
 
+def test_profile_public_identifier_from_profile_url():
+    assert (
+        _profile_public_identifier("https://www.linkedin.com/in/kristinekonrad/")
+        == "kristinekonrad"
+    )
+
+
+def test_pending_menuitem_requires_current_profile_identity():
+    generic_pending = _session_with_pending_menuitem(text="Pending")
+    matching_href = _session_with_pending_menuitem(
+        href="https://www.linkedin.com/in/kristinekonrad/",
+        text="Pending",
+    )
+    matching_name = _session_with_pending_menuitem(
+        aria_label="Pending, click to withdraw invitation sent to Kristine Konrad",
+    )
+
+    assert not _pending_surface_visible(
+        generic_pending,
+        public_identifier="kristinekonrad",
+        full_name="kristinekonrad",
+    )
+    assert _pending_surface_visible(
+        matching_href,
+        public_identifier="kristinekonrad",
+        full_name="kristinekonrad",
+    )
+    assert _pending_surface_visible(
+        matching_name,
+        public_identifier="kristinekonrad",
+        full_name="Kristine Konrad",
+    )
+
+
 def test_direct_invite_option_ignores_recommendation_connects():
     recommendation = _Candidate(
         href="/preload/custom-invite/?vanityName=vamsee-krishna-metlapalli"
@@ -210,6 +286,27 @@ def test_direct_invite_option_ignores_recommendation_connects():
     )
 
     assert option is target
+
+
+def test_direct_invite_options_keep_weak_connect_candidates_last():
+    weak = _Candidate(text="Connect over call!")
+    exact = _Candidate(
+        href="/preload/custom-invite/?vanityName=tiffany-hafez-m-a-7100433b"
+    )
+
+    options = _direct_invite_options(
+        _TopCard([weak, exact]),
+        public_identifier="tiffany-hafez-m-a-7100433b",
+        full_name="Tiffany Hafez",
+    )
+
+    assert options == [exact, weak]
+
+
+def test_invite_surface_requires_route_modal_or_pending_not_page_level_send():
+    session = _session_with_page_level_send_button_only()
+
+    assert not _invite_surface_visible(session)
 
 
 def test_custom_invite_connect_option_uses_js_click():
@@ -235,6 +332,7 @@ def test_pending_invite_surface_matches_current_lead_name():
 
     assert _pending_invite_surface_visible(session, full_name="Vincent Lu")
     assert not _pending_invite_surface_visible(session, full_name="Tiffany Hafez")
+    assert not _pending_invite_surface_visible(session, full_name="vincent-lu-23974233")
 
 
 def test_missing_alert_guard_detects_open_pending_invite_surface():

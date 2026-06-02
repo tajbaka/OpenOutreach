@@ -1,0 +1,65 @@
+{
+  "description": "Backup of linkedin_connect_note values before the 2026-05-31 FedRAMP Low/Moderate readiness rewrite. This file is not loaded by the app.",
+  "Arian": {
+    "CSPs": [
+      "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+    ],
+    "3PAOs/Assessors": [
+      "Hi {first_name}, saw you checking out {our_company_name}. Is reviewing CSP evidence and turning around FedRAMP assessments slower than it should be? Would love to connect."
+    ],
+    "Advisors": [
+      "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization still tedious and costly for the CSPs you advise? Would love to connect."
+    ],
+    "Channel": [
+      "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
+      "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
+      "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+    ]
+  },
+  "Chuka": {
+    "CSPs": [
+      "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+    ],
+    "3PAOs/Assessors": [
+      "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+    ],
+    "Advisors": [
+      "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+    ],
+    "Channel": [
+      "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+    ]
+  },
+  "Leili": {
+    "CSPs": [
+      "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+    ],
+    "3PAOs/Assessors": [
+      "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+    ],
+    "Advisors": [
+      "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+    ],
+    "Channel": [
+      "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
+      "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
+      "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+    ]
+  },
+  "Athena": {
+    "CSPs": [
+      "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+    ],
+    "3PAOs/Assessors": [
+      "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+    ],
+    "Advisors": [
+      "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+    ],
+    "Channel": [
+      "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
+      "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
+      "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+    ]
+  }
+}

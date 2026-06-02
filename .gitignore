@@ -23,3 +23,4 @@ temp_*.tsx
 temp_*.txt
 local_notes/
 .gstack/
+artifacts/

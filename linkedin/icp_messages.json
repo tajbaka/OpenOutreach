@@ -2,7 +2,7 @@
   "Arian": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+        "Hi {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low or Moderate auth is active this year. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring. \n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Help you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -10,7 +10,7 @@
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is reviewing CSP evidence and turning around FedRAMP assessments slower than it should be? Would love to connect."
+        "Hi {first_name}, saw your FedRAMP work at {company_name}. Building tools for cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -18,7 +18,7 @@
     },
     "Advisors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization still tedious and costly for the CSPs you advise? Would love to connect."
+        "Hi {first_name}, saw your security/compliance work at {company_name}. Building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -26,9 +26,9 @@
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
-        "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
-        "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+        "Hi {first_name}, building {our_company_name} for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Worth connecting?",
+        "{first_name}, building {our_company_name} around FedRAMP Low/Moderate readiness. Looking for partners already supporting CSPs on this path. Worth connecting?",
+        "Hi {first_name}, exploring channel partners for {our_company_name}. We help CSPs validate FedRAMP Low/Moderate readiness before the expensive work starts. Worth connecting?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} compresses FedRAMP authorization + ConMon work for CSPs. Curious if there's a fit with how you bundle / co-sell to your customers.\n\n- AI drafts SSP narratives + POA&M closure trails\n- Continuous evidence ingest from AWS/Azure/GCP\n- Live demo at {our_website_url}\n\nWe have a channel partner program with commission on CSP customers that sign up through you.\n\nWorth a 2-min chat on partnership angles?\n\n{add demo.gif}"
@@ -38,7 +38,7 @@
   "Chuka": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+        "Hey {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low, Moderate, or 20x readiness is active this year."
       ],
       "linkedin_connect_followup": [
         "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
@@ -46,7 +46,7 @@
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+        "Hey {first_name}, saw your FedRAMP work at {company_name}. We're building around cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
@@ -54,7 +54,7 @@
     },
     "Advisors": {
       "linkedin_connect_note": [
-        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+        "Hey {first_name}, saw your security/compliance work at {company_name}. We're building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
@@ -62,7 +62,7 @@
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows? That's why we built Boundera. Would love to connect."
+        "Hey {first_name}, building Boundera for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hey {first_name}, with FedRAMP 20x here, is {company_name} thinking about how to transition without more spreadsheets, screenshots, and fragmented workflows?\n\nThat's why we built Boundera.\n\nWe centralize evidence, remediation, gap management, and continuous monitoring into one platform so teams can move through FedRAMP 20x / Rev. 5 much faster.\n\nWould love to hear how you're approaching the transition internally."
@@ -72,7 +72,7 @@
   "Leili": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+        "Hi {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low or Moderate auth is active this year. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring. \n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Help you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -80,7 +80,7 @@
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+        "Hi {first_name}, saw your FedRAMP work at {company_name}. Building tools for cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -88,7 +88,7 @@
     },
     "Advisors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+        "Hi {first_name}, saw your security/compliance work at {company_name}. Building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -96,9 +96,9 @@
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
-        "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
-        "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+        "Hi {first_name}, building {our_company_name} for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Worth connecting?",
+        "{first_name}, building {our_company_name} around FedRAMP Low/Moderate readiness. Looking for partners already supporting CSPs on this path. Worth connecting?",
+        "Hi {first_name}, exploring channel partners for {our_company_name}. We help CSPs validate FedRAMP Low/Moderate readiness before the expensive work starts. Worth connecting?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} compresses FedRAMP authorization + ConMon work for CSPs. Curious if there's a fit with how you bundle / co-sell to your customers.\n\n- AI drafts SSP narratives + POA&M closure trails\n- Continuous evidence ingest from AWS/Azure/GCP\n- Live demo at {our_website_url}\n\nWe have a channel partner program with commission on CSP customers that sign up through you.\n\nWorth a 2-min chat on partnership angles?\n\n{add demo.gif}"
@@ -108,7 +108,7 @@
   "Athena": {
     "CSPs": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw you checking out {our_company_name}. Is FedRAMP authorization at {company_name} feeling tedious and costly? Would love to connect."
+        "Hi {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low or Moderate auth is active this year. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring. \n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Help you manage POAMS\n- Generate your machine readable SSP\n\nThis gets rid of a lot of billable hours to advisors, and makes the whole process much easier.\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -116,7 +116,7 @@
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+        "Hi {first_name}, saw your FedRAMP work at {company_name}. Building tools for cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -124,7 +124,7 @@
     },
     "Advisors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} in the FedRAMP space. Given your background at {company_name}, would love to connect and learn from your perspective on where things are headed."
+        "Hi {first_name}, saw your security/compliance work at {company_name}. Building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} automates FedRamp authorization and 20x monitoring.\n\n- We integrate directly into AWS/Azure/GCP and other cloud services\n- Figure out and fix what is missing\n- Helps CSPs manage POAMS\n- Generate the machine readable SSP\n- We also have an accessor portal that makes it easy to review the live evidence\n\nWebsite: {our_website_url}\n\nWould love to discuss this more.\n\n{add demo.gif}"
@@ -132,9 +132,9 @@
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name}, AI for FedRAMP authorization + ConMon. Curious if it fits as something you bundle / co-sell to customers going through FedRAMP. Worth a 2-min chat on partnership angles?",
-        "{first_name}, no pitch, {our_company_name} (AI for FedRAMP auth + ConMon). Looking for channel partners who already touch customers in the FedRAMP path. Worth a quick chat?",
-        "Hi {first_name}, we shipped {our_company_name}, AI copilot for FedRAMP authorization. Exploring whether it slots into your catalog / co-sell motion. Worth 2 min?"
+        "Hi {first_name}, building {our_company_name} for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Worth connecting?",
+        "{first_name}, building {our_company_name} around FedRAMP Low/Moderate readiness. Looking for partners already supporting CSPs on this path. Worth connecting?",
+        "Hi {first_name}, exploring channel partners for {our_company_name}. We help CSPs validate FedRAMP Low/Moderate readiness before the expensive work starts. Worth connecting?"
       ],
       "linkedin_connect_followup": [
         "Hi {first_name},\n\n{our_company_name} compresses FedRAMP authorization + ConMon work for CSPs. Curious if there's a fit with how you bundle / co-sell to your customers.\n\n- AI drafts SSP narratives + POA&M closure trails\n- Continuous evidence ingest from AWS/Azure/GCP\n- Live demo at {our_website_url}\n\nWe have a channel partner program with commission on CSP customers that sign up through you.\n\nWorth a 2-min chat on partnership angles?\n\n{add demo.gif}"
