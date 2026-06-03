@@ -10,9 +10,12 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.contrib.auth.models import User
 from django.utils import timezone
 
-from linkedin.models import DaemonHeartbeat
+from crm.models import Deal, Lead
+from linkedin.enums import ProfileState
+from linkedin.models import ActionLog, Campaign, DaemonHeartbeat, LinkedInProfile, Task
 from linkedin.monitoring import node_monitor as nm
 
 
@@ -103,3 +106,98 @@ class TestCheckPeers:
         )
         nm.check_peers("Arian")
         assert patched_notify.call_count == 2
+
+
+class TestCheckExpectedSenderActivity:
+    def _sender(self, username="chukyjack", linkedin_username="chukyjack@gmail.com"):
+        user = User.objects.create_user(username=username)
+        profile = LinkedInProfile.objects.create(
+            user=user,
+            linkedin_username=linkedin_username,
+            linkedin_password="x",
+        )
+        campaign = Campaign.objects.create(name=f"{username} campaign", user=user)
+        lead = Lead.objects.create(
+            first_name="Test",
+            last_name="Lead",
+            linkedin_url=f"https://www.linkedin.com/in/{username}-lead/",
+            public_identifier=f"{username}-lead",
+        )
+        Deal.objects.create(
+            lead=lead,
+            campaign=campaign,
+            state=ProfileState.READY_TO_CONNECT,
+        )
+        return profile, campaign
+
+    def test_alerts_when_expected_sender_has_fresh_heartbeat_but_no_activity(
+        self, db, monkeypatch, patched_notify,
+    ):
+        _profile, campaign = self._sender()
+        now = timezone.now()
+        DaemonHeartbeat.objects.create(sender="Chuka", last_alive=now)
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            scheduled_at=now - timedelta(hours=2),
+            payload={"campaign_id": campaign.pk},
+        )
+        monkeypatch.setattr(nm.conf, "EXPECTED_OUTBOUND_SENDERS", ("Chuka",))
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_GRACE_MINUTES", 0)
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_STALE_MINUTES", 30)
+        monkeypatch.setattr(
+            nm, "_activity_check_window", lambda _now: now - timedelta(hours=3),
+        )
+
+        nm.check_expected_sender_activity("Arian")
+
+        patched_notify.assert_called_once()
+        assert patched_notify.call_args.kwargs["sender"] == "Chuka"
+        assert "outbound activity looks stuck" in patched_notify.call_args.kwargs["title"]
+        assert DaemonHeartbeat.objects.get(sender="Chuka").activity_alerted_at is not None
+
+    def test_no_alert_when_expected_sender_has_recent_activity(
+        self, db, monkeypatch, patched_notify,
+    ):
+        profile, campaign = self._sender()
+        now = timezone.now()
+        DaemonHeartbeat.objects.create(sender="Chuka", last_alive=now)
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            scheduled_at=now - timedelta(minutes=5),
+            payload={"campaign_id": campaign.pk},
+        )
+        ActionLog.objects.create(
+            linkedin_profile=profile,
+            campaign=campaign,
+            action_type=ActionLog.ActionType.CONNECT,
+        )
+        monkeypatch.setattr(nm.conf, "EXPECTED_OUTBOUND_SENDERS", ("Chuka",))
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_GRACE_MINUTES", 0)
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_STALE_MINUTES", 30)
+        monkeypatch.setattr(
+            nm, "_activity_check_window", lambda _now: now - timedelta(hours=3),
+        )
+
+        nm.check_expected_sender_activity("Arian")
+
+        patched_notify.assert_not_called()
+
+    def test_explicit_expected_sender_without_profile_alerts(
+        self, db, monkeypatch, patched_notify,
+    ):
+        DaemonHeartbeat.objects.create(sender="Missing", last_alive=timezone.now())
+        monkeypatch.setattr(nm.conf, "EXPECTED_OUTBOUND_SENDERS", ("Missing",))
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_GRACE_MINUTES", 0)
+        monkeypatch.setattr(
+            nm,
+            "_activity_check_window",
+            lambda _now: timezone.now() - timedelta(hours=3),
+        )
+
+        nm.check_expected_sender_activity("Arian")
+
+        patched_notify.assert_called_once()
+        assert patched_notify.call_args.kwargs["sender"] == "Missing"
+        assert "not configured" in patched_notify.call_args.kwargs["title"]

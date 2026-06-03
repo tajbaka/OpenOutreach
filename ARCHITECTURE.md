@@ -264,6 +264,18 @@ the daemon calls `clear_heartbeat()` on a clean empty-queue exit so peers
 don't false-alarm. **Coverage needs ≥2 daemons running**: a lone daemon
 has no peer to watch it (an accepted limitation).
 
+**Sender activity — "is the alive sender actually progressing".** The same
+`NodeMonitor` tick also runs `check_expected_sender_activity()`. Expected
+senders come from `EXPECTED_OUTBOUND_SENDERS` when set, otherwise from active
+LinkedIn profiles that own active campaigns. After
+`SENDER_ACTIVITY_GRACE_MINUTES` from the active-day start, an expected sender
+with work should have outbound `ActionLog` rows. A fresh heartbeat plus stale
+due outbound work and no recent `ActionLog` for
+`SENDER_ACTIVITY_STALE_MINUTES` alerts as "outbound activity looks stuck".
+`DaemonHeartbeat.activity_alerted_at` is the atomic cooldown marker for this
+class of alert. This catches "monitor thread is alive but the outbound lane is
+not making progress", which plain heartbeat liveness cannot see.
+
 **Degraded detection — "alive but not working".** Runs inside the daemon,
 which is the only thing that can observe its own state (`degraded.py`):
 
@@ -272,21 +284,18 @@ which is the only thing that can observe its own state (`degraded.py`):
   `record_failure()` around each handler call). One instance per process,
   so it is sender-scoped by construction — no DB query, no `Task.operator`
   column. `TASK_FAILURE_STREAK_THRESHOLD` failures in a row → one alert.
-- **`check_listener_heartbeat()`** — called once per active-hours loop;
-  flags a realtime listener whose `listener-heartbeat-*.json` is older
-  than `LISTENER_HEARTBEAT_STALE_MINUTES` while the listener is enabled.
 
-Both degraded checks share an in-process re-alert cooldown
-(`DEGRADED_REALERT_HOURS`). All monitoring alerts route to the ops Slack
-channel (`SLACK_WEBHOOK_URL`). Monitoring is an enhancement — tick
-exceptions are logged and never crash the outreach daemon.
+Listener heartbeat files are still written for startup catch-up, but there is
+no self-alerting "realtime listener looks stuck" check. All monitoring alerts
+route to the ops Slack channel (`SLACK_WEBHOOK_URL`). Monitoring is an
+enhancement — tick exceptions are logged and never crash the outreach daemon.
 
 ## Configuration
 
 - **`.env`** (project root) — `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
 - **`conf.py` schedule** — `ACTIVE_START_HOUR` (9), `ACTIVE_END_HOUR` (17), `ACTIVE_TIMEZONE` ("UTC"), `REST_DAYS` ((5, 6) = Sat+Sun). Daemon sleeps outside this window.
 - **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30).
-- **`conf.py` node monitoring** — `ENABLE_NODE_MONITOR` (default `true`), `MONITOR_INTERVAL_SECONDS` (300), `PEER_STALE_MINUTES` (15), `DEGRADED_REALERT_HOURS` (6), `LISTENER_HEARTBEAT_STALE_MINUTES` (30), `TASK_FAILURE_STREAK_THRESHOLD` (5).
+- **`conf.py` node monitoring** — `ENABLE_NODE_MONITOR` (default `true`), `MONITOR_INTERVAL_SECONDS` (300), `PEER_STALE_MINUTES` (15), `DEGRADED_REALERT_HOURS` (6), `TASK_FAILURE_STREAK_THRESHOLD` (5), `EXPECTED_OUTBOUND_SENDERS` (empty → infer), `SENDER_ACTIVITY_GRACE_MINUTES` (60), `SENDER_ACTIVITY_STALE_MINUTES` (90).
 - **`conf.py:CAMPAIGN_CONFIG`** — `min_ready_to_connect_prob` (0.9), `min_positive_pool_prob` (0.20), `connect_delay_seconds` (10), `connect_no_candidate_delay_seconds` (300), `check_pending_recheck_after_hours` (24), `check_pending_jitter_factor` (0.2), `qualification_n_mc_samples` (100), `enrich_min_interval` (1), `min_action_interval` (120), `embedding_model` ("BAAI/bge-small-en-v1.5").
 - **Prompt templates** (at `linkedin/templates/prompts/`) — `qualify_lead.j2` (temp 0.7), `search_keywords.j2` (temp 0.9), `follow_up_agent.j2`.
 - **`requirements/`** — `base.txt`, `local.txt`, `production.txt`, `crm.txt` (empty — DjangoCRM installed via `--no-deps`).

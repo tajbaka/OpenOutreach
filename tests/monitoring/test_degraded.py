@@ -5,11 +5,9 @@ check, including the in-process re-alert cooldown shared by both.
 """
 from __future__ import annotations
 
-from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
-from django.utils import timezone
 
 from linkedin.monitoring import degraded
 
@@ -56,38 +54,3 @@ class TestTaskFailureTracker:
         for _ in range(10):  # crosses the threshold twice
             t.record_failure()
         patched_notify.assert_called_once()
-
-
-class TestCheckListenerHeartbeat:
-    def test_noop_when_listener_disabled(self, monkeypatch, patched_notify):
-        monkeypatch.setattr("linkedin.conf.ENABLE_REALTIME_LISTENER", False)
-        degraded.check_listener_heartbeat("Arian", "arian@example.com")
-        patched_notify.assert_not_called()
-
-    def test_alerts_on_stale_heartbeat(self, monkeypatch, patched_notify):
-        monkeypatch.setattr("linkedin.conf.ENABLE_REALTIME_LISTENER", True)
-        stale = timezone.now() - timedelta(hours=2)
-        monkeypatch.setattr(
-            "linkedin.monitoring.degraded.read_heartbeat", lambda _u: stale,
-        )
-        degraded.check_listener_heartbeat("Arian", "arian@example.com")
-        patched_notify.assert_called_once()
-        assert patched_notify.call_args.kwargs["sender"] == "Arian"
-
-    def test_no_alert_on_fresh_heartbeat(self, monkeypatch, patched_notify):
-        monkeypatch.setattr("linkedin.conf.ENABLE_REALTIME_LISTENER", True)
-        fresh = timezone.now() - timedelta(minutes=1)
-        monkeypatch.setattr(
-            "linkedin.monitoring.degraded.read_heartbeat", lambda _u: fresh,
-        )
-        degraded.check_listener_heartbeat("Arian", "arian@example.com")
-        patched_notify.assert_not_called()
-
-    def test_no_alert_when_heartbeat_missing(self, monkeypatch, patched_notify):
-        # None ⇒ never written yet (startup grace) — not treated as stale.
-        monkeypatch.setattr("linkedin.conf.ENABLE_REALTIME_LISTENER", True)
-        monkeypatch.setattr(
-            "linkedin.monitoring.degraded.read_heartbeat", lambda _u: None,
-        )
-        degraded.check_listener_heartbeat("Arian", "arian@example.com")
-        patched_notify.assert_not_called()

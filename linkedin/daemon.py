@@ -604,12 +604,10 @@ def run_daemon(session):
     # Node monitoring — a background thread that beats this daemon's
     # DaemonHeartbeat row and watches peers, plus an in-process
     # consecutive-failure tracker for the dispatch loop. Both alert the ops
-    # Slack channel. Gated by ENABLE_NODE_MONITOR; the listener-staleness
-    # degraded check self-guards on ENABLE_REALTIME_LISTENER.
+    # Slack channel. Gated by ENABLE_NODE_MONITOR.
     from linkedin.monitoring import (
         NodeMonitor,
         TaskFailureTracker,
-        check_listener_heartbeat,
         clear_heartbeat,
     )
     node_monitor = NodeMonitor(our_operator) if ENABLE_NODE_MONITOR else None
@@ -638,13 +636,6 @@ def run_daemon(session):
         # Active hours: ensure the listener child process is running.
         if ENABLE_REALTIME_LISTENER:
             listener_supervisor.ensure_running()
-
-        # Degraded check: a listener that is enabled but whose heartbeat
-        # has gone stale. No-op when the listener is disabled.
-        if ENABLE_NODE_MONITOR:
-            check_listener_heartbeat(
-                our_operator, session.linkedin_profile.linkedin_username,
-            )
 
         claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
         task = Task.objects.claim_next(

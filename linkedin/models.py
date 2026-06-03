@@ -592,6 +592,7 @@ class DaemonHeartbeat(models.Model):
     sender = models.CharField(max_length=100, unique=True)
     last_alive = models.DateTimeField(null=True, blank=True)
     down_alerted_at = models.DateTimeField(null=True, blank=True)
+    activity_alerted_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

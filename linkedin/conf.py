@@ -255,13 +255,26 @@ PEER_STALE_MINUTES = int(os.getenv("PEER_STALE_MINUTES") or 15)
 # even if still broken, so a long outage spams once, not every cycle.
 DEGRADED_REALERT_HOURS = int(os.getenv("DEGRADED_REALERT_HOURS") or 6)
 
-# The realtime listener is "stuck" if its heartbeat file is older than this
-# while the listener is enabled. Checked once per active-hours loop.
-LISTENER_HEARTBEAT_STALE_MINUTES = int(os.getenv("LISTENER_HEARTBEAT_STALE_MINUTES") or 30)
-
 # Consecutive task failures (in-process streak) before the daemon flags
 # itself degraded — "alive but every task is failing".
 TASK_FAILURE_STREAK_THRESHOLD = int(os.getenv("TASK_FAILURE_STREAK_THRESHOLD") or 5)
+
+# Canonical sender handles that should be making outbound progress on workdays
+# (e.g. "Arian,Chuka,Leili"). Empty means infer expected senders from active
+# LinkedIn profiles that own active campaigns.
+EXPECTED_OUTBOUND_SENDERS = tuple(
+    sender.strip()
+    for sender in os.getenv("EXPECTED_OUTBOUND_SENDERS", "").split(",")
+    if sender.strip()
+)
+
+# Activity health: after this many minutes from active-day start, expected
+# senders should have at least one outbound ActionLog row for the day.
+SENDER_ACTIVITY_GRACE_MINUTES = int(os.getenv("SENDER_ACTIVITY_GRACE_MINUTES") or 60)
+
+# Activity health: a sender with due outbound work and no successful ActionLog
+# in this many minutes is considered stuck even when its heartbeat is fresh.
+SENDER_ACTIVITY_STALE_MINUTES = int(os.getenv("SENDER_ACTIVITY_STALE_MINUTES") or 90)
 
 # Post-accept follow-up message content lives in `linkedin/icp_messages.json`
 # (rigid templates keyed `{sender: {icp: {channel: [...]}}}`, `{first_name}`
