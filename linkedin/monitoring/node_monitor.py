@@ -180,8 +180,28 @@ def _outbound_task_summary(sender: str, campaign_ids: list[int], now) -> dict:
     return {
         "pending": pending.count(),
         "due": due.count(),
+        "due_connect": due.filter(task_type=Task.TaskType.CONNECT).count(),
+        "due_follow_up": due.filter(task_type=Task.TaskType.FOLLOW_UP).count(),
         "oldest_due_at": due.aggregate(oldest=Min("scheduled_at"))["oldest"],
     }
+
+
+def _blocked_due_actions(profile, task_summary: dict) -> list[str]:
+    """Return due outbound actions blocked by the profile's rate limits."""
+    from linkedin.models import ActionLog
+
+    blocked = []
+    if (
+        task_summary["due_connect"] > 0
+        and not profile.can_execute(ActionLog.ActionType.CONNECT)
+    ):
+        blocked.append(ActionLog.ActionType.CONNECT)
+    if (
+        task_summary["due_follow_up"] > 0
+        and not profile.can_execute(ActionLog.ActionType.FOLLOW_UP)
+    ):
+        blocked.append(ActionLog.ActionType.FOLLOW_UP)
+    return blocked
 
 
 def _expected_sender_profiles() -> dict[str, object | None]:
@@ -279,6 +299,26 @@ def check_expected_sender_activity(self_sender: str) -> None:
         latest_action = actions.order_by("-created_at").first()
         total_today = sum(counts.values())
         oldest_due_at = task_summary["oldest_due_at"]
+        blocked_actions = _blocked_due_actions(profile, task_summary)
+        if blocked_actions:
+            if _claim_activity_alert(sender, now):
+                notify_degraded(
+                    sender=sender,
+                    title=f"{sender}'s outbound sender hit a rate limit",
+                    detail=(
+                        f"Heartbeat is fresh (last seen "
+                        f"{heartbeat.last_alive:%Y-%m-%d %H:%M} UTC), but "
+                        f"due outbound work is blocked by rate limits for: "
+                        f"{', '.join(blocked_actions)}. "
+                        f"Sent today: {counts.get(ActionLog.ActionType.CONNECT, 0)} "
+                        f"invites, {counts.get(ActionLog.ActionType.FOLLOW_UP, 0)} "
+                        f"follow-ups. Outbound queue: {task_summary['due']} due, "
+                        f"{task_summary['pending']} pending. This is not treated "
+                        f"as a stuck outbound lane."
+                    ),
+                )
+            continue
+
         due_is_stale = (
             oldest_due_at is not None
             and oldest_due_at < activity_stale_before

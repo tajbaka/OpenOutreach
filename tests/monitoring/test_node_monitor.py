@@ -184,6 +184,39 @@ class TestCheckExpectedSenderActivity:
 
         patched_notify.assert_not_called()
 
+    def test_rate_limited_sender_alerts_as_limited_not_stuck(
+        self, db, monkeypatch, patched_notify,
+    ):
+        _profile, campaign = self._sender()
+        now = timezone.now()
+        DaemonHeartbeat.objects.create(sender="Chuka", last_alive=now)
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            scheduled_at=now - timedelta(hours=2),
+            payload={"campaign_id": campaign.pk},
+        )
+
+        def fake_can_execute(self, action_type):
+            return action_type != ActionLog.ActionType.CONNECT
+
+        monkeypatch.setattr(LinkedInProfile, "can_execute", fake_can_execute)
+        monkeypatch.setattr(nm.conf, "EXPECTED_OUTBOUND_SENDERS", ("Chuka",))
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_GRACE_MINUTES", 0)
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_STALE_MINUTES", 30)
+        monkeypatch.setattr(
+            nm, "_activity_check_window", lambda _now: now - timedelta(hours=3),
+        )
+
+        nm.check_expected_sender_activity("Arian")
+
+        patched_notify.assert_called_once()
+        kwargs = patched_notify.call_args.kwargs
+        assert kwargs["sender"] == "Chuka"
+        assert "hit a rate limit" in kwargs["title"]
+        assert "not treated as a stuck outbound lane" in kwargs["detail"]
+        assert "outbound activity looks stuck" not in kwargs["title"]
+
     def test_explicit_expected_sender_without_profile_alerts(
         self, db, monkeypatch, patched_notify,
     ):

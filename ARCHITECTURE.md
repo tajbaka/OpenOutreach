@@ -272,9 +272,14 @@ LinkedIn profiles that own active campaigns. After
 with work should have outbound `ActionLog` rows. A fresh heartbeat plus stale
 due outbound work and no recent `ActionLog` for
 `SENDER_ACTIVITY_STALE_MINUTES` alerts as "outbound activity looks stuck".
+Before declaring a sender stuck, the checker calls
+`LinkedInProfile.can_execute()` for the due action types. If the sender is
+blocked by the daily/weekly connect or follow-up limit, it alerts as "hit a
+rate limit" and does not classify the outbound lane as stuck.
 `DaemonHeartbeat.activity_alerted_at` is the atomic cooldown marker for this
-class of alert. This catches "monitor thread is alive but the outbound lane is
-not making progress", which plain heartbeat liveness cannot see.
+class of alert. This separates healthy cap exhaustion from "monitor thread is
+alive but the outbound lane is not making progress", which plain heartbeat
+liveness cannot see.
 
 **Degraded detection — "alive but not working".** Runs inside the daemon,
 which is the only thing that can observe its own state (`degraded.py`):
