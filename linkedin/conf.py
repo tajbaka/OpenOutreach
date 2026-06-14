@@ -194,6 +194,17 @@ LISTENER_CATCHUP_GAP_MINUTES = int(os.getenv("LISTENER_CATCHUP_GAP_MINUTES") or 
 # the heartbeat file is refreshed each slice.
 LISTENER_PUMP_SLICE_SECONDS = int(os.getenv("LISTENER_PUMP_SLICE_SECONDS") or 30)
 
+# Listener schedule is independent from outbound active hours. Defaults keep
+# the inbound watcher available all day, every day, while connect/follow-up
+# automation remains governed by ACTIVE_* above.
+LISTENER_ACTIVE_START_HOUR = int(os.getenv("LISTENER_ACTIVE_START_HOUR", "0"))
+LISTENER_ACTIVE_END_HOUR = int(os.getenv("LISTENER_ACTIVE_END_HOUR", "24"))
+LISTENER_REST_DAYS = tuple(
+    int(day.strip())
+    for day in os.getenv("LISTENER_REST_DAYS", "").split(",")
+    if day.strip()
+)
+
 # Fixed CDP port the daemon exposes on its Chromium (`--remote-debugging-port`)
 # and the realtime listener child process connects to (`connect_over_cdp`).
 # Localhost-only. The daemon only opens the port when ENABLE_REALTIME_LISTENER

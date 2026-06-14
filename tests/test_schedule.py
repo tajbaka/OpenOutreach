@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from linkedin.daemon import seconds_until_active
+from linkedin.daemon import listener_should_run_now, seconds_until_active
 from linkedin.models import ActionLog, Task
 
 
@@ -161,3 +161,45 @@ class TestSecondsUntilActive:
         with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 23)):
             result = seconds_until_active(object())
             assert result == pytest.approx(10 * 3600, abs=1)
+
+
+class TestListenerSchedule:
+    @patch("linkedin.daemon.ENABLE_REALTIME_LISTENER", True)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_START_HOUR", 0)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_END_HOUR", 24)
+    @patch("linkedin.daemon.LISTENER_REST_DAYS", ())
+    @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
+    def test_default_listener_schedule_runs_after_outbound_hours(self):
+        with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 22)):
+            assert listener_should_run_now() is True
+
+    @patch("linkedin.daemon.ENABLE_REALTIME_LISTENER", True)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_START_HOUR", 7)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_END_HOUR", 23)
+    @patch("linkedin.daemon.LISTENER_REST_DAYS", ())
+    @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
+    def test_listener_wide_hours_stop_after_end(self):
+        with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 23)):
+            assert listener_should_run_now() is False
+
+    @patch("linkedin.daemon.ENABLE_REALTIME_LISTENER", True)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_START_HOUR", 7)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_END_HOUR", 23)
+    @patch("linkedin.daemon.LISTENER_REST_DAYS", ())
+    @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
+    def test_listener_wide_hours_run_before_outbound_start(self):
+        with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 18, 8)):
+            assert listener_should_run_now() is True
+
+    @patch("linkedin.daemon.ENABLE_REALTIME_LISTENER", True)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_START_HOUR", 0)
+    @patch("linkedin.daemon.LISTENER_ACTIVE_END_HOUR", 24)
+    @patch("linkedin.daemon.LISTENER_REST_DAYS", (5, 6))
+    @patch("linkedin.daemon.ACTIVE_TIMEZONE", "UTC")
+    def test_listener_respects_own_rest_days(self):
+        with patch("linkedin.daemon.timezone.localtime", return_value=_mock_now(2026, 3, 21, 12)):
+            assert listener_should_run_now() is False
+
+    @patch("linkedin.daemon.ENABLE_REALTIME_LISTENER", False)
+    def test_listener_disabled_never_runs(self):
+        assert listener_should_run_now(now=_mock_now(2026, 3, 18, 12)) is False

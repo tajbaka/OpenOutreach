@@ -30,6 +30,9 @@ from linkedin.conf import (
     ENABLE_ACTIVE_HOURS,
     ENABLE_PACING_CATCH_UP,
     ENRICHMENT_WAIT_POLL_SECONDS,
+    LISTENER_ACTIVE_END_HOUR,
+    LISTENER_ACTIVE_START_HOUR,
+    LISTENER_REST_DAYS,
     MANUAL_REPLY_POLL_SECONDS,
     REST_DAYS,
 )
@@ -230,6 +233,24 @@ def _claimable_task_types_now(profile=None):
     if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
         return None
     return _catch_up_task_types(profile, now=now)
+
+
+def listener_should_run_now(*, now=None) -> bool:
+    """Whether the realtime listener is allowed under its own schedule."""
+    if not ENABLE_REALTIME_LISTENER:
+        return False
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = now or timezone.localtime(timezone=tz)
+    if now.weekday() in LISTENER_REST_DAYS:
+        return False
+    return LISTENER_ACTIVE_START_HOUR <= now.hour < LISTENER_ACTIVE_END_HOUR
+
+
+def _sync_listener_supervisor(listener_supervisor) -> None:
+    if listener_should_run_now():
+        listener_supervisor.ensure_running()
+    else:
+        listener_supervisor.stop()
 
 
 # ------------------------------------------------------------------
@@ -641,9 +662,7 @@ def run_daemon(session):
                 if manual_wait is not None:
                     pause = min(pause, max(manual_wait, 1))
                 pause = min(pause, MANUAL_REPLY_POLL_SECONDS)
-                # Off-hours: kill the listener child so the account isn't
-                # holding a live LinkedIn realtime connection overnight.
-                listener_supervisor.stop()
+                _sync_listener_supervisor(listener_supervisor)
                 h, m = int(pause // 3600), int(pause % 3600 // 60)
                 logger.info("Outside active hours — sleeping %dh%02dm", h, m)
                 connections.close_all()
@@ -653,9 +672,7 @@ def run_daemon(session):
         if manual_reply_bypass:
             logger.info("Outside active hours — sending queued manual reply")
 
-        # Active hours: ensure the listener child process is running.
-        if ENABLE_REALTIME_LISTENER and not manual_reply_bypass:
-            listener_supervisor.ensure_running()
+        _sync_listener_supervisor(listener_supervisor)
 
         if claimable_task_types is not None and not manual_reply_bypass:
             claimable_task_types = set(claimable_task_types) | {Task.TaskType.MANUAL_REPLY}
@@ -693,7 +710,7 @@ def run_daemon(session):
                             ", ".join(sorted(claimable_task_types)) or "allowed tasks",
                             MANUAL_REPLY_POLL_SECONDS,
                         )
-                        listener_supervisor.stop()
+                        _sync_listener_supervisor(listener_supervisor)
                         connections.close_all()
                         time.sleep(MANUAL_REPLY_POLL_SECONDS)
                         continue
@@ -703,7 +720,7 @@ def run_daemon(session):
                         ", ".join(sorted(claimable_task_types)) or "allowed tasks",
                         wait,
                     )
-                    listener_supervisor.stop()
+                    _sync_listener_supervisor(listener_supervisor)
                     connections.close_all()
                     time.sleep(wait)
                     continue
@@ -727,6 +744,7 @@ def run_daemon(session):
             if wait > 0:
                 h, m = int(wait // 3600), int(wait % 3600 // 60)
                 logger.info("Next task in %dh%02dm — sleeping", h, m)
+                _sync_listener_supervisor(listener_supervisor)
                 connections.close_all()
                 time.sleep(wait)
             continue

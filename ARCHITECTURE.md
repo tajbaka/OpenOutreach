@@ -140,7 +140,7 @@ The listener runs as a **separate child process** — `manage.py listen_realtime
 
 ### Modules
 
-- **`supervisor.py`** — `ListenerSupervisor`: spawns `manage.py listen_realtime` as a subprocess, restarts it on unexpected death, gives up after 5 consecutive spawn failures, and kills the child process during off-hours (restarting when active hours resume).
+- **`supervisor.py`** — `ListenerSupervisor`: spawns `manage.py listen_realtime` as a subprocess, restarts it on unexpected death, gives up after 5 consecutive spawn failures, and runs/stops the child according to listener-specific hours (`LISTENER_ACTIVE_START_HOUR`, `LISTENER_ACTIVE_END_HOUR`, `LISTENER_REST_DAYS`) rather than outbound active hours.
 - **`listener.py`** — `run_listener` / `_run_one_connection`: calls `connect_over_cdp` to attach to the daemon's browser, opens a `/messaging/` tab in the shared context, enables the CDP `Network` domain, calls `Network.streamResourceContent` to opt in to streaming, and receives `Network.dataReceived` events carrying base64-encoded SSE bytes. Reconnects automatically on a dropped CDP connection.
 - **`sse.py`** — `RealtimeSSEBuffer`: accumulates base64-encoded CDP stream chunks, decodes them, and frames the raw bytes into complete SSE events (splitting on `\n\n`).
 - **`parser.py`** — `parse_realtime_event(raw_event) → ParsedRealtimeMessage | None`: decodes the SSE `data:` payload as JSON, walks LinkedIn's realtime envelope, and extracts sender URN, conversation URN, message URN, body text, and `sent_at` timestamp. Returns `None` for non-message events (presence pings, typing indicators, etc.).
@@ -167,7 +167,7 @@ CDP Network.dataReceived (base64 chunk)
 
 ### Lifecycle
 
-- **Supervisor**: `ListenerSupervisor` runs inside the daemon. It spawns `listen_realtime`, watches for unexpected exits (restart), gives up after 5 consecutive failures, and kills the child off-hours (resuming on active-hours re-entry).
+- **Supervisor**: `ListenerSupervisor` runs inside the daemon. It spawns `listen_realtime`, watches for unexpected exits (restart), gives up after 5 consecutive failures, and runs/stops the child according to listener-specific hours. Defaults are 0–24 with no rest days, so inbound Slack notifications can continue while outbound automation sleeps.
 - **Reconnect**: inside the listener process, `_run_one_connection` wraps a single CDP session; `run_listener` loops around it so a dropped CDP connection triggers a clean reconnect without a full process restart.
 - **Startup catch-up**: the daemon calls `run_startup_catchup(account_label)` during startup. If the heartbeat gap exceeds `LISTENER_CATCHUP_GAP_MINUTES` (default 30 min), it either prompts the operator interactively (TTY) or emits a `WARNING` log (headless) recommending:
 
@@ -306,7 +306,7 @@ enhancement — tick exceptions are logged and never crash the outreach daemon.
 
 - **`.env`** (project root) — `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
 - **`conf.py` schedule** — `ACTIVE_START_HOUR` (9), `ACTIVE_END_HOUR` (17), `ACTIVE_TIMEZONE` ("UTC"), `REST_DAYS` ((5, 6) = Sat+Sun). Daemon sleeps outside this window.
-- **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30).
+- **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30), `LISTENER_ACTIVE_START_HOUR` (0), `LISTENER_ACTIVE_END_HOUR` (24), `LISTENER_REST_DAYS` (empty).
 - **`conf.py` node monitoring** — `ENABLE_NODE_MONITOR` (default `true`), `MONITOR_INTERVAL_SECONDS` (300), `PEER_STALE_MINUTES` (15), `DEGRADED_REALERT_HOURS` (6), `TASK_FAILURE_STREAK_THRESHOLD` (5), `EXPECTED_OUTBOUND_SENDERS` (empty → infer), `SENDER_ACTIVITY_GRACE_MINUTES` (60), `SENDER_ACTIVITY_STALE_MINUTES` (90).
 - **`conf.py:CAMPAIGN_CONFIG`** — `min_ready_to_connect_prob` (0.9), `min_positive_pool_prob` (0.20), `connect_delay_seconds` (10), `connect_no_candidate_delay_seconds` (300), `check_pending_recheck_after_hours` (24), `check_pending_jitter_factor` (0.2), `qualification_n_mc_samples` (100), `enrich_min_interval` (1), `min_action_interval` (120), `embedding_model` ("BAAI/bge-small-en-v1.5").
 - **Prompt templates** (at `linkedin/templates/prompts/`) — `qualify_lead.j2` (temp 0.7), `search_keywords.j2` (temp 0.9), `follow_up_agent.j2`.
