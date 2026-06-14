@@ -355,7 +355,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     requests and 32 follow-up DMs for Chuka's campaign, from the wrong
     account.
 
-    - follow_up: claimable when `payload.operator` matches.
+    - follow_up / manual_reply: claimable when `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
       account that owns the campaign.
@@ -367,11 +367,16 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     owned = list(campaign_ids or [])
     in_owned = Q(payload__campaign_id__in=owned)
     mine_followup = Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator)
+    mine_manual = Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator)
     mine_connect = Q(task_type=Task.TaskType.CONNECT) & in_owned
     account_agnostic = ~Q(
-        task_type__in=[Task.TaskType.FOLLOW_UP, Task.TaskType.CONNECT]
+        task_type__in=[
+            Task.TaskType.FOLLOW_UP,
+            Task.TaskType.CONNECT,
+            Task.TaskType.MANUAL_REPLY,
+        ]
     )
-    return mine_followup | mine_connect | account_agnostic
+    return mine_followup | mine_manual | mine_connect | account_agnostic
 
 
 class TaskQuerySet(models.QuerySet):
@@ -393,8 +398,8 @@ class TaskQuerySet(models.QuerySet):
         daemon is logged in as; `campaign_ids` are the pks of the
         campaigns that account owns. When `operator` is supplied:
 
-          - follow_up Tasks are filtered to those whose `payload.operator`
-            matches;
+          - follow_up/manual_reply Tasks are filtered to those whose
+            `payload.operator` matches;
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
             request must go out from the account that owns the campaign;
@@ -411,6 +416,9 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
+        manual = qs.filter(task_type=Task.TaskType.MANUAL_REPLY).first()
+        if manual is not None:
+            return manual
         return qs.first()
 
     def seconds_to_next(
@@ -455,6 +463,7 @@ class Task(models.Model):
         FOLLOW_UP = "follow_up"
         SWEEP_CONNECTIONS = "sweep_connections"
         ENRICH_PHONE = "enrich_phone"
+        MANUAL_REPLY = "manual_reply"
 
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -504,6 +513,17 @@ class Task(models.Model):
                 errors.append("follow_up tasks require payload.public_id")
             if not payload.get("operator"):
                 errors.append("follow_up tasks require non-empty payload.operator")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.MANUAL_REPLY
+        ):
+            if not payload.get("lead_id"):
+                errors.append("manual_reply tasks require payload.lead_id")
+            if not payload.get("operator"):
+                errors.append("manual_reply tasks require non-empty payload.operator")
+            if not (payload.get("message") or "").strip():
+                errors.append("manual_reply tasks require non-empty payload.message")
 
         if errors:
             raise ValidationError({"payload": errors})

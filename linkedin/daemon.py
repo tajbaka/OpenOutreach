@@ -30,6 +30,7 @@ from linkedin.conf import (
     ENABLE_ACTIVE_HOURS,
     ENABLE_PACING_CATCH_UP,
     ENRICHMENT_WAIT_POLL_SECONDS,
+    MANUAL_REPLY_POLL_SECONDS,
     REST_DAYS,
 )
 from linkedin.diagnostics import failure_diagnostics
@@ -44,6 +45,7 @@ from linkedin.tasks.connect import (
     _is_behind_normal_window_pace,
 )
 from linkedin.tasks.follow_up import handle_follow_up
+from linkedin.tasks.manual_reply import handle_manual_reply
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,7 @@ logger = logging.getLogger(__name__)
 _HANDLERS = {
     Task.TaskType.CONNECT: handle_connect,
     Task.TaskType.FOLLOW_UP: handle_follow_up,
+    Task.TaskType.MANUAL_REPLY: handle_manual_reply,
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
 }
 
@@ -623,21 +626,40 @@ def run_daemon(session):
         connections.close_all()
 
         pause = seconds_until_active(session.linkedin_profile)
+        claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
+        manual_reply_bypass = False
         if pause > 0:
-            # Off-hours: kill the listener child so the account isn't
-            # holding a live LinkedIn realtime connection overnight.
-            listener_supervisor.stop()
-            h, m = int(pause // 3600), int(pause % 3600 // 60)
-            logger.info("Outside active hours — sleeping %dh%02dm", h, m)
-            connections.close_all()
-            time.sleep(pause)
-            continue
+            manual_wait = Task.objects.seconds_to_next(
+                operator=our_operator,
+                campaign_ids=our_campaign_ids,
+                task_types={Task.TaskType.MANUAL_REPLY},
+            )
+            if manual_wait is not None and manual_wait <= 0:
+                claimable_task_types = {Task.TaskType.MANUAL_REPLY}
+                manual_reply_bypass = True
+            else:
+                if manual_wait is not None:
+                    pause = min(pause, max(manual_wait, 1))
+                pause = min(pause, MANUAL_REPLY_POLL_SECONDS)
+                # Off-hours: kill the listener child so the account isn't
+                # holding a live LinkedIn realtime connection overnight.
+                listener_supervisor.stop()
+                h, m = int(pause // 3600), int(pause % 3600 // 60)
+                logger.info("Outside active hours — sleeping %dh%02dm", h, m)
+                connections.close_all()
+                time.sleep(pause)
+                continue
+
+        if manual_reply_bypass:
+            logger.info("Outside active hours — sending queued manual reply")
 
         # Active hours: ensure the listener child process is running.
-        if ENABLE_REALTIME_LISTENER:
+        if ENABLE_REALTIME_LISTENER and not manual_reply_bypass:
             listener_supervisor.ensure_running()
 
-        claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
+        if claimable_task_types is not None and not manual_reply_bypass:
+            claimable_task_types = set(claimable_task_types) | {Task.TaskType.MANUAL_REPLY}
+
         task = Task.objects.claim_next(
             operator=our_operator, campaign_ids=our_campaign_ids,
             task_types=claimable_task_types,
@@ -665,6 +687,16 @@ def run_daemon(session):
             )
             if wait is None:
                 if claimable_task_types is not None:
+                    if Task.TaskType.MANUAL_REPLY in claimable_task_types:
+                        logger.info(
+                            "Catch-up queue empty for %s — polling manual replies in %ds",
+                            ", ".join(sorted(claimable_task_types)) or "allowed tasks",
+                            MANUAL_REPLY_POLL_SECONDS,
+                        )
+                        listener_supervisor.stop()
+                        connections.close_all()
+                        time.sleep(MANUAL_REPLY_POLL_SECONDS)
+                        continue
                     wait = _seconds_until_next_active_start()
                     logger.info(
                         "Catch-up queue empty for %s — sleeping until next active window (%.0fs)",
@@ -701,7 +733,7 @@ def run_daemon(session):
 
         # Account-wide tasks (e.g. sweep_connections) span all campaigns and
         # don't carry a campaign_id; the handler sets session.campaign as needed.
-        if task.task_type == Task.TaskType.SWEEP_CONNECTIONS:
+        if task.task_type in {Task.TaskType.SWEEP_CONNECTIONS, Task.TaskType.MANUAL_REPLY}:
             session.campaign = session.campaigns.first()
         else:
             campaign = Campaign.objects.filter(pk=task.payload.get("campaign_id")).first()

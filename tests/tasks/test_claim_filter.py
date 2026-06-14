@@ -21,7 +21,7 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.utils import timezone as dj_tz
 
-from linkedin.models import Task
+from linkedin.models import Task, _operator_scope_q
 
 
 def _mk(task_type, *, operator=None, payload_extra=None, scheduled_offset_s=0):
@@ -137,19 +137,62 @@ def test_seconds_to_next_scopes_connect_to_owned_campaign():
 
 
 @pytest.mark.django_db
-def test_claim_next_excludes_enrich_phone():
-    """The outbound loop must never claim an enrichment task — that is the
-    EnrichmentWorker's job."""
+def test_claim_next_excludes_enrich_phone_but_claims_manual_reply():
+    """The outbound loop claims manual replies, but never enrichment tasks."""
     enrich = Task.objects.create(
         task_type=Task.TaskType.ENRICH_PHONE,
         status=Task.Status.PENDING,
         scheduled_at=dj_tz.now() - timedelta(seconds=60),
         payload={"lead_id": 1},
     )
-    assert Task.objects.claim_next() is None
-    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
-    assert Task.objects.seconds_to_next() is None
+    manual = Task.objects.create(
+        task_type=Task.TaskType.MANUAL_REPLY,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=120),
+        payload={"lead_id": 1, "operator": "Arian", "message": "Manual reply"},
+    )
+    assert Task.objects.claim_next().pk == manual.pk
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]).pk == manual.pk
+    assert Task.objects.seconds_to_next() == 0
     assert Task.objects.next_enrichment().pk == enrich.pk
+
+
+@pytest.mark.django_db
+def test_manual_reply_claims_before_older_followup():
+    followup = _mk(
+        Task.TaskType.FOLLOW_UP,
+        operator="Arian",
+        scheduled_offset_s=-120,
+    )
+    manual = Task.objects.create(
+        task_type=Task.TaskType.MANUAL_REPLY,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=10),
+        payload={"lead_id": 1, "operator": "Arian", "message": "Manual reply"},
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+    assert claimed.pk == manual.pk
+    assert claimed.pk != followup.pk
+
+
+@pytest.mark.django_db
+def test_manual_reply_scopes_to_matching_operator_when_enabled():
+    chuka = Task.objects.create(
+        task_type=Task.TaskType.MANUAL_REPLY,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=60),
+        payload={"lead_id": 1, "operator": "Chuka", "message": "Reply from Chuka"},
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.MANUAL_REPLY,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=120),
+        payload={"lead_id": 2, "operator": "Arian", "message": "Reply from Arian"},
+    )
+
+    scoped = Task.objects.filter(_operator_scope_q("Chuka", [1]))
+    assert list(scoped) == [chuka]
 
 
 @pytest.mark.django_db
@@ -182,4 +225,15 @@ def test_pending_connect_requires_campaign_id():
             status=Task.Status.PENDING,
             scheduled_at=dj_tz.now(),
             payload={},
+        )
+
+
+@pytest.mark.django_db
+def test_pending_manual_reply_requires_lead_operator_and_message():
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=Task.TaskType.MANUAL_REPLY,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={"lead_id": 1, "operator": "Arian", "message": "   "},
         )

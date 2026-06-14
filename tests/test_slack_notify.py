@@ -70,6 +70,51 @@ def test_notify_error_noop_when_webhook_unset():
     mock_urlopen.assert_not_called()
 
 
+def test_notify_manual_reply_sent_updates_original_slack_message(monkeypatch):
+    monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "xoxb-test")
+    payload = {
+        "slack_channel_id": "C123",
+        "slack_message_ts": "171234.567",
+        "slack_blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": "inbound"}},
+            {"type": "actions", "elements": []},
+        ],
+        "slack_response_url": "https://hooks.slack.com/actions/T/B/R",
+    }
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        slack_mod.notify_manual_reply_sent(payload, lead_name="Alice Manual")
+
+    req = mock_urlopen.call_args[0][0]
+    assert req.full_url == "https://slack.com/api/chat.update"
+    assert req.headers["Authorization"] == "Bearer xoxb-test"
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["channel"] == "C123"
+    assert sent["ts"] == "171234.567"
+    statuses = [
+        block for block in sent["blocks"]
+        if block.get("block_id", "").startswith("reply_status:")
+    ]
+    assert len(statuses) == 1
+    assert "LinkedIn reply sent" in statuses[0]["text"]["text"]
+
+
+def test_notify_manual_reply_failed_falls_back_to_response_url(monkeypatch):
+    monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "")
+    payload = {
+        "slack_response_url": "https://hooks.slack.com/actions/T/B/R",
+    }
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b"ok"
+        slack_mod.notify_manual_reply_failed(payload, "LinkedIn send failed for lead 42")
+
+    req = mock_urlopen.call_args[0][0]
+    assert req.full_url == "https://hooks.slack.com/actions/T/B/R"
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["replace_original"] is False
+    assert "LinkedIn reply failed" in sent["text"]
+
+
 def test_notify_error_posts_block_kit_when_webhook_set(slack_url):
     """Exercises the POST body shape — header, traceback section, context block."""
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
@@ -193,27 +238,63 @@ class TestNotifyMessageReceived:
         block0_text = blocks[0]["text"]["text"]
         assert "waylonkrush" in block0_text
         assert "Waylon Krush" in block0_text
-        # Block 1: quoted message snippet.
+        # Block 1: quoted full message.
         assert blocks[1]["type"] == "section"
         assert "> hello there" in blocks[1]["text"]["text"]
         # Block 2: context block with operator name.
         assert blocks[2]["type"] == "context"
         elements_text = " ".join(e["text"] for e in blocks[2]["elements"])
         assert "Arian" in elements_text
+        actions = next(b for b in blocks if b.get("type") == "actions")
+        assert any(
+            el.get("action_id") == "linkedin_reply_button"
+            and el.get("value") == f"{lead.id}:Arian"
+            for el in actions["elements"]
+        )
 
-    def test_long_text_is_truncated(self, db, slack_url):
+    def test_long_text_is_not_truncated_at_preview_length(self, db, slack_url):
         from crm.models import Lead
         lead = Lead.objects.create(
             first_name="A", linkedin_url="https://www.linkedin.com/in/a-long/",
         )
+        text = "x" * 600
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             mock_open.return_value.__enter__.return_value.status = 200
             slack_mod.notify_message_received(
-                lead=lead, text="x" * 600, operator="",
+                lead=lead, text=text, operator="",
             )
         sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
-        body = json.dumps(sent)
-        assert "..." in body
+        message_block = sent["blocks"][1]["text"]["text"]
+        assert text in message_block
+        assert "...(truncated)" not in message_block
+
+    def test_message_received_preserves_line_breaks(self, db, slack_url):
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="A", linkedin_url="https://www.linkedin.com/in/a-lines/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="first line\n\nsecond line", operator="",
+            )
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        assert sent["blocks"][1]["text"]["text"] == "> first line\n>\n> second line"
+
+    def test_very_long_text_is_slack_safely_truncated(self, db, slack_url):
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="A", linkedin_url="https://www.linkedin.com/in/a-huge/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="x" * 4000, operator="",
+            )
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        message_block = sent["blocks"][1]["text"]["text"]
+        assert len(message_block) <= slack_mod._SLACK_SECTION_TEXT_LIMIT
+        assert "...(truncated)" in message_block
 
     def test_disqualified_lead_name_has_no_prefix(self, db, slack_url):
         """Disqualified leads must not bleed the '(Disqualified)' prefix into Slack."""
@@ -249,7 +330,10 @@ class TestNotifyMessageReceived:
         sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
         actions = [b for b in sent["blocks"] if b.get("type") == "actions"]
         assert len(actions) == 1
-        select = actions[0]["elements"][0]
+        select = next(
+            el for el in actions[0]["elements"]
+            if el.get("action_id") == "enrich_phone_select"
+        )
         assert select["type"] == "static_select"
         assert select["action_id"] == "enrich_phone_select"
         values = [opt["value"] for opt in select["options"]]
@@ -376,9 +460,7 @@ class TestNotifySweepSummary:
         """conftest._silence_slack clears the ops webhook — must not POST."""
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             slack_mod.notify_sweep_summary(
-                sender="Leili", newly_connected=3, connects_today=18,
-                connect_runs_today=22, followups_today=5, qualified=4,
-                pending=12, connected=47, failed=9,
+                sender="Leili", connects_today=18, followups_today=5,
             )
         mock_open.assert_not_called()
 
@@ -386,19 +468,10 @@ class TestNotifySweepSummary:
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             mock_open.return_value.__enter__.return_value.status = 200
             slack_mod.notify_sweep_summary(
-                sender="Leili", newly_connected=3, connects_today=18,
-                connect_runs_today=22, followups_today=5, qualified=4,
-                pending=12, connected=47, failed=9,
+                sender="Leili", connects_today=18, followups_today=5,
             )
         mock_open.assert_called_once()
         body = mock_open.call_args[0][0].data.decode("utf-8")
         assert "Leili" in body
         assert "18 invites" in body
         assert "5 follow-ups" in body
-        assert "22 runs" in body
-        assert "4 ready to send" in body
-        assert "4 qualified" in body
-        assert "12 pending" in body
-        assert "47 connected" in body
-        assert "9 failed" in body
-        assert "3 newly accepted" in body

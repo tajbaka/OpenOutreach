@@ -43,6 +43,7 @@ Task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, q
 1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3).
 2. **`handle_sweep_connections`** — Account-wide. Scrapes `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`, cross-references PENDING Deals by `public_id`, transitions matches to CONNECTED and enqueues `follow_up`. Replaces the legacy per-profile `check_pending` flow. On completion posts a lean per-sender analytics snapshot to the ops Slack channel via `_post_sweep_summary` → `notify_sweep_summary` (sends today, pending/connected/failed Deal counts) — best-effort, never blocks the sweep.
 3. **`handle_follow_up`** — Per-profile. Sends rigid ICP LinkedIn follow-up sequence steps from `icp_messages.json`, gated by `ENABLE_FOLLOW_UP` and the follow-up rate limit. Payloads may carry `sequence_name`, `channel`, and `step_index`; missing values default to the current one-step `linkedin_connect_followup` / same channel / `0` behavior. Owner scoping compares outbound `Message.sender` values through `linkedin.operators.resolve_operator`, so new LinkedIn display variants must be added there. Stop checks are DB-local only: inbound LinkedIn/Gmail message, existing `crm.Meeting`, disqualified lead, suppression, or non-CONNECTED state. On send failure it re-enqueues the same step in 24h. On non-final success it records `ActionLog`, persists an outbound `crm.Message`, and enqueues the next step after that step's `delay_days`, normalized into configured active hours/rest days, while keeping the Deal `CONNECTED`; final success marks the Deal `COMPLETED`. Step-level dedup for a non-final already-sent step keeps the Deal `CONNECTED` and ensures the next step is queued; only a final-step dedup marks `COMPLETED`. Post-send retries only retry the state write so a dead DB connection cannot double-count the action or duplicate the next-step Task. The single-cell ICP Messages Sheets sync is legacy-only for follow-up copy: it rejects sequence-shaped follow-up channels on push and preserves existing sequences on pull, so multi-step copy is edited directly in JSON.
+4. **`handle_manual_reply`** — Slack-to-LinkedIn reply lane. Slack modal submit inserts a `manual_reply` Task with `lead_id`, `operator`, `message`, Slack message coordinates, and original Slack blocks. The daemon claims these ahead of normal outbound work, scoped by `payload.operator`, and sends through the same logged-in Playwright page via `send_raw_message`. Manual replies use the direct-thread UI composer with human typing and deliberately disable the Voyager API fallback, so a UI send failure fails the task instead of sending instantly. Manual replies bypass active-hours sleeps when due; while off-hours and no reply is due, the daemon caps sleep to `MANUAL_REPLY_POLL_SECONDS` (default 60) so newly queued replies are picked up quickly without running normal automation. Manual replies do not consume connect/follow-up quotas, do not advance sequences, and do not change Deal state; the durable outreach side effect is the outbound `crm.Message` with a `manual-reply:` synthetic external id. Before sending, the handler checks that same `crm.Message` ledger for an existing same lead/operator/body manual reply and skips duplicates, covering the crash-after-send/before-task-complete window. Slack sent/failed acknowledgements are best-effort via `chat.update` on the original notification, falling back to the interaction `response_url`.
 
 ## Qualification ML Pipeline
 
@@ -80,6 +81,7 @@ Three apps in `INSTALLED_APPS`:
 - **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`.
 - **`tasks/sweep_connections.py`** — `handle_sweep_connections`, `enqueue_sweep_connections`. Replaces legacy `check_pending`.
 - **`tasks/follow_up.py`** — `handle_follow_up`, rigid ICP LinkedIn DM send, sequence payload shim, rate limiting.
+- **`tasks/manual_reply.py`** — `handle_manual_reply`, Slack-composed LinkedIn reply sends from the daemon's logged-in browser account.
 - **`pipeline/qualify.py`** — `run_qualification()`, `fetch_qualification_candidates()`.
 - **`pipeline/search.py`** — `run_search()`, keyword management.
 - **`pipeline/search_keywords.py`** — `generate_search_keywords()` via LLM.
@@ -142,7 +144,7 @@ The listener runs as a **separate child process** — `manage.py listen_realtime
 - **`listener.py`** — `run_listener` / `_run_one_connection`: calls `connect_over_cdp` to attach to the daemon's browser, opens a `/messaging/` tab in the shared context, enables the CDP `Network` domain, calls `Network.streamResourceContent` to opt in to streaming, and receives `Network.dataReceived` events carrying base64-encoded SSE bytes. Reconnects automatically on a dropped CDP connection.
 - **`sse.py`** — `RealtimeSSEBuffer`: accumulates base64-encoded CDP stream chunks, decodes them, and frames the raw bytes into complete SSE events (splitting on `\n\n`).
 - **`parser.py`** — `parse_realtime_event(raw_event) → ParsedRealtimeMessage | None`: decodes the SSE `data:` payload as JSON, walks LinkedIn's realtime envelope, and extracts sender URN, conversation URN, message URN, body text, and `sent_at` timestamp. Returns `None` for non-message events (presence pings, typing indicators, etc.).
-- **`handler.py`** — `handle_realtime_event(raw_event, account_label)`: orchestrates parse → lead lookup → `persist_thread` → `notify_message_received`. Inbound-only; outbound events are silently dropped. All exceptions are caught and logged so a bad event never crashes the listener.
+- **`handler.py`** — `handle_realtime_event(raw_event, account_label)`: orchestrates parse → lead lookup → `persist_thread` → `notify_message_received`. Inbound-only; outbound events are silently dropped. Reply Slack notifications include the full Slack-safe quoted message body, preserving line breaks and only truncating near Slack's 3000-character section limit. All exceptions are caught and logged so a bad event never crashes the listener.
 - **`heartbeat.py`** — Writes and reads `data/listener-heartbeat-<account>.json` (timestamp + account label). Updated by the listener process; read by startup catch-up to compute how long the listener was offline.
 - **`lead_lookup.py`** — `resolve_lead_for_realtime(conversation_urn, sender_urn) → Lead | None`: queries the DB first by conversation URN (matched against Deal metadata), then falls back to sender URN (matched against `Lead.linkedin_url`).
 - **`catchup.py`** — `run_startup_catchup(account_label)`: reads the heartbeat file; if the gap since the last heartbeat exceeds `LISTENER_CATCHUP_GAP_MINUTES` (default 30), prompts the operator on TTY to run `backfill_messages --account primary --skip-prereq-gate`, or logs a warning when running headless.
@@ -182,12 +184,17 @@ Phone-number enrichment, **operator-triggered from Slack**. The
 opt-in via `ENABLE_AUTO_PHONE_ENRICHMENT` (`conf.py`, default off).
 
 **Trigger.** Every inbound-reply Slack notification (`notify_message_received`)
-carries a "📞 Get phone number" `static_select` menu — waterfall (default) /
-bettercontact / leadmagic / prospeo. The operator's pick is POSTed by Slack to
-a Vercel serverless function (`api/slack_enrich.py`), which verifies the Slack
-request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256), parses the chosen
-`(lead_id, provider)`, and INSERTs an `enrich_phone` `Task` into Neon with raw
-`psycopg` (no Django import). The `Task` table is the entire contract between
+carries a "Reply on LinkedIn" button plus a "📞 Get phone number"
+`static_select` menu — waterfall (default) / bettercontact / leadmagic /
+prospeo. The operator's pick/button/modal submit is POSTed by Slack to a
+Vercel serverless function (`api/slack_enrich.py`), which verifies the Slack
+request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256). Enrichment picks
+parse `(lead_id, provider)` and INSERT an `enrich_phone` `Task`; reply modal
+submits INSERT a daemon-dispatched `manual_reply` `Task`. The function uses raw
+`psycopg` (no Django import), and `SLACK_BOT_TOKEN` is required for
+`views.open`; queued status updates prefer the interaction `response_url` and
+fall back to `chat.update` when metadata is available, while daemon sent/failed
+status uses `chat.update` with the task's saved Slack blocks. The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
 against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
 `(lead, provider)` (best-effort — a duplicate is harmless); two *different*

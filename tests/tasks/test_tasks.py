@@ -1206,4 +1206,6 @@ def test_enrich_phone_task_type_exists():
     from linkedin.models import Task
 
     assert Task.TaskType.ENRICH_PHONE == "enrich_phone"
+    assert Task.TaskType.MANUAL_REPLY == "manual_reply"
     assert "enrich_phone" in {choice[0] for choice in Task.TaskType.choices}
+    assert "manual_reply" in {choice[0] for choice in Task.TaskType.choices}

@@ -33,17 +33,25 @@ def send_raw_message(
     sequence_name: str = "",
     step_index: int | None = None,
     operator: str = "",
+    external_id_kind: str = "daemon-send",
+    prefer_direct: bool = False,
+    allow_api_fallback: bool = True,
 ) -> bool:
     """Send an arbitrary message to a profile and persist it. Returns True if sent."""
     from linkedin.db.chat import save_chat_message
 
     public_identifier = profile.get("public_identifier")
 
-    sent = (
-        _send_msg_pop_up(session, profile, message)
-        or _send_message(session, profile, message)
-        or _send_message_via_api(session, profile, message)
-    )
+    if prefer_direct:
+        sent = _send_message(session, profile, message)
+        if not sent and allow_api_fallback:
+            sent = _send_message_via_api(session, profile, message)
+    else:
+        sent = _send_msg_pop_up(session, profile, message) or _send_message(
+            session, profile, message,
+        )
+        if not sent and allow_api_fallback:
+            sent = _send_message_via_api(session, profile, message)
     if not sent:
         logger.error("All send methods failed for %s", public_identifier)
         return False
@@ -56,6 +64,7 @@ def send_raw_message(
         sequence_name=sequence_name,
         step_index=step_index,
         operator=operator,
+        external_id_kind=external_id_kind,
     )
     logger.info("Message sent to %s: %s", public_identifier, message)
     return True

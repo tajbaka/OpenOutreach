@@ -15,8 +15,8 @@ Seven surfaces:
    doesn't spam the channel.
 3. `notify_message_received` — fires when the realtime listener detects
    and persists a new inbound LinkedIn DM. Single Block Kit message with
-   the lead's name and profile link, a quoted snippet of the message body,
-   and a context block identifying the owning operator.
+   the lead's name and profile link, the full Slack-safe quoted message
+   body, and a context block identifying the owning operator.
 4. `notify_phone_enriched` — fires when the enrichment worker finishes a lead.
 5. `notify_degraded` — fires from the monitoring layer when a peer node
    looks down, or this node is alive but failing (task-failure streak,
@@ -52,7 +52,7 @@ from contextlib import contextmanager
 from urllib import request
 from urllib.error import URLError
 
-from linkedin.conf import SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
+from linkedin.conf import SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,8 @@ logger = logging.getLogger(__name__)
 # 50 times in 30 seconds during a real burst.
 _RECENT_ERRORS: dict[tuple[str, str, str], float] = {}
 _DEDUPE_WINDOW_SECONDS = 300  # 5 min
+_SLACK_SECTION_TEXT_LIMIT = 3000
+_SLACK_MESSAGE_BODY_LIMIT = 2900
 
 
 def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
@@ -87,6 +89,142 @@ def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
                 logger.warning("Slack webhook returned %d for %s", resp.status, label)
     except (URLError, TimeoutError) as e:
         logger.warning("Slack webhook failed for %s: %s", label, e)
+
+
+def _post_slack_response_url(response_url: str, payload: dict, label: str) -> None:
+    """POST to a Slack interaction response_url. Best-effort only."""
+    if not response_url:
+        return
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        response_url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except (URLError, TimeoutError, OSError) as e:
+        logger.warning("Slack response_url failed for %s: %s", label, e)
+
+
+def _slack_api(method: str, payload: dict, label: str) -> bool:
+    """Call Slack Web API. Returns False on missing token or recoverable failure."""
+    if not SLACK_BOT_TOKEN:
+        return False
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        f"https://slack.com/api/{method}",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        logger.warning("Slack API %s failed for %s: %s", method, label, e)
+        return False
+    if not data.get("ok"):
+        logger.warning("Slack API %s failed for %s: %s", method, label, data.get("error"))
+        return False
+    return True
+
+
+def _manual_reply_status_blocks(original_blocks: list, status_text: str, suffix: str) -> list:
+    status = {
+        "type": "section",
+        "block_id": f"reply_status:{suffix}",
+        "text": {"type": "mrkdwn", "text": status_text},
+    }
+    out: list = []
+    inserted = False
+    for block in original_blocks or []:
+        if block.get("block_id", "").startswith("reply_status:"):
+            continue
+        if block.get("type") == "actions" and not inserted:
+            out.append(status)
+            inserted = True
+        out.append(block)
+    if not inserted:
+        out.append(status)
+    return out
+
+
+def _update_manual_reply_status(payload: dict, *, status_text: str, suffix: str, fallback: str) -> None:
+    channel_id = payload.get("slack_channel_id") or ""
+    message_ts = payload.get("slack_message_ts") or ""
+    blocks = payload.get("slack_blocks") or []
+    if channel_id and message_ts and blocks:
+        updated = _slack_api(
+            "chat.update",
+            {
+                "channel": channel_id,
+                "ts": message_ts,
+                "text": fallback,
+                "blocks": _manual_reply_status_blocks(blocks, status_text, suffix),
+            },
+            f"manual reply {suffix}",
+        )
+        if updated:
+            return
+
+    _post_slack_response_url(
+        payload.get("slack_response_url", ""),
+        {
+            "response_type": "in_channel",
+            "replace_original": False,
+            "text": fallback,
+        },
+        f"manual reply {suffix}",
+    )
+
+
+def notify_manual_reply_sent(payload: dict, *, lead_name: str = "") -> None:
+    """Tell Slack that a queued manual LinkedIn reply was sent."""
+    target = f" to {lead_name}" if lead_name else ""
+    fallback = f":white_check_mark: LinkedIn reply sent{target}."
+    _update_manual_reply_status(
+        payload,
+        status_text=f":white_check_mark: *LinkedIn reply sent*{target}.",
+        suffix="sent",
+        fallback=fallback,
+    )
+
+
+def notify_manual_reply_failed(payload: dict, error: str) -> None:
+    """Tell Slack that a queued manual LinkedIn reply failed."""
+    short = (error or "Unknown error").splitlines()[0][:240]
+    fallback = f":warning: LinkedIn reply failed: `{short}`"
+    _update_manual_reply_status(
+        payload,
+        status_text=f":warning: *LinkedIn reply failed* — `{short}`",
+        suffix="failed",
+        fallback=fallback,
+    )
+
+
+def _quote_slack_message_body(text: str) -> str:
+    """Render a LinkedIn reply as Slack mrkdwn quote text.
+
+    Slack section text is capped at 3000 chars. Keep a little room for
+    the quote prefixes and an explicit truncation marker, while preserving
+    line breaks for normal-length replies.
+    """
+    body = (text or "").strip()
+    if not body:
+        body = "(empty message)"
+    truncated = len(body) > _SLACK_MESSAGE_BODY_LIMIT
+    if truncated:
+        body = body[:_SLACK_MESSAGE_BODY_LIMIT].rstrip()
+    quoted = "\n".join(f"> {line}" if line else ">" for line in body.splitlines())
+    if truncated:
+        quoted = f"{quoted}\n> ...(truncated)"
+    return quoted[:_SLACK_SECTION_TEXT_LIMIT]
 
 
 def notify_connection_accepted(
@@ -261,9 +399,7 @@ def notify_message_received(
     profile_url = lead.linkedin_url or ""
     operator_clean = (operator or "").strip()
 
-    snippet = (text or "").strip().replace("\n", " ")
-    if len(snippet) > 280:
-        snippet = snippet[:277] + "..."
+    quoted_message = _quote_slack_message_body(text or "")
 
     op_suffix = f" — {operator_clean}'s lead" if operator_clean else ""
     name_md = f"<{profile_url}|{full_name}>" if profile_url else full_name
@@ -278,7 +414,7 @@ def notify_message_received(
 
     blocks: list[dict] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": quoted_message}},
     ]
     if elements:
         blocks.append({"type": "context", "elements": elements})
@@ -290,6 +426,16 @@ def notify_message_received(
         "type": "actions",
         "block_id": "enrich_phone_actions",
         "elements": [
+            {
+                "type": "button",
+                "action_id": "linkedin_reply_button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Reply on LinkedIn",
+                },
+                "style": "primary",
+                "value": f"{lead.id}:{operator_clean}",
+            },
             {
                 "type": "static_select",
                 "action_id": "enrich_phone_select",

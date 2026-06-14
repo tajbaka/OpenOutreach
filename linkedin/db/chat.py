@@ -37,6 +37,7 @@ def save_chat_message(
     sequence_name: str = "",
     step_index: int | None = None,
     operator: str = "",
+    external_id_kind: str = "daemon-send",
 ):
     """Persist an outbound LinkedIn message to `crm.Message`. Never raises."""
     try:
@@ -60,8 +61,10 @@ def save_chat_message(
         #
         # Sequence-aware callers provide the extra fields. Older callers keep
         # the historical shape so existing ad-hoc sends do not change format.
-        if deal_id is not None and sequence_name and step_index is not None:
-            send_operator = operator or sender
+        send_operator = operator or sender
+        if external_id_kind == "manual-reply":
+            external_id = f"manual-reply:{send_operator}:{lead.pk}:{int(now.timestamp())}"
+        elif deal_id is not None and sequence_name and step_index is not None:
             external_id = (
                 f"daemon-send:{send_operator}:{deal_id}:"
                 f"{sequence_name}:step-{step_index}:{int(now.timestamp())}"

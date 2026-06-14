@@ -41,8 +41,8 @@ BROWSER_NAV_TIMEOUT_MS = 10_000
 # Sleep delays per keystroke are randomly sampled inside this band,
 # so the timing distribution matches a human typing with natural
 # pauses and bursts rather than a uniform machine cadence.
-HUMAN_TYPE_MIN_DELAY_MS = 35
-HUMAN_TYPE_MAX_DELAY_MS = 105
+HUMAN_TYPE_MIN_DELAY_MS = 80
+HUMAN_TYPE_MAX_DELAY_MS = 250
 VOYAGER_REQUEST_TIMEOUT_MS = 30_000
 
 # ----------------------------------------------------------------------
@@ -134,8 +134,12 @@ ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip()
 # SLACK_REPLIES_WEBHOOK_URL is the "replies" channel — inbound DM detections
 # from the realtime listener (notify_message_received) and phone-enrichment
 # results (notify_phone_enriched). Empty disables those notifications.
+# SLACK_BOT_TOKEN is the xoxb token used for Slack interactivity that needs
+# Web API calls, e.g. opening manual-reply modals and updating messages.
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 SLACK_REPLIES_WEBHOOK_URL = os.getenv("SLACK_REPLIES_WEBHOOK_URL", "").strip()
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
+MANUAL_REPLY_POLL_SECONDS = int(os.getenv("MANUAL_REPLY_POLL_SECONDS", "60"))
 
 # Google Sheets CRM sync. GOOGLE_SHEETS_ID is the spreadsheet id from the
 # URL (https://docs.google.com/spreadsheets/d/<id>/edit). CREDENTIALS_PATH

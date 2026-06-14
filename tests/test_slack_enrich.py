@@ -9,7 +9,7 @@ import hmac
 import importlib.util
 import json
 import pathlib
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
 import pytest
@@ -67,6 +67,44 @@ def _interaction_body(value: str, message_blocks=None) -> str:
     payload = {"actions": [{"selected_option": {"value": value}}]}
     if message_blocks is not None:
         payload["message"] = {"blocks": message_blocks}
+    return urlencode({"payload": json.dumps(payload)})
+
+
+def _reply_button_body(value: str = "42:Chuka", message_blocks=None) -> str:
+    payload = {
+        "type": "block_actions",
+        "trigger_id": "trigger-123",
+        "response_url": "https://hooks.slack.com/actions/T/B/R",
+        "channel": {"id": "C123"},
+        "message": {"ts": "171234.567", "blocks": message_blocks or []},
+        "actions": [{"action_id": "linkedin_reply_button", "value": value}],
+    }
+    return urlencode({"payload": json.dumps(payload)})
+
+
+def _reply_modal_body(message: str = "Sounds good", metadata=None) -> str:
+    payload = {
+        "type": "view_submission",
+        "user": {"id": "U123"},
+        "view": {
+            "callback_id": "linkedin_reply_modal",
+            "private_metadata": json.dumps(metadata or {
+                "lead_id": 42,
+                "operator": "Chuka",
+                "channel_id": "C123",
+                "message_ts": "171234.567",
+                "response_url": "https://hooks.slack.com/actions/T/B/R",
+                "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}],
+            }),
+            "state": {
+                "values": {
+                    "linkedin_reply_message": {
+                        "linkedin_reply_body": {"value": message},
+                    },
+                },
+            },
+        },
+    }
     return urlencode({"payload": json.dumps(payload)})
 
 
@@ -187,3 +225,115 @@ def test_render_response_dedups_repeated_provider():
     twice = slack_enrich.render_response_blocks(once, "leadmagic")
     status = [b for b in twice if b.get("block_id", "").startswith("enrich_status")]
     assert status[0]["block_id"] == "enrich_status:leadmagic"
+
+
+def test_parse_reply_button_extracts_modal_metadata():
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "reply"}}]
+    out = slack_enrich.parse_reply_button(_reply_button_body(message_blocks=blocks))
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Chuka"
+    assert out["trigger_id"] == "trigger-123"
+    assert out["response_url"] == "https://hooks.slack.com/actions/T/B/R"
+    assert out["channel_id"] == "C123"
+    assert out["message_ts"] == "171234.567"
+    assert out["blocks"] == blocks
+
+
+def test_parse_reply_modal_submission_extracts_task_payload():
+    out = slack_enrich.parse_reply_modal_submission(_reply_modal_body("  Yes, happy to chat.  "))
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Chuka"
+    assert out["message"] == "Yes, happy to chat."
+    assert out["slack_channel_id"] == "C123"
+    assert out["slack_message_ts"] == "171234.567"
+    assert out["slack_response_url"] == "https://hooks.slack.com/actions/T/B/R"
+    assert out["slack_user_id"] == "U123"
+    assert out["blocks"]
+
+
+def test_parse_reply_modal_submission_rejects_empty_message():
+    with pytest.raises(ValueError, match="empty reply body"):
+        slack_enrich.parse_reply_modal_submission(_reply_modal_body("   "))
+
+
+def test_render_reply_status_keeps_actions_and_replaces_old_status():
+    original = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": "reply"}},
+        {"type": "section", "block_id": "reply_status:queued", "text": {"type": "mrkdwn", "text": "old"}},
+        _MENU_BLOCK,
+    ]
+    out = slack_enrich.render_reply_status_blocks(original, "new status")
+    assert any(b.get("type") == "actions" for b in out)
+    statuses = [b for b in out if b.get("block_id", "").startswith("reply_status")]
+    assert len(statuses) == 1
+    assert statuses[0]["text"]["text"] == "new status"
+
+
+def test_enqueue_manual_reply_task_inserts_when_none_exists():
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]
+    conn, cur = _mock_conn(existing=False)
+    inserted = slack_enrich.enqueue_manual_reply_task(conn, {
+        "lead_id": 42,
+        "operator": "Chuka",
+        "message": "Yes, happy to chat.",
+        "slack_channel_id": "C123",
+        "slack_message_ts": "171234.567",
+        "slack_response_url": "https://hooks.slack.com/actions/T/B/R",
+        "slack_user_id": "U123",
+        "blocks": blocks,
+    })
+    assert inserted is True
+    assert cur.execute.call_count == 2
+    insert_sql = cur.execute.call_args_list[1][0][0]
+    inserted_payload = cur.execute.call_args_list[1][0][1][0].obj
+    assert "manual_reply" in insert_sql
+    assert inserted_payload["slack_blocks"] == blocks
+    conn.commit.assert_called_once()
+
+
+def test_enqueue_manual_reply_task_dedups_pending_duplicate():
+    conn, cur = _mock_conn(existing=True)
+    inserted = slack_enrich.enqueue_manual_reply_task(conn, {
+        "lead_id": 42,
+        "operator": "Chuka",
+        "message": "Yes, happy to chat.",
+    })
+    assert inserted is False
+    assert cur.execute.call_count == 1
+    conn.commit.assert_not_called()
+
+
+def test_open_reply_modal_calls_slack_views_open(monkeypatch):
+    monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+    with patch.object(slack_enrich.request, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        slack_enrich.open_reply_modal(
+            trigger_id="trigger-123",
+            lead_id=42,
+            operator="Chuka",
+            channel_id="C123",
+            message_ts="171234.567",
+            response_url="https://hooks.slack.com/actions/T/B/R",
+            original_blocks=[],
+        )
+    req = mock_open.call_args[0][0]
+    assert req.full_url.endswith("/views.open")
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["trigger_id"] == "trigger-123"
+    assert sent["view"]["callback_id"] == "linkedin_reply_modal"
+    metadata = json.loads(sent["view"]["private_metadata"])
+    assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
+
+
+def test_post_response_url_updates_original_message():
+    with patch.object(slack_enrich.request, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.status = 200
+        slack_enrich._post_response_url(
+            "https://hooks.slack.com/actions/T/B/R",
+            {"replace_original": True, "text": "queued"},
+        )
+    req = mock_open.call_args[0][0]
+    assert req.full_url == "https://hooks.slack.com/actions/T/B/R"
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["replace_original"] is True
+    assert sent["text"] == "queued"

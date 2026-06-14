@@ -123,6 +123,50 @@ def test_save_chat_message_keeps_legacy_external_id_without_sequence(fake_sessio
     assert msg.external_id.startswith(f"daemon-send:{lead.pk}:")
 
 
+def test_save_chat_message_uses_manual_reply_external_id(fake_session):
+    from linkedin.db.chat import save_chat_message
+
+    lead = Lead.objects.create(
+        first_name="Alice",
+        linkedin_url="https://www.linkedin.com/in/alice-manual/",
+    )
+    fake_session.linkedin_profile.linkedin_username = "chukyjack@gmail.com"
+
+    save_chat_message(
+        fake_session,
+        "alice-manual",
+        "manual reply body",
+        operator="Chuka",
+        external_id_kind="manual-reply",
+    )
+
+    msg = Message.objects.get(lead=lead, source=Message.Source.LINKEDIN)
+    assert msg.external_id.startswith(f"manual-reply:Chuka:{lead.pk}:")
+    assert msg.sender == "chukyjack@gmail.com"
+
+
+def test_send_raw_message_can_disable_api_fallback(fake_session):
+    from linkedin.actions import message as message_mod
+
+    profile = {"public_identifier": "alice-no-api"}
+
+    with patch.object(message_mod, "_send_message", return_value=False) as direct, \
+            patch.object(message_mod, "_send_message_via_api") as api, \
+            patch.object(message_mod, "_send_msg_pop_up") as popup:
+        sent = message_mod.send_raw_message(
+            fake_session,
+            profile,
+            "manual body",
+            prefer_direct=True,
+            allow_api_fallback=False,
+        )
+
+    assert sent is False
+    direct.assert_called_once()
+    popup.assert_not_called()
+    api.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # B.3 — persist_thread helper
 # ---------------------------------------------------------------------------
