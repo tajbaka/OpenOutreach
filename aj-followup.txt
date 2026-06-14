@@ -1,0 +1,11 @@
+Hi AJ,
+
+Hope things have been busy on your end. Wanted to circle back on a couple of open items so we're ready to move once your team is.
+
+- MNDA: did the mutual version I sent work for your team, or would you prefer we sign yours? Either way is fine, just let me know which and I'll get it executed.
+- Testing: whenever you're ready, it'd help to know how you'd like to try the platform, connect your own AWS/cloud environment, or have us spin up a test instance you can log into and walk through the workflow.
+
+Happy to jump on a quick call if that's easier than email. Looking forward to next steps.
+
+Best,
+Arian

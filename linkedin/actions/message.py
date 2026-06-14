@@ -24,7 +24,16 @@ SELECTORS = {
 }
 
 
-def send_raw_message(session, profile: Dict[str, Any], message: str) -> bool:
+def send_raw_message(
+    session,
+    profile: Dict[str, Any],
+    message: str,
+    *,
+    deal_id: int | None = None,
+    sequence_name: str = "",
+    step_index: int | None = None,
+    operator: str = "",
+) -> bool:
     """Send an arbitrary message to a profile and persist it. Returns True if sent."""
     from linkedin.db.chat import save_chat_message
 
@@ -39,7 +48,15 @@ def send_raw_message(session, profile: Dict[str, Any], message: str) -> bool:
         logger.error("All send methods failed for %s", public_identifier)
         return False
 
-    save_chat_message(session, public_identifier, message)
+    save_chat_message(
+        session,
+        public_identifier,
+        message,
+        deal_id=deal_id,
+        sequence_name=sequence_name,
+        step_index=step_index,
+        operator=operator,
+    )
     logger.info("Message sent to %s: %s", public_identifier, message)
     return True
 
@@ -179,7 +196,17 @@ def _send_message_via_api(
         return False
 
 
-def send_media_message(session, profile: Dict[str, Any], message: str, media_path: str) -> bool:
+def send_media_message(
+    session,
+    profile: Dict[str, Any],
+    message: str,
+    media_path: str,
+    *,
+    deal_id: int | None = None,
+    sequence_name: str = "",
+    step_index: int | None = None,
+    operator: str = "",
+) -> bool:
     """Send a message + media attachment via the URN-keyed direct compose URL.
 
     Mirrors `_send_message`'s single-nav pattern: navigate once to
@@ -252,7 +279,15 @@ def send_media_message(session, profile: Dict[str, Any], message: str, media_pat
         send_btn.first.click(force=True)
         session.wait(3, 4)
 
-        save_chat_message(session, public_identifier, message or "[media]")
+        save_chat_message(
+            session,
+            public_identifier,
+            message or "[media]",
+            deal_id=deal_id,
+            sequence_name=sequence_name,
+            step_index=step_index,
+            operator=operator,
+        )
         logger.info("Media message sent to %s", public_identifier)
         return True
 
@@ -297,4 +332,3 @@ if __name__ == "__main__":
     print(f"Sending message as @{handle} → {args.profile}")
 
     send_raw_message(session=session, profile=test_profile, message=args.message)
-

@@ -28,7 +28,16 @@ from linkedin.db.urls import public_id_to_url
 logger = logging.getLogger(__name__)
 
 
-def save_chat_message(session: "AccountSession", public_identifier: str, content: str):
+def save_chat_message(
+    session: "AccountSession",
+    public_identifier: str,
+    content: str,
+    *,
+    deal_id: int | None = None,
+    sequence_name: str = "",
+    step_index: int | None = None,
+    operator: str = "",
+):
     """Persist an outbound LinkedIn message to `crm.Message`. Never raises."""
     try:
         from crm.models import Lead, Message
@@ -40,15 +49,25 @@ def save_chat_message(session: "AccountSession", public_identifier: str, content
             return
 
         now = datetime.now(timezone.utc)
-        # Synthetic external_id — daemon's send paths don't return the
-        # LinkedIn URN. Keyed on a sortable timestamp so two sends to the
-        # same lead get distinct rows. backfill_messages will later add
-        # the URN-keyed row alongside (different external_id, no collision).
-        external_id = f"daemon-send:{lead.pk}:{int(now.timestamp())}"
         sender = (
             getattr(session.linkedin_profile, "linkedin_username", "")
             or getattr(session, "handle", "")
         )
+        # Synthetic external_id — daemon's send paths don't return the
+        # LinkedIn URN. Keyed on a sortable timestamp so two sends to the
+        # same lead get distinct rows. backfill_messages will later add
+        # the URN-keyed row alongside (different external_id, no collision).
+        #
+        # Sequence-aware callers provide the extra fields. Older callers keep
+        # the historical shape so existing ad-hoc sends do not change format.
+        if deal_id is not None and sequence_name and step_index is not None:
+            send_operator = operator or sender
+            external_id = (
+                f"daemon-send:{send_operator}:{deal_id}:"
+                f"{sequence_name}:step-{step_index}:{int(now.timestamp())}"
+            )
+        else:
+            external_id = f"daemon-send:{lead.pk}:{int(now.timestamp())}"
 
         Message.objects.get_or_create(
             source=Message.Source.LINKEDIN,

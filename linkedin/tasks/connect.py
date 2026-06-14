@@ -512,6 +512,9 @@ def enqueue_follow_up(
     *,
     operator: str,
     delay_seconds: float = 10,
+    sequence_name: str | None = None,
+    channel: str | None = None,
+    step_index: int | None = None,
 ):
     """Enqueue a follow_up Task.
 
@@ -526,8 +529,15 @@ def enqueue_follow_up(
         return
     if not operator:
         raise ValueError("enqueue_follow_up requires a non-empty operator")
+    payload = {"campaign_id": campaign_id, "public_id": public_id, "operator": operator}
+    if sequence_name is not None:
+        payload["sequence_name"] = sequence_name
+    if channel is not None:
+        payload["channel"] = channel
+    if step_index is not None:
+        payload["step_index"] = step_index
     _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,
-        payload={"campaign_id": campaign_id, "public_id": public_id, "operator": operator},
+        payload=payload,
         delay_seconds=delay_seconds,
     )

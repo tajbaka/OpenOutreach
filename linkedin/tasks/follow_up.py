@@ -29,21 +29,93 @@ where the operator reviews each draft before sending.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from django.db import connections
 from django.db.utils import InterfaceError, OperationalError
+from django.utils import timezone
 from termcolor import colored
 
-from linkedin.conf import ENABLE_FOLLOW_UP
+from linkedin.conf import (
+    ACTIVE_END_HOUR,
+    ACTIVE_START_HOUR,
+    ACTIVE_TIMEZONE,
+    ENABLE_ACTIVE_HOURS,
+    ENABLE_FOLLOW_UP,
+    REST_DAYS,
+)
 from linkedin.db.deals import get_profile_dict_for_public_id, set_profile_state
 from linkedin.db.urls import public_id_to_url
-from linkedin.icp_outbound import classify_role, fill_for_lead
+from linkedin.icp_outbound import channel_steps_for_lead, classify_role, fill_for_lead
 from linkedin.models import ActionLog
 
 logger = logging.getLogger(__name__)
 
 # DB errors that mean "fresh connection needed" — Neon idle-timeout drops.
 _DB_DEAD_ERRORS = (OperationalError, InterfaceError)
+DEFAULT_SEQUENCE_NAME = "linkedin_connect_followup"
+DEFAULT_CHANNEL = "linkedin_connect_followup"
+
+
+def _step_external_id_prefix(*, operator: str, deal_id: int, sequence_name: str, step_index: int) -> str:
+    return f"daemon-send:{operator}:{deal_id}:{sequence_name}:step-{step_index}:"
+
+
+def _has_sent_sequence_step(*, deal, operator: str, sequence_name: str, step_index: int) -> bool:
+    from crm.models import Message
+
+    return Message.objects.filter(
+        lead=deal.lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.OUTBOUND,
+        external_id__startswith=_step_external_id_prefix(
+            operator=operator,
+            deal_id=deal.pk,
+            sequence_name=sequence_name,
+            step_index=step_index,
+        ),
+    ).exists()
+
+
+def _sequence_stop_reason(deal) -> str:
+    from crm.models import Meeting, Message
+
+    if deal.lead.disqualified:
+        return "Lead disqualified; automation stopped"
+    if Meeting.objects.filter(lead=deal.lead).exists():
+        return "Meeting exists; automation stopped"
+    if Message.objects.filter(
+        lead=deal.lead,
+        source__in=[Message.Source.LINKEDIN, Message.Source.GMAIL],
+        direction=Message.Direction.INBOUND,
+    ).exists():
+        return "Lead replied; automation stopped"
+    return ""
+
+
+def _delay_seconds_to_active_due(delay_days: int) -> float:
+    """Return a delay whose target lands inside the active-hours window."""
+    raw_delay = max(int(delay_days), 0) * 24 * 3600
+    if not ENABLE_ACTIVE_HOURS:
+        return float(raw_delay)
+
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = timezone.now()
+    due = timezone.localtime(now + timedelta(seconds=raw_delay), timezone=tz)
+    if due.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= due.hour < ACTIVE_END_HOUR:
+        return float(raw_delay)
+
+    if due.weekday() in REST_DAYS or due.hour >= ACTIVE_END_HOUR:
+        candidate = due + timedelta(days=1)
+    else:
+        candidate = due
+    candidate = candidate.replace(
+        hour=ACTIVE_START_HOUR, minute=0, second=0, microsecond=0,
+    )
+    while candidate.weekday() in REST_DAYS:
+        candidate += timedelta(days=1)
+    return max((candidate - timezone.localtime(now, timezone=tz)).total_seconds(), 0.0)
 
 
 def handle_follow_up(task, session, qualifiers):
@@ -64,6 +136,9 @@ def handle_follow_up(task, session, qualifiers):
     payload = task.payload
     public_id = payload["public_id"]
     campaign_id = payload["campaign_id"]
+    sequence_name = payload.get("sequence_name") or DEFAULT_SEQUENCE_NAME
+    channel = payload.get("channel") or sequence_name or DEFAULT_CHANNEL
+    step_index = int(payload.get("step_index") or 0)
 
     logger.info(
         "[%s] %s %s",
@@ -78,6 +153,9 @@ def handle_follow_up(task, session, qualifiers):
             campaign_id, public_id,
             operator=our_operator,
             delay_seconds=_seconds_until_tomorrow(),
+            sequence_name=sequence_name,
+            channel=channel,
+            step_index=step_index,
         )
         return
 
@@ -112,6 +190,24 @@ def handle_follow_up(task, session, qualifiers):
         deal.closing_reason = ClosingReason.DISQUALIFIED
         deal.reason = reason
         deal.save(update_fields=["closing_reason", "reason"])
+        return
+
+    from linkedin.enums import ProfileState
+    if deal.state != ProfileState.CONNECTED:
+        logger.info(
+            "follow_up: %s state is %s, not CONNECTED — skipping send",
+            public_id, deal.state,
+        )
+        return
+
+    stop_reason = _sequence_stop_reason(deal)
+    if stop_reason:
+        set_profile_state(
+            session,
+            public_id,
+            "Completed" if not deal.lead.disqualified else "Failed",
+            reason=stop_reason,
+        )
         return
 
     # Owner-scoping guard (second line of defense — claim_next already
@@ -165,28 +261,6 @@ def handle_follow_up(task, session, qualifiers):
         )
         return
 
-    # If the lead already sent us anything on this thread, stop — operator
-    # picks it up from the followup sheet's REPLIED / MET cohort. Sending
-    # the rigid pitch over an active human thread is the worst outcome here.
-    #
-    # Read from `crm.Message` rather than live-fetching via `get_conversation`
-    # (which would navigate to the LinkedIn thread URL first, costing a full
-    # page nav before send and leaving a bot-like double-navigation pattern
-    # in the trace). `sync_sheets` + sweep_connections + backfill_messages
-    # keep crm.Message current; the cached read is the canonical source.
-    from crm.models import Message
-    has_inbound = Message.objects.filter(
-        lead=deal.lead,
-        source=Message.Source.LINKEDIN,
-        direction=Message.Direction.INBOUND,
-    ).exists()
-    if has_inbound:
-        set_profile_state(
-            session, public_id, "Completed",
-            reason="Lead replied; automation stopped",
-        )
-        return
-
     # Same-operator cross-campaign dedup. A follow-up DM is one-per-person-
     # per-operator, but follow_up Tasks are per-Deal (campaign-scoped) — a
     # Lead with CONNECTED Deals in two campaigns gets one Task per campaign,
@@ -202,6 +276,13 @@ def handle_follow_up(task, session, qualifiers):
     # follow-up sends (`save_chat_message`). Also closes the latent same-
     # campaign re-send hole when a prior send succeeded but its
     # `set_profile_state` write failed.
+    step_already_sent = _has_sent_sequence_step(
+        deal=deal,
+        operator=our_operator,
+        sequence_name=sequence_name,
+        step_index=step_index,
+    )
+
     prior_followup_senders = (
         Message.objects.filter(
             lead=deal.lead,
@@ -213,11 +294,41 @@ def handle_follow_up(task, session, qualifiers):
         .values_list("sender", flat=True)
         .distinct()
     )
-    if our_operator in {resolve_operator(s) for s in prior_followup_senders}:
+    if step_index == 0 and our_operator in {resolve_operator(s) for s in prior_followup_senders}:
         set_profile_state(
             session, public_id, "Completed",
             reason="Follow-up already sent by this operator (deduped across campaigns)",
         )
+        return
+
+    # Resolve the sequence after the legacy same-operator guard. That guard
+    # can complete old rows without needing a sender template block; step-
+    # aware dedup needs the sequence length to know whether this step is
+    # final or whether the next step must stay queued.
+    role = classify_role(deal.lead)
+    steps = channel_steps_for_lead(sender=our_operator, role=role, channel=channel)
+
+    if step_already_sent:
+        next_step_index = step_index + 1
+        if next_step_index < len(steps):
+            enqueue_follow_up(
+                campaign_id,
+                public_id,
+                operator=our_operator,
+                delay_seconds=_delay_seconds_to_active_due(steps[next_step_index].delay_days),
+                sequence_name=sequence_name,
+                channel=channel,
+                step_index=next_step_index,
+            )
+            set_profile_state(
+                session, public_id, "Connected",
+                reason=f"Follow-up step {step_index} already sent by this operator",
+            )
+        else:
+            set_profile_state(
+                session, public_id, "Completed",
+                reason=f"Follow-up step {step_index} already sent by this operator",
+            )
         return
 
     # ICP-keyed send. `my_name` is unused for LinkedIn channel (no
@@ -226,10 +337,9 @@ def handle_follow_up(task, session, qualifiers):
     # also embed `{add <filename>}` placeholders to attach a media file
     # (looked up in assets/followup/ then ROOT_DIR) — handled in
     # `_send_with_attachments_or_text` below.
-    role = classify_role(deal.lead)
     filled = fill_for_lead(
-        sender=our_operator, role=role, channel="linkedin_connect_followup",
-        lead=deal.lead, my_name=our_operator,
+        sender=our_operator, role=role, channel=channel,
+        lead=deal.lead, my_name=our_operator, step_index=step_index,
     )
     # If the template included {add <filename>} placeholders, send via
     # the media path (first attachment only — LinkedIn's message form
@@ -239,29 +349,84 @@ def handle_follow_up(task, session, qualifiers):
         from linkedin.actions.message import send_media_message
         sent = send_media_message(
             session, profile, filled.body, str(filled.attachments[0]),
+            deal_id=deal.pk,
+            sequence_name=sequence_name,
+            step_index=step_index,
+            operator=our_operator,
         )
     else:
-        sent = send_raw_message(session, profile, filled.body)
+        sent = send_raw_message(
+            session,
+            profile,
+            filled.body,
+            deal_id=deal.pk,
+            sequence_name=sequence_name,
+            step_index=step_index,
+            operator=our_operator,
+        )
     if not sent:
         logger.warning("follow_up send failed for %s — re-enqueuing in 24h", public_id)
         enqueue_follow_up(
             campaign_id, public_id,
             operator=our_operator,
             delay_seconds=24 * 3600,
+            sequence_name=sequence_name,
+            channel=channel,
+            step_index=step_index,
         )
         return
 
-    # Post-send DB writes — critical: if `set_profile_state` doesn't run,
-    # the Deal stays at CONNECTED and a future task will re-send the same
-    # DM (duplicate). Wrap both writes so a Neon idle-timeout mid-task
-    # (DM already sent on LinkedIn) gets a fresh conn + one retry before
-    # we let the exception escape to the daemon's task except block.
-    try:
+    def _record_action():
         session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
-        set_profile_state(
-            session, public_id, "Completed",
-            reason=f"Sent ICP-{role} follow-up DM",
+
+    # `record_action` and next-step enqueue are intentionally outside the
+    # retried state-write block below. If Neon drops the connection on
+    # set_profile_state, retrying only the state write keeps the post-send
+    # path from double-counting the rate limit or creating duplicate next
+    # tasks.
+    try:
+        _record_action()
+    except _DB_DEAD_ERRORS as e:
+        logger.warning(
+            "follow_up action-log write hit dead conn for %s (DM already "
+            "sent on LinkedIn) — recycling conn and retrying once: %s",
+            public_id, e,
         )
+        connections.close_all()
+        _record_action()
+
+    next_step_index = step_index + 1
+    if next_step_index < len(steps):
+        delay_seconds = _delay_seconds_to_active_due(steps[next_step_index].delay_days)
+        enqueue_follow_up(
+            campaign_id,
+            public_id,
+            operator=our_operator,
+            delay_seconds=delay_seconds,
+            sequence_name=sequence_name,
+            channel=channel,
+            step_index=next_step_index,
+        )
+
+    def _record_success_state():
+        if next_step_index < len(steps):
+            set_profile_state(
+                session, public_id, "Connected",
+                reason=f"Sent ICP-{role} follow-up step {step_index}",
+            )
+        else:
+            set_profile_state(
+                session, public_id, "Completed",
+                reason=f"Sent ICP-{role} follow-up DM",
+            )
+
+    # Post-send state write — critical: if `set_profile_state` doesn't run,
+    # the Deal stays at CONNECTED and a future task may re-send the same DM.
+    # Wrap only this write so a Neon idle-timeout mid-task (DM already sent
+    # on LinkedIn) gets a fresh conn + one retry without duplicating the
+    # ActionLog row or next-step Task created above.
+    try:
+        _record_success_state()
     except _DB_DEAD_ERRORS as e:
         logger.warning(
             "follow_up post-send DB writes hit dead conn for %s (DM already "
@@ -269,11 +434,5 @@ def handle_follow_up(task, session, qualifiers):
             public_id, e,
         )
         connections.close_all()
-        # Bound model instances refresh on next attribute access; method
-        # calls on `session.linkedin_profile` reopen the connection.
-        session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
-        set_profile_state(
-            session, public_id, "Completed",
-            reason=f"Sent ICP-{role} follow-up DM",
-        )
-    logger.info("follow_up sent to %s (role=%s)", public_id, role)
+        _record_success_state()
+    logger.info("follow_up sent to %s (role=%s, step=%s/%s)", public_id, role, step_index, len(steps) - 1)

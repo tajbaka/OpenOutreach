@@ -42,7 +42,7 @@ Task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, q
 
 1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3).
 2. **`handle_sweep_connections`** — Account-wide. Scrapes `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`, cross-references PENDING Deals by `public_id`, transitions matches to CONNECTED and enqueues `follow_up`. Replaces the legacy per-profile `check_pending` flow. On completion posts a lean per-sender analytics snapshot to the ops Slack channel via `_post_sweep_summary` → `notify_sweep_summary` (sends today, pending/connected/failed Deal counts) — best-effort, never blocks the sweep.
-3. **`handle_follow_up`** — Per-profile. Runs agentic follow-up via `run_follow_up_agent()`. Safety net re-enqueues in 72h.
+3. **`handle_follow_up`** — Per-profile. Sends rigid ICP LinkedIn follow-up sequence steps from `icp_messages.json`, gated by `ENABLE_FOLLOW_UP` and the follow-up rate limit. Payloads may carry `sequence_name`, `channel`, and `step_index`; missing values default to the current one-step `linkedin_connect_followup` / same channel / `0` behavior. Owner scoping compares outbound `Message.sender` values through `linkedin.operators.resolve_operator`, so new LinkedIn display variants must be added there. Stop checks are DB-local only: inbound LinkedIn/Gmail message, existing `crm.Meeting`, disqualified lead, suppression, or non-CONNECTED state. On send failure it re-enqueues the same step in 24h. On non-final success it records `ActionLog`, persists an outbound `crm.Message`, and enqueues the next step after that step's `delay_days`, normalized into configured active hours/rest days, while keeping the Deal `CONNECTED`; final success marks the Deal `COMPLETED`. Step-level dedup for a non-final already-sent step keeps the Deal `CONNECTED` and ensures the next step is queued; only a final-step dedup marks `COMPLETED`. Post-send retries only retry the state write so a dead DB connection cannot double-count the action or duplicate the next-step Task. The single-cell ICP Messages Sheets sync is legacy-only for follow-up copy: it rejects sequence-shaped follow-up channels on push and preserves existing sequences on pull, so multi-step copy is edited directly in JSON.
 
 ## Qualification ML Pipeline
 
@@ -79,7 +79,7 @@ Three apps in `INSTALLED_APPS`:
 - **`diagnostics.py`** — `failure_diagnostics()` context manager, `capture_failure()` saves page HTML/screenshot/traceback to `/tmp/openoutreach-diagnostics/`.
 - **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`.
 - **`tasks/sweep_connections.py`** — `handle_sweep_connections`, `enqueue_sweep_connections`. Replaces legacy `check_pending`.
-- **`tasks/follow_up.py`** — `handle_follow_up`, rate limiting.
+- **`tasks/follow_up.py`** — `handle_follow_up`, rigid ICP LinkedIn DM send, sequence payload shim, rate limiting.
 - **`pipeline/qualify.py`** — `run_qualification()`, `fetch_qualification_candidates()`.
 - **`pipeline/search.py`** — `run_search()`, keyword management.
 - **`pipeline/search_keywords.py`** — `generate_search_keywords()` via LLM.

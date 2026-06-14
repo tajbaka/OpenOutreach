@@ -11,15 +11,16 @@ the high-volume Connected/No-Reply cohort the daemon DMs rigidly via
 only the first name filled in.
 
 This module is the rigid alternative. Templates live in
-`linkedin/icp_messages.json` (checked into the repo). The shape is
-`{sender: {icp: {channel: [variant1, variant2, ...]}}}` — the top level
-is keyed by the operator's canonical handle (`linkedin.operators.
-resolve_operator`, e.g. "Arian" / "Chuka") so each sender gets a fully
-independent template block. Under each sender, multiple variants per
-ICP × channel so the batch doesn't look templated when scanned
-top-to-bottom. The only substitution is `{first_name}`; product name,
-URLs, signature, everything else is hardcoded literally in the message
-body. To change the wording, edit the JSON.
+`linkedin/icp_messages.json` (checked into the repo). The legacy channel
+shape is `{sender: {icp: {channel: [variant1, variant2, ...]}}}`. Follow-up
+channels can also use step objects:
+`{channel: [{"delay_days": 0, "variants": [...]}, ...]}`. The top level is
+keyed by the operator's canonical handle (`linkedin.operators.resolve_operator`,
+e.g. "Arian" / "Chuka") so each sender gets a fully independent template block.
+Under each sender, variants stay nested inside the step so the batch doesn't
+look templated when scanned top-to-bottom. The only substitution is
+`{first_name}`; product name, URLs, signature, everything else is hardcoded
+literally in the message body. To change the wording, edit the JSON.
 
 There is no shared default sender: a sender absent from the JSON raises
 `SheetsError` rather than falling back, so a misconfigured operator
@@ -101,6 +102,12 @@ class FilledMessage:
 
     def __hash__(self) -> int:
         return hash((self.body, tuple(self.attachments)))
+
+
+@dataclass(frozen=True)
+class TemplateStep:
+    delay_days: int
+    variants: list[str]
 
 
 # ROLE classification — used by the daemon's follow_up Task handler to
@@ -233,15 +240,23 @@ def icp_messages_rows(sender: str) -> list[list[str]]:
     it surfaces the three core ICP buckets only, and only the first
     variant for the connect note / follow-up. Extra ICPs (e.g. Channel)
     and extra variants remain in JSON and are preserved on pull.
+    Sequenced follow-up channels are JSON-only because the single-cell
+    Sheet view cannot round-trip multiple steps safely.
     """
     rows: list[list[str]] = [list(ICP_MESSAGES_HEADERS)]
     messages = load_icp_messages(sender)
     for icp in ICP_MESSAGES_SHEET_BUCKETS:
         channels = messages.get(icp, {})
+        followup = channels.get("linkedin_connect_followup") or [""]
+        if followup and isinstance(followup[0], dict):
+            raise SheetsError(
+                f"ICP messages sync cannot push sequenced follow-up templates "
+                f"for {sender}.{icp}. Edit linkedin/icp_messages.json directly."
+            )
         rows.append([
             icp,
             ((channels.get("linkedin_connect_note") or [""])[0] or "").strip(),
-            ((channels.get("linkedin_connect_followup") or [""])[0] or "").strip(),
+            (followup[0] or "").strip(),
         ])
     return rows
 
@@ -298,13 +313,29 @@ def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> No
     """Merge one sender's edited core ICPs into `icp_messages.json`.
 
     Only buckets present in `block` are replaced. Other ICPs and extra
-    variants for untouched buckets remain as-is.
+    variants for untouched buckets remain as-is. Existing sequenced
+    `linkedin_connect_followup` channels are preserved on pull rather
+    than flattened back to the Sheet's single follow-up cell.
     """
     by_sender = json.loads(_MESSAGES_PATH.read_text())
     existing = by_sender.get(sender, {})
     merged = dict(existing)
     for icp, channels in block.items():
-        merged[icp] = channels
+        existing_channels = existing.get(icp, {})
+        merged_channels = dict(existing_channels)
+        for channel, value in channels.items():
+            current = existing_channels.get(channel)
+            if (
+                channel == "linkedin_connect_followup"
+                and isinstance(current, list)
+                and current
+                and isinstance(current[0], dict)
+            ):
+                # The Sheets tab is single-cell/legacy only for follow-up
+                # copy. Do not flatten a real multi-step sequence on pull.
+                continue
+            merged_channels[channel] = value
+        merged[icp] = merged_channels
     by_sender[sender] = merged
     _MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
 
@@ -323,6 +354,75 @@ def missing_sender_block(linkedin_username: str) -> str | None:
     return None if sender in known_senders() else sender
 
 
+def channel_steps(*, sender: str, icp: str, channel: str) -> list[TemplateStep]:
+    """Return normalized steps for one sender × ICP × channel.
+
+    Backward-compatible shapes:
+      - legacy: ["variant a", "variant b"] → one step with variants
+      - sequence: [{"delay_days": 0, "variants": ["..."]}, ...]
+    """
+    messages = load_icp_messages(sender)
+    if icp not in messages:
+        raise SheetsError(
+            f"icp_outbound: ICP {icp!r} has no rigid template "
+            f"(known: {sorted(messages)})"
+        )
+    raw = messages[icp].get(channel)
+    if not raw:
+        raise SheetsError(
+            f"icp_outbound: ICP {icp!r} has no {channel!r} channel "
+            f"variants (known channels: {sorted(messages[icp])})"
+        )
+
+    if all(isinstance(v, str) for v in raw):
+        return [TemplateStep(delay_days=0, variants=list(raw))]
+
+    steps: list[TemplateStep] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise SheetsError(
+                f"icp_outbound: {icp!r}.{channel!r} mixes legacy variants "
+                f"and step objects at index {idx}"
+            )
+        variants = item.get("variants")
+        if not isinstance(variants, list) or not variants or not all(
+            isinstance(v, str) and v.strip() for v in variants
+        ):
+            raise SheetsError(
+                f"icp_outbound: {icp!r}.{channel!r} step {idx} must include "
+                "a non-empty string variants list"
+            )
+        delay_days = item.get("delay_days", 0)
+        try:
+            delay_days = int(delay_days)
+        except (TypeError, ValueError) as e:
+            raise SheetsError(
+                f"icp_outbound: {icp!r}.{channel!r} step {idx} has invalid "
+                f"delay_days={delay_days!r}"
+            ) from e
+        if delay_days < 0:
+            raise SheetsError(
+                f"icp_outbound: {icp!r}.{channel!r} step {idx} has negative "
+                f"delay_days={delay_days}"
+            )
+        steps.append(TemplateStep(delay_days=delay_days, variants=variants))
+    return steps
+
+
+def _icp_for_role(role: str) -> str:
+    icp = FU_ROLE_TO_ICP.get(role)
+    if not icp:
+        raise SheetsError(
+            f"icp_outbound: ROLE {role!r} has no ICP mapping in "
+            f"FU_ROLE_TO_ICP (known ROLEs: {sorted(FU_ROLE_TO_ICP)})"
+        )
+    return icp
+
+
+def channel_steps_for_lead(*, sender: str, role: str, channel: str) -> list[TemplateStep]:
+    return channel_steps(sender=sender, icp=_icp_for_role(role), channel=channel)
+
+
 def fill_message(
     *,
     sender: str,
@@ -334,7 +434,8 @@ def fill_message(
     my_name: str = "",
     lead_id: int | None = None,
     variant_index: int | None = None,
-) -> str:
+    step_index: int = 0,
+) -> FilledMessage:
     """Pick a variant from the rigid template and substitute placeholders.
 
     Mechanical substitutions only (no LLM generation):
@@ -362,18 +463,13 @@ def fill_message(
     """
     from linkedin.conf import OUR_COMPANY_NAME, OUR_WEBSITE_URL
 
-    messages = load_icp_messages(sender)
-    if icp not in messages:
+    steps = channel_steps(sender=sender, icp=icp, channel=channel)
+    if step_index < 0 or step_index >= len(steps):
         raise SheetsError(
-            f"icp_outbound: ICP {icp!r} has no rigid template "
-            f"(known: {sorted(messages)})"
+            f"icp_outbound: ICP {icp!r} channel {channel!r} has no "
+            f"step {step_index} (steps: {len(steps)})"
         )
-    variants = messages[icp].get(channel)
-    if not variants:
-        raise SheetsError(
-            f"icp_outbound: ICP {icp!r} has no {channel!r} channel "
-            f"variants (known channels: {sorted(messages[icp])})"
-        )
+    variants = steps[step_index].variants
 
     if variant_index is not None:
         idx = variant_index % len(variants)
@@ -447,7 +543,8 @@ def fill_for_lead(
     channel: str,
     lead,
     my_name: str = "",
-) -> str:
+    step_index: int = 0,
+) -> FilledMessage:
     """Convenience wrapper — resolves ROLE → ICP and pulls lead fields.
 
     Equivalent to `fill_message(sender=sender, icp=FU_ROLE_TO_ICP[role],
@@ -463,12 +560,7 @@ def fill_for_lead(
     templates (signature block); LinkedIn templates have no signature,
     so passing it has no effect there.
     """
-    icp = FU_ROLE_TO_ICP.get(role)
-    if not icp:
-        raise SheetsError(
-            f"icp_outbound: ROLE {role!r} has no ICP mapping in "
-            f"FU_ROLE_TO_ICP (known ROLEs: {sorted(FU_ROLE_TO_ICP)})"
-        )
+    icp = _icp_for_role(role)
     return fill_message(
         sender=sender,
         icp=icp,
@@ -478,4 +570,5 @@ def fill_for_lead(
         company_name=getattr(lead, "company_name", "") or "",
         my_name=my_name,
         lead_id=getattr(lead, "id", None),
+        step_index=step_index,
     )

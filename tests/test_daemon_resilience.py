@@ -144,6 +144,11 @@ def test_follow_up_post_send_retries_on_dead_conn(db, fake_session, monkeypatch)
         fu_mod, "fill_for_lead",
         lambda lead, role, channel, **kw: type("F", (), {"body": "hi", "attachments": []})(),
     )
+    monkeypatch.setattr(
+        fu_mod,
+        "channel_steps_for_lead",
+        lambda **kw: [type("S", (), {"delay_days": 0})()],
+    )
 
     # Inline send_raw_message + send_media_message that pretend to succeed.
     import linkedin.tasks.follow_up as fu_pkg
@@ -186,6 +191,92 @@ def test_follow_up_post_send_retries_on_dead_conn(db, fake_session, monkeypatch)
     assert ActionLog.objects.filter(
         linkedin_profile=fake_session.linkedin_profile,
         action_type=ActionLog.ActionType.FOLLOW_UP,
+    ).count() == 1
+
+
+def test_follow_up_state_retry_does_not_duplicate_next_step(db, fake_session, monkeypatch):
+    """If the dead conn lands on set_profile_state after next-step enqueue,
+    retrying must not create a second next-step task or double-count the
+    follow-up action."""
+    from datetime import datetime, timezone
+    from crm.models import Lead, Deal, Message
+    from linkedin.db.deals import set_profile_state as real_set_profile_state
+    from linkedin.enums import ProfileState
+    from linkedin.models import ActionLog
+    from linkedin.tasks import follow_up as fu_mod
+
+    lead = Lead.objects.create(
+        first_name="Test", last_name="User",
+        linkedin_url="https://www.linkedin.com/in/testuser/",
+    )
+    deal = Deal.objects.create(
+        lead=lead,
+        campaign=fake_session.campaign,
+        state=ProfileState.CONNECTED.value,
+    )
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.OUTBOUND,
+        sender=fake_session.linkedin_profile.linkedin_username,
+        external_id="seed-1",
+        body="initial",
+        sent_at=datetime.now(timezone.utc),
+    )
+
+    monkeypatch.setattr(fu_mod, "get_profile_dict_for_public_id", lambda *a, **k: {"profile": {}})
+    monkeypatch.setattr(fu_mod, "classify_role", lambda lead: "CSP")
+    monkeypatch.setattr(
+        fu_mod, "fill_for_lead",
+        lambda lead, role, channel, **kw: type("F", (), {"body": "hi", "attachments": []})(),
+    )
+    monkeypatch.setattr(
+        fu_mod,
+        "channel_steps_for_lead",
+        lambda **kw: [
+            type("S", (), {"delay_days": 0})(),
+            type("S", (), {"delay_days": 2})(),
+        ],
+    )
+    monkeypatch.setattr(
+        "linkedin.actions.message.send_raw_message", lambda *a, **k: True, raising=False,
+    )
+    fake_session.linkedin_profile.can_execute = MagicMock(return_value=True)
+
+    call_count = {"n": 0}
+
+    def flaky_set_profile_state(session, public_id, state, reason=""):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise OperationalError("simulated SSL drop")
+        return real_set_profile_state(session, public_id, state, reason=reason)
+
+    task = MagicMock()
+    task.payload = {
+        "campaign_id": fake_session.campaign.pk,
+        "public_id": "testuser",
+        "sequence_name": "post_accept_linkedin",
+        "channel": "linkedin_connect_followup",
+        "step_index": 0,
+    }
+
+    with patch("linkedin.tasks.follow_up.set_profile_state", side_effect=flaky_set_profile_state):
+        with patch("linkedin.tasks.follow_up.connections.close_all") as mock_close:
+            fu_mod.handle_follow_up(task, fake_session, qualifiers={})
+
+    assert call_count["n"] == 2
+    mock_close.assert_called_once()
+    deal.refresh_from_db()
+    assert deal.state == ProfileState.CONNECTED.value
+    assert ActionLog.objects.filter(
+        linkedin_profile=fake_session.linkedin_profile,
+        action_type=ActionLog.ActionType.FOLLOW_UP,
+    ).count() == 1
+    assert Task.objects.filter(
+        task_type=Task.TaskType.FOLLOW_UP,
+        status=Task.Status.PENDING,
+        payload__public_id="testuser",
+        payload__step_index=1,
     ).count() == 1
 
 

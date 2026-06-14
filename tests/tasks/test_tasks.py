@@ -1,4 +1,6 @@
 # tests/tasks/test_tasks.py
+import json
+
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
@@ -18,7 +20,7 @@ from linkedin.tasks.connect import (
     handle_connect,
     recommended_action_delay,
 )
-from linkedin.tasks.follow_up import handle_follow_up
+from linkedin.tasks.follow_up import _delay_seconds_to_active_due, handle_follow_up
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 
 
@@ -448,6 +450,20 @@ class TestHandleSweepConnections:
 
 @pytest.mark.django_db
 class TestHandleFollowUp:
+    @patch("linkedin.tasks.follow_up.ACTIVE_START_HOUR", 9)
+    @patch("linkedin.tasks.follow_up.ACTIVE_END_HOUR", 17)
+    @patch("linkedin.tasks.follow_up.ACTIVE_TIMEZONE", "UTC")
+    @patch("linkedin.tasks.follow_up.REST_DAYS", (5, 6))
+    @patch("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", True)
+    def test_next_step_delay_normalizes_to_active_hours(self):
+        now = datetime(2026, 3, 20, 16, 30, tzinfo=ZoneInfo("UTC"))
+        with patch("linkedin.tasks.follow_up.timezone.now", return_value=now):
+            delay = _delay_seconds_to_active_due(1)
+
+        # +1 day lands on Saturday 16:30 UTC, so the due time should move
+        # to Monday 09:00 UTC instead of staying on the weekend.
+        assert delay == pytest.approx((64.5 * 3600), abs=1)
+
     @patch("linkedin.actions.message.send_media_message", return_value=True)
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
@@ -501,6 +517,13 @@ class TestHandleFollowUp:
         )
         assert "BrandCo" in sent_message  # {our_company_name} substituted
         assert "Alice" in sent_message
+        send_kwargs = (
+            mock_send_media.call_args.kwargs if mock_send_media.called
+            else mock_send.call_args.kwargs
+        )
+        assert send_kwargs["sequence_name"] == "linkedin_connect_followup"
+        assert send_kwargs["step_index"] == 0
+        assert send_kwargs["operator"] == "Arian"
 
     @patch("linkedin.actions.message.send_media_message", return_value=True)
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
@@ -528,13 +551,309 @@ class TestHandleFollowUp:
 
         task = _make_task(
             Task.TaskType.FOLLOW_UP,
-            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "sequence_name": "linkedin_connect_followup",
+                "step_index": 0,
+            },
         )
         qualifiers = _build_context(fake_session)
         handle_follow_up(task, fake_session, qualifiers)
 
         _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         assert mock_send.called or mock_send_media.called
+
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_non_final_sequence_step_schedules_next_step(
+        self, mock_conversation, mock_send, fake_session, tmp_path, monkeypatch,
+    ):
+        from crm.models import Lead, Message
+        from linkedin import icp_outbound
+
+        path = tmp_path / "icp_messages.json"
+        path.write_text(json.dumps({
+            "Arian": {
+                "CSPs": {
+                    "linkedin_connect_followup": [
+                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                    ],
+                },
+            },
+        }))
+        monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-seq",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "sequence_name": "post_accept_linkedin",
+                "channel": "linkedin_connect_followup",
+                "step_index": 0,
+            },
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        assert mock_send.call_args.args[2] == "Step zero Alice"
+        next_task = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exclude(pk=task.pk).get()
+        assert next_task.payload["sequence_name"] == "post_accept_linkedin"
+        assert next_task.payload["channel"] == "linkedin_connect_followup"
+        assert next_task.payload["step_index"] == 1
+        assert next_task.scheduled_at >= timezone.now() + timedelta(days=3, hours=23)
+        assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 1
+
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_final_sequence_step_marks_completed(
+        self, mock_conversation, mock_send, fake_session, tmp_path, monkeypatch,
+    ):
+        from crm.models import Lead, Message
+        from linkedin import icp_outbound
+
+        path = tmp_path / "icp_messages.json"
+        path.write_text(json.dumps({
+            "Arian": {
+                "CSPs": {
+                    "linkedin_connect_followup": [
+                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                    ],
+                },
+            },
+        }))
+        monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-final",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "sequence_name": "post_accept_linkedin",
+                "channel": "linkedin_connect_followup",
+                "step_index": 1,
+            },
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        assert mock_send.call_args.args[2] == "Step one Alice"
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exclude(pk=task.pk).exists()
+
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_later_step_not_blocked_by_prior_step_send(
+        self, mock_conversation, mock_send, fake_session, tmp_path, monkeypatch,
+    ):
+        from crm.models import Deal, Lead, Message
+        from linkedin import icp_outbound
+
+        path = tmp_path / "icp_messages.json"
+        path.write_text(json.dumps({
+            "Arian": {
+                "CSPs": {
+                    "linkedin_connect_followup": [
+                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                    ],
+                },
+            },
+        }))
+        monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        deal = Deal.objects.get(lead=lead, campaign=fake_session.campaign)
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-later-step",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id=f"daemon-send:Arian:{deal.pk}:post_accept_linkedin:step-0:1778800000",
+            direction=Message.Direction.OUTBOUND,
+            sender="Arian",
+            body="Step zero Alice",
+            sent_at=timezone.now() - timedelta(days=4),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "sequence_name": "post_accept_linkedin",
+                "channel": "linkedin_connect_followup",
+                "step_index": 1,
+            },
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        assert mock_send.call_args.args[2] == "Step one Alice"
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_skips_when_same_sequence_step_already_sent(
+        self, mock_conversation, mock_send, fake_session,
+    ):
+        from crm.models import Deal, Lead, Message
+
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        deal = Deal.objects.get(lead=lead, campaign=fake_session.campaign)
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-same-step",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id=(
+                f"daemon-send:Arian:{deal.pk}:linkedin_connect_followup:"
+                "step-0:1778800000"
+            ),
+            direction=Message.Direction.OUTBOUND,
+            sender="Arian",
+            body="(prior follow-up DM)",
+            sent_at=timezone.now() - timedelta(days=1),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "sequence_name": "linkedin_connect_followup",
+                "channel": "linkedin_connect_followup",
+                "step_index": 0,
+            },
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        mock_send.assert_not_called()
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_deduped_non_final_step_keeps_sequence_connected(
+        self, mock_conversation, mock_send, fake_session, tmp_path, monkeypatch,
+    ):
+        from crm.models import Deal, Lead, Message
+        from linkedin import icp_outbound
+
+        path = tmp_path / "icp_messages.json"
+        path.write_text(json.dumps({
+            "Arian": {
+                "CSPs": {
+                    "linkedin_connect_followup": [
+                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                        {"delay_days": 5, "variants": ["Step two {first_name}"]},
+                    ],
+                },
+            },
+        }))
+        monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        deal = Deal.objects.get(lead=lead, campaign=fake_session.campaign)
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-dedup-non-final",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=10),
+        )
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id=f"daemon-send:Arian:{deal.pk}:post_accept_linkedin:step-1:1778800000",
+            direction=Message.Direction.OUTBOUND,
+            sender="Arian",
+            body="Step one Alice",
+            sent_at=timezone.now() - timedelta(days=1),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "sequence_name": "post_accept_linkedin",
+                "channel": "linkedin_connect_followup",
+                "step_index": 1,
+            },
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        mock_send.assert_not_called()
+        assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
+        next_task = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+            payload__sequence_name="post_accept_linkedin",
+            payload__channel="linkedin_connect_followup",
+            payload__step_index=2,
+        ).exclude(pk=task.pk).get()
+        assert next_task.scheduled_at >= timezone.now() + timedelta(days=4, hours=23)
 
     @patch("linkedin.actions.message.send_raw_message")
     @patch("linkedin.actions.conversations.get_conversation")
@@ -557,6 +876,78 @@ class TestHandleFollowUp:
         # sheet workflow picks the thread up under REPLIED / Ball-on-us.
         _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 0
+        mock_send.assert_not_called()
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_skips_when_lead_replied_by_gmail(
+        self, mock_conversation, mock_send, fake_session,
+    ):
+        from crm.models import Lead, Message
+
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-gmail-stop",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.GMAIL,
+            external_id="gmail-reply-1",
+            direction=Message.Direction.INBOUND,
+            sender="alice@example.com",
+            body="Can you send times?",
+            sent_at=timezone.now() - timedelta(days=1),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        mock_send.assert_not_called()
+
+    @patch("linkedin.actions.message.send_raw_message")
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_skips_when_meeting_exists(
+        self, mock_conversation, mock_send, fake_session,
+    ):
+        from crm.models import Lead, Meeting, Message
+
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:note-meeting-stop",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="(connection note)",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+        Meeting.objects.create(
+            lead=lead,
+            source=Meeting.Source.GOOGLE_CALENDAR,
+            external_id="meeting-1",
+            start_at=timezone.now() + timedelta(days=1),
+            title="Intro",
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         mock_send.assert_not_called()
 
     @patch("linkedin.actions.message.send_media_message", return_value=True)
@@ -680,6 +1071,8 @@ class TestHandleFollowUp:
             payload__public_id="alice",
         ).exclude(pk=task.pk).first()
         assert next_task is not None
+        assert next_task.payload["sequence_name"] == "linkedin_connect_followup"
+        assert next_task.payload["step_index"] == 0
 
     @patch("linkedin.actions.message.send_raw_message")
     def test_noop_when_deal_missing(self, mock_send, fake_session):
@@ -704,7 +1097,12 @@ class TestHandleFollowUp:
         ):
             task = _make_task(
                 Task.TaskType.FOLLOW_UP,
-                {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+                {
+                    "campaign_id": fake_session.campaign.pk,
+                    "public_id": "alice",
+                    "sequence_name": "linkedin_connect_followup",
+                    "step_index": 0,
+                },
             )
             qualifiers = _build_context(fake_session)
             handle_follow_up(task, fake_session, qualifiers)
@@ -716,6 +1114,8 @@ class TestHandleFollowUp:
             payload__public_id="alice",
         ).exclude(pk=task.pk).first()
         assert next_task is not None
+        assert next_task.payload["sequence_name"] == "linkedin_connect_followup"
+        assert next_task.payload["step_index"] == 0
 
     @patch("linkedin.actions.message.send_raw_message")
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)

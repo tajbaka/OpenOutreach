@@ -33,16 +33,20 @@ def test_load_icp_messages_returns_known_buckets():
             assert icp in messages, f"{sender} missing {icp}"
 
 
-def test_load_icp_messages_returns_lists_of_variants():
-    """Each channel must be a list of variant strings — the random-but-
-    stable variant selection in fill_message assumes list shape."""
+def test_load_icp_messages_channels_normalize_to_steps():
+    """Each channel must normalize to at least one step with at least one
+    string variant. This accepts both legacy [variants] and sequence
+    [{delay_days, variants}] shapes."""
     for sender in ("Arian", "Chuka"):
         messages = icp_outbound.load_icp_messages(sender)
         for icp, channels in messages.items():
-            for channel, variants in channels.items():
-                assert isinstance(variants, list), f"{sender}.{icp}.{channel} should be list"
-                assert len(variants) >= 1, f"{sender}.{icp}.{channel} needs ≥1 variant"
-                assert all(isinstance(v, str) for v in variants)
+            for channel in channels:
+                steps = icp_outbound.channel_steps(sender=sender, icp=icp, channel=channel)
+                assert len(steps) >= 1, f"{sender}.{icp}.{channel} needs >=1 step"
+                for step in steps:
+                    assert step.delay_days >= 0
+                    assert len(step.variants) >= 1
+                    assert all(isinstance(v, str) for v in step.variants)
 
 
 def test_load_icp_messages_unknown_sender_raises():
@@ -53,11 +57,23 @@ def test_load_icp_messages_unknown_sender_raises():
         icp_outbound.load_icp_messages("NotAnOperator")
 
 
-def test_fill_message_substitutes_first_name_and_brand():
+def test_fill_message_substitutes_first_name_and_brand(tmp_path, monkeypatch):
     """{first_name}, {our_company_name}, and {our_website_url} all fill.
     The brand fields come from `.env` via `linkedin.conf`, pinned to
     `BrandCo` / `https://brand.co/` by the autouse `_stub_brand` fixture
     so the assertion doesn't drift with operator-side env edits."""
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    "Hi {first_name}, {our_company_name} lives at {our_website_url}"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
     out = icp_outbound.fill_message(
         sender="Arian",
         icp="CSPs",
@@ -65,20 +81,26 @@ def test_fill_message_substitutes_first_name_and_brand():
         first_name="Jane",
         variant_index=0,
     )
-    assert "Hey Jane," in out or "Hi Jane" in out or "Jane," in out
+    assert "Hi Jane," in out
     assert "BrandCo" in out
     assert "https://brand.co/" in out
     assert "{" not in out  # no leftover placeholders
 
 
-def test_fill_message_variant_index_picks_explicit_variant():
-    """Skipped when the JSON only has one variant per channel — current
-    state since we mirror the single Sheets template per ICP. The
-    variant-rotation feature still works (try `variant_index=1` against a
-    multi-variant entry), but there's nothing to assert against here."""
-    variants = icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin_connect_followup"]
-    if len(variants) < 2:
-        pytest.skip("Only one variant per channel — rotation not testable.")
+def test_fill_message_variant_index_picks_explicit_variant(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    "variant zero for {first_name}",
+                    "variant one for {first_name}",
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
     a = icp_outbound.fill_message(
         sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", variant_index=0,
     )
@@ -86,6 +108,56 @@ def test_fill_message_variant_index_picks_explicit_variant():
         sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", variant_index=1,
     )
     assert a != b  # different variants → different output
+
+
+def test_fill_message_supports_step_object_templates(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    {"delay_days": 0, "variants": ["Step 0 for {first_name}"]},
+                    {"delay_days": 4, "variants": ["Step 1 for {company_name}"]},
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    first = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_followup",
+        first_name="Jane",
+        company_name="Acme",
+        step_index=0,
+    )
+    second = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_followup",
+        first_name="Jane",
+        company_name="Acme",
+        step_index=1,
+    )
+
+    assert first.body == "Step 0 for Jane"
+    assert second.body == "Step 1 for Acme"
+    steps = icp_outbound.channel_steps(
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup",
+    )
+    assert [s.delay_days for s in steps] == [0, 4]
+
+
+def test_fill_message_rejects_unknown_step_index():
+    with pytest.raises(SheetsError, match="has no step 1"):
+        icp_outbound.fill_message(
+            sender="Arian",
+            icp="CSPs",
+            channel="linkedin_connect_followup",
+            first_name="Jane",
+            step_index=1,
+        )
 
 
 def test_fill_message_lead_id_stable_across_calls():
@@ -100,10 +172,24 @@ def test_fill_message_lead_id_stable_across_calls():
     assert a == b
 
 
-def test_fill_message_lead_id_modulo_wraps():
+def test_fill_message_lead_id_modulo_wraps(tmp_path, monkeypatch):
     """lead_id 5 with 3 variants → variant index 2. Confirms the modulo
     math doesn't crash on a lead_id larger than variant count."""
-    variants_count = len(icp_outbound.load_icp_messages("Arian")["CSPs"]["linkedin_connect_followup"])
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    "variant zero for {first_name}",
+                    "variant one for {first_name}",
+                    "variant two for {first_name}",
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    variants_count = 3
     out_a = icp_outbound.fill_message(
         sender="Arian", icp="CSPs", channel="linkedin_connect_followup", first_name="X", lead_id=variants_count,
     )
@@ -171,13 +257,55 @@ def test_missing_sender_block_returns_handle_for_unknown():
     )
 
 
-def test_icp_messages_rows_round_trip_for_sender():
+def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Leili": {
+            "CSPs": {
+                "linkedin_connect_note": ["csp connect"],
+                "linkedin_connect_followup": ["csp followup"],
+            },
+            "3PAOs/Assessors": {
+                "linkedin_connect_note": ["assessor connect"],
+                "linkedin_connect_followup": ["assessor followup"],
+            },
+            "Advisors": {
+                "linkedin_connect_note": ["advisor connect"],
+                "linkedin_connect_followup": ["advisor followup"],
+            },
+            "Channel": {
+                "linkedin_connect_note": ["channel preserved"],
+                "linkedin_connect_followup": ["channel preserved"],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
     rows = icp_outbound.icp_messages_rows("Leili")
     parsed = icp_outbound.parse_icp_messages_rows(rows)
     assert parsed == {
         icp: icp_outbound.load_icp_messages("Leili")[icp]
         for icp in icp_outbound.ICP_MESSAGES_SHEET_BUCKETS
     }
+
+
+def test_icp_messages_rows_rejects_sequenced_followup(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_note": ["connect"],
+                "linkedin_connect_followup": [
+                    {"delay_days": 0, "variants": ["step zero"]},
+                    {"delay_days": 4, "variants": ["step one"]},
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    with pytest.raises(SheetsError, match="cannot push sequenced follow-up templates"):
+        icp_outbound.icp_messages_rows("Arian")
 
 
 def test_parse_icp_messages_rows_rejects_duplicate_icp():
@@ -212,6 +340,35 @@ def test_save_icp_messages_replaces_one_sender_block(tmp_path, monkeypatch):
     assert saved["Leili"]["Channel"]["linkedin_connect_note"] == ["keep"]
 
 
+def test_save_icp_messages_preserves_sequenced_followup_on_pull(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    sequence = [
+        {"delay_days": 0, "variants": ["step zero"]},
+        {"delay_days": 4, "variants": ["step one"]},
+    ]
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_note": ["old connect"],
+                "linkedin_connect_followup": sequence,
+            },
+        },
+    }, indent=2) + "\n")
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    icp_outbound.save_icp_messages(
+        "Arian",
+        {"CSPs": {
+            "linkedin_connect_note": ["new connect"],
+            "linkedin_connect_followup": ["flattened from sheet"],
+        }},
+    )
+
+    saved = json.loads(path.read_text())
+    assert saved["Arian"]["CSPs"]["linkedin_connect_note"] == ["new connect"]
+    assert saved["Arian"]["CSPs"]["linkedin_connect_followup"] == sequence
+
+
 def test_fill_message_missing_first_name_renders_empty():
     """Empty first_name doesn't crash — renders awkward but recoverable.
     Better than a crash mid-batch that wipes the rest of the run."""
@@ -240,9 +397,27 @@ def test_fill_message_sanitizes_greeting_first_name():
     assert 'Allen "Al"' not in out.body
 
 
-def test_fill_for_lead_resolves_role_to_icp():
+def test_fill_for_lead_resolves_role_to_icp(tmp_path, monkeypatch):
     """ROLE→ICP routing matches FU_ROLE_TO_ICP. The followup drafter
     holds ROLE on each row, not ICP — this helper closes the gap."""
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": ["csp-only phrase for {first_name}"],
+            },
+            "3PAOs/Assessors": {
+                "linkedin_connect_followup": ["assessor-only phrase for {first_name}"],
+            },
+            "Advisors": {
+                "linkedin_connect_followup": ["advisor-only phrase for {first_name}"],
+            },
+            "Channel": {
+                "linkedin_connect_followup": ["channel-only phrase for {first_name}"],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
 
     class StubLead:
         def __init__(self, lid):
@@ -252,15 +427,11 @@ def test_fill_for_lead_resolves_role_to_icp():
             self.id = lid
 
     role_to_expected_substring = {
-        # Each substring must appear in ONLY one ICP's body so the test
-        # actually proves ROLE→ICP routing landed in the right bucket.
-        # FU_ROLE_TO_ICP: CSP→CSPs, 3PAO/Assessor→3PAOs/Assessors,
-        # Advisor→Advisors, Channel→Channel (own bucket since 2026-05-13).
-        "CSP":      "billable hours to advisors",           # CSPs-only copy
-        "3PAO":     "accessor portal",                      # 3PAOs/Assessors-specific
-        "Advisor":  "referral program that gives advisors", # Advisors-specific copy
-        "Channel":  "channel partner program with commission",  # Channel-specific
-        "Assessor": "accessor portal",                      # rolls into 3PAOs/Assessors
+        "CSP": "csp-only phrase",
+        "3PAO": "assessor-only phrase",
+        "Assessor": "assessor-only phrase",
+        "Advisor": "advisor-only phrase",
+        "Channel": "channel-only phrase",
     }
     for role, expected in role_to_expected_substring.items():
         out = icp_outbound.fill_for_lead(
@@ -269,7 +440,7 @@ def test_fill_for_lead_resolves_role_to_icp():
             channel="linkedin_connect_followup",
             lead=StubLead(lid=1),
         )
-        assert expected.lower() in out.body.lower(), (
+        assert expected in out.body, (
             f"ROLE={role}: missing {expected!r} substring in:\n{out.body}"
         )
 

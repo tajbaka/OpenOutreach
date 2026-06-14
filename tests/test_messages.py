@@ -83,6 +83,46 @@ def test_message_same_external_id_allowed_across_sources(db):
     )
 
 
+def test_save_chat_message_uses_step_aware_daemon_external_id(fake_session):
+    from linkedin.db.chat import save_chat_message
+
+    lead = Lead.objects.create(
+        first_name="Alice",
+        linkedin_url="https://www.linkedin.com/in/alice-sequence/",
+    )
+    fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+
+    save_chat_message(
+        fake_session,
+        "alice-sequence",
+        "follow-up body",
+        deal_id=123,
+        sequence_name="linkedin_connect_followup",
+        step_index=0,
+        operator="Arian",
+    )
+
+    msg = Message.objects.get(lead=lead, source=Message.Source.LINKEDIN)
+    assert msg.external_id.startswith(
+        "daemon-send:Arian:123:linkedin_connect_followup:step-0:"
+    )
+    assert msg.sender == "ariant@tryfedrampgpt.com"
+
+
+def test_save_chat_message_keeps_legacy_external_id_without_sequence(fake_session):
+    from linkedin.db.chat import save_chat_message
+
+    lead = Lead.objects.create(
+        first_name="Alice",
+        linkedin_url="https://www.linkedin.com/in/alice-legacy/",
+    )
+
+    save_chat_message(fake_session, "alice-legacy", "manual body")
+
+    msg = Message.objects.get(lead=lead, source=Message.Source.LINKEDIN)
+    assert msg.external_id.startswith(f"daemon-send:{lead.pk}:")
+
+
 # ---------------------------------------------------------------------------
 # B.3 — persist_thread helper
 # ---------------------------------------------------------------------------
@@ -243,6 +283,7 @@ def test_lead_outbound_operators_canonicalizes_known_aliases(db):
     for idx, sender in enumerate((
         "chukwuka agu",
         "Chuka Eddy Jack",
+        "eddy agu",
         "eddy@tryfedrampgpt.com",
         "leili amirshahi",
         "leili.ash2011@yahoo.com",
