@@ -1,0 +1,59 @@
+{
+  "Arian": {
+    "CSPs": {
+      "gmail_fallback": [
+        {
+          "delay_days": 0,
+          "subject_variants": [
+            "FedRAMP 20x readiness at {company_name}"
+          ],
+          "body_variants": [
+            "Hi {first_name},\n\nI reached out on LinkedIn but figured email may be easier.\n\nWe're building Boundera for CSPs that need to understand whether a FedRAMP 20x Low or Moderate path is actually viable before committing to the bigger authorization motion.\n\nThe first workflow maps KSI evidence, shows gaps, and turns eligible remediation into Jira tickets or draft GitHub PRs for the team to review.\n\nWorth comparing notes on how {company_name} is thinking about 20x this year?\n\nBest,\nArian"
+          ]
+        }
+      ]
+    },
+    "3PAOs/Assessors": {
+      "gmail_fallback": [
+        {
+          "delay_days": 0,
+          "subject_variants": [
+            "FedRAMP 20x evidence review"
+          ],
+          "body_variants": [
+            "Hi {first_name},\n\nI reached out on LinkedIn but thought email may be easier.\n\nWe're building Boundera around the messy parts of FedRAMP 20x evidence: KSI validation status, traceability, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP evidence package easier to inspect and easier to connect back to current validation evidence.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\nBest,\nArian"
+          ]
+        }
+      ]
+    },
+    "Advisors": {
+      "gmail_fallback": [
+        {
+          "delay_days": 0,
+          "subject_variants": [
+            "FedRAMP 20x readiness for CSP clients"
+          ],
+          "body_variants": [
+            "Hi {first_name},\n\nI reached out on LinkedIn but figured email may be easier.\n\nWe're building Boundera for CSPs trying to decide whether FedRAMP 20x Low or Moderate is actually viable before they spend heavily on the authorization path.\n\nThe product maps evidence to KSIs, surfaces gaps/findings, and helps move remediation into Jira or draft GitHub PR workflows instead of more spreadsheet chasing.\n\nIf this fits a client you advise, we're open to referral or partner economics.\n\nWould this be relevant to how you work with CSPs?\n\nBest,\nArian"
+          ]
+        }
+      ]
+    },
+    "Channel": {
+      "gmail_fallback": [
+        {
+          "delay_days": 0,
+          "subject_variants": [
+            "FedRAMP 20x partner fit"
+          ],
+          "body_variants": [
+            "Hi {first_name},\n\nI reached out on LinkedIn but figured email may be easier.\n\nBoundera helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nIf this fits customers you support, who would usually own that kind of FedRAMP tooling conversation?\n\nBest,\nArian"
+          ]
+        }
+      ]
+    }
+  },
+  "Leili": {},
+  "Athena": {},
+  "Eddy": {}
+}

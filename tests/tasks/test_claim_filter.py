@@ -137,13 +137,25 @@ def test_seconds_to_next_scopes_connect_to_owned_campaign():
 
 
 @pytest.mark.django_db
-def test_claim_next_excludes_enrich_phone_but_claims_manual_reply():
-    """The outbound loop claims manual replies, but never enrichment tasks."""
+def test_claim_next_excludes_non_linkedin_tasks_but_claims_manual_reply():
+    """The outbound loop claims manual replies, but never enrichment/Gmail tasks."""
     enrich = Task.objects.create(
         task_type=Task.TaskType.ENRICH_PHONE,
         status=Task.Status.PENDING,
-        scheduled_at=dj_tz.now() - timedelta(seconds=60),
+        scheduled_at=dj_tz.now() - timedelta(seconds=300),
         payload={"lead_id": 1},
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.ENRICH_EMAIL,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=180),
+        payload={"lead_id": 1, "operator": "Arian"},
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=240),
+        payload={"lead_id": 1, "operator": "Arian", "step_index": 0},
     )
     manual = Task.objects.create(
         task_type=Task.TaskType.MANUAL_REPLY,

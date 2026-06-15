@@ -29,6 +29,7 @@ class EnrichmentResult:
     status: EnrichmentStatus
     provider: str
     phone: str | None = None
+    email: str | None = None
     raw: dict = field(default_factory=dict)
 
 

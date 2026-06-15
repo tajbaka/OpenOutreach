@@ -42,7 +42,7 @@ Task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, q
 
 1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3).
 2. **`handle_sweep_connections`** — Account-wide. Scrapes `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`, cross-references PENDING Deals by `public_id`, transitions matches to CONNECTED and enqueues `follow_up`. Replaces the legacy per-profile `check_pending` flow. On completion posts a lean per-sender analytics snapshot to the ops Slack channel via `_post_sweep_summary` → `notify_sweep_summary` (sends today, pending/connected/failed Deal counts) — best-effort, never blocks the sweep.
-3. **`handle_follow_up`** — Per-profile. Sends rigid ICP LinkedIn follow-up sequence steps from `icp_messages.json`, gated by `ENABLE_FOLLOW_UP` and the follow-up rate limit. Payloads may carry `sequence_name`, `channel`, and `step_index`; missing values default to the current one-step `linkedin_connect_followup` / same channel / `0` behavior. Owner scoping compares outbound `Message.sender` values through `linkedin.operators.resolve_operator`, so new LinkedIn display variants must be added there. Stop checks are DB-local only: inbound LinkedIn/Gmail message, existing `crm.Meeting`, disqualified lead, suppression, or non-CONNECTED state. On send failure it re-enqueues the same step in 24h. On non-final success it records `ActionLog`, persists an outbound `crm.Message`, and enqueues the next step after that step's `delay_days`, normalized into configured active hours/rest days, while keeping the Deal `CONNECTED`; final success marks the Deal `COMPLETED`. Step-level dedup for a non-final already-sent step keeps the Deal `CONNECTED` and ensures the next step is queued; only a final-step dedup marks `COMPLETED`. Post-send retries only retry the state write so a dead DB connection cannot double-count the action or duplicate the next-step Task. The single-cell ICP Messages Sheets sync is legacy-only for follow-up copy: it rejects sequence-shaped follow-up channels on push and preserves existing sequences on pull, so multi-step copy is edited directly in JSON.
+3. **`handle_follow_up`** — Per-profile. Sends rigid ICP LinkedIn follow-up sequence steps from `icp_messages.json`, gated by `ENABLE_FOLLOW_UP` and the follow-up rate limit. Payloads may carry `sequence_name`, `channel`, and `step_index`; missing values default to the current one-step `linkedin_connect_followup` / same channel / `0` behavior. Owner scoping compares outbound `Message.sender` values through `linkedin.operators.resolve_operator`, so new LinkedIn display variants must be added there. Stop checks are DB-local only via `linkedin.tasks.stop_checks.automation_stop_reason`: inbound LinkedIn/Gmail message, existing `crm.Meeting`, disqualified lead, suppression, or non-CONNECTED state. On send failure it re-enqueues the same step in 24h. On non-final success it records `ActionLog`, persists an outbound `crm.Message`, and enqueues the next step after that step's `delay_days`, normalized into configured active hours/rest days, while keeping the Deal `CONNECTED`; final success marks the Deal `COMPLETED`. Step-level dedup for a non-final already-sent step keeps the Deal `CONNECTED` and ensures the next step is queued; only a final-step dedup marks `COMPLETED`. Post-send retries only retry the state write so a dead DB connection cannot double-count the action or duplicate the next-step Task. After final-step success, the only Gmail integration is `maybe_handoff_to_gmail(deal=..., operator=...)`; it no-ops unless `ENABLE_GMAIL_SEQUENCE=true`, then queues either `enrich_email` or `gmail_follow_up` without embedding Gmail send logic in this handler. The single-cell ICP Messages Sheets sync is legacy-only for follow-up copy: it rejects sequence-shaped follow-up channels on push and preserves existing sequences on pull, so multi-step copy is edited directly in JSON.
 4. **`handle_manual_reply`** — Slack-to-LinkedIn reply lane. Slack modal submit inserts a `manual_reply` Task with `lead_id`, `operator`, `message`, Slack message coordinates, and original Slack blocks. The daemon claims these ahead of normal outbound work, scoped by `payload.operator`, and sends through the same logged-in Playwright page via `send_raw_message`. Manual replies use the direct-thread UI composer with human typing and deliberately disable the Voyager API fallback, so a UI send failure fails the task instead of sending instantly. Manual replies bypass active-hours sleeps when due; while off-hours and no reply is due, the daemon caps sleep to `MANUAL_REPLY_POLL_SECONDS` (default 60) so newly queued replies are picked up quickly without running normal automation. Manual replies do not consume connect/follow-up quotas, do not advance sequences, and do not change Deal state; the durable outreach side effect is the outbound `crm.Message` with a `manual-reply:` synthetic external id. Before sending, the handler checks that same `crm.Message` ledger for an existing same lead/operator/body manual reply and skips duplicates, covering the crash-after-send/before-task-complete window. Slack sent/failed acknowledgements are best-effort via `chat.update` on the original notification, falling back to the interaction `response_url`.
 
 ## Qualification ML Pipeline
@@ -177,18 +177,20 @@ CDP Network.dataReceived (base64 chunk)
 
 `--skip-prereq-gate` bypasses the interactive staleness prompt inside `backfill_messages` so it can be called non-interactively.
 
-## Phone Enrichment (`linkedin/enrichment/`)
+## Enrichment (`linkedin/enrichment/`)
 
 Phone-number enrichment, **operator-triggered from Slack**. The
-`EnrichmentWorker` always runs; auto-enqueue on every inbound reply is
-opt-in via `ENABLE_AUTO_PHONE_ENRICHMENT` (`conf.py`, default off).
+`EnrichmentWorker` always runs; auto-enqueue phone lookup on every inbound reply
+is opt-in via `ENABLE_AUTO_PHONE_ENRICHMENT` (`conf.py`, default off). Email
+enrichment is not Slack-triggered: it is the browserless prerequisite for the
+Gmail fallback sequence, gated by `ENABLE_GMAIL_SEQUENCE`.
 
 **Trigger.** Every inbound-reply Slack notification (`notify_message_received`)
 carries a "Reply on LinkedIn" button plus a "📞 Get phone number"
 `static_select` menu — waterfall (default) / bettercontact / leadmagic /
 prospeo. The operator's pick/button/modal submit is POSTed by Slack to a
 Vercel serverless function (`api/slack_enrich.py`), which verifies the Slack
-request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256). Enrichment picks
+request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256). Phone enrichment picks
 parse `(lead_id, provider)` and INSERT an `enrich_phone` `Task`; reply modal
 submits INSERT a daemon-dispatched `manual_reply` `Task`. The function uses raw
 `psycopg` (no Django import), and `SLACK_BOT_TOKEN` is required for
@@ -204,13 +206,32 @@ listener's handler (`linkedin/realtime/handler.py`) can still auto-enqueue a
 is on, with the same per-`(lead, provider)` dedup. Either path writes
 `payload={lead_id, bettercontact_request_id, provider}`.
 
+**Email fallback trigger.** After the final LinkedIn follow-up step succeeds,
+`gmail.handoff.maybe_handoff_to_gmail` checks DB-local stop
+conditions and suppression. If `ENABLE_GMAIL_SEQUENCE=false` it no-ops. If the
+lead already has `Lead.email`, it queues a durable `gmail_follow_up` step-0 task.
+If the lead has no email, it queues `enrich_email`. The LinkedIn outbound loop
+excludes `gmail_follow_up`; the browserless top-level `gmail/` worker claims
+and sends those tasks when `ENABLE_GMAIL_SEQUENCE=true`.
+
+**Gmail package.** The top-level `gmail/` package owns the Gmail fallback lane:
+OAuth/token loading (`auth.py`), Gmail API send/search (`client.py`), post-LinkedIn
+handoff (`handoff.py`), the worker loop (`worker.py`), task handlers
+(`tasks/enrich_email.py`, `tasks/follow_up.py`), and email sequence copy
+(`templates.json` via `templates.py`). Gmail templates are separate from
+`linkedin/icp_messages.json`, which remains LinkedIn/connect/follow-up copy.
+`manage.py gmail_oauth` creates per-account tokens under `data/gmail/`;
+`manage.py gmail_send_test` sends a direct live test message through the mapped
+operator alias.
+
 **Worker.** `EnrichmentWorker` (`worker.py`) is a single background thread
 `run_daemon` always spawns alongside the listener supervisor (no longer
 flag-gated — the Slack menu is always available so enrichment must always be
-processable). It claims
-`enrich_phone` tasks via `Task.objects.next_enrichment()` — the outbound loop
-excludes `ENRICH_PHONE` from `claim_next`/`seconds_to_next`, and `heal_tasks`
-excludes it from the stale-`RUNNING` reset, so the two never race. The worker
+processable). It claims `enrich_phone` and `enrich_email` tasks via
+`Task.objects.next_enrichment()` — the outbound loop excludes `ENRICH_PHONE`,
+`ENRICH_EMAIL`, and `GMAIL_FOLLOW_UP` from `claim_next`/`seconds_to_next`, and
+`heal_tasks` excludes enrichment tasks from the stale-`RUNNING` reset, so the two
+never race. The worker
 reclaims its own stale `RUNNING` tasks at `start()` (the daemon has no clean
 shutdown — this is the crash-recovery path). HTTP-only, so it is not gated on
 active hours. Single-threaded is load-bearing: `next_enrichment` is a plain
@@ -230,6 +251,17 @@ needs. LeadMagic and Prospeo are synchronous and LinkedIn-URL native.
 Providers implement the `PhoneProvider` protocol (`base.py`); transport
 failures raise `HttpError` (→ `API_FAILURE`), malformed responses raise
 `EnrichmentError`.
+
+**Email enrichment.** `handle_enrich_email` uses `BetterContactEmailProvider`,
+which submits BetterContact in email-only mode:
+`enrich_email_address=true`, `enrich_phone_number=false`. The parser reads the
+email result separately from the phone result and stores a normalized email in
+`Lead.email`. `Lead.email_providers_tried` records definitive email provider
+answers (`FOUND` or `NOT_FOUND`); `API_FAILURE` is not recorded so it remains
+retryable. On `FOUND`, the handler queues `gmail_follow_up` step 0. On
+`NOT_FOUND`, it records the tried provider and stops the Gmail fallback for that
+lead. On `API_FAILURE`, it leaves the provider retryable and marks the task
+failed.
 
 **Outcome (multi-number).** `handle_enrich_phone` (`linkedin/tasks/enrich_phone.py`)
 lets a lead carry many numbers. `Lead.phones` is a JSON list of

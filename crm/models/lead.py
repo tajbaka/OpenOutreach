@@ -22,6 +22,10 @@ class Lead(models.Model):
     # for this lead — used to skip re-running a provider that already
     # answered. API_FAILURE is not recorded here, so it stays retryable.
     phone_providers_tried = models.JSONField(default=list, blank=True)
+    # Email enrichment provider names that returned a definitive result
+    # (FOUND or NOT_FOUND). Kept separate from phone_providers_tried so a
+    # phone lookup never suppresses an email lookup, or vice versa.
+    email_providers_tried = models.JSONField(default=list, blank=True)
     public_identifier = models.CharField(max_length=200, blank=True, default="")
     description = models.TextField(blank=True, default="")
     embedding = models.BinaryField(null=True, blank=True)

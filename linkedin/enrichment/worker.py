@@ -1,17 +1,17 @@
-"""EnrichmentWorker — the daemon's phone-enrichment task loop.
+"""EnrichmentWorker — the daemon's HTTP-only enrichment task loop.
 
 Runs as a SINGLE background thread spawned by run_daemon. Claims
-ENRICH_PHONE tasks (the outbound loop excludes them), runs the waterfall via
-handle_enrich_phone, and sets each task's final status.
+ENRICH_PHONE / ENRICH_EMAIL tasks (the outbound loop excludes them), runs the
+appropriate provider handler, and sets each task's final status.
 
 Single-threaded by design: Task.objects.next_enrichment is a plain ordered
 read, not a locking claim — a second worker would double-process tasks (and
 double-bill providers). Do not scale this without select_for_update.
 
 Crash recovery: the daemon has no clean SIGTERM shutdown, so a killed worker
-leaves its task RUNNING. `start()` reclaims stale RUNNING enrich_phone tasks
-back to PENDING — that, plus the persisted bettercontact_request_id, is the
-real crash-safety net.
+leaves its task RUNNING. `start()` reclaims stale RUNNING enrichment tasks back
+to PENDING — that, plus the persisted BetterContact request id, is the real
+crash-safety net.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ import traceback
 logger = logging.getLogger(__name__)
 
 from linkedin.notifications.slack import notify_error
+from gmail.tasks.enrich_email import handle_enrich_email
 from linkedin.tasks.enrich_phone import handle_enrich_phone
 
 
@@ -55,7 +56,10 @@ class EnrichmentWorker:
         from linkedin.models import Task
 
         reclaimed = Task.objects.filter(
-            task_type=Task.TaskType.ENRICH_PHONE,
+            task_type__in=[
+                Task.TaskType.ENRICH_PHONE,
+                Task.TaskType.ENRICH_EMAIL,
+            ],
             status=Task.Status.RUNNING,
         ).update(status=Task.Status.PENDING)
         if reclaimed:
@@ -90,12 +94,15 @@ class EnrichmentWorker:
 
         task.mark_running()
         try:
-            result = handle_enrich_phone(task)
+            if task.task_type == Task.TaskType.ENRICH_EMAIL:
+                result = handle_enrich_email(task)
+            else:
+                result = handle_enrich_phone(task)
         except Exception as exc:
-            logger.exception("enrich_phone task %s failed", task.id)
+            logger.exception("%s task %s failed", task.task_type, task.id)
             task.mark_failed(traceback.format_exc())
             notify_error(
-                "daemon:enrich_phone", exc,
+                f"daemon:{task.task_type}", exc,
                 context={"task_id": task.id, "payload": task.payload},
             )
             return True

@@ -100,6 +100,13 @@ ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
+# Post-LinkedIn fallback into the browserless Gmail lane. Default OFF until
+# Gmail auth/sending is implemented and QA'd; when on, final LinkedIn follow-up
+# success can enqueue email enrichment or a pending gmail_follow_up task.
+ENABLE_GMAIL_SEQUENCE = os.getenv("ENABLE_GMAIL_SEQUENCE", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 # Kill-switch for the connect lane (sending new connection invites).
 # When false, `handle_connect` is a no-op and `enqueue_connect` skips —
 # the daemon stops adding to the network while still processing

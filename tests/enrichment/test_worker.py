@@ -26,6 +26,17 @@ def _enrich_task(status=Task.Status.PENDING, scheduled_offset_s=-1):
     )
 
 
+def _email_task(status=Task.Status.PENDING, scheduled_offset_s=-1):
+    from datetime import timedelta
+
+    return Task.objects.create(
+        task_type=Task.TaskType.ENRICH_EMAIL,
+        status=status,
+        scheduled_at=timezone.now() + timedelta(seconds=scheduled_offset_s),
+        payload={"lead_id": 1, "operator": "Arian", "bettercontact_email_request_id": ""},
+    )
+
+
 @pytest.mark.django_db
 def test_run_once_no_task_returns_false():
     assert EnrichmentWorker()._run_once() is False
@@ -64,6 +75,22 @@ def test_run_once_skip_result_none_marks_completed():
 
 
 @pytest.mark.django_db
+def test_run_once_dispatches_email_enrichment():
+    task = _email_task()
+    found = EnrichmentResult(
+        status=EnrichmentStatus.FOUND,
+        provider="bettercontact",
+        email="ada@example.com",
+    )
+    with patch("linkedin.enrichment.worker.handle_enrich_email", return_value=found) as mock_email:
+        handled = EnrichmentWorker()._run_once()
+    task.refresh_from_db()
+    assert handled is True
+    assert task.status == Task.Status.COMPLETED
+    mock_email.assert_called_once_with(task)
+
+
+@pytest.mark.django_db
 def test_run_once_handler_exception_marks_failed_and_notifies():
     task = _enrich_task()
     with patch("linkedin.enrichment.worker.handle_enrich_phone",
@@ -78,9 +105,12 @@ def test_run_once_handler_exception_marks_failed_and_notifies():
 @pytest.mark.django_db
 def test_reclaim_stale_resets_running_enrich_tasks():
     task = _enrich_task(status=Task.Status.RUNNING)
+    email = _email_task(status=Task.Status.RUNNING)
     EnrichmentWorker()._reclaim_stale()
     task.refresh_from_db()
+    email.refresh_from_db()
     assert task.status == Task.Status.PENDING
+    assert email.status == Task.Status.PENDING
 
 
 @pytest.mark.django_db

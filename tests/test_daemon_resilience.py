@@ -280,9 +280,9 @@ def test_follow_up_state_retry_does_not_duplicate_next_step(db, fake_session, mo
     ).count() == 1
 
 
-def test_heal_tasks_does_not_reset_running_enrich_phone(fake_session):
+def test_heal_tasks_does_not_reset_running_enrichment_tasks(fake_session):
     """heal_tasks resets all stale RUNNING tasks to PENDING — but it must
-    leave ENRICH_PHONE tasks alone, because the EnrichmentWorker (which
+    leave enrichment tasks alone, because the EnrichmentWorker (which
     spawns after heal_tasks) owns reclaiming those itself. Resetting them
     here would yank an in-flight enrichment away from the worker."""
     from django.utils import timezone
@@ -296,6 +296,12 @@ def test_heal_tasks_does_not_reset_running_enrich_phone(fake_session):
         scheduled_at=timezone.now(),
         payload={"lead_id": 1},
     )
+    email = Task.objects.create(
+        task_type=Task.TaskType.ENRICH_EMAIL,
+        status=Task.Status.RUNNING,
+        scheduled_at=timezone.now(),
+        payload={"lead_id": 1, "operator": "Arian"},
+    )
     other = Task.objects.create(
         task_type=Task.TaskType.CONNECT,
         status=Task.Status.RUNNING,
@@ -306,6 +312,8 @@ def test_heal_tasks_does_not_reset_running_enrich_phone(fake_session):
     heal_tasks(fake_session)
 
     enrich.refresh_from_db()
+    email.refresh_from_db()
     other.refresh_from_db()
     assert enrich.status == Task.Status.RUNNING   # left for the worker
+    assert email.status == Task.Status.RUNNING    # left for the worker
     assert other.status == Task.Status.PENDING    # reset as before

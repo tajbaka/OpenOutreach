@@ -369,13 +369,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     mine_followup = Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator)
     mine_manual = Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator)
     mine_connect = Q(task_type=Task.TaskType.CONNECT) & in_owned
-    account_agnostic = ~Q(
-        task_type__in=[
-            Task.TaskType.FOLLOW_UP,
-            Task.TaskType.CONNECT,
-            Task.TaskType.MANUAL_REPLY,
-        ]
-    )
+    account_agnostic = ~Q(task_type__in=Task.linked_account_scoped_task_types())
     return mine_followup | mine_manual | mine_connect | account_agnostic
 
 
@@ -411,7 +405,7 @@ class TaskQuerySet(models.QuerySet):
         Task for Arian's campaign and invite from the wrong account
         (2026-05-19). See `_operator_scope_q`.
         """
-        qs = self.due().exclude(task_type=Task.TaskType.ENRICH_PHONE)
+        qs = self.due().exclude(task_type__in=Task.non_linkedin_outbound_task_types())
         if task_types is not None:
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
@@ -433,7 +427,7 @@ class TaskQuerySet(models.QuerySet):
         on a task it would never pop — a follow_up for another operator,
         or a connect for a campaign this daemon's account doesn't own.
         """
-        qs = self.pending().exclude(task_type=Task.TaskType.ENRICH_PHONE).only(
+        qs = self.pending().exclude(task_type__in=Task.non_linkedin_outbound_task_types()).only(
             "scheduled_at", "task_type", "payload",
         )
         if task_types is not None:
@@ -446,14 +440,23 @@ class TaskQuerySet(models.QuerySet):
         return max((next_task.scheduled_at - timezone.now()).total_seconds(), 0)
 
     def next_enrichment(self) -> "Task | None":
-        """The next due ENRICH_PHONE task — the EnrichmentWorker's claim query.
+        """The next due enrichment task — the EnrichmentWorker's claim query.
 
-        Separate from `claim_next` (which excludes ENRICH_PHONE) so the
-        outbound task loop and the single enrichment worker thread never
-        compete for the same row. NOTE: this is a plain ordered read, not a
-        locking claim — safe only because exactly one worker thread calls it.
+        Separate from `claim_next` (which excludes enrichment tasks) so the
+        outbound task loop and the single enrichment worker thread never compete
+        for the same row. NOTE: this is a plain ordered read, not a locking
+        claim — safe only because exactly one worker thread calls it.
         """
-        return self.due().filter(task_type=Task.TaskType.ENRICH_PHONE).first()
+        return self.due().filter(
+            task_type__in=[
+                Task.TaskType.ENRICH_PHONE,
+                Task.TaskType.ENRICH_EMAIL,
+            ],
+        ).first()
+
+    def next_gmail(self) -> "Task | None":
+        """The next due browserless Gmail follow-up task."""
+        return self.due().filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).first()
 
 
 class Task(models.Model):
@@ -463,6 +466,8 @@ class Task(models.Model):
         FOLLOW_UP = "follow_up"
         SWEEP_CONNECTIONS = "sweep_connections"
         ENRICH_PHONE = "enrich_phone"
+        ENRICH_EMAIL = "enrich_email"
+        GMAIL_FOLLOW_UP = "gmail_follow_up"
         MANUAL_REPLY = "manual_reply"
 
     class Status(models.TextChoices):
@@ -481,6 +486,22 @@ class Task(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
 
     objects = TaskQuerySet.as_manager()
+
+    @classmethod
+    def linked_account_scoped_task_types(cls) -> list[str]:
+        return [
+            cls.TaskType.FOLLOW_UP,
+            cls.TaskType.CONNECT,
+            cls.TaskType.MANUAL_REPLY,
+        ]
+
+    @classmethod
+    def non_linkedin_outbound_task_types(cls) -> list[str]:
+        return [
+            cls.TaskType.ENRICH_PHONE,
+            cls.TaskType.ENRICH_EMAIL,
+            cls.TaskType.GMAIL_FOLLOW_UP,
+        ]
 
     class Meta:
         app_label = "linkedin"
@@ -524,6 +545,26 @@ class Task(models.Model):
                 errors.append("manual_reply tasks require non-empty payload.operator")
             if not (payload.get("message") or "").strip():
                 errors.append("manual_reply tasks require non-empty payload.message")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.ENRICH_EMAIL
+        ):
+            if not payload.get("lead_id"):
+                errors.append("enrich_email tasks require payload.lead_id")
+            if not payload.get("operator"):
+                errors.append("enrich_email tasks require non-empty payload.operator")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.GMAIL_FOLLOW_UP
+        ):
+            if not payload.get("lead_id"):
+                errors.append("gmail_follow_up tasks require payload.lead_id")
+            if not payload.get("operator"):
+                errors.append("gmail_follow_up tasks require non-empty payload.operator")
+            if payload.get("step_index") is None:
+                errors.append("gmail_follow_up tasks require payload.step_index")
 
         if errors:
             raise ValidationError({"payload": errors})

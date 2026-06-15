@@ -1,10 +1,10 @@
-"""BetterContact phone-enrichment provider (async submit → poll).
+"""BetterContact enrichment providers (async submit → poll).
 
 BetterContact is itself a 20+ provider waterfall, so its NOT_FOUND is
-authoritative — that is why it sits first in PROVIDER_CHAIN. Its submit
-endpoint requires first + last name + company; linkedin_url is only a hint.
-When the lead lacks last_name/company_name we short-circuit to API_FAILURE
-(graceful failover) rather than calling the API or crashing.
+authoritative — that is why it sits first in PROVIDER_CHAIN for phone lookup.
+Its submit endpoint requires first + last name + company; linkedin_url is only a
+hint. When the lead lacks last_name/company_name we short-circuit to API_FAILURE
+rather than calling the API or crashing.
 """
 from __future__ import annotations
 
@@ -28,6 +28,10 @@ _BASE = "https://app.bettercontact.rocks/api/v2"
 
 class BetterContactProvider:
     name = "bettercontact"
+    request_id_key = "bettercontact_request_id"
+    enrich_email_address = False
+    enrich_phone_number = True
+    result_field = "contact_phone_number"
 
     def enrich(self, lead, task) -> EnrichmentResult:
         if not BETTERCONTACT_API_KEY:
@@ -41,11 +45,11 @@ class BetterContactProvider:
             )
             return EnrichmentResult(status=EnrichmentStatus.API_FAILURE, provider=self.name)
 
-        request_id = task.payload.get("bettercontact_request_id") or ""
+        request_id = task.payload.get(self.request_id_key) or ""
         try:
             if not request_id:
                 request_id = self._submit(lead)
-                task.payload["bettercontact_request_id"] = request_id
+                task.payload[self.request_id_key] = request_id
                 task.save(update_fields=["payload"])
             return self._poll(request_id)
         except HttpError as exc:
@@ -63,8 +67,8 @@ class BetterContactProvider:
                     "company": lead.company_name,
                     "linkedin_url": lead.linkedin_url,
                 }],
-                "enrich_email_address": False,
-                "enrich_phone_number": True,
+                "enrich_email_address": self.enrich_email_address,
+                "enrich_phone_number": self.enrich_phone_number,
             },
             timeout=ENRICHMENT_HTTP_TIMEOUT_SECONDS,
         )
@@ -94,12 +98,21 @@ class BetterContactProvider:
         data = resp.get("data")
         if not isinstance(data, list) or not data:
             raise EnrichmentError(f"BetterContact terminated with no data: {resp}")
-        phone = data[0].get("contact_phone_number")
-        if phone:
+        value = data[0].get(self.result_field)
+        if value:
+            kwargs = {"email": str(value)} if self.enrich_email_address else {"phone": str(value)}
             return EnrichmentResult(
                 status=EnrichmentStatus.FOUND, provider=self.name,
-                phone=str(phone), raw=resp,
+                raw=resp, **kwargs,
             )
         return EnrichmentResult(
             status=EnrichmentStatus.NOT_FOUND, provider=self.name, raw=resp,
         )
+
+
+class BetterContactEmailProvider(BetterContactProvider):
+    name = "bettercontact"
+    request_id_key = "bettercontact_email_request_id"
+    enrich_email_address = True
+    enrich_phone_number = False
+    result_field = "contact_email_address"

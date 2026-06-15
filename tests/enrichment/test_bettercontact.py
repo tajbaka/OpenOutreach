@@ -6,7 +6,10 @@ import pytest
 
 from linkedin.enrichment.base import EnrichmentStatus
 from linkedin.enrichment.http import HttpError
-from linkedin.enrichment.providers.bettercontact import BetterContactProvider
+from linkedin.enrichment.providers.bettercontact import (
+    BetterContactEmailProvider,
+    BetterContactProvider,
+)
 
 
 def _lead(**over):
@@ -121,3 +124,53 @@ def test_http_error_returns_api_failure(monkeypatch):
                side_effect=HttpError("502")):
         result = BetterContactProvider().enrich(_lead(), _task())
     assert result.status == EnrichmentStatus.API_FAILURE
+
+
+def test_email_provider_submits_email_only_and_parses_email(monkeypatch):
+    monkeypatch.setattr(
+        "linkedin.enrichment.providers.bettercontact.BETTERCONTACT_API_KEY", "key",
+    )
+    monkeypatch.setattr(
+        "linkedin.enrichment.providers.bettercontact.BETTERCONTACT_POLL_INTERVAL_SECONDS", 0,
+    )
+    task = _task()
+    with patch(
+        "linkedin.enrichment.providers.bettercontact.post_json",
+        return_value={"id": "email-req"},
+    ) as mock_post, patch(
+        "linkedin.enrichment.providers.bettercontact.get_json",
+        return_value={
+            "status": "terminated",
+            "data": [{"contact_email_address": "Ada@Example.com"}],
+        },
+    ):
+        result = BetterContactEmailProvider().enrich(_lead(), task)
+
+    payload = mock_post.call_args.kwargs["payload"]
+    assert payload["enrich_email_address"] is True
+    assert payload["enrich_phone_number"] is False
+    assert result.status == EnrichmentStatus.FOUND
+    assert result.email == "Ada@Example.com"
+    assert task.payload["bettercontact_email_request_id"] == "email-req"
+
+
+def test_email_provider_terminated_no_email_is_not_found(monkeypatch):
+    monkeypatch.setattr(
+        "linkedin.enrichment.providers.bettercontact.BETTERCONTACT_API_KEY", "key",
+    )
+    monkeypatch.setattr(
+        "linkedin.enrichment.providers.bettercontact.BETTERCONTACT_POLL_INTERVAL_SECONDS", 0,
+    )
+    with patch(
+        "linkedin.enrichment.providers.bettercontact.post_json",
+        return_value={"id": "email-req"},
+    ), patch(
+        "linkedin.enrichment.providers.bettercontact.get_json",
+        return_value={
+            "status": "terminated",
+            "data": [{"contact_email_address": ""}],
+        },
+    ):
+        result = BetterContactEmailProvider().enrich(_lead(), _task())
+
+    assert result.status == EnrichmentStatus.NOT_FOUND

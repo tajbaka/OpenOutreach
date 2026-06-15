@@ -67,6 +67,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Enable the bulk connection-sweep task."),
     EnvVar("ENABLE_FOLLOW_UP", False, False, "true", "feature_flags",
            "Enable the post-accept follow-up DM."),
+    EnvVar("ENABLE_GMAIL_SEQUENCE", False, False, "false", "feature_flags",
+           "Enable post-LinkedIn fallback into email enrichment/Gmail tasks."),
     EnvVar("ENABLE_AUTO_DISCOVERY", False, False, "true", "feature_flags",
            "Enable automatic lead discovery."),
     EnvVar("ENABLE_REALTIME_LISTENER", False, False, "false", "feature_flags",

@@ -271,12 +271,12 @@ def heal_tasks(session):
     from linkedin.enums import ProfileState
     from linkedin.models import Campaign
 
-    # 1. Recover stale running tasks. ENRICH_PHONE is excluded — the
+    # 1. Recover stale running tasks. Enrichment tasks are excluded — the
     # EnrichmentWorker (spawned after heal_tasks) reclaims its own stale
     # RUNNING tasks at start(); resetting them here would race the worker.
     stale_count = (
         Task.objects.filter(status=Task.Status.RUNNING)
-        .exclude(task_type=Task.TaskType.ENRICH_PHONE)
+        .exclude(task_type__in=[Task.TaskType.ENRICH_PHONE, Task.TaskType.ENRICH_EMAIL])
         .update(status=Task.Status.PENDING)
     )
     if stale_count:
@@ -625,6 +625,10 @@ def run_daemon(session):
     enrichment_worker = EnrichmentWorker()
     enrichment_worker.start()
 
+    from gmail.worker import GmailWorker
+    gmail_worker = GmailWorker()
+    gmail_worker.start()
+
     # Node monitoring — a background thread that beats this daemon's
     # DaemonHeartbeat row and watches peers, plus an in-process
     # consecutive-failure tracker for the dispatch loop. Both alert the ops
@@ -725,16 +729,25 @@ def run_daemon(session):
                     time.sleep(wait)
                     continue
                 if Task.objects.filter(
-                    task_type=Task.TaskType.ENRICH_PHONE,
+                    task_type__in=[Task.TaskType.ENRICH_PHONE, Task.TaskType.ENRICH_EMAIL],
                     status__in=[Task.Status.PENDING, Task.Status.RUNNING],
                 ).exists():
                     logger.info("Outbound queue empty — waiting on enrichment worker")
                     connections.close_all()
                     time.sleep(ENRICHMENT_WAIT_POLL_SECONDS)
                     continue
+                if Task.objects.filter(
+                    task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+                    status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+                ).exists():
+                    logger.info("Outbound queue empty — waiting on Gmail worker")
+                    connections.close_all()
+                    time.sleep(ENRICHMENT_WAIT_POLL_SECONDS)
+                    continue
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()
                 enrichment_worker.stop()
+                gmail_worker.stop()
                 # Clean exit: clear our heartbeat so peers don't false-alarm
                 # on a daemon that stopped on purpose, then stop the monitor.
                 if node_monitor is not None:

@@ -79,19 +79,9 @@ def _has_sent_sequence_step(*, deal, operator: str, sequence_name: str, step_ind
 
 
 def _sequence_stop_reason(deal) -> str:
-    from crm.models import Meeting, Message
+    from linkedin.tasks.stop_checks import automation_stop_reason
 
-    if deal.lead.disqualified:
-        return "Lead disqualified; automation stopped"
-    if Meeting.objects.filter(lead=deal.lead).exists():
-        return "Meeting exists; automation stopped"
-    if Message.objects.filter(
-        lead=deal.lead,
-        source__in=[Message.Source.LINKEDIN, Message.Source.GMAIL],
-        direction=Message.Direction.INBOUND,
-    ).exists():
-        return "Lead replied; automation stopped"
-    return ""
+    return automation_stop_reason(deal)
 
 
 def _delay_seconds_to_active_due(delay_days: int) -> float:
@@ -435,4 +425,8 @@ def handle_follow_up(task, session, qualifiers):
         )
         connections.close_all()
         _record_success_state()
+    if next_step_index >= len(steps):
+        from gmail.handoff import maybe_handoff_to_gmail
+
+        maybe_handoff_to_gmail(deal=deal, operator=our_operator)
     logger.info("follow_up sent to %s (role=%s, step=%s/%s)", public_id, role, step_index, len(steps) - 1)
