@@ -46,11 +46,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ssl
 import time
 import traceback
 from contextlib import contextmanager
 from urllib import request
 from urllib.error import URLError
+
+import certifi
 
 from linkedin.conf import SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
 
@@ -64,6 +67,17 @@ _RECENT_ERRORS: dict[tuple[str, str, str], float] = {}
 _DEDUPE_WINDOW_SECONDS = 300  # 5 min
 _SLACK_SECTION_TEXT_LIMIT = 3000
 _SLACK_MESSAGE_BODY_LIMIT = 2900
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+def _urlopen(req: request.Request, *, timeout: int):
+    """Open Slack HTTPS requests with a bundled CA store.
+
+    Some daemon hosts have stale or missing system trust roots, which makes
+    Slack webhooks fail with CERTIFICATE_VERIFY_FAILED. certifi keeps Slack
+    posting independent of the local Python/macOS certificate setup.
+    """
+    return request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT)
 
 
 def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
@@ -84,7 +98,7 @@ def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             if resp.status != 200:
                 logger.warning("Slack webhook returned %d for %s", resp.status, label)
     except (URLError, TimeoutError) as e:
@@ -103,7 +117,7 @@ def _post_slack_response_url(response_url: str, payload: dict, label: str) -> No
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             resp.read()
     except (URLError, TimeoutError, OSError) as e:
         logger.warning("Slack response_url failed for %s: %s", label, e)
@@ -124,7 +138,7 @@ def _slack_api(method: str, payload: dict, label: str) -> bool:
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
         logger.warning("Slack API %s failed for %s: %s", method, label, e)

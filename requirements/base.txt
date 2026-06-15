@@ -2,6 +2,7 @@ playwright
 playwright-stealth
 pydantic
 python-dotenv
+certifi
 jsonpath-ng
 pandas
 langchain

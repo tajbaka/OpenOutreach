@@ -65,6 +65,7 @@ def persist_thread(
     parsed: list[dict],
     thread_external_id: str = "",
     source: str = Message.Source.LINKEDIN,
+    outbound_senders: set[str] | None = None,
 ) -> int:
     """Upsert each parsed message into crm.Message. Returns count newly created.
 
@@ -74,8 +75,15 @@ def persist_thread(
     lead is from us. This avoids needing to know our own display name (which
     LinkedInProfile doesn't store reliably).
     """
+    from linkedin.operators import resolve_operator
+
     lead_full = f"{lead.first_name or ''} {lead.last_name or ''}".strip().lower()
     lead_first = (lead.first_name or "").strip().lower()
+    outbound_handles = {
+        resolve_operator(sender)
+        for sender in (outbound_senders or set())
+        if sender and resolve_operator(sender)
+    }
     known_connect_notes = {
         note.strip()
         for note in lead.deal_set.exclude(sent_note="").values_list("sent_note", flat=True)
@@ -98,6 +106,8 @@ def persist_thread(
                 (lead_full and sender == lead_full)
                 or (lead_first and sender.startswith(lead_first + " "))
             )
+            if outbound_handles and resolve_operator(sender) in outbound_handles:
+                is_inbound = False
             text = (m.get("text") or "").strip()
             # LinkedIn conversation payloads sometimes echo our own connection
             # note back with the lead's name as sender. When the body exactly

@@ -110,6 +110,7 @@ def _handle(event: dict, *, operator: str) -> None:
             "timestamp": parsed.timestamp,
         }],
         thread_external_id=parsed.conversation_urn,
+        outbound_senders={operator} if operator else set(),
     )
     if not created:
         logger.debug("Realtime event already persisted (%s)", parsed.entity_urn)
