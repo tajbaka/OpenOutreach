@@ -1,7 +1,9 @@
 from types import SimpleNamespace
+import json
 
 import pytest
 
+from gmail.templates import TEMPLATES_PATH
 from gmail.templates import render_for_lead, steps_for_lead
 from linkedin.exceptions import SheetsError
 
@@ -27,6 +29,13 @@ def test_render_for_lead_uses_gmail_templates():
     assert "Analytical Engines" in rendered.body
 
 
+def test_icp_emails_uses_direct_icp_step_arrays():
+    data = json.loads(TEMPLATES_PATH.read_text())
+
+    assert isinstance(data["Arian"]["CSPs"], list)
+    assert "gmail_fallback" not in data["Arian"]["CSPs"]
+
+
 def test_steps_for_lead_rejects_missing_sender():
     with pytest.raises(SheetsError, match="sender 'Missing' has no block"):
-        steps_for_lead(sender="Missing", role="CSP", sequence_name="gmail_fallback")
+        steps_for_lead(sender="Missing", role="CSP")

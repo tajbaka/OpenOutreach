@@ -10,7 +10,7 @@ from linkedin.exceptions import SheetsError
 from linkedin.name_utils import greeting_first_name
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP
 
-TEMPLATES_PATH = Path(__file__).with_name("templates.json")
+TEMPLATES_PATH = Path(__file__).with_name("icp_emails.json")
 
 
 @dataclass(frozen=True)
@@ -37,19 +37,16 @@ def _icp_for_role(role: str) -> str:
     return icp
 
 
-def steps(*, sender: str, icp: str, sequence_name: str) -> list[GmailTemplateStep]:
+def steps(*, sender: str, icp: str, sequence_name: str = "") -> list[GmailTemplateStep]:
     by_sender = _load()
     sender_block = by_sender.get(sender)
     if sender_block is None:
         raise SheetsError(f"gmail templates: sender {sender!r} has no block")
-    icp_block = sender_block.get(icp)
-    if icp_block is None:
+    raw = sender_block.get(icp)
+    if raw is None:
         raise SheetsError(f"gmail templates: sender {sender!r} has no ICP {icp!r}")
-    raw = icp_block.get(sequence_name)
-    if not raw:
-        raise SheetsError(
-            f"gmail templates: {sender}.{icp} has no sequence {sequence_name!r}"
-        )
+    if not isinstance(raw, list) or not raw:
+        raise SheetsError(f"gmail templates: {sender}.{icp} must be a non-empty step list")
     out: list[GmailTemplateStep] = []
     for idx, item in enumerate(raw):
         if not isinstance(item, dict):
@@ -77,7 +74,7 @@ def steps(*, sender: str, icp: str, sequence_name: str) -> list[GmailTemplateSte
     return out
 
 
-def steps_for_lead(*, sender: str, role: str, sequence_name: str) -> list[GmailTemplateStep]:
+def steps_for_lead(*, sender: str, role: str, sequence_name: str = "") -> list[GmailTemplateStep]:
     return steps(sender=sender, icp=_icp_for_role(role), sequence_name=sequence_name)
 
 
@@ -85,9 +82,9 @@ def render_for_lead(
     *,
     sender: str,
     role: str,
-    sequence_name: str,
     lead,
     step_index: int,
+    sequence_name: str = "",
 ) -> FilledEmail:
     sequence_steps = steps_for_lead(
         sender=sender,

@@ -258,19 +258,32 @@ module.
 
 ## Gmail Sequence Config
 
-Email templates live in `gmail/templates.json`, separate from
-`linkedin/icp_messages.json`. Add email templates by sender and ICP. The shape
-preserves variants inside steps:
+Email templates live in `gmail/icp_emails.json`, separate from
+`linkedin/icp_messages.json`. Add email templates by sender and ICP. Each ICP
+maps directly to the ordered email sequence:
 
 ```json
 {
-  "delay_days": 0,
-  "subject_variants": ["Subject A", "Subject B"],
-  "body_variants": ["Body A", "Body B"]
+  "Athena": {
+    "CSPs": [
+      {
+        "delay_days": 0,
+        "subject_variants": ["Subject A", "Subject B"],
+        "body_variants": ["Body A", "Body B"]
+      },
+      {
+        "delay_days": 4,
+        "subject_variants": ["Second subject"],
+        "body_variants": ["Second body"]
+      }
+    ]
+  }
 }
 ```
 
 Variant selection should be stable by lead id, as LinkedIn templates are today.
+`sequence_name` remains in task payloads and idempotency keys for compatibility,
+but it is not a JSON nesting level.
 
 ## Rollout Phases
 

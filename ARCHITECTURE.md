@@ -218,7 +218,7 @@ and sends those tasks when `ENABLE_GMAIL_SEQUENCE=true`.
 OAuth/token loading (`auth.py`), Gmail API send/search (`client.py`), post-LinkedIn
 handoff (`handoff.py`), the worker loop (`worker.py`), task handlers
 (`tasks/enrich_email.py`, `tasks/follow_up.py`), and email sequence copy
-(`templates.json` via `templates.py`). Gmail templates are separate from
+(`icp_emails.json` via `templates.py`). Gmail templates are separate from
 `linkedin/icp_messages.json`, which remains LinkedIn/connect/follow-up copy.
 `manage.py gmail_oauth` creates per-account tokens under `data/gmail/`;
 `manage.py gmail_send_test` sends a direct live test message through the mapped
