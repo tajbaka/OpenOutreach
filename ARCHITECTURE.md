@@ -194,7 +194,7 @@ submits INSERT a daemon-dispatched `manual_reply` `Task`. The function uses raw
 `psycopg` (no Django import), and `SLACK_BOT_TOKEN` is required for
 `views.open`; queued status updates prefer the interaction `response_url` and
 fall back to `chat.update` when metadata is available, while daemon sent/failed
-status uses `chat.update` with the task's saved Slack blocks. The `Task` table is the entire contract between
+status uses `chat.update` with the task's saved Slack blocks. The reply modal fetches the recent LinkedIn `crm.Message` thread via raw SQL and renders a compact transcript above the reply textbox, falling back to a plain textbox if the preview fetch fails. The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
 against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
 `(lead, provider)` (best-effort — a duplicate is harmless); two *different*

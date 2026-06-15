@@ -45,6 +45,9 @@ _REPLY_STATUS_PREFIX = "reply_status"
 _REPLY_ACTION_ID = "linkedin_reply_button"
 _REPLY_MODAL_CALLBACK_ID = "linkedin_reply_modal"
 _REPLY_BODY_ACTION_ID = "linkedin_reply_body"
+_THREAD_PREVIEW_LIMIT = 8
+_THREAD_MESSAGE_LIMIT = 320
+_THREAD_SECTION_LIMIT = 2800
 
 
 def verify_signature(
@@ -217,6 +220,76 @@ def _compact_metadata(metadata: dict) -> str:
     return json.dumps(metadata, separators=(",", ":"))
 
 
+def _slack_escape(text: str) -> str:
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _compact_message(text: str, *, limit: int = _THREAD_MESSAGE_LIMIT) -> str:
+    compact = " ".join((text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
+
+
+def fetch_linkedin_thread_preview(conn, lead_id: int, *, limit: int = _THREAD_PREVIEW_LIMIT) -> list[dict]:
+    """Fetch recent LinkedIn messages for the manual-reply modal.
+
+    The Vercel function intentionally avoids Django imports, so this uses the
+    raw table. Returned oldest-first for natural reading.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT direction, sender, body, sent_at "
+            "FROM crm_message "
+            "WHERE lead_id = %s AND source = 'linkedin' "
+            "ORDER BY sent_at DESC, id DESC "
+            "LIMIT %s",
+            (lead_id, limit),
+        )
+        rows = cur.fetchall()
+    messages = [
+        {
+            "direction": row[0] or "",
+            "sender": row[1] or "",
+            "body": row[2] or "",
+            "sent_at": row[3],
+        }
+        for row in rows
+    ]
+    return list(reversed(messages))
+
+
+def render_thread_preview_blocks(messages: list[dict]) -> list[dict]:
+    """Render a compact recent-thread transcript for a Slack modal."""
+    if not messages:
+        return []
+
+    lines = ["*Recent LinkedIn thread*"]
+    for msg in messages:
+        direction = (msg.get("direction") or "").lower()
+        speaker = "Them" if direction == "inbound" else "Us"
+        sender = _slack_escape(msg.get("sender") or "")
+        if sender:
+            speaker = f"{speaker} ({sender})"
+        body = _slack_escape(_compact_message(msg.get("body") or ""))
+        if not body:
+            body = "_No text body_"
+        lines.append(f"*{speaker}:* {body}")
+
+    text = "\n".join(lines)
+    if len(text) > _THREAD_SECTION_LIMIT:
+        text = text[: _THREAD_SECTION_LIMIT - 15].rstrip() + "\n...(truncated)"
+
+    return [
+        {
+            "type": "section",
+            "block_id": "linkedin_thread_preview",
+            "text": {"type": "mrkdwn", "text": text},
+        },
+        {"type": "divider"},
+    ]
+
+
 def open_reply_modal(
     *,
     trigger_id: str,
@@ -226,6 +299,7 @@ def open_reply_modal(
     message_ts: str,
     response_url: str = "",
     original_blocks: list,
+    thread_blocks: list | None = None,
 ) -> None:
     """Open the Slack modal used to collect a manual LinkedIn reply."""
     metadata = _compact_metadata({
@@ -246,6 +320,7 @@ def open_reply_modal(
             "submit": {"type": "plain_text", "text": "Queue reply"},
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": [
+                *(thread_blocks or []),
                 {
                     "type": "input",
                     "block_id": "linkedin_reply_message",
@@ -467,6 +542,14 @@ class handler(BaseHTTPRequestHandler):
     def _handle_reply_button(self, body: str) -> None:
         try:
             data = parse_reply_button(body)
+            thread_blocks: list = []
+            try:
+                with psycopg.connect(DATABASE_URL) as conn:
+                    thread_blocks = render_thread_preview_blocks(
+                        fetch_linkedin_thread_preview(conn, data["lead_id"]),
+                    )
+            except Exception as exc:  # noqa: BLE001 — modal should still open
+                print(f"manual reply thread preview failed: {exc}")
             open_reply_modal(
                 trigger_id=data["trigger_id"],
                 lead_id=data["lead_id"],
@@ -475,6 +558,7 @@ class handler(BaseHTTPRequestHandler):
                 message_ts=data["message_ts"],
                 response_url=data["response_url"],
                 original_blocks=data["blocks"],
+                thread_blocks=thread_blocks,
             )
         except (ValueError, json.JSONDecodeError):
             self._respond_text(400, "malformed reply action")
