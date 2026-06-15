@@ -101,7 +101,7 @@ Three apps in `INSTALLED_APPS`:
 - **`db/enrichment.py`** — Lazy enrichment/embedding (`ensure_profile_embedded()`).
 - **`db/chat.py`** — `save_chat_message()`.
 - **`db/urls.py`** — `url_to_public_id()`, `public_id_to_url()` — LinkedIn URL ↔ public identifier conversion.
-- **`db/messages.py`** — `persist_thread()`: idempotent get_or_create per `(source, external_id)`; derives direction from sender match against our display name; falls back to `now()` on malformed timestamps. Called from `actions/conversations.py:get_conversation` as a best-effort side effect — never breaks the caller.
+- **`db/messages.py`** — `persist_thread()`: idempotent get_or_create per `(source, external_id)`; derives LinkedIn direction from a normalized sender match against the Lead name, stripping common honorifics like `Dr.` while explicit daemon operator senders still force outbound; falls back to `now()` on malformed timestamps. Called from `actions/conversations.py:get_conversation` as a best-effort side effect — never breaks the caller.
 - **`conf.py`** — Config loading (dotenv), `CAMPAIGN_CONFIG`, path constants, `get_first_active_profile_handle()`.
 - **`exceptions.py`** — `AuthenticationError`, `TerminalStateError`, `SkipProfile`, `ReachedConnectionLimit`, `SheetsError`.
 - **`onboarding.py`** — Interactive setup.

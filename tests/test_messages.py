@@ -287,6 +287,25 @@ def test_persist_thread_treats_known_operator_sender_as_outbound(db):
     assert msg.direction == Message.Direction.OUTBOUND
 
 
+def test_persist_thread_treats_honorific_lead_sender_as_inbound(db):
+    lead = Lead.objects.create(
+        first_name="Jacquelyn",
+        last_name="B.",
+        linkedin_url="https://www.linkedin.com/in/jacquelyn-bell-solutions/",
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:dr-jacquelyn",
+        "sender": "Dr. Jacquelyn Bell",
+        "text": "How will you be delivering the solution across the agencies?",
+        "timestamp": "2026-06-15 21:50",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed)
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.INBOUND
+
+
 # ---------------------------------------------------------------------------
 # B.4 — get_conversation hook persists matched-Lead threads
 # ---------------------------------------------------------------------------
