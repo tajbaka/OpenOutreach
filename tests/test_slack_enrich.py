@@ -305,6 +305,11 @@ def test_enqueue_manual_reply_task_dedups_pending_duplicate():
 
 def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+    thread_blocks = [{
+        "type": "section",
+        "block_id": "linkedin_thread_preview_header",
+        "text": {"type": "mrkdwn", "text": "*Recent LinkedIn thread*"},
+    }]
     with patch.object(slack_enrich.request, "urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
         slack_enrich.open_reply_modal(
@@ -315,14 +320,58 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
             message_ts="171234.567",
             response_url="https://hooks.slack.com/actions/T/B/R",
             original_blocks=[],
+            thread_blocks=thread_blocks,
         )
     req = mock_open.call_args[0][0]
     assert req.full_url.endswith("/views.open")
     sent = json.loads(req.data.decode("utf-8"))
     assert sent["trigger_id"] == "trigger-123"
     assert sent["view"]["callback_id"] == "linkedin_reply_modal"
+    assert sent["view"]["blocks"][0]["block_id"] == "linkedin_thread_preview_header"
+    assert sent["view"]["blocks"][-1]["type"] == "input"
     metadata = json.loads(sent["view"]["private_metadata"])
     assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
+
+
+def test_fetch_linkedin_thread_preview_returns_oldest_first():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = [
+        ("inbound", "Lead", "newer", "2026-06-15 12:02"),
+        ("outbound", "Us", "older", "2026-06-15 12:01"),
+    ]
+
+    out = slack_enrich.fetch_linkedin_thread_preview(conn, 42, limit=2)
+
+    cur.execute.assert_called_once()
+    assert out[0]["body"] == "older"
+    assert out[1]["body"] == "newer"
+
+
+def test_render_thread_preview_blocks_escapes_and_labels_messages():
+    blocks = slack_enrich.render_thread_preview_blocks([
+        {
+            "direction": "outbound",
+            "sender": "Chuka",
+            "body": "Hello <lead>",
+            "sent_at": "2026-06-15 12:01",
+        },
+        {
+            "direction": "inbound",
+            "sender": "Dr. Jacquelyn Bell",
+            "body": "Use A&B > C?",
+            "sent_at": "2026-06-15 12:02",
+        },
+    ])
+
+    assert blocks[0]["block_id"] == "linkedin_thread_preview_header"
+    assert blocks[1]["block_id"].startswith("linkedin_thread_preview:")
+    assert "*Chuka*" in blocks[1]["text"]["text"]
+    assert "Hello &lt;lead&gt;" in blocks[1]["text"]["text"]
+    assert blocks[2]["block_id"].startswith("linkedin_thread_preview:")
+    assert "*Dr. Jacquelyn Bell*" in blocks[2]["text"]["text"]
+    assert "A&amp;B &gt; C" in blocks[2]["text"]["text"]
+    assert blocks[3]["type"] == "divider"
 
 
 def test_post_response_url_updates_original_message():

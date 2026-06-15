@@ -3,8 +3,8 @@
 Seven surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
-   accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
-   with the lead's name, role, and profile link.
+   accepted *and* the lead replied during the sweep. Single Block Kit message
+   with the lead's name, role, profile link, and reply snippet.
 2. `notify_error` / `notify_on_error` — fires when any of our workflows
    (daemon task dispatch, backfill_messages, import_connections,
    export_sales_*, daemon top-level) raises an unexpected exception.
@@ -46,11 +46,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ssl
 import time
 import traceback
 from contextlib import contextmanager
 from urllib import request
 from urllib.error import URLError
+
+import certifi
 
 from linkedin.conf import SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
 
@@ -64,6 +67,17 @@ _RECENT_ERRORS: dict[tuple[str, str, str], float] = {}
 _DEDUPE_WINDOW_SECONDS = 300  # 5 min
 _SLACK_SECTION_TEXT_LIMIT = 3000
 _SLACK_MESSAGE_BODY_LIMIT = 2900
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+def _urlopen(req: request.Request, *, timeout: int):
+    """Open Slack HTTPS requests with a bundled CA store.
+
+    Some daemon hosts have stale or missing system trust roots, which makes
+    Slack webhooks fail with CERTIFICATE_VERIFY_FAILED. certifi keeps Slack
+    posting independent of the local Python/macOS certificate setup.
+    """
+    return request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT)
 
 
 def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
@@ -84,7 +98,7 @@ def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             if resp.status != 200:
                 logger.warning("Slack webhook returned %d for %s", resp.status, label)
     except (URLError, TimeoutError) as e:
@@ -103,7 +117,7 @@ def _post_slack_response_url(response_url: str, payload: dict, label: str) -> No
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             resp.read()
     except (URLError, TimeoutError, OSError) as e:
         logger.warning("Slack response_url failed for %s: %s", label, e)
@@ -124,7 +138,7 @@ def _slack_api(method: str, payload: dict, label: str) -> bool:
         method="POST",
     )
     try:
-        with request.urlopen(req, timeout=10) as resp:
+        with _urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
         logger.warning("Slack API %s failed for %s: %s", method, label, e)
@@ -237,7 +251,7 @@ def notify_connection_accepted(
     reply_text: str | None = None,
     operator: str = "",
 ) -> None:
-    """Post a 'connection accepted' message to Slack. Silent no-op if disabled.
+    """Post an 'accepted and replied' message to Slack. Silent no-op if disabled.
 
     `reply_text` (when truthy) signals the lead also replied to your note —
     the notification then highlights the reply rather than just the accept.
@@ -246,6 +260,8 @@ def notify_connection_accepted(
     Rendered alongside Campaign so the team knows whose lead it is at a glance.
     """
     if not SLACK_WEBHOOK_URL:
+        return
+    if not reply_text:
         return
 
     headline = " · ".join(p for p in (title, company) if p)
@@ -262,28 +278,17 @@ def notify_connection_accepted(
 
     op_suffix = f" — {operator_clean}'s lead" if operator_clean else ""
 
-    if reply_text:
-        emoji = ":speech_balloon:"
-        action_line = f"{emoji} *<{profile_url}|{full_name}>* accepted *and replied*{op_suffix}"
-        fallback = f"{emoji} {full_name} accepted and replied ({campaign_name}){op_suffix}"
-        snippet = reply_text.strip().replace("\n", " ")
-        if len(snippet) > 280:
-            snippet = snippet[:277] + "..."
-        blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
-            {"type": "context", "elements": _context_elements()},
-        ]
-    else:
-        emoji = ":handshake:"
-        action_line = (
-            f"{emoji} *<{profile_url}|{full_name}>* accepted your invite (no reply yet){op_suffix}"
-        )
-        fallback = f"{emoji} {full_name} accepted your invite ({campaign_name}){op_suffix}"
-        blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
-            {"type": "context", "elements": _context_elements()},
-        ]
+    emoji = ":speech_balloon:"
+    action_line = f"{emoji} *<{profile_url}|{full_name}>* accepted *and replied*{op_suffix}"
+    fallback = f"{emoji} {full_name} accepted and replied ({campaign_name}){op_suffix}"
+    snippet = reply_text.strip().replace("\n", " ")
+    if len(snippet) > 280:
+        snippet = snippet[:277] + "..."
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
+        {"type": "context", "elements": _context_elements()},
+    ]
 
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"connection-accepted ({full_name})")

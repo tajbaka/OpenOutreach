@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 
 from django.db import transaction
@@ -10,6 +11,32 @@ from django.utils import timezone
 from crm.models import Message
 
 logger = logging.getLogger(__name__)
+
+_HONORIFIC_PREFIXES = {"dr", "mr", "mrs", "ms", "miss", "prof", "professor"}
+
+
+def _normalized_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _without_honorific_prefix(value: str) -> str:
+    parts = _normalized_name(value).split()
+    while parts and parts[0] in _HONORIFIC_PREFIXES:
+        parts.pop(0)
+    return " ".join(parts)
+
+
+def _looks_like_lead_sender(sender: str, lead) -> bool:
+    sender_name = _without_honorific_prefix(sender)
+    if not sender_name:
+        return False
+
+    lead_full = _normalized_name(f"{lead.first_name or ''} {lead.last_name or ''}")
+    lead_first = _normalized_name(lead.first_name or "")
+    return bool(
+        (lead_full and sender_name == lead_full)
+        or (lead_first and sender_name.startswith(lead_first + " "))
+    )
 
 
 def lead_outbound_operators(lead) -> set[str]:
@@ -34,17 +61,6 @@ def lead_outbound_operators(lead) -> set[str]:
     whoever runs the daemon may proceed.
     """
     from linkedin.operators import resolve_operator
-    lead_full = f"{lead.first_name or ''} {lead.last_name or ''}".strip().lower()
-    lead_first = (lead.first_name or "").strip().lower()
-
-    def _looks_like_lead_sender(sender: str) -> bool:
-        sender = (sender or "").strip().lower()
-        if not sender:
-            return False
-        return bool(
-            (lead_full and sender == lead_full)
-            or (lead_first and sender.startswith(lead_first + " "))
-        )
 
     senders = (
         Message.objects.filter(
@@ -56,7 +72,7 @@ def lead_outbound_operators(lead) -> set[str]:
         .values_list("sender", flat=True)
         .distinct()
     )
-    return {resolve_operator(s) for s in senders if s and not _looks_like_lead_sender(s)}
+    return {resolve_operator(s) for s in senders if s and not _looks_like_lead_sender(s, lead)}
 
 
 def persist_thread(
@@ -65,6 +81,7 @@ def persist_thread(
     parsed: list[dict],
     thread_external_id: str = "",
     source: str = Message.Source.LINKEDIN,
+    outbound_senders: set[str] | None = None,
 ) -> int:
     """Upsert each parsed message into crm.Message. Returns count newly created.
 
@@ -74,8 +91,13 @@ def persist_thread(
     lead is from us. This avoids needing to know our own display name (which
     LinkedInProfile doesn't store reliably).
     """
-    lead_full = f"{lead.first_name or ''} {lead.last_name or ''}".strip().lower()
-    lead_first = (lead.first_name or "").strip().lower()
+    from linkedin.operators import resolve_operator
+
+    outbound_handles = {
+        resolve_operator(sender)
+        for sender in (outbound_senders or set())
+        if sender and resolve_operator(sender)
+    }
     known_connect_notes = {
         note.strip()
         for note in lead.deal_set.exclude(sent_note="").values_list("sent_note", flat=True)
@@ -93,11 +115,11 @@ def persist_thread(
             # Inbound iff sender matches the lead — try full name first, then
             # first-name+space prefix (handles leads imported from CSVs that
             # only carry first_name, plus Voyager senders with credentials
-            # appended like "Bryan Guy, J.D.").
-            is_inbound = bool(sender) and (
-                (lead_full and sender == lead_full)
-                or (lead_first and sender.startswith(lead_first + " "))
-            )
+            # appended like "Bryan Guy, J.D.", and honorifics like
+            # "Dr. Jacquelyn Bell").
+            is_inbound = _looks_like_lead_sender(sender, lead)
+            if outbound_handles and resolve_operator(sender) in outbound_handles:
+                is_inbound = False
             text = (m.get("text") or "").strip()
             # LinkedIn conversation payloads sometimes echo our own connection
             # note back with the lead's name as sender. When the body exactly

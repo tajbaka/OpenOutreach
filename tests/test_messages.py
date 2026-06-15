@@ -268,6 +268,44 @@ def test_persist_thread_treats_matching_sent_note_as_outbound(db, django_user_mo
     assert msg.direction == Message.Direction.OUTBOUND
 
 
+def test_persist_thread_treats_known_operator_sender_as_outbound(db):
+    lead = Lead.objects.create(
+        first_name="Arian",
+        last_name="Taj",
+        linkedin_url="https://www.linkedin.com/in/arian-taj/",
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:self-echo",
+        "sender": "Arian Taj",
+        "text": "outbound echo from our own account",
+        "timestamp": "2026-05-16 14:31",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed, outbound_senders={"Arian"})
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.OUTBOUND
+
+
+def test_persist_thread_treats_honorific_lead_sender_as_inbound(db):
+    lead = Lead.objects.create(
+        first_name="Jacquelyn",
+        last_name="B.",
+        linkedin_url="https://www.linkedin.com/in/jacquelyn-bell-solutions/",
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:dr-jacquelyn",
+        "sender": "Dr. Jacquelyn Bell",
+        "text": "How will you be delivering the solution across the agencies?",
+        "timestamp": "2026-06-15 21:50",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed)
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.INBOUND
+
+
 # ---------------------------------------------------------------------------
 # B.4 — get_conversation hook persists matched-Lead threads
 # ---------------------------------------------------------------------------
