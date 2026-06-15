@@ -307,7 +307,7 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
     thread_blocks = [{
         "type": "section",
-        "block_id": "linkedin_thread_preview",
+        "block_id": "linkedin_thread_preview_header",
         "text": {"type": "mrkdwn", "text": "*Recent LinkedIn thread*"},
     }]
     with patch.object(slack_enrich.request, "urlopen") as mock_open:
@@ -327,7 +327,7 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     sent = json.loads(req.data.decode("utf-8"))
     assert sent["trigger_id"] == "trigger-123"
     assert sent["view"]["callback_id"] == "linkedin_reply_modal"
-    assert sent["view"]["blocks"][0]["block_id"] == "linkedin_thread_preview"
+    assert sent["view"]["blocks"][0]["block_id"] == "linkedin_thread_preview_header"
     assert sent["view"]["blocks"][-1]["type"] == "input"
     metadata = json.loads(sent["view"]["private_metadata"])
     assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
@@ -364,13 +364,14 @@ def test_render_thread_preview_blocks_escapes_and_labels_messages():
         },
     ])
 
-    assert blocks[0]["block_id"] == "linkedin_thread_preview"
-    text = blocks[0]["text"]["text"]
-    assert "*Us (Chuka):*" in text
-    assert "Hello &lt;lead&gt;" in text
-    assert "*Them (Dr. Jacquelyn Bell):*" in text
-    assert "A&amp;B &gt; C" in text
-    assert blocks[1]["type"] == "divider"
+    assert blocks[0]["block_id"] == "linkedin_thread_preview_header"
+    assert blocks[1]["block_id"].startswith("linkedin_thread_preview:")
+    assert "*Chuka*" in blocks[1]["text"]["text"]
+    assert "Hello &lt;lead&gt;" in blocks[1]["text"]["text"]
+    assert blocks[2]["block_id"].startswith("linkedin_thread_preview:")
+    assert "*Dr. Jacquelyn Bell*" in blocks[2]["text"]["text"]
+    assert "A&amp;B &gt; C" in blocks[2]["text"]["text"]
+    assert blocks[3]["type"] == "divider"
 
 
 def test_post_response_url_updates_original_message():

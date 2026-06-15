@@ -264,30 +264,38 @@ def render_thread_preview_blocks(messages: list[dict]) -> list[dict]:
     if not messages:
         return []
 
-    lines = ["*Recent LinkedIn thread*"]
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "block_id": "linkedin_thread_preview_header",
+            "text": {"type": "mrkdwn", "text": "*Recent LinkedIn thread*"},
+        },
+    ]
+
+    used = 0
     for msg in messages:
         direction = (msg.get("direction") or "").lower()
-        speaker = "Them" if direction == "inbound" else "Us"
-        sender = _slack_escape(msg.get("sender") or "")
-        if sender:
-            speaker = f"{speaker} ({sender})"
+        fallback = "Lead" if direction == "inbound" else "Sender"
+        speaker = _slack_escape(msg.get("sender") or fallback)
         body = _slack_escape(_compact_message(msg.get("body") or ""))
         if not body:
             body = "_No text body_"
-        lines.append(f"*{speaker}:* {body}")
-
-    text = "\n".join(lines)
-    if len(text) > _THREAD_SECTION_LIMIT:
-        text = text[: _THREAD_SECTION_LIMIT - 15].rstrip() + "\n...(truncated)"
-
-    return [
-        {
+        text = f"*{speaker}*\n\n>{body}"
+        used += len(text)
+        if used > _THREAD_SECTION_LIMIT:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "...thread preview truncated"}],
+            })
+            break
+        blocks.append({
             "type": "section",
-            "block_id": "linkedin_thread_preview",
+            "block_id": f"linkedin_thread_preview:{len(blocks)}",
             "text": {"type": "mrkdwn", "text": text},
-        },
-        {"type": "divider"},
-    ]
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
 
 
 def open_reply_modal(
