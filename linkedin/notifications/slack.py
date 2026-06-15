@@ -3,8 +3,8 @@
 Seven surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
-   accepted (PENDING → CONNECTED via the sweep). Single Block Kit message
-   with the lead's name, role, and profile link.
+   accepted *and* the lead replied during the sweep. Single Block Kit message
+   with the lead's name, role, profile link, and reply snippet.
 2. `notify_error` / `notify_on_error` — fires when any of our workflows
    (daemon task dispatch, backfill_messages, import_connections,
    export_sales_*, daemon top-level) raises an unexpected exception.
@@ -251,7 +251,7 @@ def notify_connection_accepted(
     reply_text: str | None = None,
     operator: str = "",
 ) -> None:
-    """Post a 'connection accepted' message to Slack. Silent no-op if disabled.
+    """Post an 'accepted and replied' message to Slack. Silent no-op if disabled.
 
     `reply_text` (when truthy) signals the lead also replied to your note —
     the notification then highlights the reply rather than just the accept.
@@ -260,6 +260,8 @@ def notify_connection_accepted(
     Rendered alongside Campaign so the team knows whose lead it is at a glance.
     """
     if not SLACK_WEBHOOK_URL:
+        return
+    if not reply_text:
         return
 
     headline = " · ".join(p for p in (title, company) if p)
@@ -276,28 +278,17 @@ def notify_connection_accepted(
 
     op_suffix = f" — {operator_clean}'s lead" if operator_clean else ""
 
-    if reply_text:
-        emoji = ":speech_balloon:"
-        action_line = f"{emoji} *<{profile_url}|{full_name}>* accepted *and replied*{op_suffix}"
-        fallback = f"{emoji} {full_name} accepted and replied ({campaign_name}){op_suffix}"
-        snippet = reply_text.strip().replace("\n", " ")
-        if len(snippet) > 280:
-            snippet = snippet[:277] + "..."
-        blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
-            {"type": "context", "elements": _context_elements()},
-        ]
-    else:
-        emoji = ":handshake:"
-        action_line = (
-            f"{emoji} *<{profile_url}|{full_name}>* accepted your invite (no reply yet){op_suffix}"
-        )
-        fallback = f"{emoji} {full_name} accepted your invite ({campaign_name}){op_suffix}"
-        blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
-            {"type": "context", "elements": _context_elements()},
-        ]
+    emoji = ":speech_balloon:"
+    action_line = f"{emoji} *<{profile_url}|{full_name}>* accepted *and replied*{op_suffix}"
+    fallback = f"{emoji} {full_name} accepted and replied ({campaign_name}){op_suffix}"
+    snippet = reply_text.strip().replace("\n", " ")
+    if len(snippet) > 280:
+        snippet = snippet[:277] + "..."
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": action_line}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"> {snippet}"}},
+        {"type": "context", "elements": _context_elements()},
+    ]
 
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"connection-accepted ({full_name})")

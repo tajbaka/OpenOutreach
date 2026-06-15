@@ -142,6 +142,40 @@ def test_notify_error_posts_block_kit_when_webhook_set(slack_url):
     assert any("lead_id" in e["text"] for e in elements)
 
 
+def test_connection_accepted_without_reply_does_not_post(slack_url):
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        slack_mod.notify_connection_accepted(
+            full_name="Plain Accept",
+            title="CISO",
+            company="Acme",
+            profile_url="https://www.linkedin.com/in/plain/",
+            campaign_name="FedRampGPT",
+            reply_text=None,
+            operator="Leili",
+        )
+
+    mock_urlopen.assert_not_called()
+
+
+def test_connection_accepted_with_reply_still_posts(slack_url):
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value.status = 200
+        slack_mod.notify_connection_accepted(
+            full_name="Reply Accept",
+            title="CISO",
+            company="Acme",
+            profile_url="https://www.linkedin.com/in/reply/",
+            campaign_name="FedRampGPT",
+            reply_text="Happy to talk.",
+            operator="Leili",
+        )
+
+    req = mock_urlopen.call_args[0][0]
+    sent = json.loads(req.data.decode("utf-8"))
+    assert "accepted and replied" in sent["text"]
+    assert "Happy to talk." in sent["blocks"][1]["text"]["text"]
+
+
 def test_notify_error_dedupes_repeats_within_window(slack_url):
     """Same (workflow, exc_type, last_frame) → first POSTs, second is suppressed."""
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
