@@ -50,3 +50,20 @@ def test_run_listener_resets_failures_after_a_real_connection(monkeypatch):
     assert code == 1
     # call 1 reset the counter, so it took 1 (reset) + 3 (fail) = 4 attempts
     assert state["n"] == 4
+
+
+def test_open_messaging_page_waits_only_for_navigation_commit():
+    page = type("Page", (), {"calls": []})()
+
+    def goto(url, *, wait_until, timeout):
+        page.calls.append((url, wait_until, timeout))
+
+    page.goto = goto
+
+    listener._open_messaging_page(page)
+
+    assert page.calls == [(
+        listener.MESSAGING_URL,
+        "commit",
+        listener._MESSAGING_NAV_TIMEOUT_MS,
+    )]
