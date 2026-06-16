@@ -10,6 +10,7 @@ from gmail.client import GmailClient
 from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME
 from gmail.templates import render_for_lead, steps_for_lead
 from linkedin.conf import ENABLE_GMAIL_SEQUENCE
+from linkedin.exceptions import SheetsError
 from linkedin.icp_outbound import classify_role
 from linkedin.tasks.follow_up import _delay_seconds_to_active_due
 from linkedin.tasks.stop_checks import automation_stop_reason
@@ -69,6 +70,20 @@ def _persist_outbound(*, lead, external_id: str, sender: str, body: str, thread_
     )[0]
 
 
+def _is_missing_template_error(exc: SheetsError) -> bool:
+    """Missing Gmail copy is a disabled lane, not a daemon crash.
+
+    Malformed template rows still raise so bad JSON is visible.
+    """
+    message = str(exc)
+    return (
+        "has no block" in message
+        or "has no ICP" in message
+        or "has no step" in message
+        or "has no ICP mapping" in message
+    )
+
+
 def _sync_gmail_for_lead(*, lead, client: GmailClient) -> int:
     if not lead.email:
         return 0
@@ -107,9 +122,6 @@ def handle_gmail_follow_up(task) -> None:
     if deal_id:
         deal = Deal.objects.filter(pk=deal_id).select_related("lead").first()
 
-    client = GmailClient(operator=operator)
-    _sync_gmail_for_lead(lead=lead, client=client)
-
     from linkedin.suppression import lead_suppression_match
 
     suppression = lead_suppression_match(lead)
@@ -136,13 +148,33 @@ def handle_gmail_follow_up(task) -> None:
         return
 
     role = classify_role(lead)
-    rendered = render_for_lead(
-        sender=operator,
-        role=role,
-        sequence_name=sequence_name,
-        lead=lead,
-        step_index=step_index,
-    )
+    try:
+        rendered = render_for_lead(
+            sender=operator,
+            role=role,
+            sequence_name=sequence_name,
+            lead=lead,
+            step_index=step_index,
+        )
+        steps = steps_for_lead(sender=operator, role=role, sequence_name=sequence_name)
+    except SheetsError as exc:
+        if _is_missing_template_error(exc):
+            logger.info(
+                "gmail_follow_up: missing template for lead %s - %s",
+                lead_id,
+                exc,
+            )
+            return
+        raise
+
+    client = GmailClient(operator=operator)
+    _sync_gmail_for_lead(lead=lead, client=client)
+
+    if deal is not None:
+        stop_reason = automation_stop_reason(deal)
+        if stop_reason:
+            logger.info("gmail_follow_up: lead %s stopped after sync - %s", lead_id, stop_reason)
+            return
 
     gmail_id = client.send_message(
         to=lead.email,
@@ -161,7 +193,6 @@ def handle_gmail_follow_up(task) -> None:
         thread_id=gmail_id,
     )
 
-    steps = steps_for_lead(sender=operator, role=role, sequence_name=sequence_name)
     next_step_index = step_index + 1
     if next_step_index < len(steps):
         _enqueue_next_step(task, delay_days=steps[next_step_index].delay_days)

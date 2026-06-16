@@ -10,6 +10,11 @@ from gmail.tasks.follow_up import handle_gmail_follow_up
 from tests.factories import UserFactory
 
 
+@pytest.fixture(autouse=True)
+def no_suppression(monkeypatch):
+    monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
+
+
 class FakeGmailClient:
     send_as = "ariant@boundera.io"
 
@@ -147,5 +152,22 @@ def test_gmail_follow_up_disabled_noops(monkeypatch):
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoSendClient)
 
     handle_gmail_follow_up(_task(lead, deal))
+
+    assert not Message.objects.filter(source=Message.Source.GMAIL).exists()
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_missing_sender_icp_skips_without_client(monkeypatch):
+    lead = _lead(icp="CSPs")
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+
+    class NoClient:
+        def __init__(self, *, operator):
+            raise AssertionError("missing template should skip before Gmail client")
+
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoClient)
+
+    handle_gmail_follow_up(_task(lead, deal, operator="Athena"))
 
     assert not Message.objects.filter(source=Message.Source.GMAIL).exists()

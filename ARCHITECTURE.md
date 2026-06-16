@@ -223,6 +223,8 @@ handoff (`handoff.py`), the worker loop (`worker.py`), task handlers
 (`tasks/enrich_email.py`, `tasks/follow_up.py`), and email sequence copy
 (`icp_emails.json` via `templates.py`). Gmail templates are separate from
 `linkedin/icp_messages.json`, which remains LinkedIn/connect/follow-up copy.
+Missing Gmail copy for a sender/ICP/step is treated as that lane being disabled
+for the lead and skips cleanly; malformed template rows still fail loudly.
 `manage.py gmail_oauth` creates per-account tokens under `data/gmail/`;
 `manage.py gmail_send_test` sends a direct live test message through the mapped
 operator alias.
