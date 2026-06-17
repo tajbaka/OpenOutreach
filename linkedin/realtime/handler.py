@@ -121,7 +121,12 @@ def _handle(event: dict, *, operator: str) -> None:
     )
     if msg.direction == Message.Direction.INBOUND:
         logger.info("Realtime inbound message persisted for %s", lead)
-        notify_message_received(lead=lead, text=parsed.text, operator=operator)
+        notify_message_received(
+            lead=lead,
+            text=parsed.text,
+            operator=operator,
+            thread_external_id=msg.thread_external_id or parsed.conversation_urn,
+        )
         _maybe_enqueue_enrichment(lead)
     else:
         logger.debug("Realtime outbound echo persisted for %s — no notify", lead)

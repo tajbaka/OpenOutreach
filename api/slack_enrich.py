@@ -231,21 +231,61 @@ def _compact_message(text: str, *, limit: int = _THREAD_MESSAGE_LIMIT) -> str:
     return compact[: limit - 3].rstrip() + "..."
 
 
-def fetch_linkedin_thread_preview(conn, lead_id: int, *, limit: int = _THREAD_PREVIEW_LIMIT) -> list[dict]:
+def _latest_linkedin_thread_external_id(conn, lead_id: int) -> str:
+    """Best-effort legacy fallback for old Slack buttons with no thread id."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT thread_external_id "
+            "FROM crm_message "
+            "WHERE lead_id = %s AND source = 'linkedin' "
+            "AND direction = 'inbound' "
+            "AND COALESCE(thread_external_id, '') <> '' "
+            "ORDER BY sent_at DESC, id DESC "
+            "LIMIT 1",
+            (lead_id,),
+        )
+        row = cur.fetchone()
+    return (row[0] if row else "") or ""
+
+
+def fetch_linkedin_thread_preview(
+    conn,
+    lead_id: int,
+    *,
+    thread_external_id: str = "",
+    limit: int = _THREAD_PREVIEW_LIMIT,
+) -> list[dict]:
     """Fetch recent LinkedIn messages for the manual-reply modal.
 
     The Vercel function intentionally avoids Django imports, so this uses the
-    raw table. Returned oldest-first for natural reading.
+    raw table. When a thread id is available, scope to that exact LinkedIn
+    conversation so shared Lead rows across operators do not mix transcripts.
+    Returned oldest-first for natural reading.
     """
+    thread_external_id = (thread_external_id or "").strip()
+    if not thread_external_id:
+        thread_external_id = _latest_linkedin_thread_external_id(conn, lead_id)
+
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT direction, sender, body, sent_at "
-            "FROM crm_message "
-            "WHERE lead_id = %s AND source = 'linkedin' "
-            "ORDER BY sent_at DESC, id DESC "
-            "LIMIT %s",
-            (lead_id, limit),
-        )
+        if thread_external_id:
+            cur.execute(
+                "SELECT direction, sender, body, sent_at "
+                "FROM crm_message "
+                "WHERE lead_id = %s AND source = 'linkedin' "
+                "AND thread_external_id = %s "
+                "ORDER BY sent_at DESC, id DESC "
+                "LIMIT %s",
+                (lead_id, thread_external_id, limit),
+            )
+        else:
+            cur.execute(
+                "SELECT direction, sender, body, sent_at "
+                "FROM crm_message "
+                "WHERE lead_id = %s AND source = 'linkedin' "
+                "ORDER BY sent_at DESC, id DESC "
+                "LIMIT %s",
+                (lead_id, limit),
+            )
         rows = cur.fetchall()
     messages = [
         {
@@ -307,6 +347,7 @@ def open_reply_modal(
     message_ts: str,
     response_url: str = "",
     original_blocks: list,
+    thread_external_id: str = "",
     thread_blocks: list | None = None,
 ) -> None:
     """Open the Slack modal used to collect a manual LinkedIn reply."""
@@ -316,6 +357,7 @@ def open_reply_modal(
         "channel_id": channel_id,
         "message_ts": message_ts,
         "response_url": response_url,
+        "thread_external_id": thread_external_id or "",
         "blocks": original_blocks,
     })
     _slack_api("views.open", {
@@ -409,14 +451,23 @@ def parse_reply_button(body: str) -> dict:
     if action.get("action_id") != _REPLY_ACTION_ID:
         raise ValueError("not a reply button action")
     value = action.get("value") or ""
-    if ":" not in value:
-        raise ValueError(f"unparseable reply value: {value!r}")
-    lead_part, operator = value.split(":", 1)
+    thread_external_id = ""
+    if value.strip().startswith("{"):
+        value_data = json.loads(value)
+        lead_id = int(value_data["lead_id"])
+        operator = value_data.get("operator") or ""
+        thread_external_id = value_data.get("thread_external_id") or ""
+    else:
+        if ":" not in value:
+            raise ValueError(f"unparseable reply value: {value!r}")
+        lead_part, operator = value.split(":", 1)
+        lead_id = int(lead_part)
     channel = payload.get("channel") or {}
     message = payload.get("message") or {}
     return {
-        "lead_id": int(lead_part),
+        "lead_id": lead_id,
         "operator": operator,
+        "thread_external_id": thread_external_id,
         "trigger_id": payload.get("trigger_id") or "",
         "response_url": payload.get("response_url") or "",
         "channel_id": channel.get("id") or "",
@@ -455,6 +506,7 @@ def parse_reply_modal_submission(body: str) -> dict:
         "slack_channel_id": metadata.get("channel_id") or "",
         "slack_message_ts": metadata.get("message_ts") or "",
         "slack_response_url": metadata.get("response_url") or "",
+        "thread_external_id": metadata.get("thread_external_id") or "",
         "slack_user_id": user.get("id") or "",
         "blocks": metadata.get("blocks") or [],
     }
@@ -488,6 +540,7 @@ def enqueue_manual_reply_task(conn, payload: dict) -> bool:
                 "slack_channel_id": payload.get("slack_channel_id", ""),
                 "slack_message_ts": payload.get("slack_message_ts", ""),
                 "slack_response_url": payload.get("slack_response_url", ""),
+                "thread_external_id": payload.get("thread_external_id", ""),
                 "slack_user_id": payload.get("slack_user_id", ""),
                 "slack_blocks": payload.get("blocks", []),
             }),),
@@ -554,7 +607,11 @@ class handler(BaseHTTPRequestHandler):
             try:
                 with psycopg.connect(DATABASE_URL) as conn:
                     thread_blocks = render_thread_preview_blocks(
-                        fetch_linkedin_thread_preview(conn, data["lead_id"]),
+                        fetch_linkedin_thread_preview(
+                            conn,
+                            data["lead_id"],
+                            thread_external_id=data.get("thread_external_id", ""),
+                        ),
                     )
             except Exception as exc:  # noqa: BLE001 — modal should still open
                 print(f"manual reply thread preview failed: {exc}")
@@ -566,6 +623,7 @@ class handler(BaseHTTPRequestHandler):
                 message_ts=data["message_ts"],
                 response_url=data["response_url"],
                 original_blocks=data["blocks"],
+                thread_external_id=data.get("thread_external_id", ""),
                 thread_blocks=thread_blocks,
             )
         except (ValueError, json.JSONDecodeError):

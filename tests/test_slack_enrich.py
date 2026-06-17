@@ -320,6 +320,7 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
             message_ts="171234.567",
             response_url="https://hooks.slack.com/actions/T/B/R",
             original_blocks=[],
+            thread_external_id="thread-arian",
             thread_blocks=thread_blocks,
         )
     req = mock_open.call_args[0][0]
@@ -331,6 +332,29 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     assert sent["view"]["blocks"][-1]["type"] == "input"
     metadata = json.loads(sent["view"]["private_metadata"])
     assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
+    assert metadata["thread_external_id"] == "thread-arian"
+
+
+def test_parse_reply_button_accepts_thread_scoped_json_value():
+    value = json.dumps({
+        "lead_id": 42,
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    })
+
+    out = slack_enrich.parse_reply_button(_reply_button_body(value=value))
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Arian"
+    assert out["thread_external_id"] == "thread-arian"
+
+
+def test_parse_reply_button_accepts_legacy_colon_value():
+    out = slack_enrich.parse_reply_button(_reply_button_body(value="42:Chuka"))
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Chuka"
+    assert out["thread_external_id"] == ""
 
 
 def test_fetch_linkedin_thread_preview_returns_oldest_first():
@@ -341,11 +365,30 @@ def test_fetch_linkedin_thread_preview_returns_oldest_first():
         ("outbound", "Us", "older", "2026-06-15 12:01"),
     ]
 
-    out = slack_enrich.fetch_linkedin_thread_preview(conn, 42, limit=2)
+    out = slack_enrich.fetch_linkedin_thread_preview(
+        conn, 42, thread_external_id="thread-arian", limit=2,
+    )
 
     cur.execute.assert_called_once()
+    assert cur.execute.call_args[0][1] == (42, "thread-arian", 2)
     assert out[0]["body"] == "older"
     assert out[1]["body"] == "newer"
+
+
+def test_fetch_linkedin_thread_preview_uses_latest_inbound_thread_fallback():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = ("thread-arian",)
+    cur.fetchall.return_value = [
+        ("inbound", "Paul", "newer", "2026-06-15 12:02"),
+        ("outbound", "Arian", "older", "2026-06-15 12:01"),
+    ]
+
+    out = slack_enrich.fetch_linkedin_thread_preview(conn, 42, limit=2)
+
+    assert cur.execute.call_count == 2
+    assert cur.execute.call_args_list[1][0][1] == (42, "thread-arian", 2)
+    assert [msg["body"] for msg in out] == ["older", "newer"]
 
 
 def test_render_thread_preview_blocks_escapes_and_labels_messages():

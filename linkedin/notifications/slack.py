@@ -382,13 +382,16 @@ def notify_message_received(
     lead,
     text: str,
     operator: str = "",
+    thread_external_id: str = "",
 ) -> None:
     """Post an 'inbound message received' notification. No-op if disabled.
 
     Fired by the realtime listener when an inbound LinkedIn DM is detected
     and freshly persisted. `lead` is the crm.Lead; `text` is the message
     body; `operator` is the canonical handle of the account that owns the
-    lead (rendered so the team knows whose lead replied).
+    lead (rendered so the team knows whose lead replied). `thread_external_id`
+    scopes the Slack reply modal transcript when multiple senders share one
+    Lead row but have separate LinkedIn DM threads.
 
     Posts to SLACK_REPLIES_WEBHOOK_URL — the channel where the team triages
     replies and decides whether to run phone enrichment.
@@ -439,7 +442,11 @@ def notify_message_received(
                     "text": "Reply on LinkedIn",
                 },
                 "style": "primary",
-                "value": f"{lead.id}:{operator_clean}",
+                "value": json.dumps({
+                    "lead_id": lead.id,
+                    "operator": operator_clean,
+                    "thread_external_id": thread_external_id or "",
+                }, separators=(",", ":")),
             },
             {
                 "type": "static_select",

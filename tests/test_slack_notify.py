@@ -243,7 +243,10 @@ class TestNotifyMessageReceived:
         )
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             slack_mod.notify_message_received(
-                lead=lead, text="hello there", operator="Arian",
+                lead=lead,
+                text="hello there",
+                operator="Arian",
+                thread_external_id="thread-arian",
             )
         mock_open.assert_not_called()
 
@@ -256,7 +259,10 @@ class TestNotifyMessageReceived:
         with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
             mock_open.return_value.__enter__.return_value.status = 200
             slack_mod.notify_message_received(
-                lead=lead, text="hello there", operator="Arian",
+                lead=lead,
+                text="hello there",
+                operator="Arian",
+                thread_external_id="thread-arian",
             )
         mock_open.assert_called_once()
         sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
@@ -280,11 +286,16 @@ class TestNotifyMessageReceived:
         elements_text = " ".join(e["text"] for e in blocks[2]["elements"])
         assert "Arian" in elements_text
         actions = next(b for b in blocks if b.get("type") == "actions")
-        assert any(
-            el.get("action_id") == "linkedin_reply_button"
-            and el.get("value") == f"{lead.id}:Arian"
-            for el in actions["elements"]
+        reply_button = next(
+            el for el in actions["elements"]
+            if el.get("action_id") == "linkedin_reply_button"
         )
+        reply_value = json.loads(reply_button["value"])
+        assert reply_value == {
+            "lead_id": lead.id,
+            "operator": "Arian",
+            "thread_external_id": "thread-arian",
+        }
 
     def test_long_text_is_not_truncated_at_preview_length(self, db, slack_url):
         from crm.models import Lead
