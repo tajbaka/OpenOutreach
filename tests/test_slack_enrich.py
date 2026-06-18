@@ -82,6 +82,19 @@ def _reply_button_body(value: str = "42:Chuka", message_blocks=None) -> str:
     return urlencode({"payload": json.dumps(payload)})
 
 
+def _reply_cancel_body(task_id: int = 777, message_blocks=None) -> str:
+    payload = {
+        "type": "block_actions",
+        "channel": {"id": "C123"},
+        "message": {"ts": "171234.567", "blocks": message_blocks or []},
+        "actions": [{
+            "action_id": "linkedin_reply_cancel_button",
+            "value": json.dumps({"task_id": task_id}),
+        }],
+    }
+    return urlencode({"payload": json.dumps(payload)})
+
+
 def _reply_modal_body(message: str = "Sounds good", metadata=None) -> str:
     payload = {
         "type": "view_submission",
@@ -269,10 +282,35 @@ def test_render_reply_status_keeps_actions_and_replaces_old_status():
     assert statuses[0]["text"]["text"] == "new status"
 
 
+def test_render_reply_status_can_include_cancel_button():
+    out = slack_enrich.render_reply_status_blocks(
+        [_MENU_BLOCK],
+        "queued",
+        cancel_task_id=777,
+    )
+    status = next(b for b in out if b.get("block_id") == "reply_status:queued")
+    button = status["accessory"]
+    assert button["action_id"] == "linkedin_reply_cancel_button"
+    assert json.loads(button["value"]) == {"task_id": 777}
+
+
+def test_parse_reply_cancel_button_extracts_task_and_blocks():
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "reply"}}]
+
+    out = slack_enrich.parse_reply_cancel_button(
+        _reply_cancel_body(task_id=777, message_blocks=blocks),
+    )
+
+    assert out["task_id"] == 777
+    assert out["blocks"] == blocks
+
+
 def test_enqueue_manual_reply_task_inserts_when_none_exists():
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]
-    conn, cur = _mock_conn(existing=False)
-    inserted = slack_enrich.enqueue_manual_reply_task(conn, {
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.side_effect = [None, (777,)]
+    task_id = slack_enrich.enqueue_manual_reply_task(conn, {
         "lead_id": 42,
         "operator": "Chuka",
         "message": "Yes, happy to chat.",
@@ -282,25 +320,52 @@ def test_enqueue_manual_reply_task_inserts_when_none_exists():
         "slack_user_id": "U123",
         "blocks": blocks,
     })
-    assert inserted is True
+    assert task_id == 777
     assert cur.execute.call_count == 2
     insert_sql = cur.execute.call_args_list[1][0][0]
     inserted_payload = cur.execute.call_args_list[1][0][1][0].obj
     assert "manual_reply" in insert_sql
+    assert "RETURNING id" in insert_sql
     assert inserted_payload["slack_blocks"] == blocks
     conn.commit.assert_called_once()
 
 
 def test_enqueue_manual_reply_task_dedups_pending_duplicate():
     conn, cur = _mock_conn(existing=True)
-    inserted = slack_enrich.enqueue_manual_reply_task(conn, {
+    task_id = slack_enrich.enqueue_manual_reply_task(conn, {
         "lead_id": 42,
         "operator": "Chuka",
         "message": "Yes, happy to chat.",
     })
-    assert inserted is False
+    assert task_id == 1
     assert cur.execute.call_count == 1
     conn.commit.assert_not_called()
+
+
+def test_cancel_manual_reply_task_deletes_pending_task():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = (777,)
+
+    cancelled = slack_enrich.cancel_manual_reply_task(conn, 777)
+
+    assert cancelled is True
+    sql, params = cur.execute.call_args[0]
+    assert "DELETE FROM linkedin_task" in sql
+    assert "status = 'pending'" in sql
+    assert params == (777,)
+    conn.commit.assert_called_once()
+
+
+def test_cancel_manual_reply_task_returns_false_when_not_pending():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = None
+
+    cancelled = slack_enrich.cancel_manual_reply_task(conn, 777)
+
+    assert cancelled is False
+    conn.commit.assert_called_once()
 
 
 def test_open_reply_modal_calls_slack_views_open(monkeypatch):

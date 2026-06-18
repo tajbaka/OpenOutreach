@@ -43,6 +43,7 @@ _MAX_SKEW_SECONDS = 60 * 5
 _STATUS_PREFIX = "enrich_status"
 _REPLY_STATUS_PREFIX = "reply_status"
 _REPLY_ACTION_ID = "linkedin_reply_button"
+_REPLY_CANCEL_ACTION_ID = "linkedin_reply_cancel_button"
 _REPLY_MODAL_CALLBACK_ID = "linkedin_reply_modal"
 _REPLY_BODY_ACTION_ID = "linkedin_reply_body"
 _THREAD_PREVIEW_LIMIT = 8
@@ -149,6 +150,7 @@ def render_reply_status_blocks(
     status_text: str,
     *,
     block_id_suffix: str = "queued",
+    cancel_task_id: int | None = None,
 ) -> list:
     """Return blocks with one manual-reply status line above the actions."""
     status = {
@@ -159,6 +161,23 @@ def render_reply_status_blocks(
             "text": status_text,
         },
     }
+    if cancel_task_id is not None:
+        status["accessory"] = {
+            "type": "button",
+            "action_id": _REPLY_CANCEL_ACTION_ID,
+            "text": {"type": "plain_text", "text": "Cancel queued reply"},
+            "style": "danger",
+            "value": json.dumps({"task_id": cancel_task_id}, separators=(",", ":")),
+            "confirm": {
+                "title": {"type": "plain_text", "text": "Cancel reply?"},
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "This removes the queued LinkedIn reply if it has not started sending.",
+                },
+                "confirm": {"type": "plain_text", "text": "Cancel reply"},
+                "deny": {"type": "plain_text", "text": "Keep queued"},
+            },
+        }
     out: list = []
     inserted = False
     for b in original_blocks:
@@ -476,6 +495,27 @@ def parse_reply_button(body: str) -> dict:
     }
 
 
+def parse_reply_cancel_button(body: str) -> dict:
+    """Extract metadata for cancelling a queued manual-reply task."""
+    fields = parse_qs(body)
+    raw = (fields.get("payload") or [None])[0]
+    if not raw:
+        raise ValueError("no payload field")
+    payload = json.loads(raw)
+    actions = payload.get("actions") or []
+    if not actions:
+        raise ValueError("no actions in payload")
+    action = actions[0]
+    if action.get("action_id") != _REPLY_CANCEL_ACTION_ID:
+        raise ValueError("not a reply cancel action")
+    value = json.loads(action.get("value") or "{}")
+    message = payload.get("message") or {}
+    return {
+        "task_id": int(value["task_id"]),
+        "blocks": message.get("blocks") or [],
+    }
+
+
 def parse_reply_modal_submission(body: str) -> dict:
     """Extract manual-reply task payload from a Slack view_submission."""
     fields = parse_qs(body)
@@ -512,14 +552,18 @@ def parse_reply_modal_submission(body: str) -> dict:
     }
 
 
-def enqueue_manual_reply_task(conn, payload: dict) -> bool:
-    """Insert a manual_reply Task unless the same pending reply already exists."""
+def enqueue_manual_reply_task(conn, payload: dict) -> int:
+    """Insert a manual_reply Task unless the same pending reply already exists.
+
+    Returns the pending/running task id. Returning the id lets Slack render a
+    cancellable queued state without introducing a second lookup.
+    """
     lead_id = int(payload["lead_id"])
     operator = payload["operator"]
     message = payload["message"]
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT 1 FROM linkedin_task "
+            "SELECT id FROM linkedin_task "
             "WHERE task_type = 'manual_reply' "
             "AND status IN ('pending', 'running') "
             "AND (payload->>'lead_id')::int = %s "
@@ -527,12 +571,14 @@ def enqueue_manual_reply_task(conn, payload: dict) -> bool:
             "AND payload->>'message' = %s LIMIT 1",
             (lead_id, operator, message),
         )
-        if cur.fetchone() is not None:
-            return False
+        row = cur.fetchone()
+        if row is not None:
+            return int(row[0])
         cur.execute(
             "INSERT INTO linkedin_task "
             "(task_type, status, scheduled_at, payload, error, created_at) "
-            "VALUES ('manual_reply', 'pending', now(), %s, '', now())",
+            "VALUES ('manual_reply', 'pending', now(), %s, '', now()) "
+            "RETURNING id",
             (Jsonb({
                 "lead_id": lead_id,
                 "operator": operator,
@@ -545,8 +591,25 @@ def enqueue_manual_reply_task(conn, payload: dict) -> bool:
                 "slack_blocks": payload.get("blocks", []),
             }),),
         )
+        task_id = int(cur.fetchone()[0])
     conn.commit()
-    return True
+    return task_id
+
+
+def cancel_manual_reply_task(conn, task_id: int) -> bool:
+    """Delete a queued manual_reply Task if it has not started sending."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM linkedin_task "
+            "WHERE id = %s "
+            "AND task_type = 'manual_reply' "
+            "AND status = 'pending' "
+            "RETURNING id",
+            (task_id,),
+        )
+        deleted = cur.fetchone() is not None
+    conn.commit()
+    return deleted
 
 
 class handler(BaseHTTPRequestHandler):
@@ -576,6 +639,9 @@ class handler(BaseHTTPRequestHandler):
 
         actions = payload.get("actions") or []
         action = actions[0] if actions else {}
+        if action.get("action_id") == _REPLY_CANCEL_ACTION_ID:
+            self._handle_reply_cancel(body)
+            return
         if action.get("action_id") == _REPLY_ACTION_ID:
             self._handle_reply_button(body)
             return
@@ -648,7 +714,7 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             with psycopg.connect(DATABASE_URL) as conn:
-                enqueue_manual_reply_task(conn, payload)
+                task_id = enqueue_manual_reply_task(conn, payload)
         except Exception:  # noqa: BLE001 — surface any DB failure as a 500
             self._respond_text(500, "database error")
             return
@@ -657,8 +723,9 @@ class handler(BaseHTTPRequestHandler):
         if blocks:
             queued_blocks = render_reply_status_blocks(
                 blocks,
-                ":hourglass_flowing_sand: *LinkedIn reply queued* — the daemon will send it shortly.",
+                ":hourglass_flowing_sand: *LinkedIn reply queued* — the daemon will send it shortly. You can cancel it before it starts sending.",
                 block_id_suffix="queued",
+                cancel_task_id=task_id,
             )
             updated = False
             response_url = payload.get("slack_response_url") or ""
@@ -688,6 +755,39 @@ class handler(BaseHTTPRequestHandler):
 
         self._respond_json({"response_action": "clear"})
 
+    def _handle_reply_cancel(self, body: str) -> None:
+        try:
+            data = parse_reply_cancel_button(body)
+        except (ValueError, KeyError, json.JSONDecodeError):
+            self._respond_text(400, "malformed reply cancel action")
+            return
+
+        try:
+            with psycopg.connect(DATABASE_URL) as conn:
+                cancelled = cancel_manual_reply_task(conn, data["task_id"])
+        except Exception:  # noqa: BLE001 — surface any DB failure as a 500
+            self._respond_text(500, "database error")
+            return
+
+        if cancelled:
+            status_text = ":no_entry: *LinkedIn reply cancelled* — it will not be sent."
+            fallback = "LinkedIn reply cancelled"
+            suffix = "cancelled"
+        else:
+            status_text = (
+                ":warning: *Could not cancel LinkedIn reply* — it may have already started sending."
+            )
+            fallback = "Could not cancel LinkedIn reply"
+            suffix = "cancel_failed"
+        self._respond_blocks(
+            render_reply_status_blocks(
+                data["blocks"],
+                status_text,
+                block_id_suffix=suffix,
+            ),
+            text=fallback,
+        )
+
     def _respond_text(self, code: int, text: str) -> None:
         body = text.encode("utf-8")
         self.send_response(code)
@@ -696,12 +796,12 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _respond_blocks(self, blocks: list) -> None:
+    def _respond_blocks(self, blocks: list, *, text: str = "Phone enrichment requested") -> None:
         """200 with a Slack message-replacement body — keeps the select menu
         live so the operator can request more providers."""
         body = json.dumps({
             "replace_original": True,
-            "text": "Phone enrichment requested",
+            "text": text,
             "blocks": blocks,
         }).encode("utf-8")
         self.send_response(200)
