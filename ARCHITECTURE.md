@@ -203,7 +203,9 @@ new reply/context buttons scope that preview by the triggering
 LinkedIn thread for that lead. The Lead context modal fetches deterministic
 Lead/Deal/profile/thread context via raw SQL; its AI summary and Draft reply
 buttons call the configured OpenAI-compatible endpoint (`LLM_API_KEY`,
-`AI_MODEL`, optional `LLM_API_BASE`) and update the same modal. The queued Slack
+`AI_MODEL`, optional `LLM_API_BASE`) and update the same modal. Generated
+summary/draft text is carried in the modal's private metadata so each remains
+visible as its own Lead context section while the other action runs. The queued Slack
 status includes a cancel button whose payload points at the inserted task id;
 cancelling deletes the task only if it is still pending. If the preview fetch
 fails, the reply modal falls back to a plain textbox. The `Task` table is the entire contract between

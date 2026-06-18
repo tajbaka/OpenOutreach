@@ -59,6 +59,7 @@ _THREAD_MESSAGE_LIMIT = 320
 _THREAD_SECTION_LIMIT = 2800
 _CONTEXT_MESSAGE_LIMIT = 6
 _LLM_TIMEOUT_SECONDS = 8
+_LEAD_CONTEXT_METADATA_TEXT_LIMIT = 1200
 
 _INTENT_REPLY_SUBMISSION = "reply_submission"
 _INTENT_ENRICH_PHONE = "enrich_phone"
@@ -307,6 +308,22 @@ def _compact_metadata(metadata: dict) -> str:
     return json.dumps(metadata, separators=(",", ":"))
 
 
+def _lead_context_metadata(
+    context: dict,
+    *,
+    ai_summary: str = "",
+    draft_reply: str = "",
+) -> str:
+    lead = context["lead"]
+    return _compact_metadata({
+        "lead_id": lead["id"],
+        "operator": context.get("operator") or "",
+        "thread_external_id": context.get("thread_external_id") or "",
+        "ai_summary": _compact_metadata_text(ai_summary),
+        "draft_reply": _compact_metadata_text(draft_reply),
+    })
+
+
 def _slack_escape(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -316,6 +333,13 @@ def _compact_message(text: str, *, limit: int = _THREAD_MESSAGE_LIMIT) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3].rstrip() + "..."
+
+
+def _compact_metadata_text(text: str, *, limit: int = _LEAD_CONTEXT_METADATA_TEXT_LIMIT) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
 
 
 def _latest_linkedin_thread_external_id(conn, lead_id: int) -> str:
@@ -487,17 +511,27 @@ def update_slack_message(*, channel_id: str, message_ts: str, blocks: list, text
     })
 
 
-def update_slack_view(*, view_id: str, view_hash: str = "", blocks: list, title: str = "Lead context") -> None:
+def update_slack_view(
+    *,
+    view_id: str,
+    view_hash: str = "",
+    blocks: list,
+    title: str = "Lead context",
+    private_metadata: str = "",
+) -> None:
     """Update an already-open Slack modal."""
+    view = {
+        "type": "modal",
+        "callback_id": _LEAD_CONTEXT_MODAL_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": title[:24] or "Lead context"},
+        "close": {"type": "plain_text", "text": "Close"},
+        "blocks": blocks,
+    }
+    if private_metadata:
+        view["private_metadata"] = private_metadata
     payload = {
         "view_id": view_id,
-        "view": {
-            "type": "modal",
-            "callback_id": _LEAD_CONTEXT_MODAL_CALLBACK_ID,
-            "title": {"type": "plain_text", "text": title[:24] or "Lead context"},
-            "close": {"type": "plain_text", "text": "Close"},
-            "blocks": blocks,
-        },
+        "view": view,
     }
     if view_hash:
         payload["hash"] = view_hash
@@ -630,14 +664,21 @@ def parse_lead_context_button(body: str) -> dict:
         raise ValueError("not a lead context action")
     value = _parse_action_value(action.get("value") or "")
     view = payload.get("view") or {}
+    view_metadata = json.loads(view.get("private_metadata") or "{}")
     return {
-        "lead_id": int(value["lead_id"]),
-        "operator": value.get("operator") or "",
-        "thread_external_id": value.get("thread_external_id") or "",
+        "lead_id": int(value.get("lead_id") or view_metadata["lead_id"]),
+        "operator": value.get("operator") or view_metadata.get("operator") or "",
+        "thread_external_id": (
+            value.get("thread_external_id")
+            or view_metadata.get("thread_external_id")
+            or ""
+        ),
         "trigger_id": payload.get("trigger_id") or "",
         "view_id": view.get("id") or "",
         "view_hash": view.get("hash") or "",
         "action_id": action_id,
+        "ai_summary": view_metadata.get("ai_summary") or "",
+        "draft_reply": view_metadata.get("draft_reply") or "",
     }
 
 
@@ -990,6 +1031,7 @@ def open_lead_context_modal(*, trigger_id: str, context: dict) -> None:
         "view": {
             "type": "modal",
             "callback_id": _LEAD_CONTEXT_MODAL_CALLBACK_ID,
+            "private_metadata": _lead_context_metadata(context),
             "title": {"type": "plain_text", "text": "Lead context"},
             "close": {"type": "plain_text", "text": "Close"},
             "blocks": render_lead_context_blocks(context),
@@ -1216,12 +1258,22 @@ class handler(BaseHTTPRequestHandler):
             return
 
         view_id = data.get("view_id") or ""
+        existing_summary = data.get("ai_summary") or ""
+        existing_draft = data.get("draft_reply") or ""
         if view_id:
             try:
                 update_slack_view(
                     view_id=view_id,
                     blocks=render_lead_context_blocks(
-                        context, loading="Generating AI summary..."
+                        context,
+                        ai_summary=existing_summary,
+                        draft_reply=existing_draft,
+                        loading="Generating AI summary...",
+                    ),
+                    private_metadata=_lead_context_metadata(
+                        context,
+                        ai_summary=existing_summary,
+                        draft_reply=existing_draft,
                     ),
                 )
             except Exception:
@@ -1229,12 +1281,35 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             ai_summary = generate_ai_lead_summary(context)
-            blocks = render_lead_context_blocks(context, ai_summary=ai_summary)
+            blocks = render_lead_context_blocks(
+                context,
+                ai_summary=ai_summary,
+                draft_reply=existing_draft,
+            )
+            metadata = _lead_context_metadata(
+                context,
+                ai_summary=ai_summary,
+                draft_reply=existing_draft,
+            )
         except Exception as exc:  # noqa: BLE001 — show recoverable model failure in modal
-            blocks = render_lead_context_blocks(context, ai_error=str(exc))
+            blocks = render_lead_context_blocks(
+                context,
+                ai_summary=existing_summary,
+                ai_error="" if existing_summary else str(exc),
+                draft_reply=existing_draft,
+            )
+            metadata = _lead_context_metadata(
+                context,
+                ai_summary=existing_summary,
+                draft_reply=existing_draft,
+            )
 
         try:
-            update_slack_view(view_id=view_id, blocks=blocks)
+            update_slack_view(
+                view_id=view_id,
+                blocks=blocks,
+                private_metadata=metadata,
+            )
         except Exception:
             self._respond_text(500, "slack modal error")
             return
@@ -1258,12 +1333,22 @@ class handler(BaseHTTPRequestHandler):
             return
 
         view_id = data.get("view_id") or ""
+        existing_summary = data.get("ai_summary") or ""
+        existing_draft = data.get("draft_reply") or ""
         if view_id:
             try:
                 update_slack_view(
                     view_id=view_id,
                     blocks=render_lead_context_blocks(
-                        context, loading="Drafting reply..."
+                        context,
+                        ai_summary=existing_summary,
+                        draft_reply=existing_draft,
+                        loading="Drafting reply...",
+                    ),
+                    private_metadata=_lead_context_metadata(
+                        context,
+                        ai_summary=existing_summary,
+                        draft_reply=existing_draft,
                     ),
                 )
             except Exception:
@@ -1271,12 +1356,35 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             draft = generate_ai_draft_reply(context)
-            blocks = render_lead_context_blocks(context, draft_reply=draft)
+            blocks = render_lead_context_blocks(
+                context,
+                ai_summary=existing_summary,
+                draft_reply=draft,
+            )
+            metadata = _lead_context_metadata(
+                context,
+                ai_summary=existing_summary,
+                draft_reply=draft,
+            )
         except Exception as exc:  # noqa: BLE001 — show recoverable model failure in modal
-            blocks = render_lead_context_blocks(context, draft_error=str(exc))
+            blocks = render_lead_context_blocks(
+                context,
+                ai_summary=existing_summary,
+                draft_reply=existing_draft,
+                draft_error="" if existing_draft else str(exc),
+            )
+            metadata = _lead_context_metadata(
+                context,
+                ai_summary=existing_summary,
+                draft_reply=existing_draft,
+            )
 
         try:
-            update_slack_view(view_id=view_id, blocks=blocks)
+            update_slack_view(
+                view_id=view_id,
+                blocks=blocks,
+                private_metadata=metadata,
+            )
         except Exception:
             self._respond_text(500, "slack modal error")
             return

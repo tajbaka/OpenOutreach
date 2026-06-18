@@ -100,11 +100,18 @@ def _reply_cancel_body(task_id: int = 777, message_blocks=None) -> str:
     return urlencode({"payload": json.dumps(payload)})
 
 
-def _lead_context_body(action_id: str = "linkedin_lead_context_button") -> str:
+def _lead_context_body(
+    action_id: str = "linkedin_lead_context_button",
+    view_metadata=None,
+) -> str:
     payload = {
         "type": "block_actions",
         "trigger_id": "trigger-ctx",
-        "view": {"id": "V123", "hash": "h123"},
+        "view": {
+            "id": "V123",
+            "hash": "h123",
+            "private_metadata": json.dumps(view_metadata or {}),
+        },
         "actions": [{
             "action_id": action_id,
             "value": json.dumps({
@@ -450,6 +457,31 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     assert metadata["thread_external_id"] == "thread-arian"
 
 
+def test_update_slack_view_can_persist_lead_context_metadata(monkeypatch):
+    monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+
+    with patch.object(slack_enrich.request, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        slack_enrich.update_slack_view(
+            view_id="V123",
+            blocks=[],
+            private_metadata=json.dumps({
+                "lead_id": 42,
+                "operator": "Arian",
+                "thread_external_id": "thread-arian",
+                "ai_summary": "Summary",
+                "draft_reply": "Draft\n\nReply",
+            }),
+        )
+
+    req = mock_open.call_args[0][0]
+    assert req.full_url.endswith("/views.update")
+    sent = json.loads(req.data.decode("utf-8"))
+    metadata = json.loads(sent["view"]["private_metadata"])
+    assert metadata["ai_summary"] == "Summary"
+    assert metadata["draft_reply"] == "Draft\n\nReply"
+
+
 def test_parse_reply_button_accepts_thread_scoped_json_value():
     value = json.dumps({
         "lead_id": 42,
@@ -484,6 +516,24 @@ def test_parse_lead_context_button_extracts_metadata():
     assert out["view_id"] == "V123"
     assert out["view_hash"] == "h123"
     assert out["action_id"] == "linkedin_lead_context_draft_button"
+
+
+def test_parse_lead_context_button_preserves_generated_modal_metadata():
+    out = slack_enrich.parse_lead_context_button(
+        _lead_context_body(
+            "linkedin_lead_context_draft_button",
+            view_metadata={
+                "lead_id": 42,
+                "operator": "Arian",
+                "thread_external_id": "thread-arian",
+                "ai_summary": "Existing summary",
+                "draft_reply": "Existing draft\n\nWith spacing",
+            },
+        ),
+    )
+
+    assert out["ai_summary"] == "Existing summary"
+    assert out["draft_reply"] == "Existing draft\n\nWith spacing"
 
 
 def test_render_lead_context_blocks_includes_ai_and_draft_actions():
