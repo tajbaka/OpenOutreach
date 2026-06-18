@@ -360,6 +360,23 @@ class TestNotifyMessageReceived:
         assert "(Disqualified)" not in body
         assert "Bad Actor" in body
 
+    def test_unknown_company_sentinel_is_hidden(self, db, slack_url):
+        from crm.models import Lead
+        lead = Lead.objects.create(
+            first_name="Jamil", last_name="Mahmood",
+            company_name="Unknown Company",
+            linkedin_url="https://www.linkedin.com/in/jamil-j-mahmood/",
+        )
+        with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+            mock_open.return_value.__enter__.return_value.status = 200
+            slack_mod.notify_message_received(
+                lead=lead, text="hi", operator="Leili",
+            )
+        sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        body = json.dumps(sent)
+        assert "Unknown Company" not in body
+        assert "Jamil Mahmood" in body
+
 
     def test_includes_provider_select_block(self, db, slack_url):
         from crm.models import Lead

@@ -70,6 +70,7 @@ _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
 _ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
 ICP_MESSAGES_HEADERS = ["ICP", "Connect Message", "Followup Message"]
 ICP_MESSAGES_SHEET_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors")
+UNKNOWN_COMPANY_NAMES = {"unknown company", "unknown", "n/a", "none"}
 
 
 @dataclass
@@ -108,6 +109,23 @@ class FilledMessage:
 class TemplateStep:
     delay_days: int
     variants: list[str]
+
+
+def is_unknown_company_name(company_name: str | None) -> bool:
+    """True when `company_name` is a placeholder sentinel, not real data."""
+    normalized = re.sub(r"\s+", " ", (company_name or "").strip().lower())
+    return normalized in UNKNOWN_COMPANY_NAMES
+
+
+def safe_company_name(company_name: str | None, *, fallback: str = "your team") -> str:
+    """Return a template-safe company string.
+
+    Some import paths use "Unknown Company" as a data sentinel. Rendering that
+    into outreach copy exposes the automation, so rigid templates get a
+    grammatical generic fallback instead.
+    """
+    cleaned = (company_name or "").strip()
+    return fallback if is_unknown_company_name(cleaned) else cleaned
 
 
 # ROLE classification — used by the daemon's follow_up Task handler to
@@ -486,7 +504,7 @@ def fill_message(
     body = stripped.format(
         first_name=greeting_first_name(first_name),
         last_name=last_name or "",
-        company_name=company_name or "",
+        company_name=safe_company_name(company_name),
         my_name=my_name or "",
         our_company_name=OUR_COMPANY_NAME,
         our_website_url=OUR_WEBSITE_URL,

@@ -129,6 +129,23 @@ class TestHandleConnect:
         assert note.startswith("Hi Allen,")
         assert 'Allen "Al"' not in note
 
+    def test_build_connection_note_replaces_unknown_company_sentinel(self, monkeypatch):
+        from crm.models import Lead
+
+        lead = Lead.objects.create(
+            first_name="Jamil",
+            last_name="Mahmood",
+            company_name="Unknown Company",
+            linkedin_url="https://www.linkedin.com/in/jamil-j-mahmood/",
+            public_identifier="jamil-j-mahmood",
+            icp="CSPs",
+        )
+
+        note = build_connection_note(lead.id, sender="Arian")
+
+        assert "Unknown Company" not in note
+        assert "noticed your team in the FedRAMP/public-sector space" in note
+
     def _candidate(self):
         return {"public_identifier": "alice", "url": "https://www.linkedin.com/in/alice/", "profile": SAMPLE_PROFILE}
 

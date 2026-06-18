@@ -87,6 +87,31 @@ def test_fill_message_substitutes_first_name_and_brand(tmp_path, monkeypatch):
     assert "{" not in out  # no leftover placeholders
 
 
+def test_fill_message_replaces_unknown_company_sentinel(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    "Hi {first_name}, noticed {company_name} in the FedRAMP space"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    out = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_followup",
+        first_name="Jamil",
+        company_name="Unknown Company",
+    )
+
+    assert "Unknown Company" not in out
+    assert "noticed your team in the FedRAMP space" in out
+
+
 def test_fill_message_variant_index_picks_explicit_variant(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
     path.write_text(json.dumps({

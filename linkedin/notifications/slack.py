@@ -56,6 +56,7 @@ from urllib.error import URLError
 import certifi
 
 from linkedin.conf import SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
+from linkedin.icp_outbound import is_unknown_company_name
 
 logger = logging.getLogger(__name__)
 
@@ -417,7 +418,7 @@ def notify_message_received(
     elements: list[dict] = []
     if operator_clean:
         elements.append({"type": "mrkdwn", "text": f"*Lead for:* {operator_clean}"})
-    if lead.company_name:
+    if lead.company_name and not is_unknown_company_name(lead.company_name):
         elements.append({"type": "mrkdwn", "text": f"*Company:* {lead.company_name}"})
 
     blocks: list[dict] = [
@@ -534,7 +535,7 @@ def notify_phone_enriched(*, lead, result) -> None:
         fallback = f":telephone_receiver: No phone number found for {full_name}"
 
     elements: list[dict] = []
-    if lead.company_name:
+    if lead.company_name and not is_unknown_company_name(lead.company_name):
         elements.append({"type": "mrkdwn", "text": f"*Company:* {lead.company_name}"})
     elements.append({"type": "mrkdwn", "text": f"*Provider:* {result.provider}"})
 

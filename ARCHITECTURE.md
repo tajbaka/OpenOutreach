@@ -78,7 +78,7 @@ Three apps in `INSTALLED_APPS`:
 
 - **`daemon.py`** — Worker loop with active-hours guard (`ENABLE_ACTIVE_HOURS` flag, `seconds_until_active()`), `_build_qualifiers()`, `heal_tasks()`, freemium import, `_FreemiumRotator`.
 - **`diagnostics.py`** — `failure_diagnostics()` context manager, `capture_failure()` saves page HTML/screenshot/traceback to `/tmp/openoutreach-diagnostics/`.
-- **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`.
+- **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`. Connect-note rendering uses `icp_outbound.safe_company_name()` so `"Unknown Company"` never leaks into outbound notes.
 - **`tasks/sweep_connections.py`** — `handle_sweep_connections`, `enqueue_sweep_connections`. Replaces legacy `check_pending`.
 - **`tasks/follow_up.py`** — `handle_follow_up`, rigid ICP LinkedIn DM send, sequence payload shim, rate limiting.
 - **`tasks/manual_reply.py`** — `handle_manual_reply`, Slack-composed LinkedIn reply sends from the daemon's logged-in browser account.
