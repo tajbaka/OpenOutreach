@@ -64,7 +64,12 @@ def test_verify_signature_rejects_missing_headers():
 
 
 def _interaction_body(value: str, message_blocks=None) -> str:
-    payload = {"actions": [{"selected_option": {"value": value}}]}
+    payload = {
+        "actions": [{
+            "action_id": "enrich_phone_select",
+            "selected_option": {"value": value},
+        }],
+    }
     if message_blocks is not None:
         payload["message"] = {"blocks": message_blocks}
     return urlencode({"payload": json.dumps(payload)})
@@ -192,6 +197,19 @@ def test_interaction_intent_routes_known_actions():
     for body, expected in cases:
         payload = slack_enrich.decode_slack_payload(body)
         assert slack_enrich.interaction_intent(payload) == expected
+
+
+def test_interaction_intent_rejects_unknown_select_action():
+    payload = {
+        "type": "block_actions",
+        "actions": [{
+            "action_id": "other_select",
+            "selected_option": {"value": "42:waterfall"},
+        }],
+    }
+
+    with pytest.raises(ValueError, match="unsupported Slack action"):
+        slack_enrich.interaction_intent(payload)
 
 
 def _mock_conn(existing: bool):
@@ -513,6 +531,33 @@ def test_render_lead_context_blocks_includes_ai_and_draft_actions():
         "linkedin_lead_context_ai_button",
         "linkedin_lead_context_draft_button",
     }
+
+
+def test_render_lead_context_blocks_hides_actions_while_loading():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "company_name": "Analytical Engines",
+            "linkedin_url": "",
+            "public_identifier": "ada",
+            "description": "{}",
+            "icp": "CSP",
+        },
+        "deals": [],
+        "messages": [],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(
+        context,
+        loading="Drafting reply...",
+    )
+
+    assert any(b.get("block_id") == "lead_context_loading" for b in blocks)
+    assert not any(b.get("block_id") == "lead_context_actions" for b in blocks)
 
 
 def test_fetch_linkedin_thread_preview_returns_oldest_first():

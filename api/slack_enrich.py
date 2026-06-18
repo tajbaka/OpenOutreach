@@ -45,6 +45,7 @@ _MAX_SKEW_SECONDS = 60 * 5
 # the message blocks back on the next interaction.
 _STATUS_PREFIX = "enrich_status"
 _REPLY_STATUS_PREFIX = "reply_status"
+_ENRICH_PHONE_ACTION_ID = "enrich_phone_select"
 _REPLY_ACTION_ID = "linkedin_reply_button"
 _REPLY_CANCEL_ACTION_ID = "linkedin_reply_cancel_button"
 _REPLY_MODAL_CALLBACK_ID = "linkedin_reply_modal"
@@ -57,6 +58,7 @@ _THREAD_PREVIEW_LIMIT = 8
 _THREAD_MESSAGE_LIMIT = 320
 _THREAD_SECTION_LIMIT = 2800
 _CONTEXT_MESSAGE_LIMIT = 6
+_LLM_TIMEOUT_SECONDS = 8
 
 _INTENT_REPLY_SUBMISSION = "reply_submission"
 _INTENT_ENRICH_PHONE = "enrich_phone"
@@ -67,6 +69,7 @@ _INTENT_LEAD_CONTEXT_AI = "lead_context_ai"
 _INTENT_LEAD_CONTEXT_DRAFT = "lead_context_draft"
 
 _INTENT_BY_ACTION_ID = {
+    _ENRICH_PHONE_ACTION_ID: _INTENT_ENRICH_PHONE,
     _REPLY_ACTION_ID: _INTENT_REPLY_BUTTON,
     _REPLY_CANCEL_ACTION_ID: _INTENT_REPLY_CANCEL,
     _LEAD_CONTEXT_ACTION_ID: _INTENT_LEAD_CONTEXT,
@@ -168,8 +171,6 @@ def interaction_intent(payload: dict) -> str:
     action_id = action.get("action_id") or ""
     if action_id in _INTENT_BY_ACTION_ID:
         return _INTENT_BY_ACTION_ID[action_id]
-    if action.get("selected_option"):
-        return _INTENT_ENRICH_PHONE
     raise ValueError(f"unsupported Slack action: {action_id!r}")
 
 
@@ -955,30 +956,31 @@ def render_lead_context_blocks(
             "text": {"type": "mrkdwn", "text": f":warning: *Draft failed* — `{_slack_escape(draft_error)}`"},
         })
 
-    value = json.dumps({
-        "lead_id": lead["id"],
-        "operator": context.get("operator") or "",
-        "thread_external_id": context.get("thread_external_id") or "",
-    }, separators=(",", ":"))
-    blocks.append({
-        "type": "actions",
-        "block_id": "lead_context_actions",
-        "elements": [
-            {
-                "type": "button",
-                "action_id": _LEAD_CONTEXT_AI_ACTION_ID,
-                "text": {"type": "plain_text", "text": "Generate AI summary"},
-                "value": value,
-            },
-            {
-                "type": "button",
-                "action_id": _LEAD_CONTEXT_DRAFT_ACTION_ID,
-                "text": {"type": "plain_text", "text": "Draft reply"},
-                "style": "primary",
-                "value": value,
-            },
-        ],
-    })
+    if not loading:
+        value = json.dumps({
+            "lead_id": lead["id"],
+            "operator": context.get("operator") or "",
+            "thread_external_id": context.get("thread_external_id") or "",
+        }, separators=(",", ":"))
+        blocks.append({
+            "type": "actions",
+            "block_id": "lead_context_actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": _LEAD_CONTEXT_AI_ACTION_ID,
+                    "text": {"type": "plain_text", "text": "Generate AI summary"},
+                    "value": value,
+                },
+                {
+                    "type": "button",
+                    "action_id": _LEAD_CONTEXT_DRAFT_ACTION_ID,
+                    "text": {"type": "plain_text", "text": "Draft reply"},
+                    "style": "primary",
+                    "value": value,
+                },
+            ],
+        })
     return blocks[:100]
 
 
@@ -1050,7 +1052,7 @@ def _llm_chat(*, system: str, user: str, temperature: float = 0.2) -> str:
         },
         method="POST",
     )
-    with request.urlopen(req, timeout=25) as resp:
+    with request.urlopen(req, timeout=_LLM_TIMEOUT_SECONDS) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return (
         ((data.get("choices") or [{}])[0].get("message") or {}).get("content")

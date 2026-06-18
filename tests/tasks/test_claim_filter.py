@@ -46,6 +46,7 @@ def test_claim_next_without_operator_arg_returns_anything():
     t = Task.objects.claim_next()
     assert t is not None
     assert t.task_type == Task.TaskType.FOLLOW_UP
+    assert t.status == Task.Status.RUNNING
 
 
 @pytest.mark.django_db
@@ -56,9 +57,11 @@ def test_claim_next_filters_followup_to_matching_operator():
     # A daemon never sees another operator's follow_up.
     claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
     assert claimed is not None and claimed.pk == arian_t.pk
+    assert claimed.status == Task.Status.RUNNING
 
     claimed = Task.objects.claim_next(operator="Chuka", campaign_ids=[1])
     assert claimed is not None and claimed.pk == chuka_t.pk
+    assert claimed.status == Task.Status.RUNNING
 
 
 @pytest.mark.django_db
@@ -74,6 +77,7 @@ def test_connect_task_scoped_to_owning_campaign():
 
     claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[3])
     assert claimed is not None and claimed.pk == mine.pk
+    assert claimed.status == Task.Status.RUNNING
 
 
 @pytest.mark.django_db
@@ -99,6 +103,7 @@ def test_claim_next_can_be_restricted_to_followups_only():
         task_types={Task.TaskType.FOLLOW_UP},
     )
     assert claimed is not None and claimed.pk == followup.pk
+    assert claimed.status == Task.Status.RUNNING
 
 
 @pytest.mark.django_db
@@ -111,6 +116,7 @@ def test_sweep_connections_stays_account_agnostic():
 
     claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[2])
     assert claimed.pk == sweep_t.pk
+    assert claimed.status == Task.Status.RUNNING
 
 
 @pytest.mark.django_db
@@ -151,9 +157,11 @@ def test_claim_next_excludes_enrich_phone_but_claims_manual_reply():
         scheduled_at=dj_tz.now() - timedelta(seconds=120),
         payload={"lead_id": 1, "operator": "Arian", "message": "Manual reply"},
     )
-    assert Task.objects.claim_next().pk == manual.pk
-    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]).pk == manual.pk
-    assert Task.objects.seconds_to_next() == 0
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+    assert claimed.pk == manual.pk
+    assert claimed.status == Task.Status.RUNNING
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
+    assert Task.objects.seconds_to_next() is None
     assert Task.objects.next_enrichment().pk == enrich.pk
 
 
@@ -174,6 +182,24 @@ def test_manual_reply_claims_before_older_followup():
     claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
     assert claimed.pk == manual.pk
     assert claimed.pk != followup.pk
+    assert claimed.status == Task.Status.RUNNING
+
+
+@pytest.mark.django_db
+def test_claim_next_atomically_moves_manual_reply_out_of_cancelable_pending_state():
+    manual = Task.objects.create(
+        task_type=Task.TaskType.MANUAL_REPLY,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=10),
+        payload={"lead_id": 1, "operator": "Arian", "message": "Manual reply"},
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+
+    assert claimed.pk == manual.pk
+    assert claimed.status == Task.Status.RUNNING
+    assert claimed.started_at is not None
+    assert not Task.objects.filter(pk=manual.pk, status=Task.Status.PENDING).exists()
 
 
 @pytest.mark.django_db

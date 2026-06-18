@@ -386,6 +386,27 @@ class TaskQuerySet(models.QuerySet):
     def due(self):
         return self.pending().filter(scheduled_at__lte=timezone.now())
 
+    def _claim_candidate(self, candidate: "Task | None") -> "Task | None":
+        """Atomically flip a selected pending task to running.
+
+        Slack manual-reply cancel deletes only PENDING tasks. The claim read
+        and running mark must therefore be one guarded state transition, or a
+        cancel can report success after the daemon has already selected the
+        task.
+        """
+        if candidate is None:
+            return None
+        started_at = timezone.now()
+        updated = self.model.objects.filter(
+            pk=candidate.pk,
+            status=Task.Status.PENDING,
+        ).update(status=Task.Status.RUNNING, started_at=started_at)
+        if not updated:
+            return None
+        candidate.status = Task.Status.RUNNING
+        candidate.started_at = started_at
+        return candidate
+
     def claim_next(
         self,
         operator: str | None = None,
@@ -418,8 +439,8 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
         manual = qs.filter(task_type=Task.TaskType.MANUAL_REPLY).first()
         if manual is not None:
-            return manual
-        return qs.first()
+            return self._claim_candidate(manual)
+        return self._claim_candidate(qs.first())
 
     def seconds_to_next(
         self,
