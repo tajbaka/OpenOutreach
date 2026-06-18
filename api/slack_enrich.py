@@ -958,6 +958,7 @@ def render_lead_context_blocks(
     draft_reply: str = "",
     draft_error: str = "",
     loading: str = "",
+    newest_artifact: str = "",
 ) -> list[dict]:
     """Render deterministic lead context, optionally with AI-generated output."""
     lead = context["lead"]
@@ -1027,32 +1028,26 @@ def render_lead_context_blocks(
             "text": {"type": "mrkdwn", "text": "*Recent LinkedIn messages*\n" + "\n".join(message_lines)},
         })
 
-    if loading:
-        blocks.append({"type": "divider"})
-        blocks.append({
-            "type": "section",
-            "block_id": "lead_context_loading",
-            "text": {"type": "mrkdwn", "text": f":hourglass_flowing_sand: *{_slack_escape(loading)}*"},
-        })
-
+    ai_blocks: list[dict] = []
     if ai_summary:
-        blocks.append({"type": "divider"})
-        blocks.append({
+        ai_blocks.append({"type": "divider"})
+        ai_blocks.append({
             "type": "section",
             "block_id": "lead_context_ai_summary",
             "text": {"type": "mrkdwn", "text": f"*AI summary*\n{_slack_escape(ai_summary)}"},
         })
     elif ai_error:
-        blocks.append({"type": "divider"})
-        blocks.append({
+        ai_blocks.append({"type": "divider"})
+        ai_blocks.append({
             "type": "section",
             "block_id": "lead_context_ai_error",
             "text": {"type": "mrkdwn", "text": f":warning: *AI summary failed* — `{_slack_escape(ai_error)}`"},
         })
 
+    draft_blocks: list[dict] = []
     if draft_reply:
-        blocks.append({"type": "divider"})
-        blocks.append({
+        draft_blocks.append({"type": "divider"})
+        draft_blocks.append({
             "type": "section",
             "block_id": "lead_context_draft_reply",
             "text": {
@@ -1061,11 +1056,26 @@ def render_lead_context_blocks(
             },
         })
     elif draft_error:
-        blocks.append({"type": "divider"})
-        blocks.append({
+        draft_blocks.append({"type": "divider"})
+        draft_blocks.append({
             "type": "section",
             "block_id": "lead_context_draft_error",
             "text": {"type": "mrkdwn", "text": f":warning: *Draft failed* — `{_slack_escape(draft_error)}`"},
+        })
+
+    if newest_artifact == _ARTIFACT_AI_SUMMARY:
+        blocks.extend(draft_blocks)
+        blocks.extend(ai_blocks)
+    else:
+        blocks.extend(ai_blocks)
+        blocks.extend(draft_blocks)
+
+    if loading:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "block_id": "lead_context_loading",
+            "text": {"type": "mrkdwn", "text": f":hourglass_flowing_sand: *{_slack_escape(loading)}*"},
         })
 
     if not loading:
@@ -1366,6 +1376,7 @@ class handler(BaseHTTPRequestHandler):
                 context,
                 ai_summary=ai_summary,
                 draft_reply=existing_draft,
+                newest_artifact=_ARTIFACT_AI_SUMMARY,
             )
             metadata = _lead_context_metadata(
                 context,
@@ -1378,6 +1389,7 @@ class handler(BaseHTTPRequestHandler):
                 ai_summary=existing_summary,
                 ai_error="" if existing_summary else str(exc),
                 draft_reply=existing_draft,
+                newest_artifact=_ARTIFACT_AI_SUMMARY if not existing_summary else "",
             )
             metadata = _lead_context_metadata(
                 context,
@@ -1451,6 +1463,7 @@ class handler(BaseHTTPRequestHandler):
                 context,
                 ai_summary=existing_summary,
                 draft_reply=draft,
+                newest_artifact=_ARTIFACT_DRAFT_REPLY,
             )
             metadata = _lead_context_metadata(
                 context,
@@ -1463,6 +1476,7 @@ class handler(BaseHTTPRequestHandler):
                 ai_summary=existing_summary,
                 draft_reply=existing_draft,
                 draft_error="" if existing_draft else str(exc),
+                newest_artifact=_ARTIFACT_DRAFT_REPLY if not existing_draft else "",
             )
             metadata = _lead_context_metadata(
                 context,

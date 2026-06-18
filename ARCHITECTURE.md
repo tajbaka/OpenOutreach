@@ -207,7 +207,9 @@ buttons call the configured OpenAI-compatible endpoint (`LLM_API_KEY`,
 summary/draft text is saved to `linkedin.SlackLeadContextArtifact`, scoped by
 `(lead, operator, thread_external_id, kind)`, so closing and reopening Lead
 context preserves the latest sender-specific sections. Slack `private_metadata`
-only carries a compact open-modal cache while another action runs. The queued Slack
+only carries a compact open-modal cache while another action runs. The loading
+row and newly generated section render at the bottom of the modal so progress
+and result appear below existing context. The queued Slack
 status includes a cancel button whose payload points at the inserted task id;
 cancelling deletes the task only if it is still pending. If the preview fetch
 fails, the reply modal falls back to a plain textbox. The `Task` table is the entire contract between

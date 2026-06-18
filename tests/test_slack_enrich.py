@@ -608,6 +608,46 @@ def test_render_lead_context_blocks_hides_actions_while_loading():
 
     assert any(b.get("block_id") == "lead_context_loading" for b in blocks)
     assert not any(b.get("block_id") == "lead_context_actions" for b in blocks)
+    assert blocks[-1]["block_id"] == "lead_context_loading"
+
+
+def test_render_lead_context_blocks_puts_newest_artifact_at_bottom():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "company_name": "Analytical Engines",
+            "linkedin_url": "",
+            "public_identifier": "ada",
+            "description": "{}",
+            "icp": "CSP",
+        },
+        "deals": [],
+        "messages": [],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(
+        context,
+        ai_summary="Newest summary",
+        draft_reply="Existing draft",
+        newest_artifact="ai_summary",
+    )
+
+    generated_ids = [
+        b["block_id"]
+        for b in blocks
+        if b.get("block_id") in {
+            "lead_context_ai_summary",
+            "lead_context_draft_reply",
+        }
+    ]
+    assert generated_ids == [
+        "lead_context_draft_reply",
+        "lead_context_ai_summary",
+    ]
 
 
 def test_render_lead_context_blocks_uses_saved_artifacts_by_default():
