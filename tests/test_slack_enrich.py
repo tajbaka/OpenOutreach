@@ -610,6 +610,108 @@ def test_render_lead_context_blocks_hides_actions_while_loading():
     assert not any(b.get("block_id") == "lead_context_actions" for b in blocks)
 
 
+def test_render_lead_context_blocks_uses_saved_artifacts_by_default():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Jacquelyn",
+            "last_name": "Bell",
+            "company_name": "JB Choices",
+            "linkedin_url": "",
+            "public_identifier": "jacquelyn-bell",
+            "description": "{}",
+            "icp": "Advisor",
+        },
+        "deals": [],
+        "messages": [],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+        "artifacts": {
+            "ai_summary": "Saved summary",
+            "draft_reply": "Saved draft",
+        },
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(context)
+
+    body = json.dumps(blocks)
+    assert "Saved summary" in body
+    assert "Saved draft" in body
+
+
+def test_lead_context_metadata_falls_back_to_saved_artifacts():
+    context = {
+        "lead": {"id": 42},
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+        "artifacts": {
+            "ai_summary": "Saved summary",
+            "draft_reply": "Saved draft\n\nWith spacing",
+        },
+    }
+
+    metadata = json.loads(slack_enrich._lead_context_metadata(context))
+
+    assert metadata["ai_summary"] == "Saved summary"
+    assert metadata["draft_reply"] == "Saved draft\n\nWith spacing"
+
+
+def test_fetch_lead_context_artifacts_scopes_by_sender_and_thread():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = [
+        ("ai_summary", "Saved summary"),
+        ("draft_reply", "Saved draft"),
+    ]
+
+    out = slack_enrich.fetch_lead_context_artifacts(
+        conn,
+        42,
+        operator="Arian",
+        thread_external_id="thread-arian",
+    )
+
+    sql, params = cur.execute.call_args[0]
+    assert "linkedin_slackleadcontextartifact" in sql
+    assert '"operator"' in sql
+    assert params == (42, "Arian", "thread-arian", "ai_summary", "draft_reply")
+    assert out == {"ai_summary": "Saved summary", "draft_reply": "Saved draft"}
+
+
+def test_upsert_lead_context_artifact_uses_scope_conflict_key():
+    conn = MagicMock()
+
+    slack_enrich.upsert_lead_context_artifact(
+        conn,
+        lead_id=42,
+        operator="Arian",
+        thread_external_id="thread-arian",
+        kind="draft_reply",
+        content="Saved draft",
+    )
+
+    cur = conn.cursor.return_value.__enter__.return_value
+    sql, params = cur.execute.call_args[0]
+    assert "ON CONFLICT" in sql
+    assert "(lead_id, \"operator\", thread_external_id, kind)" in sql
+    assert params == (42, "Arian", "thread-arian", "draft_reply", "Saved draft")
+    conn.commit.assert_called_once()
+
+
+def test_upsert_lead_context_artifact_rejects_unknown_kind():
+    conn = MagicMock()
+
+    with pytest.raises(ValueError, match="unsupported lead context artifact kind"):
+        slack_enrich.upsert_lead_context_artifact(
+            conn,
+            lead_id=42,
+            kind="unknown",
+            content="bad",
+        )
+
+    conn.cursor.assert_not_called()
+
+
 def test_fetch_linkedin_thread_preview_returns_oldest_first():
     conn = MagicMock()
     cur = conn.cursor.return_value.__enter__.return_value

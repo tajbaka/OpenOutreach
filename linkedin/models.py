@@ -569,6 +569,51 @@ class Task(models.Model):
         self.save(update_fields=["status", "error"])
 
 
+class SlackLeadContextArtifact(models.Model):
+    """Durable generated sections for Slack's Lead context modal.
+
+    The source-of-truth lead/profile/thread data stays in crm.Lead,
+    crm.Deal, and crm.Message. This table stores only generated operator-scoped
+    artifacts so closing and reopening a Slack modal does not lose useful AI
+    output.
+    """
+
+    class Kind(models.TextChoices):
+        AI_SUMMARY = "ai_summary"
+        DRAFT_REPLY = "draft_reply"
+
+    lead = models.ForeignKey(
+        "crm.Lead",
+        on_delete=models.CASCADE,
+        related_name="slack_context_artifacts",
+    )
+    operator = models.CharField(max_length=80, blank=True, default="")
+    thread_external_id = models.CharField(max_length=512, blank=True, default="")
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lead", "operator", "thread_external_id", "kind"],
+                name="uniq_slack_lead_context_artifact_scope",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["lead", "operator", "thread_external_id"],
+                name="slack_lead_ctx_scope_idx",
+            ),
+        ]
+
+    def __str__(self):
+        scope = f"{self.operator}:{self.thread_external_id}" if self.operator else self.thread_external_id
+        return f"{self.kind} for lead={self.lead_id} {scope}".strip()
+
+
 class WorkflowRun(models.Model):
     """Audit + freshness signal for high-level workflows the operator runs.
 

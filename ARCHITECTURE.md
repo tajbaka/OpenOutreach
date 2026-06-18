@@ -204,8 +204,10 @@ LinkedIn thread for that lead. The Lead context modal fetches deterministic
 Lead/Deal/profile/thread context via raw SQL; its AI summary and Draft reply
 buttons call the configured OpenAI-compatible endpoint (`LLM_API_KEY`,
 `AI_MODEL`, optional `LLM_API_BASE`) and update the same modal. Generated
-summary/draft text is carried in the modal's private metadata so each remains
-visible as its own Lead context section while the other action runs. The queued Slack
+summary/draft text is saved to `linkedin.SlackLeadContextArtifact`, scoped by
+`(lead, operator, thread_external_id, kind)`, so closing and reopening Lead
+context preserves the latest sender-specific sections. Slack `private_metadata`
+only carries a compact open-modal cache while another action runs. The queued Slack
 status includes a cancel button whose payload points at the inserted task id;
 cancelling deletes the task only if it is still pending. If the preview fetch
 fails, the reply modal falls back to a plain textbox. The `Task` table is the entire contract between

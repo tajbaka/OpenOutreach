@@ -60,6 +60,8 @@ _THREAD_SECTION_LIMIT = 2800
 _CONTEXT_MESSAGE_LIMIT = 6
 _LLM_TIMEOUT_SECONDS = 8
 _LEAD_CONTEXT_METADATA_TEXT_LIMIT = 1200
+_ARTIFACT_AI_SUMMARY = "ai_summary"
+_ARTIFACT_DRAFT_REPLY = "draft_reply"
 
 _INTENT_REPLY_SUBMISSION = "reply_submission"
 _INTENT_ENRICH_PHONE = "enrich_phone"
@@ -315,12 +317,13 @@ def _lead_context_metadata(
     draft_reply: str = "",
 ) -> str:
     lead = context["lead"]
+    artifacts = context.get("artifacts") or {}
     return _compact_metadata({
         "lead_id": lead["id"],
         "operator": context.get("operator") or "",
         "thread_external_id": context.get("thread_external_id") or "",
-        "ai_summary": _compact_metadata_text(ai_summary),
-        "draft_reply": _compact_metadata_text(draft_reply),
+        "ai_summary": _compact_metadata_text(ai_summary or artifacts.get(_ARTIFACT_AI_SUMMARY, "")),
+        "draft_reply": _compact_metadata_text(draft_reply or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")),
     })
 
 
@@ -340,6 +343,64 @@ def _compact_metadata_text(text: str, *, limit: int = _LEAD_CONTEXT_METADATA_TEX
     if len(value) <= limit:
         return value
     return value[: limit - 3].rstrip() + "..."
+
+
+def fetch_lead_context_artifacts(
+    conn,
+    lead_id: int,
+    *,
+    operator: str = "",
+    thread_external_id: str = "",
+) -> dict[str, str]:
+    """Fetch the latest generated Lead context sections for this sender/thread."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT kind, content "
+            "FROM linkedin_slackleadcontextartifact "
+            "WHERE lead_id = %s "
+            "AND \"operator\" = %s "
+            "AND thread_external_id = %s "
+            "AND kind IN (%s, %s)",
+            (
+                int(lead_id),
+                operator or "",
+                thread_external_id or "",
+                _ARTIFACT_AI_SUMMARY,
+                _ARTIFACT_DRAFT_REPLY,
+            ),
+        )
+        rows = cur.fetchall()
+    return {row[0]: row[1] or "" for row in rows}
+
+
+def upsert_lead_context_artifact(
+    conn,
+    *,
+    lead_id: int,
+    operator: str = "",
+    thread_external_id: str = "",
+    kind: str,
+    content: str,
+) -> None:
+    """Save one generated Lead context section for later modal opens."""
+    if kind not in {_ARTIFACT_AI_SUMMARY, _ARTIFACT_DRAFT_REPLY}:
+        raise ValueError(f"unsupported lead context artifact kind: {kind!r}")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO linkedin_slackleadcontextartifact "
+            "(lead_id, \"operator\", thread_external_id, kind, content, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, now(), now()) "
+            "ON CONFLICT (lead_id, \"operator\", thread_external_id, kind) "
+            "DO UPDATE SET content = EXCLUDED.content, updated_at = now()",
+            (
+                int(lead_id),
+                operator or "",
+                thread_external_id or "",
+                kind,
+                content or "",
+            ),
+        )
+    conn.commit()
 
 
 def _latest_linkedin_thread_external_id(conn, lead_id: int) -> str:
@@ -838,10 +899,17 @@ def fetch_lead_context(
         thread_external_id=thread_external_id,
         limit=_CONTEXT_MESSAGE_LIMIT,
     )
+    artifacts = fetch_lead_context_artifacts(
+        conn,
+        lead_id,
+        operator=operator,
+        thread_external_id=thread_external_id,
+    )
     return {
         "lead": lead,
         "deals": deals,
         "messages": messages,
+        "artifacts": artifacts,
         "operator": operator,
         "thread_external_id": thread_external_id,
     }
@@ -893,6 +961,9 @@ def render_lead_context_blocks(
 ) -> list[dict]:
     """Render deterministic lead context, optionally with AI-generated output."""
     lead = context["lead"]
+    artifacts = context.get("artifacts") or {}
+    ai_summary = ai_summary or artifacts.get(_ARTIFACT_AI_SUMMARY, "")
+    draft_reply = draft_reply or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")
     bits = _profile_bits(lead.get("description", ""))
     name = _slack_escape(_full_name(lead))
     company = lead.get("company_name") or ""
@@ -1258,8 +1329,9 @@ class handler(BaseHTTPRequestHandler):
             return
 
         view_id = data.get("view_id") or ""
-        existing_summary = data.get("ai_summary") or ""
-        existing_draft = data.get("draft_reply") or ""
+        artifacts = context.get("artifacts") or {}
+        existing_summary = data.get("ai_summary") or artifacts.get(_ARTIFACT_AI_SUMMARY, "")
+        existing_draft = data.get("draft_reply") or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")
         if view_id:
             try:
                 update_slack_view(
@@ -1281,6 +1353,15 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             ai_summary = generate_ai_lead_summary(context)
+            with psycopg.connect(DATABASE_URL) as conn:
+                upsert_lead_context_artifact(
+                    conn,
+                    lead_id=data["lead_id"],
+                    operator=data.get("operator", ""),
+                    thread_external_id=data.get("thread_external_id", ""),
+                    kind=_ARTIFACT_AI_SUMMARY,
+                    content=ai_summary,
+                )
             blocks = render_lead_context_blocks(
                 context,
                 ai_summary=ai_summary,
@@ -1333,8 +1414,9 @@ class handler(BaseHTTPRequestHandler):
             return
 
         view_id = data.get("view_id") or ""
-        existing_summary = data.get("ai_summary") or ""
-        existing_draft = data.get("draft_reply") or ""
+        artifacts = context.get("artifacts") or {}
+        existing_summary = data.get("ai_summary") or artifacts.get(_ARTIFACT_AI_SUMMARY, "")
+        existing_draft = data.get("draft_reply") or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")
         if view_id:
             try:
                 update_slack_view(
@@ -1356,6 +1438,15 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             draft = generate_ai_draft_reply(context)
+            with psycopg.connect(DATABASE_URL) as conn:
+                upsert_lead_context_artifact(
+                    conn,
+                    lead_id=data["lead_id"],
+                    operator=data.get("operator", ""),
+                    thread_external_id=data.get("thread_external_id", ""),
+                    kind=_ARTIFACT_DRAFT_REPLY,
+                    content=draft,
+                )
             blocks = render_lead_context_blocks(
                 context,
                 ai_summary=existing_summary,
