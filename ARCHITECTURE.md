@@ -184,17 +184,29 @@ Phone-number enrichment, **operator-triggered from Slack**. The
 opt-in via `ENABLE_AUTO_PHONE_ENRICHMENT` (`conf.py`, default off).
 
 **Trigger.** Every inbound-reply Slack notification (`notify_message_received`)
-carries a "Reply on LinkedIn" button plus a "📞 Get phone number"
-`static_select` menu — waterfall (default) / bettercontact / leadmagic /
-prospeo. The operator's pick/button/modal submit is POSTed by Slack to a
-Vercel serverless function (`api/slack_enrich.py`), which verifies the Slack
-request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256). Enrichment picks
-parse `(lead_id, provider)` and INSERT an `enrich_phone` `Task`; reply modal
-submits INSERT a daemon-dispatched `manual_reply` `Task`. The function uses raw
-`psycopg` (no Django import), and `SLACK_BOT_TOKEN` is required for
-`views.open`; queued status updates prefer the interaction `response_url` and
-fall back to `chat.update` when metadata is available, while daemon sent/failed
-status uses `chat.update` with the task's saved Slack blocks. The reply modal fetches the recent LinkedIn `crm.Message` thread via raw SQL and renders a compact transcript above the reply textbox; new reply buttons scope that preview by the triggering `thread_external_id`, while legacy buttons fall back to the latest inbound LinkedIn thread for that lead. The queued Slack status includes a cancel button whose payload points at the inserted task id; cancelling deletes the task only if it is still pending. If the preview fetch fails, the modal falls back to a plain textbox. The `Task` table is the entire contract between
+carries a "Reply on LinkedIn" button, a "Lead context" button, plus a
+"📞 Get phone number" `static_select` menu — waterfall (default) /
+bettercontact / leadmagic / prospeo. The operator's pick/button/modal submit is
+POSTed by Slack to a Vercel serverless function (`api/slack_enrich.py`), which
+verifies the Slack request signature (`SLACK_SIGNING_SECRET`, HMAC-SHA256) and
+routes each Slack intention through an intent-to-handler dispatch table.
+Enrichment picks parse `(lead_id, provider)` and INSERT an `enrich_phone`
+`Task`; reply modal submits INSERT a daemon-dispatched `manual_reply` `Task`.
+The function uses raw `psycopg` (no Django import), and `SLACK_BOT_TOKEN` is
+required for `views.open` / `views.update`; queued status updates prefer the
+interaction `response_url` and fall back to `chat.update` when metadata is
+available, while daemon sent/failed status uses `chat.update` with the task's
+saved Slack blocks. The reply modal fetches the recent LinkedIn `crm.Message`
+thread via raw SQL and renders a compact transcript above the reply textbox;
+new reply/context buttons scope that preview by the triggering
+`thread_external_id`, while legacy buttons fall back to the latest inbound
+LinkedIn thread for that lead. The Lead context modal fetches deterministic
+Lead/Deal/profile/thread context via raw SQL; its AI summary and Draft reply
+buttons call the configured OpenAI-compatible endpoint (`LLM_API_KEY`,
+`AI_MODEL`, optional `LLM_API_BASE`) and update the same modal. The queued Slack
+status includes a cancel button whose payload points at the inserted task id;
+cancelling deletes the task only if it is still pending. If the preview fetch
+fails, the reply modal falls back to a plain textbox. The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
 against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
 `(lead, provider)` (best-effort — a duplicate is harmless); two *different*

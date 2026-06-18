@@ -450,6 +450,19 @@ def notify_message_received(
                 }, separators=(",", ":")),
             },
             {
+                "type": "button",
+                "action_id": "linkedin_lead_context_button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Lead context",
+                },
+                "value": json.dumps({
+                    "lead_id": lead.id,
+                    "operator": operator_clean,
+                    "thread_external_id": thread_external_id or "",
+                }, separators=(",", ":")),
+            },
+            {
                 "type": "static_select",
                 "action_id": "enrich_phone_select",
                 "placeholder": {

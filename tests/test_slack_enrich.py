@@ -95,6 +95,23 @@ def _reply_cancel_body(task_id: int = 777, message_blocks=None) -> str:
     return urlencode({"payload": json.dumps(payload)})
 
 
+def _lead_context_body(action_id: str = "linkedin_lead_context_button") -> str:
+    payload = {
+        "type": "block_actions",
+        "trigger_id": "trigger-ctx",
+        "view": {"id": "V123", "hash": "h123"},
+        "actions": [{
+            "action_id": action_id,
+            "value": json.dumps({
+                "lead_id": 42,
+                "operator": "Arian",
+                "thread_external_id": "thread-arian",
+            }),
+        }],
+    }
+    return urlencode({"payload": json.dumps(payload)})
+
+
 def _reply_modal_body(message: str = "Sounds good", metadata=None) -> str:
     payload = {
         "type": "view_submission",
@@ -160,6 +177,21 @@ def test_parse_interaction_rejects_missing_payload():
 def test_parse_interaction_rejects_value_without_colon():
     with pytest.raises(ValueError):
         slack_enrich.parse_interaction(_interaction_body("nocolon"))
+
+
+def test_interaction_intent_routes_known_actions():
+    cases = [
+        (_reply_button_body(), "reply_button"),
+        (_reply_cancel_body(), "reply_cancel"),
+        (_lead_context_body("linkedin_lead_context_button"), "lead_context"),
+        (_lead_context_body("linkedin_lead_context_ai_button"), "lead_context_ai"),
+        (_lead_context_body("linkedin_lead_context_draft_button"), "lead_context_draft"),
+        (_interaction_body("42:waterfall"), "enrich_phone"),
+        (_reply_modal_body(), "reply_submission"),
+    ]
+    for body, expected in cases:
+        payload = slack_enrich.decode_slack_payload(body)
+        assert slack_enrich.interaction_intent(payload) == expected
 
 
 def _mock_conn(existing: bool):
@@ -420,6 +452,67 @@ def test_parse_reply_button_accepts_legacy_colon_value():
     assert out["lead_id"] == 42
     assert out["operator"] == "Chuka"
     assert out["thread_external_id"] == ""
+
+
+def test_parse_lead_context_button_extracts_metadata():
+    out = slack_enrich.parse_lead_context_button(
+        _lead_context_body("linkedin_lead_context_draft_button"),
+    )
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Arian"
+    assert out["thread_external_id"] == "thread-arian"
+    assert out["trigger_id"] == "trigger-ctx"
+    assert out["view_id"] == "V123"
+    assert out["view_hash"] == "h123"
+    assert out["action_id"] == "linkedin_lead_context_draft_button"
+
+
+def test_render_lead_context_blocks_includes_ai_and_draft_actions():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Jacquelyn",
+            "last_name": "Bell",
+            "company_name": "JB Choices",
+            "linkedin_url": "https://www.linkedin.com/in/jacquelyn-bell/",
+            "public_identifier": "jacquelyn-bell",
+            "description": json.dumps({
+                "headline": "FedRAMP advisor",
+                "summary": "Works with public sector compliance teams.",
+            }),
+            "icp": "Advisor",
+        },
+        "deals": [{
+            "owner": "Arian",
+            "campaign": "FedRampGPT",
+            "state": "CONNECTED",
+        }],
+        "messages": [{
+            "direction": "inbound",
+            "sender": "Jacquelyn Bell",
+            "body": "Tell me more.",
+        }],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(
+        context,
+        ai_summary="Advisor lead. Keep it light.",
+        draft_reply="Happy to explain.",
+    )
+
+    body = json.dumps(blocks)
+    assert "Jacquelyn Bell" in body
+    assert "Advisor lead" in body
+    assert "Happy to explain" in body
+    actions = next(b for b in blocks if b.get("block_id") == "lead_context_actions")
+    action_ids = {el["action_id"] for el in actions["elements"]}
+    assert action_ids == {
+        "linkedin_lead_context_ai_button",
+        "linkedin_lead_context_draft_button",
+    }
 
 
 def test_fetch_linkedin_thread_preview_returns_oldest_first():

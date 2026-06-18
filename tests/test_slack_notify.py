@@ -296,6 +296,15 @@ class TestNotifyMessageReceived:
             "operator": "Arian",
             "thread_external_id": "thread-arian",
         }
+        context_button = next(
+            el for el in actions["elements"]
+            if el.get("action_id") == "linkedin_lead_context_button"
+        )
+        assert json.loads(context_button["value"]) == {
+            "lead_id": lead.id,
+            "operator": "Arian",
+            "thread_external_id": "thread-arian",
+        }
 
     def test_long_text_is_not_truncated_at_preview_length(self, db, slack_url):
         from crm.models import Lead
