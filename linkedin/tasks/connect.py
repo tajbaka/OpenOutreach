@@ -67,7 +67,7 @@ def build_connection_note(lead_id: int | None, sender: str) -> str:
     detection across batches).
     """
     from crm.models import Lead
-    from linkedin.icp_outbound import load_icp_messages, resolve_icp
+    from linkedin.icp_outbound import load_icp_messages, resolve_icp, safe_company_name
 
     lead = Lead.objects.filter(pk=lead_id).first() if lead_id else None
     first_name = greeting_first_name(lead.first_name if lead else "")
@@ -97,7 +97,7 @@ def build_connection_note(lead_id: int | None, sender: str) -> str:
                     return template.format(
                         first_name=first_name,
                         last_name=(lead.last_name or "").strip(),
-                        company_name=(lead.company_name or "").strip(),
+                        company_name=safe_company_name(lead.company_name),
                         our_company_name=OUR_COMPANY_NAME,
                         our_website_url=OUR_WEBSITE_URL,
                     )

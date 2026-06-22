@@ -39,6 +39,47 @@ def _looks_like_lead_sender(sender: str, lead) -> bool:
     )
 
 
+def _looks_like_connect_note_echo(text: str, lead) -> bool:
+    """Detect LinkedIn realtime echoes of our own invite note.
+
+    LinkedIn can stream the original connection note as if the lead sent it.
+    `Deal.sent_note` is the primary guard, but older rows may not have it
+    populated, so keep this fallback intentionally narrow.
+    """
+    normalized = _normalized_name(text)
+    first = _normalized_name(lead.first_name or "")
+    if not normalized or not first:
+        return False
+    if not (
+        normalized.startswith(f"hi {first} ")
+        or normalized.startswith(f"hey {first} ")
+        or normalized.startswith(f"{first} ")
+    ):
+        return False
+    has_outreach_context = any(
+        token in normalized
+        for token in (
+            "fedramp",
+            "boundera",
+            "fedrampgpt",
+            "public sector",
+            "public space",
+            "20x",
+        )
+    )
+    has_connect_ask = any(
+        phrase in normalized
+        for phrase in (
+            "would love to connect",
+            "good to connect",
+            "worth connecting",
+            "worth connect",
+            "happy to connect",
+        )
+    )
+    return has_outreach_context and has_connect_ask
+
+
 def lead_outbound_operators(lead) -> set[str]:
     """Return canonical operator handles found in the lead's LinkedIn DM outbound senders.
 
@@ -125,7 +166,7 @@ def persist_thread(
             # note back with the lead's name as sender. When the body exactly
             # matches a Deal.sent_note we know it was our outbound invite note,
             # not a real reply from the lead.
-            if text and text in known_connect_notes:
+            if text and (text in known_connect_notes or _looks_like_connect_note_echo(text, lead)):
                 is_inbound = False
             direction = (
                 Message.Direction.INBOUND if is_inbound

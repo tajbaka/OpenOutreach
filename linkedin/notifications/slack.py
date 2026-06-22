@@ -56,6 +56,7 @@ from urllib.error import URLError
 import certifi
 
 from linkedin.conf import SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
+from linkedin.icp_outbound import is_unknown_company_name
 
 logger = logging.getLogger(__name__)
 
@@ -382,13 +383,16 @@ def notify_message_received(
     lead,
     text: str,
     operator: str = "",
+    thread_external_id: str = "",
 ) -> None:
     """Post an 'inbound message received' notification. No-op if disabled.
 
     Fired by the realtime listener when an inbound LinkedIn DM is detected
     and freshly persisted. `lead` is the crm.Lead; `text` is the message
     body; `operator` is the canonical handle of the account that owns the
-    lead (rendered so the team knows whose lead replied).
+    lead (rendered so the team knows whose lead replied). `thread_external_id`
+    scopes the Slack reply modal transcript when multiple senders share one
+    Lead row but have separate LinkedIn DM threads.
 
     Posts to SLACK_REPLIES_WEBHOOK_URL — the channel where the team triages
     replies and decides whether to run phone enrichment.
@@ -414,7 +418,7 @@ def notify_message_received(
     elements: list[dict] = []
     if operator_clean:
         elements.append({"type": "mrkdwn", "text": f"*Lead for:* {operator_clean}"})
-    if lead.company_name:
+    if lead.company_name and not is_unknown_company_name(lead.company_name):
         elements.append({"type": "mrkdwn", "text": f"*Company:* {lead.company_name}"})
 
     blocks: list[dict] = [
@@ -439,7 +443,24 @@ def notify_message_received(
                     "text": "Reply on LinkedIn",
                 },
                 "style": "primary",
-                "value": f"{lead.id}:{operator_clean}",
+                "value": json.dumps({
+                    "lead_id": lead.id,
+                    "operator": operator_clean,
+                    "thread_external_id": thread_external_id or "",
+                }, separators=(",", ":")),
+            },
+            {
+                "type": "button",
+                "action_id": "linkedin_lead_context_button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "Lead context",
+                },
+                "value": json.dumps({
+                    "lead_id": lead.id,
+                    "operator": operator_clean,
+                    "thread_external_id": thread_external_id or "",
+                }, separators=(",", ":")),
             },
             {
                 "type": "static_select",
@@ -527,7 +548,7 @@ def notify_phone_enriched(*, lead, result) -> None:
         fallback = f":telephone_receiver: No phone number found for {full_name}"
 
     elements: list[dict] = []
-    if lead.company_name:
+    if lead.company_name and not is_unknown_company_name(lead.company_name):
         elements.append({"type": "mrkdwn", "text": f"*Company:* {lead.company_name}"})
     elements.append({"type": "mrkdwn", "text": f"*Provider:* {result.provider}"})
 

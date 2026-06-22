@@ -40,6 +40,10 @@ _MAX_CONSECUTIVE_FAILURES = 30
 # dropped" — the failure counter resets so a long-lived listener that
 # reconnects across daemon browser-relaunches never exhausts the cap.
 _HEALTHY_CONNECTION_SECONDS = 60
+# LinkedIn's messaging shell can keep loading long enough to miss the default
+# navigation timeout. The listener only needs the navigation to start so CDP can
+# observe /realtime/connect.
+_MESSAGING_NAV_TIMEOUT_MS = 15_000
 
 
 def run_listener(*, operator: str, username: str, cdp_port: int | None = None) -> int:
@@ -129,7 +133,7 @@ def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
             cdp.on("Network.responseReceived", _on_response)
             cdp.on("Network.dataReceived", _on_data)
 
-            page.goto(MESSAGING_URL, wait_until="domcontentloaded")
+            _open_messaging_page(page)
             logger.info("listener: connected over CDP, observing %s", _REALTIME_CONNECT_PATH)
 
             slice_ms = LISTENER_PUMP_SLICE_SECONDS * 1000
@@ -141,3 +145,12 @@ def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
                 page.close()
             except Exception:
                 pass
+
+
+def _open_messaging_page(page) -> None:
+    """Start LinkedIn messaging without waiting on the full app shell."""
+    page.goto(
+        MESSAGING_URL,
+        wait_until="commit",
+        timeout=_MESSAGING_NAV_TIMEOUT_MS,
+    )

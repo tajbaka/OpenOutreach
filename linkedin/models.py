@@ -380,6 +380,27 @@ class TaskQuerySet(models.QuerySet):
     def due(self):
         return self.pending().filter(scheduled_at__lte=timezone.now())
 
+    def _claim_candidate(self, candidate: "Task | None") -> "Task | None":
+        """Atomically flip a selected pending task to running.
+
+        Slack manual-reply cancel deletes only PENDING tasks. The claim read
+        and running mark must therefore be one guarded state transition, or a
+        cancel can report success after the daemon has already selected the
+        task.
+        """
+        if candidate is None:
+            return None
+        started_at = timezone.now()
+        updated = self.model.objects.filter(
+            pk=candidate.pk,
+            status=Task.Status.PENDING,
+        ).update(status=Task.Status.RUNNING, started_at=started_at)
+        if not updated:
+            return None
+        candidate.status = Task.Status.RUNNING
+        candidate.started_at = started_at
+        return candidate
+
     def claim_next(
         self,
         operator: str | None = None,
@@ -412,8 +433,8 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
         manual = qs.filter(task_type=Task.TaskType.MANUAL_REPLY).first()
         if manual is not None:
-            return manual
-        return qs.first()
+            return self._claim_candidate(manual)
+        return self._claim_candidate(qs.first())
 
     def seconds_to_next(
         self,
@@ -587,6 +608,51 @@ class Task(models.Model):
         self.status = self.Status.FAILED
         self.error = error
         self.save(update_fields=["status", "error"])
+
+
+class SlackLeadContextArtifact(models.Model):
+    """Durable generated sections for Slack's Lead context modal.
+
+    The source-of-truth lead/profile/thread data stays in crm.Lead,
+    crm.Deal, and crm.Message. This table stores only generated operator-scoped
+    artifacts so closing and reopening a Slack modal does not lose useful AI
+    output.
+    """
+
+    class Kind(models.TextChoices):
+        AI_SUMMARY = "ai_summary"
+        DRAFT_REPLY = "draft_reply"
+
+    lead = models.ForeignKey(
+        "crm.Lead",
+        on_delete=models.CASCADE,
+        related_name="slack_context_artifacts",
+    )
+    operator = models.CharField(max_length=80, blank=True, default="")
+    thread_external_id = models.CharField(max_length=512, blank=True, default="")
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lead", "operator", "thread_external_id", "kind"],
+                name="uniq_slack_lead_context_artifact_scope",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["lead", "operator", "thread_external_id"],
+                name="slack_lead_ctx_scope_idx",
+            ),
+        ]
+
+    def __str__(self):
+        scope = f"{self.operator}:{self.thread_external_id}" if self.operator else self.thread_external_id
+        return f"{self.kind} for lead={self.lead_id} {scope}".strip()
 
 
 class WorkflowRun(models.Model):

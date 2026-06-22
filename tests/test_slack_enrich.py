@@ -64,7 +64,12 @@ def test_verify_signature_rejects_missing_headers():
 
 
 def _interaction_body(value: str, message_blocks=None) -> str:
-    payload = {"actions": [{"selected_option": {"value": value}}]}
+    payload = {
+        "actions": [{
+            "action_id": "enrich_phone_select",
+            "selected_option": {"value": value},
+        }],
+    }
     if message_blocks is not None:
         payload["message"] = {"blocks": message_blocks}
     return urlencode({"payload": json.dumps(payload)})
@@ -78,6 +83,43 @@ def _reply_button_body(value: str = "42:Chuka", message_blocks=None) -> str:
         "channel": {"id": "C123"},
         "message": {"ts": "171234.567", "blocks": message_blocks or []},
         "actions": [{"action_id": "linkedin_reply_button", "value": value}],
+    }
+    return urlencode({"payload": json.dumps(payload)})
+
+
+def _reply_cancel_body(task_id: int = 777, message_blocks=None) -> str:
+    payload = {
+        "type": "block_actions",
+        "channel": {"id": "C123"},
+        "message": {"ts": "171234.567", "blocks": message_blocks or []},
+        "actions": [{
+            "action_id": "linkedin_reply_cancel_button",
+            "value": json.dumps({"task_id": task_id}),
+        }],
+    }
+    return urlencode({"payload": json.dumps(payload)})
+
+
+def _lead_context_body(
+    action_id: str = "linkedin_lead_context_button",
+    view_metadata=None,
+) -> str:
+    payload = {
+        "type": "block_actions",
+        "trigger_id": "trigger-ctx",
+        "view": {
+            "id": "V123",
+            "hash": "h123",
+            "private_metadata": json.dumps(view_metadata or {}),
+        },
+        "actions": [{
+            "action_id": action_id,
+            "value": json.dumps({
+                "lead_id": 42,
+                "operator": "Arian",
+                "thread_external_id": "thread-arian",
+            }),
+        }],
     }
     return urlencode({"payload": json.dumps(payload)})
 
@@ -147,6 +189,34 @@ def test_parse_interaction_rejects_missing_payload():
 def test_parse_interaction_rejects_value_without_colon():
     with pytest.raises(ValueError):
         slack_enrich.parse_interaction(_interaction_body("nocolon"))
+
+
+def test_interaction_intent_routes_known_actions():
+    cases = [
+        (_reply_button_body(), "reply_button"),
+        (_reply_cancel_body(), "reply_cancel"),
+        (_lead_context_body("linkedin_lead_context_button"), "lead_context"),
+        (_lead_context_body("linkedin_lead_context_ai_button"), "lead_context_ai"),
+        (_lead_context_body("linkedin_lead_context_draft_button"), "lead_context_draft"),
+        (_interaction_body("42:waterfall"), "enrich_phone"),
+        (_reply_modal_body(), "reply_submission"),
+    ]
+    for body, expected in cases:
+        payload = slack_enrich.decode_slack_payload(body)
+        assert slack_enrich.interaction_intent(payload) == expected
+
+
+def test_interaction_intent_rejects_unknown_select_action():
+    payload = {
+        "type": "block_actions",
+        "actions": [{
+            "action_id": "other_select",
+            "selected_option": {"value": "42:waterfall"},
+        }],
+    }
+
+    with pytest.raises(ValueError, match="unsupported Slack action"):
+        slack_enrich.interaction_intent(payload)
 
 
 def _mock_conn(existing: bool):
@@ -269,10 +339,35 @@ def test_render_reply_status_keeps_actions_and_replaces_old_status():
     assert statuses[0]["text"]["text"] == "new status"
 
 
+def test_render_reply_status_can_include_cancel_button():
+    out = slack_enrich.render_reply_status_blocks(
+        [_MENU_BLOCK],
+        "queued",
+        cancel_task_id=777,
+    )
+    status = next(b for b in out if b.get("block_id") == "reply_status:queued")
+    button = status["accessory"]
+    assert button["action_id"] == "linkedin_reply_cancel_button"
+    assert json.loads(button["value"]) == {"task_id": 777}
+
+
+def test_parse_reply_cancel_button_extracts_task_and_blocks():
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "reply"}}]
+
+    out = slack_enrich.parse_reply_cancel_button(
+        _reply_cancel_body(task_id=777, message_blocks=blocks),
+    )
+
+    assert out["task_id"] == 777
+    assert out["blocks"] == blocks
+
+
 def test_enqueue_manual_reply_task_inserts_when_none_exists():
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}]
-    conn, cur = _mock_conn(existing=False)
-    inserted = slack_enrich.enqueue_manual_reply_task(conn, {
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.side_effect = [None, (777,)]
+    task_id = slack_enrich.enqueue_manual_reply_task(conn, {
         "lead_id": 42,
         "operator": "Chuka",
         "message": "Yes, happy to chat.",
@@ -282,25 +377,52 @@ def test_enqueue_manual_reply_task_inserts_when_none_exists():
         "slack_user_id": "U123",
         "blocks": blocks,
     })
-    assert inserted is True
+    assert task_id == 777
     assert cur.execute.call_count == 2
     insert_sql = cur.execute.call_args_list[1][0][0]
     inserted_payload = cur.execute.call_args_list[1][0][1][0].obj
     assert "manual_reply" in insert_sql
+    assert "RETURNING id" in insert_sql
     assert inserted_payload["slack_blocks"] == blocks
     conn.commit.assert_called_once()
 
 
 def test_enqueue_manual_reply_task_dedups_pending_duplicate():
     conn, cur = _mock_conn(existing=True)
-    inserted = slack_enrich.enqueue_manual_reply_task(conn, {
+    task_id = slack_enrich.enqueue_manual_reply_task(conn, {
         "lead_id": 42,
         "operator": "Chuka",
         "message": "Yes, happy to chat.",
     })
-    assert inserted is False
+    assert task_id == 1
     assert cur.execute.call_count == 1
     conn.commit.assert_not_called()
+
+
+def test_cancel_manual_reply_task_deletes_pending_task():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = (777,)
+
+    cancelled = slack_enrich.cancel_manual_reply_task(conn, 777)
+
+    assert cancelled is True
+    sql, params = cur.execute.call_args[0]
+    assert "DELETE FROM linkedin_task" in sql
+    assert "status = 'pending'" in sql
+    assert params == (777,)
+    conn.commit.assert_called_once()
+
+
+def test_cancel_manual_reply_task_returns_false_when_not_pending():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = None
+
+    cancelled = slack_enrich.cancel_manual_reply_task(conn, 777)
+
+    assert cancelled is False
+    conn.commit.assert_called_once()
 
 
 def test_open_reply_modal_calls_slack_views_open(monkeypatch):
@@ -320,6 +442,7 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
             message_ts="171234.567",
             response_url="https://hooks.slack.com/actions/T/B/R",
             original_blocks=[],
+            thread_external_id="thread-arian",
             thread_blocks=thread_blocks,
         )
     req = mock_open.call_args[0][0]
@@ -331,6 +454,302 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     assert sent["view"]["blocks"][-1]["type"] == "input"
     metadata = json.loads(sent["view"]["private_metadata"])
     assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
+    assert metadata["thread_external_id"] == "thread-arian"
+
+
+def test_update_slack_view_can_persist_lead_context_metadata(monkeypatch):
+    monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+
+    with patch.object(slack_enrich.request, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        slack_enrich.update_slack_view(
+            view_id="V123",
+            blocks=[],
+            private_metadata=json.dumps({
+                "lead_id": 42,
+                "operator": "Arian",
+                "thread_external_id": "thread-arian",
+                "ai_summary": "Summary",
+                "draft_reply": "Draft\n\nReply",
+            }),
+        )
+
+    req = mock_open.call_args[0][0]
+    assert req.full_url.endswith("/views.update")
+    sent = json.loads(req.data.decode("utf-8"))
+    metadata = json.loads(sent["view"]["private_metadata"])
+    assert metadata["ai_summary"] == "Summary"
+    assert metadata["draft_reply"] == "Draft\n\nReply"
+
+
+def test_parse_reply_button_accepts_thread_scoped_json_value():
+    value = json.dumps({
+        "lead_id": 42,
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    })
+
+    out = slack_enrich.parse_reply_button(_reply_button_body(value=value))
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Arian"
+    assert out["thread_external_id"] == "thread-arian"
+
+
+def test_parse_reply_button_accepts_legacy_colon_value():
+    out = slack_enrich.parse_reply_button(_reply_button_body(value="42:Chuka"))
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Chuka"
+    assert out["thread_external_id"] == ""
+
+
+def test_parse_lead_context_button_extracts_metadata():
+    out = slack_enrich.parse_lead_context_button(
+        _lead_context_body("linkedin_lead_context_draft_button"),
+    )
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Arian"
+    assert out["thread_external_id"] == "thread-arian"
+    assert out["trigger_id"] == "trigger-ctx"
+    assert out["view_id"] == "V123"
+    assert out["view_hash"] == "h123"
+    assert out["action_id"] == "linkedin_lead_context_draft_button"
+
+
+def test_parse_lead_context_button_preserves_generated_modal_metadata():
+    out = slack_enrich.parse_lead_context_button(
+        _lead_context_body(
+            "linkedin_lead_context_draft_button",
+            view_metadata={
+                "lead_id": 42,
+                "operator": "Arian",
+                "thread_external_id": "thread-arian",
+                "ai_summary": "Existing summary",
+                "draft_reply": "Existing draft\n\nWith spacing",
+            },
+        ),
+    )
+
+    assert out["ai_summary"] == "Existing summary"
+    assert out["draft_reply"] == "Existing draft\n\nWith spacing"
+
+
+def test_render_lead_context_blocks_includes_ai_and_draft_actions():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Jacquelyn",
+            "last_name": "Bell",
+            "company_name": "JB Choices",
+            "linkedin_url": "https://www.linkedin.com/in/jacquelyn-bell/",
+            "public_identifier": "jacquelyn-bell",
+            "description": json.dumps({
+                "headline": "FedRAMP advisor",
+                "summary": "Works with public sector compliance teams.",
+            }),
+            "icp": "Advisor",
+        },
+        "deals": [{
+            "owner": "Arian",
+            "campaign": "FedRampGPT",
+            "state": "CONNECTED",
+        }],
+        "messages": [{
+            "direction": "inbound",
+            "sender": "Jacquelyn Bell",
+            "body": "Tell me more.",
+        }],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(
+        context,
+        ai_summary="Advisor lead. Keep it light.",
+        draft_reply="Happy to explain.",
+    )
+
+    body = json.dumps(blocks)
+    assert "Jacquelyn Bell" in body
+    assert "Advisor lead" in body
+    assert "Happy to explain" in body
+    actions = next(b for b in blocks if b.get("block_id") == "lead_context_actions")
+    action_ids = {el["action_id"] for el in actions["elements"]}
+    assert action_ids == {
+        "linkedin_lead_context_ai_button",
+        "linkedin_lead_context_draft_button",
+    }
+
+
+def test_render_lead_context_blocks_hides_actions_while_loading():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "company_name": "Analytical Engines",
+            "linkedin_url": "",
+            "public_identifier": "ada",
+            "description": "{}",
+            "icp": "CSP",
+        },
+        "deals": [],
+        "messages": [],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(
+        context,
+        loading="Drafting reply...",
+    )
+
+    assert any(b.get("block_id") == "lead_context_loading" for b in blocks)
+    assert not any(b.get("block_id") == "lead_context_actions" for b in blocks)
+    assert blocks[-1]["block_id"] == "lead_context_loading"
+
+
+def test_render_lead_context_blocks_puts_newest_artifact_at_bottom():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "company_name": "Analytical Engines",
+            "linkedin_url": "",
+            "public_identifier": "ada",
+            "description": "{}",
+            "icp": "CSP",
+        },
+        "deals": [],
+        "messages": [],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(
+        context,
+        ai_summary="Newest summary",
+        draft_reply="Existing draft",
+        newest_artifact="ai_summary",
+    )
+
+    generated_ids = [
+        b["block_id"]
+        for b in blocks
+        if b.get("block_id") in {
+            "lead_context_ai_summary",
+            "lead_context_draft_reply",
+        }
+    ]
+    assert generated_ids == [
+        "lead_context_draft_reply",
+        "lead_context_ai_summary",
+    ]
+
+
+def test_render_lead_context_blocks_uses_saved_artifacts_by_default():
+    context = {
+        "lead": {
+            "id": 42,
+            "first_name": "Jacquelyn",
+            "last_name": "Bell",
+            "company_name": "JB Choices",
+            "linkedin_url": "",
+            "public_identifier": "jacquelyn-bell",
+            "description": "{}",
+            "icp": "Advisor",
+        },
+        "deals": [],
+        "messages": [],
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+        "artifacts": {
+            "ai_summary": "Saved summary",
+            "draft_reply": "Saved draft",
+        },
+    }
+
+    blocks = slack_enrich.render_lead_context_blocks(context)
+
+    body = json.dumps(blocks)
+    assert "Saved summary" in body
+    assert "Saved draft" in body
+
+
+def test_lead_context_metadata_falls_back_to_saved_artifacts():
+    context = {
+        "lead": {"id": 42},
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+        "artifacts": {
+            "ai_summary": "Saved summary",
+            "draft_reply": "Saved draft\n\nWith spacing",
+        },
+    }
+
+    metadata = json.loads(slack_enrich._lead_context_metadata(context))
+
+    assert metadata["ai_summary"] == "Saved summary"
+    assert metadata["draft_reply"] == "Saved draft\n\nWith spacing"
+
+
+def test_fetch_lead_context_artifacts_scopes_by_sender_and_thread():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = [
+        ("ai_summary", "Saved summary"),
+        ("draft_reply", "Saved draft"),
+    ]
+
+    out = slack_enrich.fetch_lead_context_artifacts(
+        conn,
+        42,
+        operator="Arian",
+        thread_external_id="thread-arian",
+    )
+
+    sql, params = cur.execute.call_args[0]
+    assert "linkedin_slackleadcontextartifact" in sql
+    assert '"operator"' in sql
+    assert params == (42, "Arian", "thread-arian", "ai_summary", "draft_reply")
+    assert out == {"ai_summary": "Saved summary", "draft_reply": "Saved draft"}
+
+
+def test_upsert_lead_context_artifact_uses_scope_conflict_key():
+    conn = MagicMock()
+
+    slack_enrich.upsert_lead_context_artifact(
+        conn,
+        lead_id=42,
+        operator="Arian",
+        thread_external_id="thread-arian",
+        kind="draft_reply",
+        content="Saved draft",
+    )
+
+    cur = conn.cursor.return_value.__enter__.return_value
+    sql, params = cur.execute.call_args[0]
+    assert "ON CONFLICT" in sql
+    assert "(lead_id, \"operator\", thread_external_id, kind)" in sql
+    assert params == (42, "Arian", "thread-arian", "draft_reply", "Saved draft")
+    conn.commit.assert_called_once()
+
+
+def test_upsert_lead_context_artifact_rejects_unknown_kind():
+    conn = MagicMock()
+
+    with pytest.raises(ValueError, match="unsupported lead context artifact kind"):
+        slack_enrich.upsert_lead_context_artifact(
+            conn,
+            lead_id=42,
+            kind="unknown",
+            content="bad",
+        )
+
+    conn.cursor.assert_not_called()
 
 
 def test_fetch_linkedin_thread_preview_returns_oldest_first():
@@ -341,11 +760,30 @@ def test_fetch_linkedin_thread_preview_returns_oldest_first():
         ("outbound", "Us", "older", "2026-06-15 12:01"),
     ]
 
-    out = slack_enrich.fetch_linkedin_thread_preview(conn, 42, limit=2)
+    out = slack_enrich.fetch_linkedin_thread_preview(
+        conn, 42, thread_external_id="thread-arian", limit=2,
+    )
 
     cur.execute.assert_called_once()
+    assert cur.execute.call_args[0][1] == (42, "thread-arian", 2)
     assert out[0]["body"] == "older"
     assert out[1]["body"] == "newer"
+
+
+def test_fetch_linkedin_thread_preview_uses_latest_inbound_thread_fallback():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = ("thread-arian",)
+    cur.fetchall.return_value = [
+        ("inbound", "Paul", "newer", "2026-06-15 12:02"),
+        ("outbound", "Arian", "older", "2026-06-15 12:01"),
+    ]
+
+    out = slack_enrich.fetch_linkedin_thread_preview(conn, 42, limit=2)
+
+    assert cur.execute.call_count == 2
+    assert cur.execute.call_args_list[1][0][1] == (42, "thread-arian", 2)
+    assert [msg["body"] for msg in out] == ["older", "newer"]
 
 
 def test_render_thread_preview_blocks_escapes_and_labels_messages():

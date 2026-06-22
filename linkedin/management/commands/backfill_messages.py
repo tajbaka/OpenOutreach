@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # and stay clear of LinkedIn rate limits.
 SLEEP_MIN_SECONDS = 8
 SLEEP_MAX_SECONDS = 22
+MESSAGING_INBOX_URL = "https://www.linkedin.com/messaging/"
 
 
 # Each tuple: (label, username env var, password env var). The session
@@ -66,6 +67,13 @@ def _make_session(label: str, env_user: str, env_pass: str) -> StandaloneLinkedI
         env_password=env_pass,
         label=label,
     )
+
+
+def _open_messaging_inbox(session: StandaloneLinkedInSession) -> None:
+    """Place the visible browser on the Messaging inbox before live thread fetches."""
+    page = session.page
+    page.goto(MESSAGING_INBOX_URL, wait_until="domcontentloaded", timeout=30_000)
+    page.wait_for_timeout(random.randint(2_000, 5_000))
 
 
 def _self_display_name(session) -> str:
@@ -263,6 +271,9 @@ class Command(BaseCommand):
         if not deals:
             self.stdout.write(f"No eligible Leads for sender={sender!r}.")
             return
+
+        self.stdout.write("Opening LinkedIn Messaging inbox.")
+        _open_messaging_inbox(session)
 
         fetched, persisted, errors, skipped = 0, 0, 0, 0
         for i, deal in enumerate(deals, 1):

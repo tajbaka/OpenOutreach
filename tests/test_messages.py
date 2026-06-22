@@ -268,6 +268,29 @@ def test_persist_thread_treats_matching_sent_note_as_outbound(db, django_user_mo
     assert msg.direction == Message.Direction.OUTBOUND
 
 
+def test_persist_thread_treats_legacy_connect_note_echo_as_outbound(db):
+    lead = Lead.objects.create(
+        first_name="Walter",
+        last_name="Maikish",
+        company_name="Elisity",
+        linkedin_url="https://www.linkedin.com/in/waltermaikish/",
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:walter-note-echo",
+        "sender": "Walter Maikish",
+        "text": (
+            "Hey Walter — we are building FedrampGPT around FedRAMP auth "
+            "+ continuous monitoring. Would love to connect."
+        ),
+        "timestamp": "2026-06-17 16:08",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed)
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.OUTBOUND
+
+
 def test_persist_thread_treats_known_operator_sender_as_outbound(db):
     lead = Lead.objects.create(
         first_name="Arian",

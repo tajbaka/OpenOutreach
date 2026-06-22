@@ -48,6 +48,7 @@ def test_inbound_message_persists_and_notifies(db):
     assert msg.direction == Message.Direction.INBOUND
     assert msg.lead == lead
     mock_notify.assert_called_once()
+    assert mock_notify.call_args.kwargs["thread_external_id"] == CONV
 
 
 def test_duplicate_event_is_idempotent(db):
