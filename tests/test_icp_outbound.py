@@ -175,13 +175,13 @@ def test_fill_message_supports_step_object_templates(tmp_path, monkeypatch):
 
 
 def test_fill_message_rejects_unknown_step_index():
-    with pytest.raises(SheetsError, match="has no step 1"):
+    with pytest.raises(SheetsError, match="has no step 99"):
         icp_outbound.fill_message(
             sender="Arian",
             icp="CSPs",
             channel="linkedin_connect_followup",
             first_name="Jane",
-            step_index=1,
+            step_index=99,
         )
 
 
@@ -307,6 +307,7 @@ def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
 
     rows = icp_outbound.icp_messages_rows("Leili")
+    assert [row[0] for row in rows[1:]] == ["CSPs", "3PAOs/Assessors", "Advisors", "Channel"]
     parsed = icp_outbound.parse_icp_messages_rows(rows)
     assert parsed == {
         icp: icp_outbound.load_icp_messages("Leili")[icp]
@@ -314,14 +315,14 @@ def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
     }
 
 
-def test_icp_messages_rows_rejects_sequenced_followup(tmp_path, monkeypatch):
+def test_icp_messages_rows_renders_sequenced_followup(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
     path.write_text(json.dumps({
         "Arian": {
             "CSPs": {
                 "linkedin_connect_note": ["connect"],
                 "linkedin_connect_followup": [
-                    {"delay_days": 0, "variants": ["step zero"]},
+                    {"delay_days": 0, "variants": ["step zero", "alt zero"]},
                     {"delay_days": 4, "variants": ["step one"]},
                 ],
             },
@@ -329,8 +330,93 @@ def test_icp_messages_rows_rejects_sequenced_followup(tmp_path, monkeypatch):
     }))
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
 
-    with pytest.raises(SheetsError, match="cannot push sequenced follow-up templates"):
-        icp_outbound.icp_messages_rows("Arian")
+    rows = icp_outbound.icp_messages_rows("Arian")
+    # Two-step sequence → two follow-up columns, sized dynamically.
+    assert rows[0] == icp_outbound.icp_messages_headers(2)
+    # First variant of step 0 → "Followup Message 1"; step 1 → "Followup Message 2".
+    csp_row = next(r for r in rows[1:] if r[0] == "CSPs")
+    assert csp_row == ["CSPs", "connect", "step zero", "step one"]
+
+
+def test_icp_messages_rows_grows_columns_for_long_sequences(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_note": ["connect"],
+                "linkedin_connect_followup": [
+                    {"delay_days": 0, "variants": ["s0"]},
+                    {"delay_days": 4, "variants": ["s1"]},
+                    {"delay_days": 8, "variants": ["s2"]},
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    rows = icp_outbound.icp_messages_rows("Arian")
+    # A three-step sequence grows the tab to three follow-up columns.
+    assert rows[0] == icp_outbound.icp_messages_headers(3)
+    csp_row = next(r for r in rows[1:] if r[0] == "CSPs")
+    assert csp_row == ["CSPs", "connect", "s0", "s1", "s2"]
+
+
+def test_parse_icp_messages_rows_rebuilds_sequence_from_extra_columns():
+    rows = [
+        icp_outbound.icp_messages_headers(3),
+        ["CSPs", "connect", "first followup", "second followup", "third followup"],
+    ]
+    parsed = icp_outbound.parse_icp_messages_rows(rows)
+    assert parsed["CSPs"]["linkedin_connect_followup"] == [
+        {"delay_days": 0, "variants": ["first followup"]},
+        {"delay_days": 4, "variants": ["second followup"]},
+        {"delay_days": 4, "variants": ["third followup"]},
+    ]
+
+
+def test_parse_icp_messages_rows_single_cell_stays_legacy():
+    # Blank trailing follow-up columns → legacy single-string shape.
+    rows = [
+        icp_outbound.icp_messages_headers(2),
+        ["CSPs", "connect", "only followup", ""],
+    ]
+    parsed = icp_outbound.parse_icp_messages_rows(rows)
+    assert parsed["CSPs"]["linkedin_connect_followup"] == ["only followup"]
+
+
+def test_save_icp_messages_sequence_edit_preserves_existing_delays(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_note": ["old connect"],
+                "linkedin_connect_followup": [
+                    {"delay_days": 0, "variants": ["old step zero"]},
+                    {"delay_days": 7, "variants": ["old step one"]},
+                ],
+            },
+        },
+    }, indent=2) + "\n")
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    # Pull-shaped payload: edited text, parser-default delays (0, 4).
+    icp_outbound.save_icp_messages(
+        "Arian",
+        {"CSPs": {
+            "linkedin_connect_note": ["new connect"],
+            "linkedin_connect_followup": [
+                {"delay_days": 0, "variants": ["edited step zero"]},
+                {"delay_days": 4, "variants": ["edited step one"]},
+            ],
+        }},
+    )
+
+    saved = json.loads(path.read_text())
+    # Text updated from the sheet; the existing 7-day cadence is kept.
+    assert saved["Arian"]["CSPs"]["linkedin_connect_followup"] == [
+        {"delay_days": 0, "variants": ["edited step zero"]},
+        {"delay_days": 7, "variants": ["edited step one"]},
+    ]
 
 
 def test_parse_icp_messages_rows_rejects_duplicate_icp():
@@ -404,9 +490,10 @@ def test_fill_message_missing_first_name_renders_empty():
         first_name="",
         variant_index=0,
     )
-    # Variant 0 starts with "Hi {first_name}, ..." → "Hi , ..."
-    assert "BrandCo" in out  # still well-formed message (brand substituted)
-    assert "{" not in out
+    # Variant 0 starts with "Hi {first_name}, ..." → "Hi , ...".
+    assert out.body.startswith("Hi ,")
+    assert "FedRAMP 20x" in out.body
+    assert "{" not in out.body
 
 
 def test_fill_message_sanitizes_greeting_first_name():

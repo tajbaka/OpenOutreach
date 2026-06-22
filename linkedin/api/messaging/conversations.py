@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _GRAPHQL_BASE = "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql"
 _CONVERSATIONS_QUERY_ID = "messengerConversations.0d5e6781bbee71c3e51c8843c6519f48"
+_CONVERSATIONS_CATEGORY_QUERY_ID = "messengerConversations.9501074288a12f3ae9e3c7ea243bccbf"
 _MESSAGES_QUERY_ID = "messengerMessages.5846eeb71c981f11e0134cb6626cc314"
 
 
@@ -26,16 +27,78 @@ def _graphql_headers(api: PlaywrightLinkedinAPI) -> dict:
     retry=retry_if_exception_type(IOError),
     reraise=True,
 )
-def fetch_conversations(api: PlaywrightLinkedinAPI) -> dict:
-    """Fetch recent conversations list. Returns raw API response."""
+def fetch_conversations(
+    api: PlaywrightLinkedinAPI,
+    *,
+    sync_token: str | None = None,
+    count: int | None = None,
+) -> dict:
+    """Fetch a conversations page. Returns raw API response.
+
+    ``sync_token`` and ``count`` are optional so existing recent-inbox callers
+    keep their old behavior, while inbox-crawl commands can walk additional
+    pages when LinkedIn returns a next sync token.
+    """
     mailbox_urn = get_self_urn(api)
+    variables = [f"mailboxUrn:{encode_urn(mailbox_urn)}"]
+    if sync_token:
+        variables.append(f"syncToken:{encode_urn(sync_token)}")
+    if count:
+        variables.append(f"count:{int(count)}")
     url = (
         f"{_GRAPHQL_BASE}"
         f"?queryId={_CONVERSATIONS_QUERY_ID}"
-        f"&variables=(mailboxUrn:{encode_urn(mailbox_urn)})"
+        f"&variables=({','.join(variables)})"
     )
     res = api.get(url, headers=_graphql_headers(api))
     check_response(res, "fetch_conversations")
+    return res.json()
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=2, max=30),
+    retry=retry_if_exception_type(IOError),
+    reraise=True,
+)
+def fetch_conversations_by_category(
+    api: PlaywrightLinkedinAPI,
+    *,
+    last_updated_before: int | None = None,
+    next_cursor: str | None = None,
+    count: int | None = None,
+    category: str = "PRIMARY_INBOX",
+) -> dict:
+    """Fetch an older inbox conversation page using LinkedIn's scrolled-list query.
+
+    The initial recent-inbox query returns only LinkedIn's first visible batch.
+    When the Messaging UI scrolls the conversation list, it switches to this
+    category query with ``lastUpdatedBefore`` for the first older page and
+    ``nextCursor`` for later pages.
+    """
+    if next_cursor and last_updated_before is not None:
+        raise ValueError("Pass either next_cursor or last_updated_before, not both.")
+    if not next_cursor and last_updated_before is None:
+        raise ValueError("Need next_cursor or last_updated_before.")
+
+    mailbox_urn = get_self_urn(api)
+    variables = [
+        f"query:(predicateUnions:List((conversationCategoryPredicate:(category:{category}))))",
+        f"count:{int(count or 20)}",
+        f"mailboxUrn:{encode_urn(mailbox_urn)}",
+    ]
+    if next_cursor:
+        variables.append(f"nextCursor:{encode_urn(next_cursor)}")
+    else:
+        variables.append(f"lastUpdatedBefore:{int(last_updated_before)}")
+
+    url = (
+        f"{_GRAPHQL_BASE}"
+        f"?queryId={_CONVERSATIONS_CATEGORY_QUERY_ID}"
+        f"&variables=({','.join(variables)})"
+    )
+    res = api.get(url, headers=_graphql_headers(api))
+    check_response(res, "fetch_conversations_by_category")
     return res.json()
 
 

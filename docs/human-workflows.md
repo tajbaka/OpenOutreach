@@ -35,6 +35,8 @@ The automation gathers raw signal. The human workflows turn that signal into out
 - **No reply yet** — accepted invite, never replied (different angle than original)
 - **Met / Scheduling are sections, not Cohort values** — those rows are grouped by People-tab `Outreach status`, while the `Cohort` cell stays focused on outbound state (`Ball on us`, `Cold thread`, `Active in-flight`)
 
+**Freshness posture:** Phase 1 also stamps each row with `conversation_freshness` and `draft_posture`. Cohort answers whose ball it is; freshness answers whether the draft should continue the thread, lightly follow up, reopen an old conversation, or hold the row until there is a fresh reason to write. Stale/cold threads must not be drafted as if the last exchange happened recently.
+
 **When to run:** safe to run daily. Ball-on-court classifier prevents drafting on top of fresh outbound.
 
 **Reads from:** `crm.Message` (LinkedIn DMs + Gmail + Calendar — already ingested by data-sync, no MCP calls of its own), existing `Sent? = TRUE` rows in the Followups tabs (to skip already-handled leads), People-tab Outreach status to identify Met / Scheduling cohorts.

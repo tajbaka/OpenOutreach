@@ -33,8 +33,8 @@ whatever `42 % len(variants)` resolves to), not a random new one.
 
 Routing: ROLE → ICP via the same `FU_ROLE_TO_ICP` mapping the Sheets
 path uses, so a lead the followup workflow classifies as `ROLE=CSP`
-gets the `CSPs` template here. Channel rolls into Advisors, Assessor
-rolls into 3PAOs/Assessors (same as Sheets).
+gets the `CSPs` template here. Channel has its own partner/routing
+bucket, while Assessor rolls into 3PAOs/Assessors.
 """
 from __future__ import annotations
 
@@ -68,8 +68,36 @@ _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
 # Python `follow_up` task module) and `assets/followup` (no separator).
 # Trailing "" = ROOT_DIR itself for legacy callers.
 _ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
-ICP_MESSAGES_HEADERS = ["ICP", "Connect Message", "Followup Message"]
-ICP_MESSAGES_SHEET_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors")
+ICP_MESSAGES_BASE_HEADERS = ["ICP", "Connect Message"]
+ICP_MESSAGES_SHEET_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors", "Channel")
+# Follow-up sequences are arbitrary-length: the sheet grows one
+# `Followup Message N` column per step, sized per sender to the longest
+# sequence across its ICP buckets (always at least one column).
+_FOLLOWUP_HEADER_RE = re.compile(r"^followup message(?:\s+(\d+))?$")
+
+
+def _followup_header(n: int) -> str:
+    return f"Followup Message {n}"
+
+
+def icp_messages_headers(followup_steps: int) -> list[str]:
+    """Full header row for `followup_steps` follow-up columns (min one)."""
+    n = max(followup_steps, 1)
+    return list(ICP_MESSAGES_BASE_HEADERS) + [_followup_header(i + 1) for i in range(n)]
+
+
+# Single-step default header; the push path computes the real width per sender.
+ICP_MESSAGES_HEADERS = icp_messages_headers(1)
+
+
+def _default_step_delay(idx: int) -> int:
+    """Cadence used for a sheet-introduced step when JSON carries no delay.
+
+    Step 0 fires on accept (0 days); each later step defaults to a 4-day gap.
+    Existing per-step delays in JSON are preserved on merge (see
+    `_reconcile_followup`); this only fills genuinely new steps.
+    """
+    return 0 if idx == 0 else 4
 UNKNOWN_COMPANY_NAMES = {"unknown company", "unknown", "n/a", "none"}
 
 
@@ -255,28 +283,42 @@ def icp_messages_rows(sender: str) -> list[list[str]]:
     """Flatten one sender's core JSON block into one row per ICP.
 
     The sheet is intentionally operator-friendly rather than lossless:
-    it surfaces the three core ICP buckets only, and only the first
-    variant for the connect note / follow-up. Extra ICPs (e.g. Channel)
-    and extra variants remain in JSON and are preserved on pull.
-    Sequenced follow-up channels are JSON-only because the single-cell
-    Sheet view cannot round-trip multiple steps safely.
+    it surfaces the core ICP buckets only, and only the first variant
+    for the connect note / follow-up step(s). Extra variants remain in
+    JSON and are preserved on pull.
+    Sequenced follow-ups render one step per `Followup Message N` column;
+    the tab is sized to the longest sequence across the sender's buckets,
+    so any number of steps round-trips.
     """
-    rows: list[list[str]] = [list(ICP_MESSAGES_HEADERS)]
     messages = load_icp_messages(sender)
+    steps_by_icp = {
+        icp: _followup_step_firsts(messages.get(icp, {}).get("linkedin_connect_followup"))
+        for icp in ICP_MESSAGES_SHEET_BUCKETS
+    }
+    n_cols = max((len(s) for s in steps_by_icp.values()), default=0)
+    rows: list[list[str]] = [icp_messages_headers(n_cols)]
     for icp in ICP_MESSAGES_SHEET_BUCKETS:
         channels = messages.get(icp, {})
-        followup = channels.get("linkedin_connect_followup") or [""]
-        if followup and isinstance(followup[0], dict):
-            raise SheetsError(
-                f"ICP messages sync cannot push sequenced follow-up templates "
-                f"for {sender}.{icp}. Edit linkedin/icp_messages.json directly."
-            )
+        steps = steps_by_icp[icp]
         rows.append([
             icp,
             ((channels.get("linkedin_connect_note") or [""])[0] or "").strip(),
-            (followup[0] or "").strip(),
+            *[steps[i] if i < len(steps) else "" for i in range(max(n_cols, 1))],
         ])
     return rows
+
+
+def _followup_step_firsts(raw) -> list[str]:
+    """First variant of each follow-up step, for both JSON shapes.
+
+    Legacy `["a", "b"]` → one step (`["a"]`). Sequenced
+    `[{"variants": [...]}, ...]` → one entry per step. Empty/missing → `[]`.
+    """
+    if not raw:
+        return []
+    if isinstance(raw[0], dict):
+        return [((item.get("variants") or [""])[0] or "").strip() for item in raw]
+    return [(raw[0] or "").strip()]
 
 
 def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[str]]]:
@@ -295,19 +337,36 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
 
     icp_idx = col_idx("ICP")
     connect_idx = col_idx("Connect Message")
-    followup_idx = col_idx("Followup Message")
+
+    # Every `Followup Message [N]` column, ordered by step number. A bare
+    # "Followup Message" header counts as step 1.
+    followup_cols: list[int] = []
+    for idx, header in enumerate(header_lower):
+        m = _FOLLOWUP_HEADER_RE.match(header)
+        if m:
+            step_num = int(m.group(1)) if m.group(1) else 1
+            followup_cols.append((step_num, idx))
+    if not followup_cols:
+        raise SheetsError("ICP messages tab missing required 'Followup Message' column")
+    followup_idxs = [idx for _num, idx in sorted(followup_cols)]
 
     out: dict[str, dict[str, list[str]]] = {}
     for row_num, row in enumerate(rows[1:], start=2):
-        def cell(idx: int) -> str:
-            return row[idx].strip() if idx < len(row) and row[idx] is not None else ""
+        def cell(idx: int | None) -> str:
+            if idx is None or idx >= len(row) or row[idx] is None:
+                return ""
+            return row[idx].strip()
 
         icp = cell(icp_idx)
         connect_message = cell(connect_idx)
-        followup_message = cell(followup_idx)
-        if not any((icp, connect_message, followup_message)):
+        step_texts = [cell(i) for i in followup_idxs]
+        # Trailing empty step columns just mean this ICP's sequence is
+        # shorter than the widest one on the tab.
+        while step_texts and not step_texts[-1]:
+            step_texts.pop()
+        if not any((icp, connect_message, *step_texts)):
             continue
-        if not icp or not connect_message or not followup_message:
+        if not icp or not connect_message or not step_texts or not step_texts[0]:
             raise SheetsError(
                 f"ICP messages row {row_num} must include ICP, Connect Message, and Followup Message"
             )
@@ -318,9 +377,18 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
             )
         if icp in out:
             raise SheetsError(f"ICP messages row {row_num} duplicates ICP {icp!r}")
+        if len(step_texts) > 1:
+            # Multiple steps → sequenced shape. Delays default here;
+            # save_icp_messages() preserves existing per-step delays on merge.
+            followup_value: list = [
+                {"delay_days": _default_step_delay(i), "variants": [text]}
+                for i, text in enumerate(step_texts)
+            ]
+        else:
+            followup_value = [step_texts[0]]
         out[icp] = {
             "linkedin_connect_note": [connect_message],
-            "linkedin_connect_followup": [followup_message],
+            "linkedin_connect_followup": followup_value,
         }
     if not out:
         raise SheetsError("ICP messages tab has no message rows")
@@ -331,9 +399,10 @@ def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> No
     """Merge one sender's edited core ICPs into `icp_messages.json`.
 
     Only buckets present in `block` are replaced. Other ICPs and extra
-    variants for untouched buckets remain as-is. Existing sequenced
-    `linkedin_connect_followup` channels are preserved on pull rather
-    than flattened back to the Sheet's single follow-up cell.
+    variants for untouched buckets remain as-is. Follow-up handling is
+    delegated to `_reconcile_followup` so a sheet-edited sequence applies
+    its text while preserving the existing JSON cadence, and a legacy
+    single-cell pull never flattens a real multi-step sequence.
     """
     by_sender = json.loads(_MESSAGES_PATH.read_text())
     existing = by_sender.get(sender, {})
@@ -342,20 +411,45 @@ def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> No
         existing_channels = existing.get(icp, {})
         merged_channels = dict(existing_channels)
         for channel, value in channels.items():
-            current = existing_channels.get(channel)
-            if (
-                channel == "linkedin_connect_followup"
-                and isinstance(current, list)
-                and current
-                and isinstance(current[0], dict)
-            ):
-                # The Sheets tab is single-cell/legacy only for follow-up
-                # copy. Do not flatten a real multi-step sequence on pull.
-                continue
+            if channel == "linkedin_connect_followup":
+                value = _reconcile_followup(existing_channels.get(channel), value)
             merged_channels[channel] = value
         merged[icp] = merged_channels
     by_sender[sender] = merged
     _MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
+
+
+def _reconcile_followup(current, new):
+    """Merge a sheet-parsed follow-up value with the existing JSON value.
+
+    `new` is what `parse_icp_messages_rows` produced — a legacy `[str]` when
+    the sheet had one follow-up cell, or a sequenced `[{...}, ...]` when
+    multiple `Followup Message N` cells were filled. The sheet never carries
+    step delays, so:
+      - sequenced sheet edit + sequenced JSON → keep new text, keep the
+        existing per-step delays (sheet can't express cadence).
+      - sequenced sheet edit + legacy/absent JSON → use new as-is (default
+        delays from the parser).
+      - legacy single cell + sequenced JSON → preserve the JSON sequence
+        rather than flatten it (operator left the second cell blank).
+      - otherwise → take new verbatim.
+    """
+    new_is_seq = isinstance(new, list) and bool(new) and isinstance(new[0], dict)
+    cur_is_seq = isinstance(current, list) and bool(current) and isinstance(current[0], dict)
+    if new_is_seq:
+        if cur_is_seq:
+            reconciled = []
+            for idx, step in enumerate(new):
+                if idx < len(current) and "delay_days" in current[idx]:
+                    delay = current[idx]["delay_days"]
+                else:
+                    delay = step.get("delay_days", 0)
+                reconciled.append({"delay_days": delay, "variants": step["variants"]})
+            return reconciled
+        return new
+    if cur_is_seq:
+        return current
+    return new
 
 
 def missing_sender_block(linkedin_username: str) -> str | None:

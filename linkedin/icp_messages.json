@@ -5,7 +5,18 @@
         "Hi {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low or Moderate auth is active this year. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs test whether a FedRAMP 20x Low or Moderate path is actually viable before the expensive authorization work starts.\n\nWe run a 20x OS pilot that maps KSI evidence, shows gaps, and turns eligible fixes into remediation workflows, including Jira tickets and draft GitHub PRs for your team to review.\n\nThe goal is to show the workflow without asking your team to hand over broad production access.\n\nWorth comparing notes on how {company_name} is thinking about FedRAMP this year?\n\n{add demo.gif}"
+        {
+          "delay_days": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
+          ]
+        },
+        {
+          "delay_days": 4,
+          "variants": [
+            "Hey {first_name}, quick follow-up on this.\n\nThe reason FedRAMP 20x is interesting is that, for the right CSPs, it may be a much lower-friction path than the traditional Rev 5 package-heavy route: more automation, KSI validation evidence, persistent validation / continuous monitoring built in, and a clearer path to Marketplace visibility.\n\nThe first useful step is usually figuring out whether {company_name} is even a good fit for 20x: what evidence already exists, what gaps would block you, and whether Low or Moderate equivalency is realistic before a bigger authorization push.\n\nOpen to a quick compare-notes conversation?"
+          ]
+        }
       ]
     },
     "3PAOs/Assessors": {
@@ -13,7 +24,7 @@
         "Hi {first_name}, saw your FedRAMP work at {company_name}. Building tools for cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nI’m building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP’s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
+        "Hi {first_name},\n\nI\u2019m building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP\u2019s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
       ]
     },
     "Advisors": {
@@ -21,17 +32,26 @@
         "Hi {first_name}, saw your security/compliance work at {company_name}. Building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nI’m building {our_company_name} for CSPs trying to figure out whether FedRAMP 20x Low or Moderate is actually viable.\n\nThe product maps evidence to KSIs, surfaces gaps/findings, and helps move remediation into Jira or draft GitHub PR workflows instead of more spreadsheet chasing.\n\nIf this fits a client you advise, we’re open to referral / partner economics.\n\nWould this be relevant to how you work with CSPs, or not really?\n\n{add demo.gif}"
+        {
+          "delay_days": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you\u2019re hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nThat\u2019s where Boundera fits: helping teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
+          ]
+        },
+        {
+          "delay_days": 4,
+          "variants": [
+            "Hey {first_name}, quick follow-up on this.\n\nThe pattern I'm trying to understand is whether CSP clients are starting to ask advisors about 20x vs the traditional Rev 5 path, or whether most are still treating FedRAMP as the same package-heavy authorization project.\n\nIf 20x becomes a more automated, lower-friction route for the right services, advisors may need a faster way to help clients assess fit, evidence readiness, and remediation ownership.\n\nIs that showing up in your client conversations yet?"
+          ]
+        }
       ]
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Worth connecting?",
-        "{first_name}, building {our_company_name} around FedRAMP Low/Moderate readiness. Looking for partners already supporting CSPs on this path. Worth connecting?",
-        "Hi {first_name}, exploring channel partners for {our_company_name}. We help CSPs validate FedRAMP Low/Moderate readiness before the expensive work starts. Worth connecting?"
+        "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nNot trying to change your referral process. If there’s a right partner/vendor team internally, happy to follow the existing path.\n\nWho would usually own this kind of FedRAMP tooling conversation?\n\n{add demo.gif}"
+        "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from CSPs around FedRAMP right now, especially with 20x becoming a more real path alongside Rev 5.\n\nMy read is that a lot of vendors are still trying to figure out how 20x will change their process for getting on the Marketplace, and whether it is the right step for them.\n\nGiven 20x is so new, how are you thinking about working with CSPs who go through 20x instead of Rev 5?"
       ]
     }
   },
@@ -44,13 +64,13 @@
         {
           "delay_days": 0,
           "variants": [
-            "Hey {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs test whether a FedRAMP 20x Low or Moderate path is actually viable before the expensive authorization work starts.\n\nWe run a 20x OS pilot that maps KSI evidence, shows gaps, and turns eligible fixes into remediation workflows, including Jira tickets and draft GitHub PRs for your team to review.\n\nThe goal is to show the workflow without asking your team to hand over broad production access.\n\nWorth comparing notes on how {company_name} is thinking about FedRAMP this year?\n\n{add demo.gif}"
+            "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
           ]
         },
         {
           "delay_days": 4,
           "variants": [
-            "Hey {first_name}, quick follow-up on this.\n\nIf FedRAMP 20x is even a tentative 2026 priority for {company_name}, the useful first step is usually a light readiness check: which KSIs already have evidence, which ones need remediation, and whether Low or Moderate equivalents are realistic before a bigger authorization push.\n\nOpen to a quick compare-notes conversation?"
+            "Hey {first_name}, quick follow-up on this.\n\nThe reason FedRAMP 20x is interesting is that, for the right CSPs, it may be a much lower-friction path than the traditional Rev 5 package-heavy route: more automation, KSI validation evidence, persistent validation / continuous monitoring built in, and a clearer path to Marketplace visibility.\n\nThe first useful step is usually figuring out whether {company_name} is even a good fit for 20x: what evidence already exists, what gaps would block you, and whether Low or Moderate equivalency is realistic before a bigger authorization push.\n\nOpen to a quick compare-notes conversation?"
           ]
         }
       ]
@@ -63,13 +83,13 @@
         {
           "delay_days": 0,
           "variants": [
-            "Hey {first_name},\n\nWe're building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP’s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
+            "Hey {first_name},\n\nWe're building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP\u2019s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
           ]
         },
         {
           "delay_days": 4,
           "variants": [
-            "Hey {first_name}, circling back once.\n\nThe part I’m trying to pressure-test with assessors is whether CSP evidence can arrive in a more reviewer-friendly shape: KSI status, linked artifacts, open findings, and remediation ownership without digging through scattered docs.\n\nIf you have a strong view on where that breaks today, I’d value the critique."
+            "Hey {first_name}, circling back once.\n\nThe part I\u2019m trying to pressure-test with assessors is whether CSP evidence can arrive in a more reviewer-friendly shape: KSI status, linked artifacts, open findings, and remediation ownership without digging through scattered docs.\n\nIf you have a strong view on where that breaks today, I\u2019d value the critique."
           ]
         }
       ]
@@ -82,26 +102,26 @@
         {
           "delay_days": 0,
           "variants": [
-            "Hey {first_name},\n\nWe're building {our_company_name} for CSPs trying to figure out whether FedRAMP 20x Low or Moderate is actually viable.\n\nThe product maps evidence to KSIs, surfaces gaps/findings, and helps move remediation into Jira or draft GitHub PR workflows instead of more spreadsheet chasing.\n\nIf this fits a client you advise, we’re open to referral / partner economics.\n\nWould this be relevant to how you work with CSPs, or not really?\n\n{add demo.gif}"
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you\u2019re hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nThat\u2019s where Boundera fits: helping teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
           ]
         },
         {
           "delay_days": 4,
           "variants": [
-            "Hey {first_name}, quick follow-up.\n\nIf you advise CSPs that are FedRAMP-curious but not ready for a full authorization motion, {our_company_name} is meant to help them decide whether the path is viable before they spend heavily.\n\nWorth keeping on your radar for clients heading toward Low, Moderate, or 20x?"
+            "Hey {first_name}, quick follow-up on this.\n\nThe pattern I'm trying to understand is whether CSP clients are starting to ask advisors about 20x vs the traditional Rev 5 path, or whether most are still treating FedRAMP as the same package-heavy authorization project.\n\nIf 20x becomes a more automated, lower-friction route for the right services, advisors may need a faster way to help clients assess fit, evidence readiness, and remediation ownership.\n\nIs that showing up in your client conversations yet?"
           ]
         }
       ]
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hey {first_name}, building Boundera for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Good to connect?"
+        "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
         {
           "delay_days": 0,
           "variants": [
-            "Hey {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nNot trying to change your referral process. If there’s a right partner/vendor team internally, happy to follow the existing path.\n\nWho would usually own this kind of FedRAMP tooling conversation?\n\n{add demo.gif}"
+            "Hey {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nNot trying to change your referral process. If there\u2019s a right partner/vendor team internally, happy to follow the existing path.\n\nWho would usually own this kind of FedRAMP tooling conversation?\n\n{add demo.gif}"
           ]
         },
         {
@@ -119,7 +139,18 @@
         "Hi {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low or Moderate auth is active this year. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs test whether a FedRAMP 20x Low or Moderate path is actually viable before the expensive authorization work starts.\n\nWe run a 20x OS pilot that maps KSI evidence, shows gaps, and turns eligible fixes into remediation workflows, including Jira tickets and draft GitHub PRs for your team to review.\n\nThe goal is to show the workflow without asking your team to hand over broad production access.\n\nWorth comparing notes on how {company_name} is thinking about FedRAMP this year?\n\n{add demo.gif}"
+        {
+          "delay_days": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
+          ]
+        },
+        {
+          "delay_days": 4,
+          "variants": [
+            "Hey {first_name}, quick follow-up on this.\n\nThe reason FedRAMP 20x is interesting is that, for the right CSPs, it may be a much lower-friction path than the traditional Rev 5 package-heavy route: more automation, KSI validation evidence, persistent validation / continuous monitoring built in, and a clearer path to Marketplace visibility.\n\nThe first useful step is usually figuring out whether {company_name} is even a good fit for 20x: what evidence already exists, what gaps would block you, and whether Low or Moderate equivalency is realistic before a bigger authorization push.\n\nOpen to a quick compare-notes conversation?"
+          ]
+        }
       ]
     },
     "3PAOs/Assessors": {
@@ -127,7 +158,7 @@
         "Hi {first_name}, saw your FedRAMP work at {company_name}. Building tools for cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nI’m building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP’s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
+        "Hi {first_name},\n\nI\u2019m building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP\u2019s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
       ]
     },
     "Advisors": {
@@ -135,17 +166,26 @@
         "Hi {first_name}, saw your security/compliance work at {company_name}. Building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nI’m building {our_company_name} for CSPs trying to figure out whether FedRAMP 20x Low or Moderate is actually viable.\n\nThe product maps evidence to KSIs, surfaces gaps/findings, and helps move remediation into Jira or draft GitHub PR workflows instead of more spreadsheet chasing.\n\nIf this fits a client you advise, we’re open to referral / partner economics.\n\nWould this be relevant to how you work with CSPs, or not really?\n\n{add demo.gif}"
+        {
+          "delay_days": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you\u2019re hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nThat\u2019s where Boundera fits: helping teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
+          ]
+        },
+        {
+          "delay_days": 4,
+          "variants": [
+            "Hey {first_name}, quick follow-up on this.\n\nThe pattern I'm trying to understand is whether CSP clients are starting to ask advisors about 20x vs the traditional Rev 5 path, or whether most are still treating FedRAMP as the same package-heavy authorization project.\n\nIf 20x becomes a more automated, lower-friction route for the right services, advisors may need a faster way to help clients assess fit, evidence readiness, and remediation ownership.\n\nIs that showing up in your client conversations yet?"
+          ]
+        }
       ]
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Worth connecting?",
-        "{first_name}, building {our_company_name} around FedRAMP Low/Moderate readiness. Looking for partners already supporting CSPs on this path. Worth connecting?",
-        "Hi {first_name}, exploring channel partners for {our_company_name}. We help CSPs validate FedRAMP Low/Moderate readiness before the expensive work starts. Worth connecting?"
+        "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nNot trying to change your referral process. If there’s a right partner/vendor team internally, happy to follow the existing path.\n\nWho would usually own this kind of FedRAMP tooling conversation?\n\n{add demo.gif}"
+        "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from CSPs around FedRAMP right now, especially with 20x becoming a more real path alongside Rev 5.\n\nMy read is that a lot of vendors are still trying to figure out how 20x will change their process for getting on the Marketplace, and whether it is the right step for them.\n\nGiven 20x is so new, how are you thinking about working with CSPs who go through 20x instead of Rev 5?"
       ]
     }
   },
@@ -155,7 +195,18 @@
         "Hi {first_name}, noticed {company_name} in the FedRAMP/public-sector space. Curious if Low or Moderate auth is active this year. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs test whether a FedRAMP 20x Low or Moderate path is actually viable before the expensive authorization work starts.\n\nWe run a 20x OS pilot that maps KSI evidence, shows gaps, and turns eligible fixes into remediation workflows, including Jira tickets and draft GitHub PRs for your team to review.\n\nThe goal is to show the workflow without asking your team to hand over broad production access.\n\nWorth comparing notes on how {company_name} is thinking about FedRAMP this year?\n\n{add demo.gif}"
+        {
+          "delay_days": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
+          ]
+        },
+        {
+          "delay_days": 4,
+          "variants": [
+            "Hey {first_name}, quick follow-up on this.\n\nThe reason FedRAMP 20x is interesting is that, for the right CSPs, it may be a much lower-friction path than the traditional Rev 5 package-heavy route: more automation, KSI validation evidence, persistent validation / continuous monitoring built in, and a clearer path to Marketplace visibility.\n\nThe first useful step is usually figuring out whether {company_name} is even a good fit for 20x: what evidence already exists, what gaps would block you, and whether Low or Moderate equivalency is realistic before a bigger authorization push.\n\nOpen to a quick compare-notes conversation?"
+          ]
+        }
       ]
     },
     "3PAOs/Assessors": {
@@ -163,7 +214,7 @@
         "Hi {first_name}, saw your FedRAMP work at {company_name}. Building tools for cleaner CSP evidence review. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nI’m building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP’s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
+        "Hi {first_name},\n\nI\u2019m building {our_company_name} around the messy part of FedRAMP 20x for CSPs: evidence traceability, KSI validation status, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP\u2019s evidence easier to inspect, with reviewer-facing views, current status, and a cleaner path from gap to fix.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\n{add demo.gif}"
       ]
     },
     "Advisors": {
@@ -171,17 +222,26 @@
         "Hi {first_name}, saw your security/compliance work at {company_name}. Building around FedRAMP readiness for CSPs. Good to connect?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nI’m building {our_company_name} for CSPs trying to figure out whether FedRAMP 20x Low or Moderate is actually viable.\n\nThe product maps evidence to KSIs, surfaces gaps/findings, and helps move remediation into Jira or draft GitHub PR workflows instead of more spreadsheet chasing.\n\nIf this fits a client you advise, we’re open to referral / partner economics.\n\nWould this be relevant to how you work with CSPs, or not really?\n\n{add demo.gif}"
+        {
+          "delay_days": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you\u2019re hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nThat\u2019s where Boundera fits: helping teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
+          ]
+        },
+        {
+          "delay_days": 4,
+          "variants": [
+            "Hey {first_name}, quick follow-up on this.\n\nThe pattern I'm trying to understand is whether CSP clients are starting to ask advisors about 20x vs the traditional Rev 5 path, or whether most are still treating FedRAMP as the same package-heavy authorization project.\n\nIf 20x becomes a more automated, lower-friction route for the right services, advisors may need a faster way to help clients assess fit, evidence readiness, and remediation ownership.\n\nIs that showing up in your client conversations yet?"
+          ]
+        }
       ]
     },
     "Channel": {
       "linkedin_connect_note": [
-        "Hi {first_name}, building {our_company_name} for CSPs pursuing FedRAMP Low/Moderate readiness. Curious if this fits customers you support or co-sell into. Worth connecting?",
-        "{first_name}, building {our_company_name} around FedRAMP Low/Moderate readiness. Looking for partners already supporting CSPs on this path. Worth connecting?",
-        "Hi {first_name}, exploring channel partners for {our_company_name}. We help CSPs validate FedRAMP Low/Moderate readiness before the expensive work starts. Worth connecting?"
+        "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name},\n\nReal reason I reached out: {our_company_name} helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nNot trying to change your referral process. If there’s a right partner/vendor team internally, happy to follow the existing path.\n\nWho would usually own this kind of FedRAMP tooling conversation?\n\n{add demo.gif}"
+        "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from CSPs around FedRAMP right now, especially with 20x becoming a more real path alongside Rev 5.\n\nMy read is that a lot of vendors are still trying to figure out how 20x will change their process for getting on the Marketplace, and whether it is the right step for them.\n\nGiven 20x is so new, how are you thinking about working with CSPs who go through 20x instead of Rev 5?"
       ]
     }
   }

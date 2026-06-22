@@ -8,5 +8,6 @@ from linkedin.api.messaging.utils import (  # noqa: F401
 from linkedin.api.messaging.send import send_message  # noqa: F401
 from linkedin.api.messaging.conversations import (  # noqa: F401
     fetch_conversations,
+    fetch_conversations_by_category,
     fetch_messages,
 )

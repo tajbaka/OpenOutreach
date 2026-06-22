@@ -8,10 +8,14 @@ Safe to run **daily**. The ball-on-court classifier (Phase 1) routes fresh outbo
 
 ## Output location
 
-Drafts land in two **Google Sheets tabs** — one per active sender:
+Drafts land in **Google Sheets tabs** — one per active sender:
 
 - `Arian - Followups`
 - `Chuka - Followups`
+- `Athena - Followups`
+- `Leili - Followups`
+
+`write_followups()` drops and recreates whichever tabs appear in its payload, so a new sender's tab is created automatically the first time that sender has cohort rows — no manual sheet setup.
 
 Each tab has 14 columns and is divided into five sections via merged divider rows:
 
@@ -61,6 +65,8 @@ Six buckets the workflow generates files / sections for. The drafted ones are sp
 
 > The "Connected, no reply" cohort was previously surfaced here and drafted into the SENIOR/T1 tiers; it's now handled programmatically by the daemon (`linkedin/tasks/follow_up.py` + `linkedin/icp_messages.json`). Leads who accept an invite and never reply get a rigid template DM from the daemon and are then marked Completed — no operator review step.
 
+**Freshness posture is separate from cohort.** The cohort answers "whose ball is it?" The freshness posture answers "how should this sound given the time gap?" A stale thread can still be `Ball on us`, but the draft must reopen the conversation instead of pretending the last message was recent.
+
 ## Step-by-step
 
 ### Phase 0 — Re-ground in the FedrampGPT codebase (MANDATORY, every run)
@@ -99,7 +105,7 @@ Followup is **global** (operator=""), but its prereqs are **per-operator**. So t
 ```python
 from linkedin.workflow_prereqs import check_prereqs, format_report, prompt_if_stale, StalenessReport
 
-OPERATORS = ["Chuka", "Arian"]  # add new operators as they join
+OPERATORS = ["Chuka", "Arian", "Athena", "Leili"]  # add new operators as they join
 
 reports = [check_prereqs("followup", operator=op) for op in OPERATORS]
 for r in reports:
@@ -133,6 +139,7 @@ from crm.models import Lead, Deal, Message
 from linkedin.notifications.sheets import (
     read_followup_sent_rows,
     read_followup_templates,
+    read_icp_goals,
     SheetIndex,
     COL_LINKEDIN_URL, COL_OUTREACH_STATUS,
     MET_STATUSES, PRE_MEETING_STATUSES,
@@ -154,7 +161,7 @@ def _norm_name(s: str) -> str:
     return " ".join((s or "").split()).lower()
 
 ALREADY_SENT_NAMES: set[str] = set()
-for op in ("Arian", "Chuka"):
+for op in ("Arian", "Chuka", "Athena", "Leili"):
     for r in read_followup_sent_rows(op):
         nm = _norm_name(r.get("Name", ""))
         if nm:
@@ -202,8 +209,47 @@ except Exception as _e:
     print(f"warning: could not load People tab for Met/Scheduling cohorts: {_e}")
 
 NUDGE_AFTER_DAYS = 5  # how long to wait before nudging an unanswered outbound
+ACTIVE_THREAD_DAYS = 7
+WARM_THREAD_DAYS = 21
+STALE_THREAD_DAYS = 60
+COLD_THREAD_DAYS = 90
 now = datetime.now(timezone.utc)
 nudge_cutoff = now - timedelta(days=NUDGE_AFTER_DAYS)
+
+def _days_since_dt(dt):
+    return (now - dt).days if dt else None
+
+def _latest_by_direction(msgs, direction):
+    return next((m for m in reversed(msgs) if m.direction == direction), None)
+
+def _freshness_context(klass, latest_any, latest_inbound, latest_outbound, latest_meeting=None):
+    """Return (conversation_freshness, draft_posture, freshness_reason).
+
+    Cohort decides whether the row belongs in Ball on us / Cold thread /
+    Active in-flight / Met / Scheduling. Freshness decides whether the draft
+    can continue the old thread directly or must reopen with light memory.
+    """
+    anchor_candidates = []
+    if latest_any:
+        anchor_candidates.append(latest_any.sent_at)
+    if klass == "met" and latest_meeting:
+        anchor_candidates.append(latest_meeting.start_at)
+    anchor = max(anchor_candidates) if anchor_candidates else None
+    age = _days_since_dt(anchor)
+
+    if age is None:
+        return ("unknown", "new_touch", "no dated conversation anchor")
+    if klass == "active_in_flight":
+        return ("active", "hold", "latest outbound is still fresh")
+    if age <= ACTIVE_THREAD_DAYS:
+        return ("active", "reply", "continue the thread directly")
+    if age <= WARM_THREAD_DAYS:
+        return ("warm", "light_followup", "reference prior context lightly")
+    if age <= STALE_THREAD_DAYS:
+        return ("stale", "reopen", "reopen the thread; do not write as if it is ongoing")
+    if age <= COLD_THREAD_DAYS:
+        return ("cold", "memory_reopen", "treat as a new touch with light memory")
+    return ("archival", "skip_or_new_reason", "draft only with a fresh external reason")
 
 def classify(lead):
     """
@@ -267,6 +313,11 @@ def _build_row(lead, klass, msgs, latest=None, extra=None):
         days_since = (now - anchor).days if anchor else None
     else:
         days_since = (now - latest_any.sent_at).days if latest_any else None
+    latest_inbound = _latest_by_direction(msgs, "inbound")
+    latest_outbound = _latest_by_direction(msgs, "outbound")
+    freshness, draft_posture, freshness_reason = _freshness_context(
+        klass, latest_any, latest_inbound, latest_outbound, latest_meeting,
+    )
     row = {
         "lead_id": lead.id, "deal_id": (deal.id if deal else None),
         "first_name": lead.first_name, "last_name": lead.last_name,
@@ -280,7 +331,14 @@ def _build_row(lead, klass, msgs, latest=None, extra=None):
         "latest_at": (str(latest.sent_at)[:19] if latest else None),
         "latest_any_direction": (latest_any.direction if latest_any else None),
         "latest_any_at": (str(latest_any.sent_at)[:19] if latest_any else None),
+        "last_inbound_at": (str(latest_inbound.sent_at)[:19] if latest_inbound else None),
+        "last_outbound_at": (str(latest_outbound.sent_at)[:19] if latest_outbound else None),
         "days_since": days_since,
+        "days_since_inbound": _days_since_dt(latest_inbound.sent_at) if latest_inbound else None,
+        "days_since_outbound": _days_since_dt(latest_outbound.sent_at) if latest_outbound else None,
+        "conversation_freshness": freshness,
+        "draft_posture": draft_posture,
+        "freshness_reason": freshness_reason,
         "messages": [{"source": m.source, "d": m.direction, "t": str(m.sent_at)[:19], "b": (m.body or "")[:600], "s": m.sender} for m in msgs],
         # Meet context — drafter reads raw Gemini transcript for Met cohort.
         # Truncated to 3500 chars in the JSON dump to keep row size sane;
@@ -382,7 +440,7 @@ EOF
 
 The output splits into four cohort files plus the templates snapshot:
 
-- `/tmp/followup_drafts.json` — leads that need a draft. Mix of "ball on us, draft a reply" and "cold thread, draft a nudge." The `latest_direction` field tells you which kind.
+- `/tmp/followup_drafts.json` — leads that need a draft. Mix of "ball on us, draft a reply" and "cold thread, draft a nudge." The `latest_direction` field tells you which kind; `conversation_freshness` and `draft_posture` tell the drafter whether to continue the thread directly, reopen it, or skip unless there is a fresh reason.
 - `/tmp/followup_pre_meeting.json` — leads with Outreach status `Wants Meeting` or `Meeting Booked`. Drafter resurfaces time slots or sends pre-meeting confirms. Never deliverable-first.
 - `/tmp/followup_active_in_flight.json` — visibility only. Listed in the SUMMARY/ACTIVE section of the output file with a one-line state, no draft. These are the leads that under the old freshness filter would have silently disappeared.
 - `/tmp/followup_met.json` — post-meeting follow-up cohort. Sourced from the People tab's Outreach status (`Had Meeting` / `Manual followup` / `Prospecting to close`). Each entry carries an `outreach_status` field so Phase 5 can pick the right post-meeting frame. These land in the 🤝 MET section in Phase 6, but the `Cohort` cell should still reflect outbound state rather than `Met`.
@@ -432,6 +490,28 @@ Phase 1's `_build_row` already reads the merged timeline via `Message.objects.fi
 **No re-classification call needed in followup** — the inline classifier in Phase 1 reads the merged DB timeline and produces correct ball-on-court results.
 
 ### Phase 5 — Draft
+
+**Freshness posture gate (mandatory before writing copy):**
+
+Before drafting each row, read `row["conversation_freshness"]`, `row["draft_posture"]`, `row["days_since"]`, `row["days_since_inbound"]`, and `row["days_since_outbound"]`. Cohort tells you whether the row belongs in Ball on us / Cold thread / Met / Scheduling. Freshness posture tells you how the message should sound. Never write as if the last thread is active when `draft_posture` is `reopen`, `memory_reopen`, or `skip_or_new_reason`.
+
+| `draft_posture` | Typical age | Drafting rule |
+|---|---:|---|
+| `reply` | 0-7 days | Continue the thread directly. Answer the latest inbound first, then ask the next low-friction question. |
+| `light_followup` | 8-21 days | Reference prior context lightly, then move forward. One memory cue is enough. |
+| `reopen` | 22-60 days | Reopen the conversation. Name the old context briefly, then give them an easy current reason to respond. Do not imply the thread is still warm. |
+| `memory_reopen` | 61-90 days | Treat it like a new touch with one light memory from the old exchange. The old thread is context, not momentum. |
+| `skip_or_new_reason` | 91+ days | Do not draft from the stale thread alone. Draft only if there is a fresh external reason: new product capability verified in Phase 0, a recent company/profile trigger, a new FedRAMP 20x change, or a concrete asset we owe them. Otherwise leave the draft blank, set/keep priority as `HOLD`, and flag it in the SUMMARY. |
+| `hold` | active in-flight | No draft. The row is visibility-only. |
+
+Stale examples:
+
+- Bad at 75 days: "Following up on our last thread about evidence automation. Want to grab time next week?"
+- Better at 75 days: "We connected a while back around Avaya's 20x work. Quick question, are you still in the early scoping phase, or has evidence ownership become the thing slowing the team down?"
+- Bad at 120 days with no new trigger: "Just checking in."
+- Better at 120 days: no draft unless there is a current reason to write.
+
+For `pre_meeting` and `met` rows, freshness still applies. If a meeting is actually upcoming, the calendar state wins. If an old `Wants Meeting` / `Meeting Booked` row is 22+ days stale and there is no current calendar event, do not write as if slots or the meeting are live. Reopen with context first, then ask whether the topic is still active. If a post-meeting deliverable is 22+ days late, lead with the deliverable or a fresh artifact, not with an apology.
 
 **Tone rules (learned from user feedback):**
 - No em dashes. Use commas, periods, or restructure.
@@ -588,7 +668,7 @@ Skip Phase 5b only if you're explicitly running with `--no-humanize` for speed; 
 
 ### Phase 6 — Sheet output
 
-The drafts land in two Google Sheets tabs (`Arian - Followups`, `Chuka - Followups`) via a single helper call. Build a row dict per Lead from **all four** cohort files — `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, and `/tmp/followup_pre_meeting.json` — group by operator, and call `write_followups()`. The `Cohort` field is outbound-state only (`Ball on us`, `Cold thread`, `Active in-flight`). Section routing is handled by `write_followups()`: rows with post-meeting statuses land in 🤝 MET, pre-meeting statuses land in 📅 SCHEDULING, replied rows land in 💬 REPLIED, active rows land in 🌊 ACTIVE IN-FLIGHT, and preserved sent-history rows land in ✅ SENT.
+The drafts land in one Google Sheets tab per active sender (`Arian - Followups`, `Chuka - Followups`, `Athena - Followups`, `Leili - Followups`) via a single helper call. Build a row dict per Lead from **all four** cohort files — `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, and `/tmp/followup_pre_meeting.json` — group by operator, and call `write_followups()`. The `Cohort` field is outbound-state only (`Ball on us`, `Cold thread`, `Active in-flight`). Section routing is handled by `write_followups()`: rows with post-meeting statuses land in 🤝 MET, pre-meeting statuses land in 📅 SCHEDULING, replied rows land in 💬 REPLIED, active rows land in 🌊 ACTIVE IN-FLIGHT, and preserved sent-history rows land in ✅ SENT.
 
 ```python
 from linkedin.notifications.sheets import (
@@ -623,8 +703,15 @@ arian_rows = [
     # ...
 ]
 chuka_rows = [...]
+# ...one list per active sender (Athena, Leili, ...) keyed by canonical handle.
 
-write_followups({"Arian": arian_rows, "Chuka": chuka_rows})
+# One key per sender that has rows this run; empty senders can be omitted.
+write_followups({
+    "Arian": arian_rows,
+    "Chuka": chuka_rows,
+    "Athena": athena_rows,
+    "Leili": leili_rows,
+})
 ```
 
 `write_followups()` does this on each call:
@@ -651,18 +738,29 @@ Print a SUMMARY block to stdout (and optionally include in `raw.json`) at the en
 - **Polite-no candidates** for `Lead.disqualified=True` batch
 - **Already-met-but-not-in-People-tab** contacts (Section C from `docs/data-sync-workflow.md`)
 - **Action items** owed by us across multiple threads (e.g., "we owe Percy the Anthropic-pattern repo link")
+- **Stale/cold posture exceptions**: rows where `draft_posture in {"reopen", "memory_reopen", "skip_or_new_reason"}`. For archival rows, state whether they were held blank or drafted because of a fresh trigger.
 
 **Finally — record the WorkflowRun so the next session's Phase 0.5 staleness check knows when followup last ran:**
 
 ```python
 from linkedin.models import WorkflowRun
+all_followup_rows = cohort_drafts + cohort_met + cohort_pre_meeting
+stale_reopens = [
+    r for r in all_followup_rows
+    if r.get("draft_posture") in {"reopen", "memory_reopen"}
+]
+archival_holds = [
+    r for r in all_followup_rows
+    if r.get("draft_posture") == "skip_or_new_reason"
+]
 WorkflowRun.objects.create(
     name="followup",
     operator="",  # global — drafts for all operators in one pass
     summary=(
         f"drafts={len(cohort_drafts)} met={len(cohort_met)} "
         f"pre_meeting={len(cohort_pre_meeting)} "
-        f"active={len(cohort_active_in_flight)} polite_no={len(polite_no)}"
+        f"active={len(cohort_active_in_flight)} polite_no={len(polite_no)} "
+        f"stale_reopens={len(stale_reopens)} archival_holds={len(archival_holds)}"
     ),
     counts={
         "drafts":               len(cohort_drafts),
@@ -670,6 +768,8 @@ WorkflowRun.objects.create(
         "pre_meeting":          len(cohort_pre_meeting),
         "active_in_flight":     len(cohort_active_in_flight),
         "polite_no_candidates": len(polite_no),
+        "stale_reopens":        len(stale_reopens),
+        "archival_holds":       len(archival_holds),
     },
 )
 ```
@@ -679,7 +779,6 @@ WorkflowRun.objects.create(
 The canonical tone reference is the user's hand-written `followups.txt` (kept at repo root, not in the dated subdirs). Re-read it before drafting to recalibrate. Key patterns to mimic:
 
 - "no rush, figured I'd send one more note"
-- "my fault on the gap"
 - "Want a 2-min Loom showing it on a sample env?"
 - "No pitch, just curious if it'd dent your workload."
 
@@ -702,8 +801,9 @@ Tier 2 leads don't get individual drafts; they share a name-personalized templat
 
 ### Sender field
 - `Message.sender` (CharField on `crm.Message`) holds the outbound sender identifier — a LinkedIn display name for `source=linkedin` rows and a Gmail address for `source=gmail` rows.
-- LinkedIn display names: `"chukwuka agu"` → Chuka, `"Arian Taj"` → Arian.
-- Gmail addresses: `eddy@tryfedrampgpt.com` → Chuka (host operator), `ariantajbaka@gmail.com` / `ariant2013@gmail.com` → Arian.
+- LinkedIn display names: `"chukwuka agu"` → Chuka, `"Arian Taj"` → Arian, `"Leili Amirshahi"` → Leili, `"Athena Aghdami"` → Athena.
+- Gmail addresses: `eddy@tryfedrampgpt.com` → Chuka (host operator), `ariantajbaka@gmail.com` / `ariant2013@gmail.com` → Arian, `leili.ash2011@yahoo.com` → Leili, `athenaaghdami@gmail.com` → Athena.
+- The canonical mapping lives in `linkedin/operators.py` (`resolve_operator`) — use it rather than re-deriving handles here; the examples above are just the common cases.
 - Operator-routing rule for the drafter: prefer the LinkedIn display name when present; fall back to the Gmail address mapping above for email-only leads (Stephen Pratt, John@mindanvil, etc.). A lead can have outbounds in both — pick the operator who owns the most recent outbound thread on the merged timeline.
 - Use this to bucket per-sender, since each sender's threads should stay continuous to the same prospect.
 
@@ -712,7 +812,7 @@ Some calendar attendees had meetings but aren't yet reflected in the People tab'
 
 ### File path conventions
 - Generation scratch: `/tmp/followup_drafts.json`, `/tmp/followup_active_in_flight.json`, `/tmp/followup_met.json`, `/tmp/followup_pre_meeting.json`, `/tmp/icp_goals.json`, `/tmp/polite_no_candidates.json`
-- Final output: `Arian - Followups` and `Chuka - Followups` tabs in the Google Sheet (via `linkedin.notifications.sheets.write_followups()`)
+- Final output: one `<Sender> - Followups` tab per active sender (`Arian - Followups`, `Chuka - Followups`, `Athena - Followups`, `Leili - Followups`) in the Google Sheet (via `linkedin.notifications.sheets.write_followups()`)
 - Optional archive: `followups/YYYY-MM-DD/raw.json` (per-run snapshot of rows + classifier state, for history only)
 - Tone exemplar: `followups.txt` at repo root (manual reference, do not overwrite)
 
