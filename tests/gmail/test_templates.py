@@ -70,6 +70,26 @@ def test_render_for_icp_uses_direct_icp_bucket():
     assert "vendors around FedRAMP 20x" in rendered.body
 
 
+def test_render_for_icp_uses_gmail_sender_display_name_override():
+    lead = SimpleNamespace(
+        id=8,
+        first_name="Ada",
+        last_name="Lovelace",
+        company_name="Analytical Engines",
+    )
+
+    rendered = render_for_icp(
+        sender="Chuka",
+        icp="3PAOs/Assessors",
+        sequence_name="gmail_fallback",
+        lead=lead,
+        step_index=0,
+    )
+
+    assert rendered.body.endswith("Best,\nEddy")
+    assert "Best,\nChuka" not in rendered.body
+
+
 def test_icp_emails_uses_direct_icp_step_arrays():
     data = json.loads(TEMPLATES_PATH.read_text())
 

@@ -88,6 +88,32 @@ def test_gmail_follow_up_sends_and_persists(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_gmail_follow_up_next_step_delay_starts_after_send(monkeypatch):
+    lead = _lead()
+    deal = _deal(lead)
+    deal.connected_at = timezone.now() - timedelta(days=30)
+    deal.save(update_fields=["connected_at"])
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
+
+    seen = {}
+
+    def fake_delay(delay_hours, *, reference_time=None):
+        seen["delay_hours"] = delay_hours
+        seen["reference_time"] = reference_time
+        return 123
+
+    monkeypatch.setattr("gmail.tasks.follow_up._delay_seconds_to_active_due", fake_delay)
+
+    handle_gmail_follow_up(_task(lead, deal))
+
+    next_task = Task.objects.get(task_type=Task.TaskType.GMAIL_FOLLOW_UP, payload__step_index=1)
+    assert seen["delay_hours"] == 192
+    assert seen["reference_time"] is None
+    assert next_task.scheduled_at > timezone.now() + timedelta(seconds=100)
+
+
+@pytest.mark.django_db
 def test_gmail_follow_up_uses_persisted_icp(monkeypatch):
     lead = _lead(icp="Channel")
     deal = _deal(lead)

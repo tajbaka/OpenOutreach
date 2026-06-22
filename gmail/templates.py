@@ -56,6 +56,13 @@ def _icp_for_role(role: str) -> str:
     return icp
 
 
+def _sender_display_name(sender: str) -> str:
+    from gmail.auth import GMAIL_OPERATOR_MAPPING
+
+    mapping = GMAIL_OPERATOR_MAPPING.get(sender) or {}
+    return mapping.get("display_name") or sender
+
+
 def _field_root(field_name: str) -> str:
     root = field_name
     for separator in (".", "["):
@@ -192,7 +199,7 @@ def render_for_icp(
         "first_name": greeting_first_name(getattr(lead, "first_name", "") or ""),
         "last_name": getattr(lead, "last_name", "") or "",
         "company_name": company_name,
-        "my_name": sender,
+        "my_name": _sender_display_name(sender),
         "our_company_name": OUR_COMPANY_NAME,
         "our_website_url": OUR_WEBSITE_URL,
     }

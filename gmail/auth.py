@@ -11,6 +11,7 @@ DEFAULT_CLIENT_SECRET_PATH = GMAIL_DATA_DIR / "oauth-client.json"
 
 SCOPES = (
     "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/gmail.readonly",
 )
@@ -51,6 +52,11 @@ GMAIL_OPERATOR_MAPPING: dict[str, dict[str, str]] = {
     "Leili": {
         "gmail_account": "arian_boundera",
         "send_as": "leili@boundera.io",
+    },
+    "Chuka": {
+        "gmail_account": "eddy_boundera",
+        "send_as": "eddy@boundera.io",
+        "display_name": "Eddy",
     },
     "Eddy": {
         "gmail_account": "eddy_boundera",

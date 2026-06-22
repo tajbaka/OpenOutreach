@@ -234,12 +234,14 @@ email templates. Gmail template routing uses `resolve_icp(lead)`, so a stamped
 `Lead.icp` such as `Channel` wins before the legacy classifier backfills blanks.
 If the lead already has `Lead.email`, it queues durable
 `gmail_follow_up` step 0; otherwise it queues `enrich_email`. Gmail and LinkedIn
-steps use independent `delay_hours` offsets from `Deal.connected_at`; a failed
-or skipped Gmail task does not block later LinkedIn steps, and a failed LinkedIn
-step does not block Gmail. Both lanes stop on any inbound LinkedIn or Gmail
-reply. Default post-accept cadence is LinkedIn at Day 0, Gmail at +0.33 hours,
-LinkedIn at Day 4, and Gmail at Day 8; later added Gmail steps default to weekly
-spacing after Day 8. `delay_hours` supports fractional values, so roughly
+steps use independent `delay_hours`; Gmail step 0 is anchored to
+`Deal.connected_at`, while later Gmail steps are anchored to the previous Gmail
+send time so catch-up runs cannot send multiple Gmail steps back-to-back. A
+failed or skipped Gmail task does not block later LinkedIn steps, and a failed
+LinkedIn step does not block Gmail. Both lanes stop on any inbound LinkedIn or
+Gmail reply. Default post-accept cadence is LinkedIn at Day 0, Gmail at +0.33
+hours, LinkedIn at Day 4, and Gmail at Day 8; later added Gmail steps default to
+weekly spacing after Day 8. `delay_hours` supports fractional values, so roughly
 20-minute Gmail offsets are valid.
 
 **Gmail package.** The top-level `gmail/` package owns the Gmail post-accept lane:
@@ -248,6 +250,9 @@ OAuth/token loading (`auth.py`), Gmail API send/search (`client.py`), scheduling
 (`tasks/enrich_email.py`, `tasks/follow_up.py`), and email sequence copy
 (`icp_emails.json` via `templates.py`). Gmail templates are separate from
 `linkedin/icp_messages.json`, which remains LinkedIn/connect/follow-up copy.
+`gmail/auth.py` maps Arian and Leili to `arian_boundera`, while Athena, Eddy,
+and Chuka use `eddy_boundera`; Chuka sends as `eddy@boundera.io`, which is a
+verified alias on that OAuth account.
 Missing Gmail copy for a sender/ICP/step is treated as that lane being disabled
 for the lead and skips cleanly; malformed template rows still fail loudly.
 Gmail subjects/bodies are parsed against an explicit placeholder allowlist
@@ -260,6 +265,7 @@ subject/body cells for an otherwise valid ICP row save that sender/ICP's Gmail
 block as an empty list so stale JSON copy cannot keep sending after an operator
 clears the Sheet.
 `manage.py gmail_oauth` creates per-account tokens under `data/gmail/`;
+tokens request Gmail send, compose/draft, settings, and readonly scopes;
 `manage.py gmail_send_test` sends a direct live test message through the mapped
 operator alias.
 

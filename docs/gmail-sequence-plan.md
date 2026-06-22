@@ -47,6 +47,11 @@ Gmail steps default to 0.33h, 192h, then weekly after that. This keeps the
 first email close to the first LinkedIn follow-up while preserving independent,
 standalone copy in case either lane fails open.
 
+The first Gmail task is anchored to `Deal.connected_at` so it can land near the
+accept event. Later Gmail steps are anchored to the previous Gmail send time, so
+catch-up runs for older connected leads do not compress the sequence into
+multiple same-run emails.
+
 ## Fail-Open Behavior
 
 Channels are intentionally independent:
@@ -116,5 +121,5 @@ Missing, blank, or incomplete Gmail copy for a sender/ICP disables only that
 Gmail lane. It must not alter LinkedIn state, LinkedIn scheduling, or LinkedIn
 send behavior.
 
-Current Gmail templates are populated for Arian, Athena, Leili, and Eddy. Chuka
-is intentionally skipped unless a Gmail mapping and templates are added.
+Current Gmail templates are populated for Arian, Athena, Leili, Chuka, and Eddy.
+Chuka sends through the `eddy_boundera` Gmail account as `eddy@boundera.io`.

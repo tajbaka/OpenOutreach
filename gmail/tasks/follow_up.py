@@ -38,15 +38,12 @@ def _has_sent_gmail_step(*, lead, operator: str, sequence_name: str, step_index:
     ).exists()
 
 
-def _enqueue_next_step(task, *, delay_hours: float, reference_time=None) -> None:
+def _enqueue_next_step(task, *, delay_hours: float) -> None:
     from linkedin.models import Task
 
     payload = dict(task.payload)
     payload["step_index"] = int(payload.get("step_index") or 0) + 1
-    delay_seconds = _delay_seconds_to_active_due(
-        delay_hours,
-        reference_time=reference_time,
-    )
+    delay_seconds = _delay_seconds_to_active_due(delay_hours)
     Task.objects.create(
         task_type=Task.TaskType.GMAIL_FOLLOW_UP,
         status=Task.Status.PENDING,
@@ -201,10 +198,8 @@ def handle_gmail_follow_up(task) -> None:
 
     next_step_index = step_index + 1
     if next_step_index < len(steps):
-        reference_time = deal.connected_at if deal is not None else None
         _enqueue_next_step(
             task,
             delay_hours=steps[next_step_index].delay_hours,
-            reference_time=reference_time,
         )
     logger.info("gmail_follow_up sent to lead=%s step=%s", lead_id, step_index)

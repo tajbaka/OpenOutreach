@@ -94,12 +94,16 @@ def test_handoff_disabled_noops(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_handoff_skips_unmapped_gmail_operator(monkeypatch):
+def test_handoff_supports_chuka_gmail_operator(monkeypatch):
     monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com")
 
-    assert maybe_schedule_gmail_sequence(deal=deal, operator="Chuka") is None
-    assert not Task.objects.exists()
+    task = maybe_schedule_gmail_sequence(deal=deal, operator="Chuka")
+
+    assert task.task_type == Task.TaskType.GMAIL_FOLLOW_UP
+    assert task.payload["lead_id"] == deal.lead_id
+    assert task.payload["operator"] == "Chuka"
 
 
 @pytest.mark.django_db
