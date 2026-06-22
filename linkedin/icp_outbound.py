@@ -14,11 +14,15 @@ This module is the rigid alternative. Templates live in
 `linkedin/icp_messages.json` (checked into the repo). The legacy channel
 shape is `{sender: {icp: {channel: [variant1, variant2, ...]}}}`. Follow-up
 channels can also use step objects:
-`{channel: [{"delay_days": 0, "variants": [...]}, ...]}`. The top level is
-keyed by the operator's canonical handle (`linkedin.operators.resolve_operator`,
-e.g. "Arian" / "Chuka") so each sender gets a fully independent template block.
-Under each sender, variants stay nested inside the step so the batch doesn't
-look templated when scanned top-to-bottom. The only substitution is
+`{channel: [{"delay_days": 0, "variants": [...]}, ...]}`. An ICP block can
+declare `"media": ["demo.gif"]`; templates in that block may reference
+`{demo.gif}` to attach that file, resolved from `assets/follow_up/` or
+`assets/followup/`. The legacy `{add demo.gif}` syntax still works. The top
+level is keyed by the operator's canonical handle
+(`linkedin.operators.resolve_operator`, e.g. "Arian" / "Chuka") so each sender
+gets a fully independent template block. Under each sender, variants stay
+nested inside the step so the batch doesn't look templated when scanned
+top-to-bottom. The only substitution is
 `{first_name}`; product name, URLs, signature, everything else is hardcoded
 literally in the message body. To change the wording, edit the JSON.
 
@@ -54,9 +58,11 @@ logger = logging.getLogger(__name__)
 
 _MESSAGES_PATH = Path(__file__).parent / "icp_messages.json"
 
-# `{add <filename>}` placeholders attach a file to the send. The
-# placeholder text is stripped from the rendered body. Multiple
-# attachments per template are supported. Resolution order:
+# `{add <filename>}` placeholders attach a file to the send. ICP blocks can
+# also declare `"media": ["demo.gif"]`, allowing templates in that block to
+# attach media with the shorter `{demo.gif}` token. Placeholder text is stripped
+# from the rendered body. Multiple attachments per template are supported.
+# Resolution order:
 #   1. If the value contains a path separator → resolve relative to
 #      ROOT_DIR verbatim (e.g. `{add assets/followup/demo.gif}`).
 #   2. Else → search `_ATTACH_SEARCH_DIRS` in order; first match wins
@@ -247,8 +253,8 @@ def classify_role(lead) -> str:
     return "CSP"
 
 
-def load_icp_messages(sender: str) -> dict[str, dict[str, list[str]]]:
-    """Return one sender's `{icp: {channel: [variant, ...]}}` block.
+def load_icp_messages(sender: str) -> dict[str, dict[str, object]]:
+    """Return one sender's `{icp: {channel: [variant, ...], media: [...]}}` block.
 
     The JSON file is `{sender: {icp: {channel: [...]}}}` — each operator
     (canonical handle from `linkedin.operators.resolve_operator`) gets a
@@ -590,11 +596,14 @@ def fill_message(
     else:
         idx = 0
 
-    # IMPORTANT: extract `{add <filename>}` placeholders BEFORE str.format —
-    # otherwise format() sees them as named placeholders and raises KeyError
-    # on "add demo.gif" since there's no matching kwarg.
+    # IMPORTANT: extract media placeholders BEFORE str.format — otherwise
+    # format() sees `{add demo.gif}` / `{demo.gif}` as named placeholders and
+    # raises KeyError since there are no matching kwargs.
     template = variants[idx]
-    stripped, attachments = _extract_attachments(template)
+    stripped, attachments = _extract_attachments(
+        template,
+        media_names=_media_names_for_icp(sender=sender, icp=icp),
+    )
     body = stripped.format(
         first_name=greeting_first_name(first_name),
         last_name=last_name or "",
@@ -608,8 +617,25 @@ def fill_message(
     return FilledMessage(body=body, attachments=attachments)
 
 
-def _extract_attachments(template: str) -> tuple[str, list[Path]]:
-    """Strip `{add <filename>}` from `template` and resolve each filename.
+def _media_names_for_icp(*, sender: str, icp: str) -> tuple[str, ...]:
+    """Return the optional media registry for one sender × ICP block."""
+    messages = load_icp_messages(sender)
+    raw = messages.get(icp, {}).get("media", [])
+    if raw in (None, ""):
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise SheetsError(
+            f"icp_outbound: {icp!r}.media must be a list of filenames"
+        )
+    return tuple(item.strip() for item in raw if item.strip())
+
+
+def _extract_attachments(
+    template: str,
+    *,
+    media_names: tuple[str, ...] = (),
+) -> tuple[str, list[Path]]:
+    """Strip media placeholders from `template` and resolve each filename.
 
     Returns `(template_without_attach_placeholders, resolved_paths)`.
     Missing files are logged-and-dropped so a stale reference doesn't
@@ -617,8 +643,7 @@ def _extract_attachments(template: str) -> tuple[str, list[Path]]:
     """
     attachments: list[Path] = []
 
-    def _swap(match):
-        filename = match.group(1).strip()
+    def _attach(filename: str) -> None:
         candidate = _resolve_attachment(filename)
         if candidate:
             attachments.append(candidate)
@@ -629,9 +654,23 @@ def _extract_attachments(template: str) -> tuple[str, list[Path]]:
                 filename,
                 [str(ROOT_DIR / d / filename) for d in _ATTACH_SEARCH_DIRS],
             )
+
+    def _swap_add(match):
+        _attach(match.group(1).strip())
         return ""
 
-    return _ATTACH_RE.sub(_swap, template), attachments
+    stripped = _ATTACH_RE.sub(_swap_add, template)
+
+    for filename in media_names:
+        token_re = re.compile(r"\{\s*" + re.escape(filename) + r"\s*\}")
+
+        def _swap_media(match):
+            _attach(filename)
+            return ""
+
+        stripped = token_re.sub(_swap_media, stripped)
+
+    return stripped, attachments
 
 
 def _resolve_attachment(filename: str) -> Path | None:

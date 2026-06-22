@@ -41,6 +41,8 @@ def test_load_icp_messages_channels_normalize_to_steps():
         messages = icp_outbound.load_icp_messages(sender)
         for icp, channels in messages.items():
             for channel in channels:
+                if channel == "media":
+                    continue
                 steps = icp_outbound.channel_steps(sender=sender, icp=icp, channel=channel)
                 assert len(steps) >= 1, f"{sender}.{icp}.{channel} needs >=1 step"
                 for step in steps:
@@ -85,6 +87,67 @@ def test_fill_message_substitutes_first_name_and_brand(tmp_path, monkeypatch):
     assert "BrandCo" in out
     assert "https://brand.co/" in out
     assert "{" not in out  # no leftover placeholders
+
+
+def test_fill_message_resolves_registered_media_placeholder(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    asset_dir = root / "assets" / "follow_up"
+    asset_dir.mkdir(parents=True)
+    asset = asset_dir / "demo.gif"
+    asset.write_bytes(b"GIF89a")
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "media": ["demo.gif"],
+                "linkedin_connect_followup": [
+                    "Hi {first_name}, quick visual attached.\n\n{demo.gif}"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "ROOT_DIR", root)
+
+    out = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_followup",
+        first_name="Jane",
+    )
+
+    assert out.body == "Hi Jane, quick visual attached."
+    assert out.attachments == [asset]
+
+
+def test_fill_message_legacy_add_placeholder_still_resolves(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    asset_dir = root / "assets" / "follow_up"
+    asset_dir.mkdir(parents=True)
+    asset = asset_dir / "demo.gif"
+    asset.write_bytes(b"GIF89a")
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    "Hi {first_name}, quick visual attached.\n\n{add demo.gif}"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "ROOT_DIR", root)
+
+    out = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_followup",
+        first_name="Jane",
+    )
+
+    assert out.body == "Hi Jane, quick visual attached."
+    assert out.attachments == [asset]
 
 
 def test_fill_message_replaces_unknown_company_sentinel(tmp_path, monkeypatch):
@@ -478,6 +541,32 @@ def test_save_icp_messages_preserves_sequenced_followup_on_pull(tmp_path, monkey
     saved = json.loads(path.read_text())
     assert saved["Arian"]["CSPs"]["linkedin_connect_note"] == ["new connect"]
     assert saved["Arian"]["CSPs"]["linkedin_connect_followup"] == sequence
+
+
+def test_save_icp_messages_preserves_media_registry_on_pull(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "media": ["demo.gif"],
+                "linkedin_connect_note": ["old connect"],
+                "linkedin_connect_followup": ["old followup {demo.gif}"],
+            },
+        },
+    }, indent=2) + "\n")
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    icp_outbound.save_icp_messages(
+        "Arian",
+        {"CSPs": {
+            "linkedin_connect_note": ["new connect"],
+            "linkedin_connect_followup": ["new followup {demo.gif}"],
+        }},
+    )
+
+    saved = json.loads(path.read_text())
+    assert saved["Arian"]["CSPs"]["media"] == ["demo.gif"]
+    assert saved["Arian"]["CSPs"]["linkedin_connect_followup"] == ["new followup {demo.gif}"]
 
 
 def test_fill_message_missing_first_name_renders_empty():
