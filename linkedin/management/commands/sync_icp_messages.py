@@ -24,7 +24,8 @@ class Command(BaseCommand):
         from linkedin.exceptions import SheetsError
         from linkedin.icp_outbound import (
             icp_messages_rows,
-            parse_icp_messages_rows,
+            parse_icp_messages_sheet_rows,
+            save_gmail_messages,
             save_icp_messages,
         )
         from linkedin.notifications.sheets import (
@@ -49,11 +50,13 @@ class Command(BaseCommand):
                 return
 
             rows = read_icp_messages_tab(sender)
-            block = parse_icp_messages_rows(rows)
+            block, gmail_block = parse_icp_messages_sheet_rows(rows)
             save_icp_messages(sender, block)
+            save_gmail_messages(sender, gmail_block)
             self.stdout.write(self.style.SUCCESS(
                 f"Imported {sum(len(v) for channels in block.values() for v in channels.values())} "
-                f"variant(s) from {icp_messages_tab_name(sender)} into linkedin/icp_messages.json."
+                f"LinkedIn variant(s) and {sum(len(v) for v in gmail_block.values())} "
+                f"Gmail step(s) from {icp_messages_tab_name(sender)}."
             ))
         except SheetsError as e:
             raise CommandError(str(e)) from e

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 from django.db import connections
@@ -84,9 +85,23 @@ def _sequence_stop_reason(deal) -> str:
     return automation_stop_reason(deal)
 
 
-def _delay_seconds_to_active_due(delay_days: int) -> float:
-    """Return a delay whose target lands inside the active-hours window."""
-    raw_delay = max(int(delay_days), 0) * 24 * 3600
+def _delay_seconds_to_active_due(
+    delay_hours: float,
+    *,
+    reference_time=None,
+) -> float:
+    """Return a delay whose target lands inside the active-hours window.
+
+    `delay_hours` is an offset from `reference_time`, normally
+    `Deal.connected_at`. Falling back to now keeps legacy rows with no
+    connection timestamp schedulable without special cases.
+    """
+    anchor = reference_time or timezone.now()
+    parsed_delay_hours = float(delay_hours)
+    if not isfinite(parsed_delay_hours):
+        raise ValueError(f"delay_hours must be finite, got {delay_hours!r}")
+    target = anchor + timedelta(hours=max(parsed_delay_hours, 0.0))
+    raw_delay = max((target - timezone.now()).total_seconds(), 0.0)
     if not ENABLE_ACTIVE_HOURS:
         return float(raw_delay)
 
@@ -305,7 +320,10 @@ def handle_follow_up(task, session, qualifiers):
                 campaign_id,
                 public_id,
                 operator=our_operator,
-                delay_seconds=_delay_seconds_to_active_due(steps[next_step_index].delay_days),
+                delay_seconds=_delay_seconds_to_active_due(
+                    steps[next_step_index].delay_hours,
+                    reference_time=deal.connected_at,
+                ),
                 sequence_name=sequence_name,
                 channel=channel,
                 step_index=next_step_index,
@@ -387,7 +405,10 @@ def handle_follow_up(task, session, qualifiers):
 
     next_step_index = step_index + 1
     if next_step_index < len(steps):
-        delay_seconds = _delay_seconds_to_active_due(steps[next_step_index].delay_days)
+        delay_seconds = _delay_seconds_to_active_due(
+            steps[next_step_index].delay_hours,
+            reference_time=deal.connected_at,
+        )
         enqueue_follow_up(
             campaign_id,
             public_id,
@@ -425,8 +446,4 @@ def handle_follow_up(task, session, qualifiers):
         )
         connections.close_all()
         _record_success_state()
-    if next_step_index >= len(steps):
-        from gmail.handoff import maybe_handoff_to_gmail
-
-        maybe_handoff_to_gmail(deal=deal, operator=our_operator)
     logger.info("follow_up sent to %s (role=%s, step=%s/%s)", public_id, role, step_index, len(steps) - 1)

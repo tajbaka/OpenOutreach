@@ -381,14 +381,23 @@ def handle_connect(task, session, qualifiers):
 
         if status == ProfileState.CONNECTED:
             set_profile_state(session, public_id, status.value)
+            deal = Deal.objects.filter(
+                lead__linkedin_url=public_id_to_url(public_id),
+                campaign=session.campaign,
+            ).select_related("lead").first()
+            operator = resolve_operator(session.linkedin_profile.linkedin_username)
             enqueue_follow_up(
                 campaign_id,
                 public_id,
-                operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                operator=operator,
                 delay_seconds=recommended_action_delay(
                     session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                 ),
             )
+            if deal is not None:
+                from gmail.handoff import maybe_schedule_gmail_sequence
+
+                maybe_schedule_gmail_sequence(deal=deal, operator=operator)
             # Already-connected profiles are effectively "no connect work
             # done" from this lane's perspective, so keep moving instead of
             # consuming the normal connect pacing budget.
@@ -434,14 +443,23 @@ def handle_connect(task, session, qualifiers):
                 ).update(sent_note=note)
                 enqueue_sweep_connections()
             elif new_state == ProfileState.CONNECTED:
+                deal = Deal.objects.filter(
+                    lead__linkedin_url=public_id_to_url(public_id),
+                    campaign=session.campaign,
+                ).select_related("lead").first()
+                operator = resolve_operator(session.linkedin_profile.linkedin_username)
                 enqueue_follow_up(
                     campaign_id,
                     public_id,
-                    operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                    operator=operator,
                     delay_seconds=recommended_action_delay(
                         session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                     ),
                 )
+                if deal is not None:
+                    from gmail.handoff import maybe_schedule_gmail_sequence
+
+                    maybe_schedule_gmail_sequence(deal=deal, operator=operator)
 
     except ReachedConnectionLimit as e:
         logger.warning("Rate limited: %s", e)

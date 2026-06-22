@@ -100,9 +100,9 @@ ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
-# Post-LinkedIn fallback into the browserless Gmail lane. Default OFF until
-# Gmail auth/sending is implemented and QA'd; when on, final LinkedIn follow-up
-# success can enqueue email enrichment or a pending gmail_follow_up task.
+# Post-accept browserless Gmail lane. Default OFF; when on, accepted LinkedIn
+# connections can enqueue email enrichment or a pending gmail_follow_up task on
+# their own delay_hours timeline, independent from LinkedIn follow-up completion.
 ENABLE_GMAIL_SEQUENCE = os.getenv("ENABLE_GMAIL_SEQUENCE", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }

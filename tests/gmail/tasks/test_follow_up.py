@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from crm.models import Deal, Lead, Message
 from linkedin.enums import ProfileState
+from linkedin.exceptions import SheetsError
 from linkedin.models import Campaign, Task
 from gmail.tasks.follow_up import handle_gmail_follow_up
 from tests.factories import UserFactory
@@ -84,6 +85,19 @@ def test_gmail_follow_up_sends_and_persists(monkeypatch):
     assert msg.sender == "ariant@boundera.io"
     assert "Hi Ada" in msg.body
     assert "Analytical Engines" in msg.body
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_uses_persisted_icp(monkeypatch):
+    lead = _lead(icp="Channel")
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
+
+    handle_gmail_follow_up(_task(lead, deal))
+
+    msg = Message.objects.get(source=Message.Source.GMAIL, direction=Message.Direction.OUTBOUND)
+    assert "vendors around FedRAMP 20x" in msg.body
 
 
 @pytest.mark.django_db
@@ -168,6 +182,27 @@ def test_gmail_follow_up_missing_sender_icp_skips_without_client(monkeypatch):
 
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoClient)
 
-    handle_gmail_follow_up(_task(lead, deal, operator="Athena"))
+    handle_gmail_follow_up(_task(lead, deal, operator="Missing"))
+
+    assert not Message.objects.filter(source=Message.Source.GMAIL).exists()
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_blank_template_skips_without_client(monkeypatch):
+    lead = _lead(icp="CSPs")
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr(
+        "gmail.tasks.follow_up.render_for_icp",
+        lambda **kwargs: (_ for _ in ()).throw(SheetsError("gmail templates: step 0 needs body_variants")),
+    )
+
+    class NoClient:
+        def __init__(self, *, operator):
+            raise AssertionError("blank template should skip before Gmail client")
+
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoClient)
+
+    handle_gmail_follow_up(_task(lead, deal))
 
     assert not Message.objects.filter(source=Message.Source.GMAIL).exists()

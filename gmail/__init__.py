@@ -1,1 +1,1 @@
-"""Browserless Gmail fallback sequence lane."""
+"""Browserless Gmail post-accept sequence lane."""

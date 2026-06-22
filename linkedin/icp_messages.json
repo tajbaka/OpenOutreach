@@ -6,13 +6,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe main reason I'm asking: for the right CSPs, 20x may be a lower-friction path than the traditional Rev 5 package-heavy process.\n\nUsually the first question is not \"which tool should we buy?\" It's whether 20x is even viable: existing evidence, KSI gaps, remediation owners, and Low/Moderate fit.\n\nIs {company_name} still figuring out whether 20x applies, or sticking with the traditional Rev 5 path for now?\n\n{demo.gif}"
           ]
@@ -28,13 +28,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how you're thinking about FedRAMP 20x from the assessor side.\n\nIf more CSPs explore 20x instead of the traditional Rev 5 path, my read is that the hard part becomes automatic validation and continuous reporting: whether the evidence is current, understandable, and reviewable without chasing scattered docs.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe 20x question I'm trying to pressure-test is whether automatic validation actually makes review easier, or whether assessors still end up needing clearer context around evidence, gaps, and remediation ownership.\n\nFrom your side, what would make a 20x-style CSP package easier to trust and review?"
           ]
@@ -47,13 +47,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious what you're hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a lower-friction path.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe pattern I'm trying to understand is whether CSPs are asking advisors, \"can we use 20x?\" or whether most are still defaulting to the traditional Rev 5 path.\n\nAre you seeing that question come up with clients yet?\n\n{demo.gif}"
           ]
@@ -68,7 +68,12 @@
         "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
+          ]
+        }
       ]
     }
   },
@@ -79,13 +84,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe main reason I'm asking: for the right CSPs, 20x may be a lower-friction path than the traditional Rev 5 package-heavy process.\n\nUsually the first question is not \"which tool should we buy?\" It's whether 20x is even viable: existing evidence, KSI gaps, remediation owners, and Low/Moderate fit.\n\nIs {company_name} still figuring out whether 20x applies, or sticking with the traditional Rev 5 path for now?\n\n{demo.gif}"
           ]
@@ -101,13 +106,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how you're thinking about FedRAMP 20x from the assessor side.\n\nIf more CSPs explore 20x instead of the traditional Rev 5 path, my read is that the hard part becomes automatic validation and continuous reporting: whether the evidence is current, understandable, and reviewable without chasing scattered docs.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe 20x question I'm trying to pressure-test is whether automatic validation actually makes review easier, or whether assessors still end up needing clearer context around evidence, gaps, and remediation ownership.\n\nFrom your side, what would make a 20x-style CSP package easier to trust and review?"
           ]
@@ -120,13 +125,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious what you're hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a lower-friction path.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe pattern I'm trying to understand is whether CSPs are asking advisors, \"can we use 20x?\" or whether most are still defaulting to the traditional Rev 5 path.\n\nAre you seeing that question come up with clients yet?\n\n{demo.gif}"
           ]
@@ -142,13 +147,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, following up once.\n\nIf {our_company_name} fits a partner or vendor team you work with, the cleanest path is usually a short intro to whoever owns FedRAMP readiness, public-sector cloud, or CSP compliance tooling.\n\nIs there a better person for that conversation?"
           ]
@@ -163,13 +168,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe main reason I'm asking: for the right CSPs, 20x may be a lower-friction path than the traditional Rev 5 package-heavy process.\n\nUsually the first question is not \"which tool should we buy?\" It's whether 20x is even viable: existing evidence, KSI gaps, remediation owners, and Low/Moderate fit.\n\nIs {company_name} still figuring out whether 20x applies, or sticking with the traditional Rev 5 path for now?\n\n{demo.gif}"
           ]
@@ -185,13 +190,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how you're thinking about FedRAMP 20x from the assessor side.\n\nIf more CSPs explore 20x instead of the traditional Rev 5 path, my read is that the hard part becomes automatic validation and continuous reporting: whether the evidence is current, understandable, and reviewable without chasing scattered docs.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe 20x question I'm trying to pressure-test is whether automatic validation actually makes review easier, or whether assessors still end up needing clearer context around evidence, gaps, and remediation ownership.\n\nFrom your side, what would make a 20x-style CSP package easier to trust and review?"
           ]
@@ -204,13 +209,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious what you're hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a lower-friction path.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe pattern I'm trying to understand is whether CSPs are asking advisors, \"can we use 20x?\" or whether most are still defaulting to the traditional Rev 5 path.\n\nAre you seeing that question come up with clients yet?\n\n{demo.gif}"
           ]
@@ -225,7 +230,12 @@
         "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
+          ]
+        }
       ]
     }
   },
@@ -236,13 +246,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how closely {company_name} is looking at FedRAMP 20x.\n\nA lot of teams that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nIs 20x something your team is actively evaluating?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe main reason I'm asking: for the right CSPs, 20x may be a lower-friction path than the traditional Rev 5 package-heavy process.\n\nUsually the first question is not \"which tool should we buy?\" It's whether 20x is even viable: existing evidence, KSI gaps, remediation owners, and Low/Moderate fit.\n\nIs {company_name} still figuring out whether 20x applies, or sticking with the traditional Rev 5 path for now?\n\n{demo.gif}"
           ]
@@ -258,13 +268,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious how you're thinking about FedRAMP 20x from the assessor side.\n\nIf more CSPs explore 20x instead of the traditional Rev 5 path, my read is that the hard part becomes automatic validation and continuous reporting: whether the evidence is current, understandable, and reviewable without chasing scattered docs.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe 20x question I'm trying to pressure-test is whether automatic validation actually makes review easier, or whether assessors still end up needing clearer context around evidence, gaps, and remediation ownership.\n\nFrom your side, what would make a 20x-style CSP package easier to trust and review?"
           ]
@@ -277,13 +287,13 @@
       ],
       "linkedin_connect_followup": [
         {
-          "delay_days": 0,
+          "delay_hours": 0,
           "variants": [
             "Hi {first_name}, appreciate the connect.\n\nCurious what you're hearing from CSP clients around FedRAMP 20x.\n\nA lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a lower-friction path.\n\nAre clients asking you about 20x yet, or is it still mostly too early?"
           ]
         },
         {
-          "delay_days": 4,
+          "delay_hours": 96,
           "variants": [
             "Hey {first_name}, quick follow-up.\n\nThe pattern I'm trying to understand is whether CSPs are asking advisors, \"can we use 20x?\" or whether most are still defaulting to the traditional Rev 5 path.\n\nAre you seeing that question come up with clients yet?\n\n{demo.gif}"
           ]
@@ -298,7 +308,12 @@
         "Hi {first_name}, saw your federal cloud/security work. We\u2019re learning how agencies are thinking about FedRAMP 20x and CSP evidence review. Worth connecting?"
       ],
       "linkedin_connect_followup": [
-        "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Hi {first_name}, appreciate the connect.\n\nCurious what you're seeing from vendors around FedRAMP 20x now that it's becoming a more real path alongside Rev 5.\n\nAre CSPs asking your team about 20x yet, or is that still not showing up much?"
+          ]
+        }
       ]
     }
   }

@@ -139,12 +139,16 @@ def handle_sweep_connections(task, session, qualifiers):
                 )
 
         from linkedin.operators import resolve_operator
+        operator = resolve_operator(session.linkedin_profile.linkedin_username)
         enqueue_follow_up(
             deal.campaign.pk,
             public_id,
-            operator=resolve_operator(session.linkedin_profile.linkedin_username),
+            operator=operator,
             delay_seconds=delay_seconds,
         )
+        from gmail.handoff import maybe_schedule_gmail_sequence
+
+        maybe_schedule_gmail_sequence(deal=deal, operator=operator)
         matched += 1
 
     logger.info(
@@ -188,6 +192,7 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
     All counts are scoped to the account that ran this sweep:
       - sends today from ActionLog (this LinkedInProfile).
     """
+    from crm.models import Deal
     from linkedin.operators import resolve_operator
 
     try:
@@ -207,11 +212,19 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
             payload__campaign_id__in=[c.pk for c in session.campaigns],
             started_at__gte=today_start,
         ).count()
+        qualified = Deal.objects.filter(
+            campaign__in=session.campaigns,
+            state=ProfileState.QUALIFIED,
+            lead__disqualified=False,
+        ).count()
 
         notify_sweep_summary(
             sender=resolve_operator(session.linkedin_profile.linkedin_username),
             connects_today=connects_today,
             followups_today=followups_today,
+            connect_runs_today=connect_runs_today,
+            qualified=qualified,
+            newly_connected=newly_connected,
         )
     except Exception as e:
         logger.warning("sweep summary post failed: %s", e)

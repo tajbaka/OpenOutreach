@@ -14,7 +14,7 @@ This module is the rigid alternative. Templates live in
 `linkedin/icp_messages.json` (checked into the repo). The legacy channel
 shape is `{sender: {icp: {channel: [variant1, variant2, ...]}}}`. Follow-up
 channels can also use step objects:
-`{channel: [{"delay_days": 0, "variants": [...]}, ...]}`. An ICP block can
+`{channel: [{"delay_hours": 0, "variants": [...]}, ...]}`. An ICP block can
 declare `"media": ["demo.gif"]`; templates in that block may reference
 `{demo.gif}` to attach that file, resolved from `assets/follow_up/` or
 `assets/followup/`. The legacy `{add demo.gif}` syntax still works. The top
@@ -46,6 +46,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from math import isfinite
 from pathlib import Path
 
 from linkedin.conf import ROOT_DIR
@@ -57,6 +58,7 @@ from linkedin.operators import resolve_operator
 logger = logging.getLogger(__name__)
 
 _MESSAGES_PATH = Path(__file__).parent / "icp_messages.json"
+_GMAIL_MESSAGES_PATH = ROOT_DIR / "gmail" / "icp_emails.json"
 
 # `{add <filename>}` placeholders attach a file to the send. ICP blocks can
 # also declare `"media": ["demo.gif"]`, allowing templates in that block to
@@ -80,30 +82,57 @@ ICP_MESSAGES_SHEET_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors", "Channel")
 # `Followup Message N` column per step, sized per sender to the longest
 # sequence across its ICP buckets (always at least one column).
 _FOLLOWUP_HEADER_RE = re.compile(r"^followup message(?:\s+(\d+))?$")
+_EMAIL_SUBJECT_HEADER_RE = re.compile(r"^email subject(?:\s+(\d+))?$")
+_EMAIL_BODY_HEADER_RE = re.compile(r"^email body(?:\s+(\d+))?$")
 
 
 def _followup_header(n: int) -> str:
     return f"Followup Message {n}"
 
 
-def icp_messages_headers(followup_steps: int) -> list[str]:
-    """Full header row for `followup_steps` follow-up columns (min one)."""
-    n = max(followup_steps, 1)
-    return list(ICP_MESSAGES_BASE_HEADERS) + [_followup_header(i + 1) for i in range(n)]
+def _email_subject_header(n: int) -> str:
+    return f"Email Subject {n}"
+
+
+def _email_body_header(n: int) -> str:
+    return f"Email Body {n}"
+
+
+def icp_messages_headers(followup_steps: int, email_steps: int = 0) -> list[str]:
+    """Full header row for the multi-channel post-accept cadence."""
+    n = max(followup_steps, email_steps, 1)
+    headers = list(ICP_MESSAGES_BASE_HEADERS)
+    for idx in range(n):
+        step = idx + 1
+        headers.extend([
+            _followup_header(step),
+            _email_subject_header(step),
+            _email_body_header(step),
+        ])
+    return headers
 
 
 # Single-step default header; the push path computes the real width per sender.
 ICP_MESSAGES_HEADERS = icp_messages_headers(1)
 
 
-def _default_step_delay(idx: int) -> int:
+def _default_step_delay(idx: int) -> float:
     """Cadence used for a sheet-introduced step when JSON carries no delay.
 
-    Step 0 fires on accept (0 days); each later step defaults to a 4-day gap.
+    Step 0 fires on accept (0 hours); each later step defaults to 96 hours.
     Existing per-step delays in JSON are preserved on merge (see
     `_reconcile_followup`); this only fills genuinely new steps.
     """
-    return 0 if idx == 0 else 4
+    return 0 if idx == 0 else 96
+
+
+def _default_email_step_delay(idx: int) -> float:
+    """Default email offsets from accept when Sheets adds a Gmail step."""
+    if idx == 0:
+        return 0.33
+    if idx == 1:
+        return 192
+    return 192 + ((idx - 1) * 168)
 UNKNOWN_COMPANY_NAMES = {"unknown company", "unknown", "n/a", "none"}
 
 
@@ -141,7 +170,7 @@ class FilledMessage:
 
 @dataclass(frozen=True)
 class TemplateStep:
-    delay_days: int
+    delay_hours: float
     variants: list[str]
 
 
@@ -275,6 +304,14 @@ def load_icp_messages(sender: str) -> dict[str, dict[str, object]]:
     return by_sender[sender]
 
 
+def load_gmail_messages(sender: str) -> dict[str, list[dict[str, object]]]:
+    """Return one sender's Gmail template block, or `{}` when absent."""
+    if not _GMAIL_MESSAGES_PATH.exists():
+        return {}
+    by_sender = json.loads(_GMAIL_MESSAGES_PATH.read_text())
+    return by_sender.get(sender, {})
+
+
 def known_senders() -> set[str]:
     """Return the set of operator handles with a block in icp_messages.json.
 
@@ -297,20 +334,35 @@ def icp_messages_rows(sender: str) -> list[list[str]]:
     so any number of steps round-trips.
     """
     messages = load_icp_messages(sender)
+    gmail_messages = load_gmail_messages(sender)
     steps_by_icp = {
         icp: _followup_step_firsts(messages.get(icp, {}).get("linkedin_connect_followup"))
         for icp in ICP_MESSAGES_SHEET_BUCKETS
     }
-    n_cols = max((len(s) for s in steps_by_icp.values()), default=0)
-    rows: list[list[str]] = [icp_messages_headers(n_cols)]
+    email_steps_by_icp = {
+        icp: _email_step_firsts(gmail_messages.get(icp))
+        for icp in ICP_MESSAGES_SHEET_BUCKETS
+    }
+    n_linkedin = max((len(s) for s in steps_by_icp.values()), default=0)
+    n_email = max((len(s) for s in email_steps_by_icp.values()), default=0)
+    n_cols = max(n_linkedin, n_email, 1)
+    rows: list[list[str]] = [icp_messages_headers(n_linkedin, n_email)]
     for icp in ICP_MESSAGES_SHEET_BUCKETS:
         channels = messages.get(icp, {})
         steps = steps_by_icp[icp]
-        rows.append([
+        email_steps = email_steps_by_icp[icp]
+        row = [
             icp,
             ((channels.get("linkedin_connect_note") or [""])[0] or "").strip(),
-            *[steps[i] if i < len(steps) else "" for i in range(max(n_cols, 1))],
-        ])
+        ]
+        for i in range(n_cols):
+            subject, body = email_steps[i] if i < len(email_steps) else ("", "")
+            row.extend([
+                steps[i] if i < len(steps) else "",
+                subject,
+                body,
+            ])
+        rows.append(row)
     return rows
 
 
@@ -327,8 +379,24 @@ def _followup_step_firsts(raw) -> list[str]:
     return [(raw[0] or "").strip()]
 
 
-def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[str]]]:
-    """Parse sheet rows back into one sender's core JSON block."""
+def _email_step_firsts(raw) -> list[tuple[str, str]]:
+    """First subject/body variant of each Gmail step."""
+    if not raw:
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        subject = ((item.get("subject_variants") or [""])[0] or "").strip()
+        body = ((item.get("body_variants") or [""])[0] or "").strip()
+        out.append((subject, body))
+    return out
+
+
+def parse_icp_messages_sheet_rows(
+    rows: list[list[str]],
+) -> tuple[dict[str, dict[str, list[str]]], dict[str, list[dict[str, object]]]]:
+    """Parse sheet rows back into LinkedIn and Gmail template blocks."""
     if not rows:
         raise SheetsError("ICP messages tab is empty")
     header_lower = [str(h).strip().lower() for h in rows[0]]
@@ -346,17 +414,37 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
 
     # Every `Followup Message [N]` column, ordered by step number. A bare
     # "Followup Message" header counts as step 1.
-    followup_cols: list[int] = []
+    followup_cols: list[tuple[int, int]] = []
+    email_subject_cols: dict[int, int] = {}
+    email_body_cols: dict[int, int] = {}
     for idx, header in enumerate(header_lower):
         m = _FOLLOWUP_HEADER_RE.match(header)
         if m:
             step_num = int(m.group(1)) if m.group(1) else 1
             followup_cols.append((step_num, idx))
+            continue
+        m = _EMAIL_SUBJECT_HEADER_RE.match(header)
+        if m:
+            step_num = int(m.group(1)) if m.group(1) else 1
+            email_subject_cols[step_num] = idx
+            continue
+        m = _EMAIL_BODY_HEADER_RE.match(header)
+        if m:
+            step_num = int(m.group(1)) if m.group(1) else 1
+            email_body_cols[step_num] = idx
     if not followup_cols:
         raise SheetsError("ICP messages tab missing required 'Followup Message' column")
     followup_idxs = [idx for _num, idx in sorted(followup_cols)]
+    email_step_nums = sorted(set(email_subject_cols) | set(email_body_cols))
+    has_email_columns = bool(email_step_nums)
+    for step_num in email_step_nums:
+        if step_num not in email_subject_cols or step_num not in email_body_cols:
+            raise SheetsError(
+                f"ICP messages tab must include both Email Subject {step_num} and Email Body {step_num}"
+            )
 
     out: dict[str, dict[str, list[str]]] = {}
+    gmail_out: dict[str, list[dict[str, object]]] = {}
     for row_num, row in enumerate(rows[1:], start=2):
         def cell(idx: int | None) -> str:
             if idx is None or idx >= len(row) or row[idx] is None:
@@ -366,11 +454,17 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
         icp = cell(icp_idx)
         connect_message = cell(connect_idx)
         step_texts = [cell(i) for i in followup_idxs]
+        email_steps = [
+            (cell(email_subject_cols[step_num]), cell(email_body_cols[step_num]))
+            for step_num in email_step_nums
+        ]
         # Trailing empty step columns just mean this ICP's sequence is
         # shorter than the widest one on the tab.
         while step_texts and not step_texts[-1]:
             step_texts.pop()
-        if not any((icp, connect_message, *step_texts)):
+        while email_steps and not email_steps[-1][0] and not email_steps[-1][1]:
+            email_steps.pop()
+        if not any((icp, connect_message, *step_texts, *[v for pair in email_steps for v in pair])):
             continue
         if not icp or not connect_message or not step_texts or not step_texts[0]:
             raise SheetsError(
@@ -387,7 +481,7 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
             # Multiple steps → sequenced shape. Delays default here;
             # save_icp_messages() preserves existing per-step delays on merge.
             followup_value: list = [
-                {"delay_days": _default_step_delay(i), "variants": [text]}
+                {"delay_hours": _default_step_delay(i), "variants": [text]}
                 for i, text in enumerate(step_texts)
             ]
         else:
@@ -396,9 +490,32 @@ def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[s
             "linkedin_connect_note": [connect_message],
             "linkedin_connect_followup": followup_value,
         }
+        rendered_email_steps = []
+        for idx, (subject, body) in enumerate(email_steps):
+            if not subject or not body:
+                raise SheetsError(
+                    f"ICP messages row {row_num} Email step {idx + 1} must include subject and body"
+                )
+            rendered_email_steps.append({
+                "delay_hours": _default_email_step_delay(idx),
+                "subject_variants": [subject],
+                "body_variants": [body],
+            })
+        if rendered_email_steps:
+            gmail_out[icp] = rendered_email_steps
+        elif has_email_columns:
+            # Blank email cells in an otherwise valid ICP row explicitly
+            # disable that sender/ICP's Gmail lane on pull. Omitting the ICP
+            # here would merge-preserve stale Gmail JSON copy.
+            gmail_out[icp] = []
     if not out:
         raise SheetsError("ICP messages tab has no message rows")
-    return out
+    return out, gmail_out
+
+
+def parse_icp_messages_rows(rows: list[list[str]]) -> dict[str, dict[str, list[str]]]:
+    """Parse sheet rows back into one sender's LinkedIn JSON block."""
+    return parse_icp_messages_sheet_rows(rows)[0]
 
 
 def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> None:
@@ -425,6 +542,27 @@ def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> No
     _MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
 
 
+def save_gmail_messages(sender: str, block: dict[str, list[dict[str, object]]]) -> None:
+    """Merge one sender's edited Gmail templates into `gmail/icp_emails.json`.
+
+    An explicit empty list means the Sheet intentionally disabled Gmail copy
+    for that sender/ICP; preserve it so stale JSON does not keep sending.
+    """
+    if not _GMAIL_MESSAGES_PATH.exists():
+        by_sender = {}
+    else:
+        by_sender = json.loads(_GMAIL_MESSAGES_PATH.read_text())
+    existing = by_sender.get(sender, {})
+    merged = dict(existing)
+    for icp, value in block.items():
+        if value == []:
+            merged[icp] = []
+        else:
+            merged[icp] = _reconcile_gmail_followup(existing.get(icp), value)
+    by_sender[sender] = merged
+    _GMAIL_MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
+
+
 def _reconcile_followup(current, new):
     """Merge a sheet-parsed follow-up value with the existing JSON value.
 
@@ -446,16 +584,32 @@ def _reconcile_followup(current, new):
         if cur_is_seq:
             reconciled = []
             for idx, step in enumerate(new):
-                if idx < len(current) and "delay_days" in current[idx]:
-                    delay = current[idx]["delay_days"]
+                if idx < len(current) and "delay_hours" in current[idx]:
+                    delay = current[idx]["delay_hours"]
                 else:
-                    delay = step.get("delay_days", 0)
-                reconciled.append({"delay_days": delay, "variants": step["variants"]})
+                    delay = step.get("delay_hours", 0)
+                reconciled.append({"delay_hours": delay, "variants": step["variants"]})
             return reconciled
         return new
     if cur_is_seq:
         return current
     return new
+
+
+def _reconcile_gmail_followup(current, new):
+    cur_is_seq = isinstance(current, list) and bool(current) and isinstance(current[0], dict)
+    reconciled = []
+    for idx, step in enumerate(new):
+        if cur_is_seq and idx < len(current) and "delay_hours" in current[idx]:
+            delay = current[idx]["delay_hours"]
+        else:
+            delay = step.get("delay_hours", _default_email_step_delay(idx))
+        reconciled.append({
+            "delay_hours": delay,
+            "subject_variants": step["subject_variants"],
+            "body_variants": step["body_variants"],
+        })
+    return reconciled
 
 
 def missing_sender_block(linkedin_username: str) -> str | None:
@@ -477,7 +631,7 @@ def channel_steps(*, sender: str, icp: str, channel: str) -> list[TemplateStep]:
 
     Backward-compatible shapes:
       - legacy: ["variant a", "variant b"] → one step with variants
-      - sequence: [{"delay_days": 0, "variants": ["..."]}, ...]
+      - sequence: [{"delay_hours": 0, "variants": ["..."]}, ...]
     """
     messages = load_icp_messages(sender)
     if icp not in messages:
@@ -493,7 +647,7 @@ def channel_steps(*, sender: str, icp: str, channel: str) -> list[TemplateStep]:
         )
 
     if all(isinstance(v, str) for v in raw):
-        return [TemplateStep(delay_days=0, variants=list(raw))]
+        return [TemplateStep(delay_hours=0, variants=list(raw))]
 
     steps: list[TemplateStep] = []
     for idx, item in enumerate(raw):
@@ -510,20 +664,25 @@ def channel_steps(*, sender: str, icp: str, channel: str) -> list[TemplateStep]:
                 f"icp_outbound: {icp!r}.{channel!r} step {idx} must include "
                 "a non-empty string variants list"
             )
-        delay_days = item.get("delay_days", 0)
+        raw_delay_hours = item.get("delay_hours", 0)
         try:
-            delay_days = int(delay_days)
+            delay_hours = float(raw_delay_hours)
         except (TypeError, ValueError) as e:
             raise SheetsError(
                 f"icp_outbound: {icp!r}.{channel!r} step {idx} has invalid "
-                f"delay_days={delay_days!r}"
+                f"delay_hours={raw_delay_hours!r}"
             ) from e
-        if delay_days < 0:
+        if not isfinite(delay_hours):
+            raise SheetsError(
+                f"icp_outbound: {icp!r}.{channel!r} step {idx} has invalid "
+                f"delay_hours={raw_delay_hours!r}"
+            )
+        if delay_hours < 0:
             raise SheetsError(
                 f"icp_outbound: {icp!r}.{channel!r} step {idx} has negative "
-                f"delay_days={delay_days}"
+                f"delay_hours={delay_hours}"
             )
-        steps.append(TemplateStep(delay_days=delay_days, variants=variants))
+        steps.append(TemplateStep(delay_hours=delay_hours, variants=variants))
     return steps
 
 

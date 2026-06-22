@@ -1,8 +1,8 @@
-"""LinkedIn-to-Gmail fallback handoff.
+"""Post-accept Gmail cadence scheduling.
 
 This module owns the durable task contract for the browserless Gmail lane. The
-LinkedIn follow-up handler calls only `maybe_handoff_to_gmail` after the final
-LinkedIn sequence step succeeds.
+connect/sweep paths call `maybe_schedule_gmail_sequence` when a lead reaches
+CONNECTED, so Gmail timing is independent from the LinkedIn follow-up sequence.
 """
 from __future__ import annotations
 
@@ -76,6 +76,7 @@ def enqueue_email_enrichment(
     deal_id: int | None = None,
     sequence_name: str = DEFAULT_GMAIL_SEQUENCE_NAME,
     step_index: int = DEFAULT_GMAIL_STEP_INDEX,
+    delay_seconds: float = 0,
 ):
     """Create an email-enrichment task unless one is already queued."""
     from linkedin.models import Task
@@ -106,17 +107,46 @@ def enqueue_email_enrichment(
 
     return Task.objects.create(
         task_type=Task.TaskType.ENRICH_EMAIL,
-        scheduled_at=timezone.now(),
+        scheduled_at=timezone.now() + timedelta(seconds=max(delay_seconds, 0)),
         payload=payload,
     )
 
 
-def maybe_handoff_to_gmail(*, deal, operator: str):
-    """Queue the Gmail fallback lane when the final LinkedIn step gets no reply."""
-    if not ENABLE_GMAIL_SEQUENCE:
+def _operator_can_send_gmail(operator: str) -> bool:
+    from gmail.auth import GMAIL_OPERATOR_MAPPING
+
+    return operator in GMAIL_OPERATOR_MAPPING
+
+
+def maybe_schedule_gmail_sequence(*, deal, operator: str):
+    """Best-effort Gmail scheduler.
+
+    Gmail is an additive lane. Any failure here must never alter or fail the
+    LinkedIn connect/sweep/follow-up path that called it.
+    """
+    try:
+        return _maybe_schedule_gmail_sequence(deal=deal, operator=operator)
+    except Exception:
+        logger.exception(
+            "gmail cadence scheduling failed for lead %s; LinkedIn flow continues",
+            getattr(deal, "lead_id", "unknown"),
+        )
         return None
 
+
+def _maybe_schedule_gmail_sequence(*, deal, operator: str):
+    """Queue Gmail step 0 from the post-accept cadence when eligible."""
+    if not ENABLE_GMAIL_SEQUENCE:
+        return None
+    if not _operator_can_send_gmail(operator):
+        logger.info("gmail cadence skipped for operator %s: no Gmail mapping", operator)
+        return None
+
+    from gmail.templates import steps_for_icp
+    from linkedin.exceptions import SheetsError
+    from linkedin.icp_outbound import resolve_icp
     from linkedin.suppression import lead_suppression_match
+    from linkedin.tasks.follow_up import _delay_seconds_to_active_due
     from linkedin.tasks.stop_checks import automation_stop_reason
 
     stop_reason = automation_stop_reason(deal)
@@ -132,15 +162,37 @@ def maybe_handoff_to_gmail(*, deal, operator: str):
         )
         return None
 
+    try:
+        icp = resolve_icp(deal.lead)
+        if not icp:
+            logger.info("gmail cadence skipped for lead %s: no ICP", deal.lead_id)
+            return None
+        steps = steps_for_icp(
+            sender=operator,
+            icp=icp,
+            sequence_name=DEFAULT_GMAIL_SEQUENCE_NAME,
+        )
+    except SheetsError as exc:
+        logger.info("gmail cadence skipped for lead %s: %s", deal.lead_id, exc)
+        return None
+    if not steps:
+        return None
+
+    delay_seconds = _delay_seconds_to_active_due(
+        steps[0].delay_hours,
+        reference_time=deal.connected_at,
+    )
     if deal.lead.email:
         return enqueue_gmail_follow_up(
             lead_id=deal.lead_id,
             operator=operator,
             deal_id=deal.pk,
+            delay_seconds=delay_seconds,
         )
 
     return enqueue_email_enrichment(
         lead_id=deal.lead_id,
         operator=operator,
         deal_id=deal.pk,
+        delay_seconds=delay_seconds,
     )

@@ -1,4 +1,4 @@
-"""gmail_follow_up task handler - browserless Gmail fallback sequence."""
+"""gmail_follow_up task handler - browserless Gmail cadence sequence."""
 from __future__ import annotations
 
 import logging
@@ -8,10 +8,10 @@ from django.utils import timezone
 
 from gmail.client import GmailClient
 from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME
-from gmail.templates import render_for_lead, steps_for_lead
+from gmail.templates import render_for_icp, steps_for_icp
 from linkedin.conf import ENABLE_GMAIL_SEQUENCE
 from linkedin.exceptions import SheetsError
-from linkedin.icp_outbound import classify_role
+from linkedin.icp_outbound import resolve_icp
 from linkedin.tasks.follow_up import _delay_seconds_to_active_due
 from linkedin.tasks.stop_checks import automation_stop_reason
 
@@ -38,12 +38,15 @@ def _has_sent_gmail_step(*, lead, operator: str, sequence_name: str, step_index:
     ).exists()
 
 
-def _enqueue_next_step(task, *, delay_days: int) -> None:
+def _enqueue_next_step(task, *, delay_hours: float, reference_time=None) -> None:
     from linkedin.models import Task
 
     payload = dict(task.payload)
     payload["step_index"] = int(payload.get("step_index") or 0) + 1
-    delay_seconds = _delay_seconds_to_active_due(delay_days)
+    delay_seconds = _delay_seconds_to_active_due(
+        delay_hours,
+        reference_time=reference_time,
+    )
     Task.objects.create(
         task_type=Task.TaskType.GMAIL_FOLLOW_UP,
         status=Task.Status.PENDING,
@@ -71,16 +74,16 @@ def _persist_outbound(*, lead, external_id: str, sender: str, body: str, thread_
 
 
 def _is_missing_template_error(exc: SheetsError) -> bool:
-    """Missing Gmail copy is a disabled lane, not a daemon crash.
-
-    Malformed template rows still raise so bad JSON is visible.
-    """
+    """Missing or blank Gmail copy disables only the Gmail lane."""
     message = str(exc)
     return (
         "has no block" in message
         or "has no ICP" in message
         or "has no step" in message
         or "has no ICP mapping" in message
+        or "must be a non-empty step list" in message
+        or "needs subject_variants" in message
+        or "needs body_variants" in message
     )
 
 
@@ -147,16 +150,19 @@ def handle_gmail_follow_up(task) -> None:
         logger.info("gmail_follow_up: step already sent for lead %s", lead_id)
         return
 
-    role = classify_role(lead)
     try:
-        rendered = render_for_lead(
+        icp = resolve_icp(lead)
+        if not icp:
+            logger.info("gmail_follow_up: missing ICP for lead %s - skipping", lead_id)
+            return
+        rendered = render_for_icp(
             sender=operator,
-            role=role,
+            icp=icp,
             sequence_name=sequence_name,
             lead=lead,
             step_index=step_index,
         )
-        steps = steps_for_lead(sender=operator, role=role, sequence_name=sequence_name)
+        steps = steps_for_icp(sender=operator, icp=icp, sequence_name=sequence_name)
     except SheetsError as exc:
         if _is_missing_template_error(exc):
             logger.info(
@@ -195,5 +201,10 @@ def handle_gmail_follow_up(task) -> None:
 
     next_step_index = step_index + 1
     if next_step_index < len(steps):
-        _enqueue_next_step(task, delay_days=steps[next_step_index].delay_days)
+        reference_time = deal.connected_at if deal is not None else None
+        _enqueue_next_step(
+            task,
+            delay_hours=steps[next_step_index].delay_hours,
+            reference_time=reference_time,
+        )
     logger.info("gmail_follow_up sent to lead=%s step=%s", lead_id, step_index)

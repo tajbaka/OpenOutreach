@@ -481,6 +481,14 @@ class TestHandleFollowUp:
         # to Monday 09:00 UTC instead of staying on the weekend.
         assert delay == pytest.approx((64.5 * 3600), abs=1)
 
+    @patch("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", False)
+    def test_next_step_delay_accepts_fractional_hours(self):
+        now = datetime(2026, 3, 20, 12, 0, tzinfo=ZoneInfo("UTC"))
+        with patch("linkedin.tasks.follow_up.timezone.now", return_value=now):
+            delay = _delay_seconds_to_active_due(0.33, reference_time=now)
+
+        assert delay == pytest.approx(0.33 * 3600, abs=1)
+
     @patch("linkedin.actions.message.send_media_message", return_value=True)
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
@@ -521,8 +529,14 @@ class TestHandleFollowUp:
         qualifiers = _build_context(fake_session)
         handle_follow_up(task, fake_session, qualifiers)
 
-        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.FOLLOW_UP).count() == 1
+        next_task = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exclude(pk=task.pk).get()
+        assert next_task.payload["step_index"] == 1
         # Template has `{add demo.gif}` so the send routes through
         # send_media_message when the file exists in assets/follow_up/.
         # In the test env that path resolves, so we expect the media send.
@@ -532,7 +546,8 @@ class TestHandleFollowUp:
             mock_send_media.call_args.args[2] if mock_send_media.called
             else mock_send.call_args.args[2]
         )
-        assert "BrandCo" in sent_message  # {our_company_name} substituted
+        assert "{our_company_name}" not in sent_message
+        assert "FedRAMP 20x" in sent_message
         assert "Alice" in sent_message
         send_kwargs = (
             mock_send_media.call_args.kwargs if mock_send_media.called
@@ -578,7 +593,13 @@ class TestHandleFollowUp:
         qualifiers = _build_context(fake_session)
         handle_follow_up(task, fake_session, qualifiers)
 
-        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        next_task = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exclude(pk=task.pk).get()
+        assert next_task.payload["step_index"] == 1
         assert mock_send.called or mock_send_media.called
 
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
@@ -594,8 +615,8 @@ class TestHandleFollowUp:
             "Arian": {
                 "CSPs": {
                     "linkedin_connect_followup": [
-                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
-                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                        {"delay_hours": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_hours": 96, "variants": ["Step one {first_name}"]},
                     ],
                 },
             },
@@ -653,8 +674,8 @@ class TestHandleFollowUp:
             "Arian": {
                 "CSPs": {
                     "linkedin_connect_followup": [
-                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
-                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                        {"delay_hours": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_hours": 96, "variants": ["Step one {first_name}"]},
                     ],
                 },
             },
@@ -707,8 +728,8 @@ class TestHandleFollowUp:
             "Arian": {
                 "CSPs": {
                     "linkedin_connect_followup": [
-                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
-                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
+                        {"delay_hours": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_hours": 96, "variants": ["Step one {first_name}"]},
                     ],
                 },
             },
@@ -815,9 +836,9 @@ class TestHandleFollowUp:
             "Arian": {
                 "CSPs": {
                     "linkedin_connect_followup": [
-                        {"delay_days": 0, "variants": ["Step zero {first_name}"]},
-                        {"delay_days": 4, "variants": ["Step one {first_name}"]},
-                        {"delay_days": 5, "variants": ["Step two {first_name}"]},
+                        {"delay_hours": 0, "variants": ["Step zero {first_name}"]},
+                        {"delay_hours": 96, "variants": ["Step one {first_name}"]},
+                        {"delay_hours": 120, "variants": ["Step two {first_name}"]},
                     ],
                 },
             },
@@ -1047,7 +1068,13 @@ class TestHandleFollowUp:
         handle_follow_up(task, fake_session, qualifiers)
 
         # Not deduped: this operator's own follow-up still goes out.
-        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        next_task = Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exclude(pk=task.pk).get()
+        assert next_task.payload["step_index"] == 1
         assert mock_send.called or mock_send_media.called
 
     @patch("linkedin.actions.message.send_media_message", return_value=False)

@@ -203,6 +203,9 @@ class Command(BaseCommand):
                 operator=operator,
                 delay_seconds=i * stagger,
             )
+            from gmail.handoff import maybe_schedule_gmail_sequence
+
+            maybe_schedule_gmail_sequence(deal=deal, operator=operator)
             enqueued += 1
 
         self.stdout.write(self.style.SUCCESS(f"Enqueued {enqueued} follow_up Task(s)."))

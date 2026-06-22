@@ -1,4 +1,4 @@
-"""enrich_email task handler - BetterContact email lookup for Gmail fallback."""
+"""enrich_email task handler - BetterContact email lookup for Gmail cadence."""
 from __future__ import annotations
 
 import logging
@@ -16,7 +16,7 @@ def _normalize_email(value: str) -> str:
 
 
 def handle_enrich_email(task) -> EnrichmentResult | None:
-    """Find one lead's email address for the Gmail fallback lane."""
+    """Find one lead's email address for the Gmail cadence lane."""
     from crm.models import Deal, Lead
     from gmail.handoff import enqueue_gmail_follow_up
     from linkedin.suppression import lead_suppression_match

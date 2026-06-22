@@ -147,7 +147,7 @@ def test_follow_up_post_send_retries_on_dead_conn(db, fake_session, monkeypatch)
     monkeypatch.setattr(
         fu_mod,
         "channel_steps_for_lead",
-        lambda **kw: [type("S", (), {"delay_days": 0})()],
+        lambda **kw: [type("S", (), {"delay_hours": 0})()],
     )
 
     # Inline send_raw_message + send_media_message that pretend to succeed.
@@ -234,8 +234,8 @@ def test_follow_up_state_retry_does_not_duplicate_next_step(db, fake_session, mo
         fu_mod,
         "channel_steps_for_lead",
         lambda **kw: [
-            type("S", (), {"delay_days": 0})(),
-            type("S", (), {"delay_days": 2})(),
+            type("S", (), {"delay_hours": 0})(),
+            type("S", (), {"delay_hours": 48})(),
         ],
     )
     monkeypatch.setattr(

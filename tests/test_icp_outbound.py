@@ -36,7 +36,7 @@ def test_load_icp_messages_returns_known_buckets():
 def test_load_icp_messages_channels_normalize_to_steps():
     """Each channel must normalize to at least one step with at least one
     string variant. This accepts both legacy [variants] and sequence
-    [{delay_days, variants}] shapes."""
+    [{delay_hours, variants}] shapes."""
     for sender in ("Arian", "Chuka"):
         messages = icp_outbound.load_icp_messages(sender)
         for icp, channels in messages.items():
@@ -46,7 +46,7 @@ def test_load_icp_messages_channels_normalize_to_steps():
                 steps = icp_outbound.channel_steps(sender=sender, icp=icp, channel=channel)
                 assert len(steps) >= 1, f"{sender}.{icp}.{channel} needs >=1 step"
                 for step in steps:
-                    assert step.delay_days >= 0
+                    assert step.delay_hours >= 0
                     assert len(step.variants) >= 1
                     assert all(isinstance(v, str) for v in step.variants)
 
@@ -204,8 +204,8 @@ def test_fill_message_supports_step_object_templates(tmp_path, monkeypatch):
         "Arian": {
             "CSPs": {
                 "linkedin_connect_followup": [
-                    {"delay_days": 0, "variants": ["Step 0 for {first_name}"]},
-                    {"delay_days": 4, "variants": ["Step 1 for {company_name}"]},
+                    {"delay_hours": 0, "variants": ["Step 0 for {first_name}"]},
+                    {"delay_hours": 120, "variants": ["Step 1 for {company_name}"]},
                 ],
             },
         },
@@ -234,7 +234,27 @@ def test_fill_message_supports_step_object_templates(tmp_path, monkeypatch):
     steps = icp_outbound.channel_steps(
         sender="Arian", icp="CSPs", channel="linkedin_connect_followup",
     )
-    assert [s.delay_days for s in steps] == [0, 4]
+    assert [s.delay_hours for s in steps] == [0, 120]
+
+
+def test_channel_steps_accepts_decimal_delay_hours(tmp_path, monkeypatch):
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "linkedin_connect_followup": [
+                    {"delay_hours": 0.33, "variants": ["Quick note for {first_name}"]},
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+
+    steps = icp_outbound.channel_steps(
+        sender="Arian", icp="CSPs", channel="linkedin_connect_followup",
+    )
+
+    assert steps[0].delay_hours == 0.33
 
 
 def test_fill_message_rejects_unknown_step_index():
@@ -347,6 +367,8 @@ def test_missing_sender_block_returns_handle_for_unknown():
 
 def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
+    gmail_path = tmp_path / "icp_emails.json"
+    gmail_path.write_text("{}")
     path.write_text(json.dumps({
         "Leili": {
             "CSPs": {
@@ -368,6 +390,7 @@ def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
         },
     }))
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", gmail_path)
 
     rows = icp_outbound.icp_messages_rows("Leili")
     assert [row[0] for row in rows[1:]] == ["CSPs", "3PAOs/Assessors", "Advisors", "Channel"]
@@ -380,68 +403,112 @@ def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
 
 def test_icp_messages_rows_renders_sequenced_followup(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
+    gmail_path = tmp_path / "icp_emails.json"
+    gmail_path.write_text("{}")
     path.write_text(json.dumps({
         "Arian": {
             "CSPs": {
                 "linkedin_connect_note": ["connect"],
                 "linkedin_connect_followup": [
-                    {"delay_days": 0, "variants": ["step zero", "alt zero"]},
-                    {"delay_days": 4, "variants": ["step one"]},
+                    {"delay_hours": 0, "variants": ["step zero", "alt zero"]},
+                    {"delay_hours": 120, "variants": ["step one"]},
                 ],
             },
         },
     }))
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", gmail_path)
 
     rows = icp_outbound.icp_messages_rows("Arian")
     # Two-step sequence → two follow-up columns, sized dynamically.
     assert rows[0] == icp_outbound.icp_messages_headers(2)
     # First variant of step 0 → "Followup Message 1"; step 1 → "Followup Message 2".
     csp_row = next(r for r in rows[1:] if r[0] == "CSPs")
-    assert csp_row == ["CSPs", "connect", "step zero", "step one"]
+    assert csp_row == ["CSPs", "connect", "step zero", "", "", "step one", "", ""]
 
 
 def test_icp_messages_rows_grows_columns_for_long_sequences(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
+    gmail_path = tmp_path / "icp_emails.json"
+    gmail_path.write_text("{}")
     path.write_text(json.dumps({
         "Arian": {
             "CSPs": {
                 "linkedin_connect_note": ["connect"],
                 "linkedin_connect_followup": [
-                    {"delay_days": 0, "variants": ["s0"]},
-                    {"delay_days": 4, "variants": ["s1"]},
-                    {"delay_days": 8, "variants": ["s2"]},
+                    {"delay_hours": 0, "variants": ["s0"]},
+                    {"delay_hours": 120, "variants": ["s1"]},
+                    {"delay_hours": 240, "variants": ["s2"]},
                 ],
             },
         },
     }))
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", gmail_path)
 
     rows = icp_outbound.icp_messages_rows("Arian")
     # A three-step sequence grows the tab to three follow-up columns.
     assert rows[0] == icp_outbound.icp_messages_headers(3)
     csp_row = next(r for r in rows[1:] if r[0] == "CSPs")
-    assert csp_row == ["CSPs", "connect", "s0", "s1", "s2"]
+    assert csp_row == ["CSPs", "connect", "s0", "", "", "s1", "", "", "s2", "", ""]
 
 
 def test_parse_icp_messages_rows_rebuilds_sequence_from_extra_columns():
     rows = [
         icp_outbound.icp_messages_headers(3),
-        ["CSPs", "connect", "first followup", "second followup", "third followup"],
+        [
+            "CSPs", "connect",
+            "first followup", "", "",
+            "second followup", "", "",
+            "third followup", "", "",
+        ],
     ]
     parsed = icp_outbound.parse_icp_messages_rows(rows)
     assert parsed["CSPs"]["linkedin_connect_followup"] == [
-        {"delay_days": 0, "variants": ["first followup"]},
-        {"delay_days": 4, "variants": ["second followup"]},
-        {"delay_days": 4, "variants": ["third followup"]},
+        {"delay_hours": 0, "variants": ["first followup"]},
+        {"delay_hours": 96, "variants": ["second followup"]},
+        {"delay_hours": 96, "variants": ["third followup"]},
     ]
+
+
+def test_parse_icp_messages_sheet_rows_rebuilds_gmail_steps():
+    rows = [
+        icp_outbound.icp_messages_headers(2, email_steps=2),
+        [
+            "CSPs", "connect",
+            "linkedin one", "Subject one", "Body one",
+            "linkedin two", "Subject two", "Body two",
+        ],
+    ]
+
+    linkedin_block, gmail_block = icp_outbound.parse_icp_messages_sheet_rows(rows)
+
+    assert linkedin_block["CSPs"]["linkedin_connect_followup"] == [
+        {"delay_hours": 0, "variants": ["linkedin one"]},
+        {"delay_hours": 96, "variants": ["linkedin two"]},
+    ]
+    assert gmail_block["CSPs"] == [
+        {"delay_hours": 0.33, "subject_variants": ["Subject one"], "body_variants": ["Body one"]},
+        {"delay_hours": 192, "subject_variants": ["Subject two"], "body_variants": ["Body two"]},
+    ]
+
+
+def test_parse_blank_gmail_cells_explicitly_disable_icp():
+    rows = [
+        icp_outbound.icp_messages_headers(1, email_steps=1),
+        ["CSPs", "connect", "linkedin followup", "", ""],
+    ]
+
+    _linkedin_block, gmail_block = icp_outbound.parse_icp_messages_sheet_rows(rows)
+
+    assert gmail_block["CSPs"] == []
 
 
 def test_parse_icp_messages_rows_single_cell_stays_legacy():
     # Blank trailing follow-up columns → legacy single-string shape.
     rows = [
         icp_outbound.icp_messages_headers(2),
-        ["CSPs", "connect", "only followup", ""],
+        ["CSPs", "connect", "only followup", "", "", "", "", ""],
     ]
     parsed = icp_outbound.parse_icp_messages_rows(rows)
     assert parsed["CSPs"]["linkedin_connect_followup"] == ["only followup"]
@@ -454,22 +521,22 @@ def test_save_icp_messages_sequence_edit_preserves_existing_delays(tmp_path, mon
             "CSPs": {
                 "linkedin_connect_note": ["old connect"],
                 "linkedin_connect_followup": [
-                    {"delay_days": 0, "variants": ["old step zero"]},
-                    {"delay_days": 7, "variants": ["old step one"]},
+                    {"delay_hours": 0, "variants": ["old step zero"]},
+                    {"delay_hours": 168, "variants": ["old step one"]},
                 ],
             },
         },
     }, indent=2) + "\n")
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
 
-    # Pull-shaped payload: edited text, parser-default delays (0, 4).
+    # Pull-shaped payload: edited text, parser-default delays (0, 96).
     icp_outbound.save_icp_messages(
         "Arian",
         {"CSPs": {
             "linkedin_connect_note": ["new connect"],
             "linkedin_connect_followup": [
-                {"delay_days": 0, "variants": ["edited step zero"]},
-                {"delay_days": 4, "variants": ["edited step one"]},
+                {"delay_hours": 0, "variants": ["edited step zero"]},
+                {"delay_hours": 96, "variants": ["edited step one"]},
             ],
         }},
     )
@@ -477,8 +544,58 @@ def test_save_icp_messages_sequence_edit_preserves_existing_delays(tmp_path, mon
     saved = json.loads(path.read_text())
     # Text updated from the sheet; the existing 7-day cadence is kept.
     assert saved["Arian"]["CSPs"]["linkedin_connect_followup"] == [
-        {"delay_days": 0, "variants": ["edited step zero"]},
-        {"delay_days": 7, "variants": ["edited step one"]},
+        {"delay_hours": 0, "variants": ["edited step zero"]},
+        {"delay_hours": 168, "variants": ["edited step one"]},
+    ]
+
+
+def test_save_gmail_messages_preserves_existing_delays(tmp_path, monkeypatch):
+    path = tmp_path / "icp_emails.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": [
+                {"delay_hours": 48, "subject_variants": ["old subject"], "body_variants": ["old body"]},
+                {"delay_hours": 240, "subject_variants": ["old two"], "body_variants": ["old body two"]},
+            ],
+        },
+    }, indent=2) + "\n")
+    monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", path)
+
+    icp_outbound.save_gmail_messages(
+        "Arian",
+        {"CSPs": [
+            {"delay_hours": 24, "subject_variants": ["new subject"], "body_variants": ["new body"]},
+            {"delay_hours": 216, "subject_variants": ["new two"], "body_variants": ["new body two"]},
+        ]},
+    )
+
+    saved = json.loads(path.read_text())
+    assert saved["Arian"]["CSPs"] == [
+        {"delay_hours": 48, "subject_variants": ["new subject"], "body_variants": ["new body"]},
+        {"delay_hours": 240, "subject_variants": ["new two"], "body_variants": ["new body two"]},
+    ]
+
+
+def test_save_gmail_messages_empty_list_disables_stale_copy(tmp_path, monkeypatch):
+    path = tmp_path / "icp_emails.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": [
+                {"delay_hours": 48, "subject_variants": ["old subject"], "body_variants": ["old body"]},
+            ],
+            "Advisors": [
+                {"delay_hours": 24, "subject_variants": ["keep"], "body_variants": ["keep body"]},
+            ],
+        },
+    }, indent=2) + "\n")
+    monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", path)
+
+    icp_outbound.save_gmail_messages("Arian", {"CSPs": []})
+
+    saved = json.loads(path.read_text())
+    assert saved["Arian"]["CSPs"] == []
+    assert saved["Arian"]["Advisors"] == [
+        {"delay_hours": 24, "subject_variants": ["keep"], "body_variants": ["keep body"]},
     ]
 
 
@@ -517,8 +634,8 @@ def test_save_icp_messages_replaces_one_sender_block(tmp_path, monkeypatch):
 def test_save_icp_messages_preserves_sequenced_followup_on_pull(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
     sequence = [
-        {"delay_days": 0, "variants": ["step zero"]},
-        {"delay_days": 4, "variants": ["step one"]},
+        {"delay_hours": 0, "variants": ["step zero"]},
+        {"delay_hours": 120, "variants": ["step one"]},
     ]
     path.write_text(json.dumps({
         "Arian": {

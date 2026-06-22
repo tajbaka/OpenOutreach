@@ -595,6 +595,9 @@ def notify_sweep_summary(
     sender: str,
     connects_today: int,
     followups_today: int,
+    connect_runs_today: int | None = None,
+    qualified: int | None = None,
+    newly_connected: int | None = None,
 ) -> None:
     """Post a minimal per-sender send-count snapshot to the ops channel.
 
@@ -604,6 +607,8 @@ def notify_sweep_summary(
     Silent no-op when the ops webhook is unset.
 
       - connects_today / followups_today — actions sent today (ActionLog)
+      - connect_runs_today / qualified / newly_connected — optional pipeline
+        context from the sweep task
     """
     if not SLACK_WEBHOOK_URL:
         return
@@ -613,6 +618,12 @@ def notify_sweep_summary(
         f"*Sent today:* {connects_today} invites\n"
         f"*Follow-ups today:* {followups_today}"
     )
+    if newly_connected is not None:
+        body += f"\n*Newly accepted this sweep:* {newly_connected}"
+    if connect_runs_today is not None:
+        body += f"\n*Connect tasks run today:* {connect_runs_today}"
+    if qualified is not None:
+        body += f"\n*Qualified remaining:* {qualified}"
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": headline}},
         {"type": "section", "text": {"type": "mrkdwn", "text": body}},

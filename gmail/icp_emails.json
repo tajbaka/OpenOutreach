@@ -2,50 +2,257 @@
   "Arian": {
     "CSPs": [
       {
-        "delay_days": 0,
+        "delay_hours": 0.33,
         "subject_variants": [
-          "FedRAMP 20x readiness at {company_name}"
+          "FedRAMP 20x path at {company_name}"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nI reached out on LinkedIn but figured email may be easier.\n\nWe're building Boundera for CSPs that need to understand whether a FedRAMP 20x Low or Moderate path is actually viable before committing to the bigger authorization motion.\n\nThe first workflow maps KSI evidence, shows gaps, and turns eligible remediation into Jira tickets or draft GitHub PRs for the team to review.\n\nWorth comparing notes on how {company_name} is thinking about 20x this year?\n\nBest,\nArian"
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nA lot of CSPs that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a faster, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence to KSIs, find gaps, and turn remediation into owned work before a bigger authorization push.\n\nIs {company_name} actively evaluating 20x, or staying with the traditional Rev 5 path for now?\n\nBest,\n{my_name}"
         ]
-      }
-    ],
-    "3PAOs/Assessors": [
+      },
       {
-        "delay_days": 0,
+        "delay_hours": 192,
         "subject_variants": [
-          "FedRAMP 20x evidence review"
+          "20x evidence readiness"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nI reached out on LinkedIn but thought email may be easier.\n\nWe're building Boundera around the messy parts of FedRAMP 20x evidence: KSI validation status, traceability, open findings, and remediation ownership.\n\nFor assessors, the angle is not replacing review. It is making the CSP evidence package easier to inspect and easier to connect back to current validation evidence.\n\nCurious where review breaks down most for your team: evidence quality, traceability, remediation tracking, or package completeness?\n\nBest,\nArian"
+          "Hi {first_name},\n\nOne more note in case useful.\n\nThe first practical question we usually help answer is not whether to buy tooling. It is whether the 20x path is realistic: which KSIs already have evidence, where remediation is needed, and whether the team can keep validation current without rebuilding another spreadsheet-heavy process.\n\nWorth a quick compare-notes conversation?\n\nBest,\n{my_name}"
         ]
       }
     ],
     "Advisors": [
       {
-        "delay_days": 0,
+        "delay_hours": 0.33,
         "subject_variants": [
-          "FedRAMP 20x readiness for CSP clients"
+          "FedRAMP 20x questions from CSP clients"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nI reached out on LinkedIn but figured email may be easier.\n\nWe're building Boundera for CSPs trying to decide whether FedRAMP 20x Low or Moderate is actually viable before they spend heavily on the authorization path.\n\nThe product maps evidence to KSIs, surfaces gaps/findings, and helps move remediation into Jira or draft GitHub PR workflows instead of more spreadsheet chasing.\n\nIf this fits a client you advise, we're open to referral or partner economics.\n\nWould this be relevant to how you work with CSPs?\n\nBest,\nArian"
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are hearing from CSP clients around FedRAMP 20x. A lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x readiness workflow for clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nThe partner angle we are trying to validate is simple: advisors can help CSPs figure out whether 20x is worth pursuing before the client commits to a larger authorization motion.\n\nThe useful first step is a light readiness check: evidence mapped to KSIs, obvious gaps, remediation ownership, and whether Low or Moderate equivalents are realistic.\n\nDoes that fit conversations you are having with CSP clients?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "3PAOs/Assessors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x evidence review"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious how you are thinking about FedRAMP 20x from the assessor side. If more CSPs explore 20x instead of the traditional Rev 5 path, the hard part may become whether validation evidence is current, understandable, and easy to trace back to remediation ownership.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?\n\nBest,\n{my_name}"
         ]
       }
     ],
     "Channel": [
       {
-        "delay_days": 0,
+        "delay_hours": 0.33,
         "subject_variants": [
-          "FedRAMP 20x partner fit"
+          "FedRAMP 20x vendor readiness"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nI reached out on LinkedIn but figured email may be easier.\n\nBoundera helps CSPs validate whether a FedRAMP 20x path is viable before they commit to a larger authorization effort.\n\nThe first offer is a 20x OS pilot: customer-controlled deployment, KSI evidence mapping, gap visibility, remediation workflows, and reviewer-ready outputs.\n\nIf this fits customers you support, who would usually own that kind of FedRAMP tooling conversation?\n\nBest,\nArian"
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are seeing from vendors around FedRAMP 20x now that it is becoming a more real path alongside Rev 5. My read is that many CSPs are still trying to understand whether 20x changes how they get marketplace-ready.\n\nHow are you thinking about vendors who may pursue 20x instead of the traditional Rev 5 path?\n\nBest,\n{my_name}"
         ]
       }
     ]
   },
-  "Leili": {},
-  "Athena": {},
-  "Eddy": {}
+  "Leili": {
+    "CSPs": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x path at {company_name}"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nA lot of CSPs that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a faster, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence to KSIs, find gaps, and turn remediation into owned work before a bigger authorization push.\n\nIs {company_name} actively evaluating 20x, or staying with the traditional Rev 5 path for now?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x evidence readiness"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nOne more note in case useful.\n\nThe first practical question we usually help answer is not whether to buy tooling. It is whether the 20x path is realistic: which KSIs already have evidence, where remediation is needed, and whether the team can keep validation current without rebuilding another spreadsheet-heavy process.\n\nWorth a quick compare-notes conversation?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Advisors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x questions from CSP clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are hearing from CSP clients around FedRAMP 20x. A lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x readiness workflow for clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nThe partner angle we are trying to validate is simple: advisors can help CSPs figure out whether 20x is worth pursuing before the client commits to a larger authorization motion.\n\nThe useful first step is a light readiness check: evidence mapped to KSIs, obvious gaps, remediation ownership, and whether Low or Moderate equivalents are realistic.\n\nDoes that fit conversations you are having with CSP clients?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "3PAOs/Assessors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x evidence review"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious how you are thinking about FedRAMP 20x from the assessor side. If more CSPs explore 20x instead of the traditional Rev 5 path, the hard part may become whether validation evidence is current, understandable, and easy to trace back to remediation ownership.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Channel": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x vendor readiness"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are seeing from vendors around FedRAMP 20x now that it is becoming a more real path alongside Rev 5. My read is that many CSPs are still trying to understand whether 20x changes how they get marketplace-ready.\n\nHow are you thinking about vendors who may pursue 20x instead of the traditional Rev 5 path?\n\nBest,\n{my_name}"
+        ]
+      }
+    ]
+  },
+  "Athena": {
+    "CSPs": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x path at {company_name}"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nA lot of CSPs that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a faster, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence to KSIs, find gaps, and turn remediation into owned work before a bigger authorization push.\n\nIs {company_name} actively evaluating 20x, or staying with the traditional Rev 5 path for now?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x evidence readiness"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nOne more note in case useful.\n\nThe first practical question we usually help answer is not whether to buy tooling. It is whether the 20x path is realistic: which KSIs already have evidence, where remediation is needed, and whether the team can keep validation current without rebuilding another spreadsheet-heavy process.\n\nWorth a quick compare-notes conversation?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Advisors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x questions from CSP clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are hearing from CSP clients around FedRAMP 20x. A lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x readiness workflow for clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nThe partner angle we are trying to validate is simple: advisors can help CSPs figure out whether 20x is worth pursuing before the client commits to a larger authorization motion.\n\nThe useful first step is a light readiness check: evidence mapped to KSIs, obvious gaps, remediation ownership, and whether Low or Moderate equivalents are realistic.\n\nDoes that fit conversations you are having with CSP clients?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "3PAOs/Assessors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x evidence review"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious how you are thinking about FedRAMP 20x from the assessor side. If more CSPs explore 20x instead of the traditional Rev 5 path, the hard part may become whether validation evidence is current, understandable, and easy to trace back to remediation ownership.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Channel": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x vendor readiness"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are seeing from vendors around FedRAMP 20x now that it is becoming a more real path alongside Rev 5. My read is that many CSPs are still trying to understand whether 20x changes how they get marketplace-ready.\n\nHow are you thinking about vendors who may pursue 20x instead of the traditional Rev 5 path?\n\nBest,\n{my_name}"
+        ]
+      }
+    ]
+  },
+  "Eddy": {
+    "CSPs": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x path at {company_name}"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nA lot of CSPs that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a faster, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence to KSIs, find gaps, and turn remediation into owned work before a bigger authorization push.\n\nIs {company_name} actively evaluating 20x, or staying with the traditional Rev 5 path for now?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x evidence readiness"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nOne more note in case useful.\n\nThe first practical question we usually help answer is not whether to buy tooling. It is whether the 20x path is realistic: which KSIs already have evidence, where remediation is needed, and whether the team can keep validation current without rebuilding another spreadsheet-heavy process.\n\nWorth a quick compare-notes conversation?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Advisors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x questions from CSP clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are hearing from CSP clients around FedRAMP 20x. A lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x readiness workflow for clients"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nThe partner angle we are trying to validate is simple: advisors can help CSPs figure out whether 20x is worth pursuing before the client commits to a larger authorization motion.\n\nThe useful first step is a light readiness check: evidence mapped to KSIs, obvious gaps, remediation ownership, and whether Low or Moderate equivalents are realistic.\n\nDoes that fit conversations you are having with CSP clients?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "3PAOs/Assessors": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x evidence review"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious how you are thinking about FedRAMP 20x from the assessor side. If more CSPs explore 20x instead of the traditional Rev 5 path, the hard part may become whether validation evidence is current, understandable, and easy to trace back to remediation ownership.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Channel": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x vendor readiness"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are seeing from vendors around FedRAMP 20x now that it is becoming a more real path alongside Rev 5. My read is that many CSPs are still trying to understand whether 20x changes how they get marketplace-ready.\n\nHow are you thinking about vendors who may pursue 20x instead of the traditional Rev 5 path?\n\nBest,\n{my_name}"
+        ]
+      }
+    ]
+  }
 }
