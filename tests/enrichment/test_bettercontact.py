@@ -121,9 +121,12 @@ def test_http_error_returns_api_failure(monkeypatch):
         "linkedin.enrichment.providers.bettercontact.BETTERCONTACT_API_KEY", "key",
     )
     with patch("linkedin.enrichment.providers.bettercontact.post_json",
-               side_effect=HttpError("502")):
+               side_effect=HttpError("502", status=502, body={"error": "bad"})):
         result = BetterContactProvider().enrich(_lead(), _task())
     assert result.status == EnrichmentStatus.API_FAILURE
+    assert result.raw["reason"] == "http_error"
+    assert result.raw["status"] == 502
+    assert result.raw["body"] == {"error": "bad"}
 
 
 def test_email_provider_submits_email_only_and_parses_email(monkeypatch):

@@ -11,7 +11,10 @@ as a 400 with an error_code) — HttpError carries `status` and the parsed
 from __future__ import annotations
 
 import json
+import ssl
 from urllib import error, request
+
+import certifi
 
 
 class HttpError(Exception):
@@ -45,7 +48,8 @@ def _request_json(url, *, method, headers=None, payload=None, timeout):
         },
     )
     try:
-        with request.urlopen(req, timeout=timeout) as resp:
+        context = ssl.create_default_context(cafile=certifi.where())
+        with request.urlopen(req, timeout=timeout, context=context) as resp:
             body = resp.read().decode("utf-8")
     except error.HTTPError as exc:
         raw = b""

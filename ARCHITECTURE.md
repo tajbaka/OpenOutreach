@@ -293,9 +293,11 @@ waterfall); `API_FAILURE` escalates. BetterContact is async (submit → poll,
 resumable via the persisted `bettercontact_request_id`) and short-circuits to
 `API_FAILURE` when the lead lacks the `last_name`/`company_name` its submit
 needs. LeadMagic and Prospeo are synchronous and LinkedIn-URL native.
-Providers implement the `PhoneProvider` protocol (`base.py`); transport
-failures raise `HttpError` (→ `API_FAILURE`), malformed responses raise
-`EnrichmentError`.
+Providers implement the `PhoneProvider` protocol (`base.py`); transport calls
+use certifi's CA bundle so daemon hosts with stale system trust stores can
+still reach provider APIs. Transport failures raise `HttpError`
+(→ `API_FAILURE` with structured status/body metadata persisted to
+`Task.error` by the worker), malformed responses raise `EnrichmentError`.
 
 **Email enrichment.** `handle_enrich_email` uses `BetterContactEmailProvider`,
 which submits BetterContact in email-only mode:

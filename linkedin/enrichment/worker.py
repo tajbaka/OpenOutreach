@@ -15,6 +15,7 @@ crash-safety net.
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import traceback
@@ -24,6 +25,20 @@ logger = logging.getLogger(__name__)
 from linkedin.notifications.slack import notify_error
 from gmail.tasks.enrich_email import handle_enrich_email
 from linkedin.tasks.enrich_phone import handle_enrich_phone
+
+
+def _format_api_failure(result) -> str:
+    detail = {
+        "provider": result.provider,
+        "status": result.status.value,
+        "raw": result.raw,
+    }
+    return "Enrichment provider API failure: " + json.dumps(
+        detail,
+        ensure_ascii=True,
+        default=str,
+        sort_keys=True,
+    )
 
 
 class EnrichmentWorker:
@@ -108,9 +123,7 @@ class EnrichmentWorker:
             return True
 
         if result is not None and result.status == EnrichmentStatus.API_FAILURE:
-            task.mark_failed(
-                f"All enrichment providers failed (last={result.provider})",
-            )
+            task.mark_failed(_format_api_failure(result))
         else:
             task.mark_completed()
         return True

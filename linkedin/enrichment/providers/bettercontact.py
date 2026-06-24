@@ -26,6 +26,14 @@ logger = logging.getLogger(__name__)
 _BASE = "https://app.bettercontact.rocks/api/v2"
 
 
+def _api_failure(reason: str, **raw) -> EnrichmentResult:
+    return EnrichmentResult(
+        status=EnrichmentStatus.API_FAILURE,
+        provider="bettercontact",
+        raw={"reason": reason, **raw},
+    )
+
+
 class BetterContactProvider:
     name = "bettercontact"
     request_id_key = "bettercontact_request_id"
@@ -36,14 +44,21 @@ class BetterContactProvider:
     def enrich(self, lead, task) -> EnrichmentResult:
         if not BETTERCONTACT_API_KEY:
             logger.warning("BetterContact: no API key configured — API_FAILURE")
-            return EnrichmentResult(status=EnrichmentStatus.API_FAILURE, provider=self.name)
+            return _api_failure("missing_api_key")
 
         if not lead.last_name or not lead.company_name:
             logger.warning(
                 "BetterContact: lead %s missing last_name/company — API_FAILURE",
                 lead.id,
             )
-            return EnrichmentResult(status=EnrichmentStatus.API_FAILURE, provider=self.name)
+            return _api_failure(
+                "missing_required_fields",
+                missing={
+                    "last_name": not bool(lead.last_name),
+                    "company_name": not bool(lead.company_name),
+                },
+                lead_id=lead.id,
+            )
 
         request_id = task.payload.get(self.request_id_key) or ""
         try:
@@ -54,7 +69,12 @@ class BetterContactProvider:
             return self._poll(request_id)
         except HttpError as exc:
             logger.warning("BetterContact API failure: %s", exc)
-            return EnrichmentResult(status=EnrichmentStatus.API_FAILURE, provider=self.name)
+            return _api_failure(
+                "http_error",
+                message=str(exc),
+                status=exc.status,
+                body=exc.body,
+            )
 
     def _submit(self, lead) -> str:
         resp = post_json(
@@ -90,7 +110,13 @@ class BetterContactProvider:
             if time.monotonic() >= deadline:
                 logger.warning("BetterContact poll timed out for %s", request_id)
                 return EnrichmentResult(
-                    status=EnrichmentStatus.API_FAILURE, provider=self.name, raw=resp,
+                    status=EnrichmentStatus.API_FAILURE,
+                    provider=self.name,
+                    raw={
+                        "reason": "poll_timeout",
+                        "request_id": request_id,
+                        "last_response": resp,
+                    },
                 )
             time.sleep(BETTERCONTACT_POLL_INTERVAL_SECONDS)
 
