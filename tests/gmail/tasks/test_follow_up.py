@@ -17,14 +17,14 @@ def no_suppression(monkeypatch):
 
 
 class FakeGmailClient:
-    send_as = "ariant@boundera.io"
+    send_as = "ariant@getboundera.com"
 
     def __init__(self, *, operator):
         self.operator = operator
         self.sent = []
 
     def send_as_aliases(self):
-        return {"ariant@boundera.io": {"isDefault": True}}
+        return {"ariant@getboundera.com": {"isDefault": True}}
 
     def search_threads_for_email(self, email):
         return []
@@ -82,7 +82,7 @@ def test_gmail_follow_up_sends_and_persists(monkeypatch):
 
     msg = Message.objects.get(source=Message.Source.GMAIL, direction=Message.Direction.OUTBOUND)
     assert msg.external_id.startswith(f"gmail-send:Arian:{lead.id}:gmail_fallback:step-0:")
-    assert msg.sender == "ariant@boundera.io"
+    assert msg.sender == "ariant@getboundera.com"
     assert "Hi Ada" in msg.body
     assert "Analytical Engines" in msg.body
 
@@ -165,7 +165,7 @@ def test_gmail_follow_up_dedup_skips_existing_step(monkeypatch):
         source=Message.Source.GMAIL,
         direction=Message.Direction.OUTBOUND,
         external_id=f"gmail-send:Arian:{lead.id}:gmail_fallback:step-0:old",
-        sender="ariant@boundera.io",
+        sender="ariant@getboundera.com",
         body="already sent",
         sent_at=timezone.now(),
     )

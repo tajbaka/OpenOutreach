@@ -122,4 +122,4 @@ Gmail lane. It must not alter LinkedIn state, LinkedIn scheduling, or LinkedIn
 send behavior.
 
 Current Gmail templates are populated for Arian, Athena, Leili, Chuka, and Eddy.
-Chuka sends through the `eddy_boundera` Gmail account as `eddy@boundera.io`.
+Chuka sends through the `eddy_boundera` Gmail account as `eddy@getboundera.com`.

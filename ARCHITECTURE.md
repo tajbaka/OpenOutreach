@@ -251,7 +251,7 @@ OAuth/token loading (`auth.py`), Gmail API send/search (`client.py`), scheduling
 (`icp_emails.json` via `templates.py`). Gmail templates are separate from
 `linkedin/icp_messages.json`, which remains LinkedIn/connect/follow-up copy.
 `gmail/auth.py` maps Arian and Leili to `arian_boundera`, while Athena, Eddy,
-and Chuka use `eddy_boundera`; Chuka sends as `eddy@boundera.io`, which is a
+and Chuka use `eddy_boundera`; Chuka sends as `eddy@getboundera.com`, which is a
 verified alias on that OAuth account.
 Missing Gmail copy for a sender/ICP/step is treated as that lane being disabled
 for the lead and skips cleanly; malformed template rows still fail loudly.

@@ -27,15 +27,15 @@ GMAIL_ACCOUNTS: dict[str, GmailAccount] = {
     "arian_boundera": GmailAccount(
         key="arian_boundera",
         send_as_aliases=(
-            "ariant@boundera.io",
-            "leili@boundera.io",
+            "ariant@getboundera.com",
+            "leili@getboundera.com",
         ),
     ),
     "eddy_boundera": GmailAccount(
         key="eddy_boundera",
         send_as_aliases=(
-            "athena@boundera.io",
-            "eddy@boundera.io",
+            "athena@getboundera.com",
+            "eddy@getboundera.com",
         ),
     ),
 }
@@ -43,24 +43,24 @@ GMAIL_ACCOUNTS: dict[str, GmailAccount] = {
 GMAIL_OPERATOR_MAPPING: dict[str, dict[str, str]] = {
     "Arian": {
         "gmail_account": "arian_boundera",
-        "send_as": "ariant@boundera.io",
+        "send_as": "ariant@getboundera.com",
     },
     "Athena": {
         "gmail_account": "eddy_boundera",
-        "send_as": "athena@boundera.io",
+        "send_as": "athena@getboundera.com",
     },
     "Leili": {
         "gmail_account": "arian_boundera",
-        "send_as": "leili@boundera.io",
+        "send_as": "leili@getboundera.com",
     },
     "Chuka": {
         "gmail_account": "eddy_boundera",
-        "send_as": "eddy@boundera.io",
+        "send_as": "eddy@getboundera.com",
         "display_name": "Eddy",
     },
     "Eddy": {
         "gmail_account": "eddy_boundera",
-        "send_as": "eddy@boundera.io",
+        "send_as": "eddy@getboundera.com",
     },
 }
 

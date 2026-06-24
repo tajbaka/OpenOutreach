@@ -24,3 +24,4 @@ temp_*.txt
 local_notes/
 .gstack/
 artifacts/
+outputs/
