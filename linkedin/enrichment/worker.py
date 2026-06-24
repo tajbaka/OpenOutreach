@@ -23,21 +23,52 @@ import traceback
 logger = logging.getLogger(__name__)
 
 from linkedin.notifications.slack import notify_error
+from linkedin.notifications.slack import notify_degraded
+from linkedin.monitoring.degraded import _should_alert
 from gmail.tasks.enrich_email import handle_enrich_email
 from linkedin.tasks.enrich_phone import handle_enrich_phone
 
 
-def _format_api_failure(result) -> str:
-    detail = {
+def _api_failure_detail(result) -> dict:
+    return {
         "provider": result.provider,
         "status": result.status.value,
         "raw": result.raw,
     }
+
+
+def _format_api_failure(result) -> str:
+    detail = _api_failure_detail(result)
     return "Enrichment provider API failure: " + json.dumps(
         detail,
         ensure_ascii=True,
         default=str,
         sort_keys=True,
+    )
+
+
+def _notify_api_failure(*, task, result) -> None:
+    raw = result.raw or {}
+    reason = str(raw.get("reason") or "unknown")
+    status = raw.get("status")
+    key = f"enrichment_api_failure:{result.provider}:{reason}:{status}"
+    if not _should_alert(key):
+        return
+
+    operator = (task.payload or {}).get("operator") or "enrichment-worker"
+    detail = _format_api_failure(result)
+    if len(detail) > 2500:
+        detail = detail[:2497] + "..."
+    notify_degraded(
+        sender=operator,
+        title=f"Enrichment provider failure: {result.provider}",
+        detail=(
+            f"*Task:* `{task.id}` `{task.task_type}`\n"
+            f"*Lead:* `{(task.payload or {}).get('lead_id')}`\n"
+            f"*Reason:* `{reason}`\n"
+            f"*HTTP status:* `{status}`\n"
+            f"```{detail}```"
+        ),
     )
 
 
@@ -124,6 +155,7 @@ class EnrichmentWorker:
 
         if result is not None and result.status == EnrichmentStatus.API_FAILURE:
             task.mark_failed(_format_api_failure(result))
+            _notify_api_failure(task=task, result=result)
         else:
             task.mark_completed()
         return True

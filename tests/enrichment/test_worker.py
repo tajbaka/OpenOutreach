@@ -63,12 +63,32 @@ def test_run_once_api_failure_marks_task_failed():
         provider="prospeo",
         raw={"reason": "http_error", "status": 402},
     )
-    with patch("linkedin.enrichment.worker.handle_enrich_phone", return_value=fail):
+    with patch("linkedin.enrichment.worker.handle_enrich_phone", return_value=fail), \
+         patch("linkedin.enrichment.worker._should_alert", return_value=True), \
+         patch("linkedin.enrichment.worker.notify_degraded") as mock_degraded:
         EnrichmentWorker()._run_once()
     task.refresh_from_db()
     assert task.status == Task.Status.FAILED
     assert "prospeo" in task.error
     assert '"status": 402' in task.error
+    mock_degraded.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_run_once_api_failure_respects_alert_cooldown():
+    task = _enrich_task()
+    fail = EnrichmentResult(
+        status=EnrichmentStatus.API_FAILURE,
+        provider="prospeo",
+        raw={"reason": "http_error", "status": 429},
+    )
+    with patch("linkedin.enrichment.worker.handle_enrich_phone", return_value=fail), \
+         patch("linkedin.enrichment.worker._should_alert", return_value=False), \
+         patch("linkedin.enrichment.worker.notify_degraded") as mock_degraded:
+        EnrichmentWorker()._run_once()
+    task.refresh_from_db()
+    assert task.status == Task.Status.FAILED
+    mock_degraded.assert_not_called()
 
 
 @pytest.mark.django_db

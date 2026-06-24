@@ -297,7 +297,8 @@ Providers implement the `PhoneProvider` protocol (`base.py`); transport calls
 use certifi's CA bundle so daemon hosts with stale system trust stores can
 still reach provider APIs. Transport failures raise `HttpError`
 (→ `API_FAILURE` with structured status/body metadata persisted to
-`Task.error` by the worker), malformed responses raise `EnrichmentError`.
+`Task.error` by the worker plus a cooldown-gated ops Slack degraded alert
+keyed by provider/reason/status), malformed responses raise `EnrichmentError`.
 
 **Email enrichment.** `handle_enrich_email` uses `BetterContactEmailProvider`,
 which submits BetterContact in email-only mode:
