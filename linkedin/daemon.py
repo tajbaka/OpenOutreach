@@ -771,6 +771,11 @@ def run_daemon(session):
                     node_monitor.stop()
                 return
             if wait > 0:
+                if (
+                    claimable_task_types is None
+                    or Task.TaskType.MANUAL_REPLY in claimable_task_types
+                ):
+                    wait = min(wait, MANUAL_REPLY_POLL_SECONDS)
                 h, m = int(wait // 3600), int(wait % 3600 // 60)
                 logger.info("Next task in %dh%02dm — sleeping", h, m)
                 _sync_listener_supervisor(listener_supervisor)
