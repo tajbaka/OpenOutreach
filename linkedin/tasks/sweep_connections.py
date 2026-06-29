@@ -161,26 +161,34 @@ def handle_sweep_connections(task, session, qualifiers):
     _post_sweep_summary(session, newly_connected=matched)
 
     # Self-reschedule.
-    enqueue_sweep_connections(delay_seconds=CONNECTION_SWEEP_INTERVAL_HOURS * 3600)
+    from linkedin.operators import resolve_operator
+
+    enqueue_sweep_connections(
+        operator=resolve_operator(session.linkedin_profile.linkedin_username),
+        delay_seconds=CONNECTION_SWEEP_INTERVAL_HOURS * 3600,
+    )
 
 
-def enqueue_sweep_connections(delay_seconds: float | None = None):
-    """Ensure one pending sweep_connections task exists; do not duplicate."""
+def enqueue_sweep_connections(*, operator: str, delay_seconds: float | None = None):
+    """Ensure one pending sweep_connections task exists per operator."""
     if not ENABLE_SWEEP_CONNECTIONS:
         return
+    if not operator:
+        raise ValueError("enqueue_sweep_connections requires a non-empty operator")
     if delay_seconds is None:
         delay_seconds = CONNECTION_SWEEP_INTERVAL_HOURS * 3600
 
     if Task.objects.filter(
         task_type=Task.TaskType.SWEEP_CONNECTIONS,
         status=Task.Status.PENDING,
+        payload__operator=operator,
     ).exists():
         return
 
     Task.objects.create(
         task_type=Task.TaskType.SWEEP_CONNECTIONS,
         scheduled_at=timezone.now() + timedelta(seconds=delay_seconds),
-        payload={},
+        payload={"operator": operator},
     )
 
 

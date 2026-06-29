@@ -355,12 +355,11 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     requests and 32 follow-up DMs for Chuka's campaign, from the wrong
     account.
 
-    - follow_up / manual_reply: claimable when `payload.operator` matches.
+    - follow_up / manual_reply / sweep_connections: claimable when
+      `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
       account that owns the campaign.
-    - sweep_connections: account-agnostic; its handler only touches the
-      claiming daemon's own campaigns regardless of which task it pops.
     """
     from django.db.models import Q
 
@@ -368,9 +367,10 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     in_owned = Q(payload__campaign_id__in=owned)
     mine_followup = Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator)
     mine_manual = Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator)
+    mine_sweep = Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator)
     mine_connect = Q(task_type=Task.TaskType.CONNECT) & in_owned
     account_agnostic = ~Q(task_type__in=Task.linked_account_scoped_task_types())
-    return mine_followup | mine_manual | mine_connect | account_agnostic
+    return mine_followup | mine_manual | mine_sweep | mine_connect | account_agnostic
 
 
 class TaskQuerySet(models.QuerySet):
@@ -418,7 +418,7 @@ class TaskQuerySet(models.QuerySet):
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
             request must go out from the account that owns the campaign;
-          - sweep_connections passes through (account-agnostic).
+          - sweep_connections Tasks are filtered to `payload.operator`;
 
         Without this, a daemon logged in as Arian could pop a follow_up
         Task for one of Chuka's connections (Travis incident,
@@ -517,6 +517,7 @@ class Task(models.Model):
             cls.TaskType.FOLLOW_UP,
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
+            cls.TaskType.SWEEP_CONNECTIONS,
         ]
 
     @classmethod
@@ -569,6 +570,13 @@ class Task(models.Model):
                 errors.append("manual_reply tasks require non-empty payload.operator")
             if not (payload.get("message") or "").strip():
                 errors.append("manual_reply tasks require non-empty payload.message")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.SWEEP_CONNECTIONS
+        ):
+            if not payload.get("operator"):
+                errors.append("sweep_connections tasks require non-empty payload.operator")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

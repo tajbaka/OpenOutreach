@@ -14,6 +14,7 @@ from linkedin.models import ActionLog, Task
 from linkedin.ml.qualifier import BayesianQualifier
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
+from linkedin.operators import resolve_operator
 from linkedin.tasks.connect import (
     ConnectStrategy,
     build_connection_note,
@@ -80,6 +81,8 @@ def _make_task(task_type, payload, **kwargs):
     """Create a task and mark it RUNNING (matching daemon behavior)."""
     payload = dict(payload)
     if task_type == Task.TaskType.FOLLOW_UP and not payload.get("operator"):
+        payload["operator"] = "Arian"
+    if task_type == Task.TaskType.SWEEP_CONNECTIONS and not payload.get("operator"):
         payload["operator"] = "Arian"
     return Task.objects.create(
         task_type=task_type,
@@ -204,6 +207,7 @@ class TestHandleConnect:
         assert Task.objects.filter(
             task_type=Task.TaskType.SWEEP_CONNECTIONS,
             status=Task.Status.PENDING,
+            payload__operator=resolve_operator(fake_session.linkedin_profile.linkedin_username),
         ).exists()
 
     @patch("linkedin.tasks.connect.strategy_for")
@@ -418,6 +422,7 @@ class TestHandleSweepConnections:
         assert Task.objects.filter(
             task_type=Task.TaskType.SWEEP_CONNECTIONS,
             status=Task.Status.PENDING,
+            payload__operator=resolve_operator(fake_session.linkedin_profile.linkedin_username),
         ).exclude(pk=task.pk).exists()
 
     @patch("linkedin.tasks.sweep_connections.notify_sweep_summary")

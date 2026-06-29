@@ -406,7 +406,9 @@ def handle_connect(task, session, qualifiers):
 
         if status == ProfileState.PENDING:
             set_profile_state(session, public_id, status.value)
-            enqueue_sweep_connections()
+            enqueue_sweep_connections(
+                operator=resolve_operator(session.linkedin_profile.linkedin_username),
+            )
             # No action taken — short delay before next candidate
             enqueue_connect(campaign_id, delay_seconds=10)
             return
@@ -441,7 +443,9 @@ def handle_connect(task, session, qualifiers):
                     lead__linkedin_url=public_id_to_url(public_id),
                     campaign=session.campaign,
                 ).update(sent_note=note)
-                enqueue_sweep_connections()
+                enqueue_sweep_connections(
+                    operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                )
             elif new_state == ProfileState.CONNECTED:
                 deal = Deal.objects.filter(
                     lead__linkedin_url=public_id_to_url(public_id),
@@ -469,7 +473,9 @@ def handle_connect(task, session, qualifiers):
     except ExistingPendingInvite:
         logger.info("%s PENDING (existing invite)", public_id)
         set_profile_state(session, public_id, ProfileState.PENDING.value)
-        enqueue_sweep_connections()
+        enqueue_sweep_connections(
+            operator=resolve_operator(session.linkedin_profile.linkedin_username),
+        )
         enqueue_connect(campaign_id, delay_seconds=10)
         return
     except SkipProfile as e:

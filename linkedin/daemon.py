@@ -337,12 +337,28 @@ def heal_tasks(session):
 
     # 4. Sweep tasks (acceptance detection — independent of follow-up DMs).
     if ENABLE_SWEEP_CONNECTIONS:
-        # Bring forward one sweep_connections task so it runs first on startup.
+        from linkedin.operators import resolve_operator
+
+        our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+        retired_legacy_sweeps = Task.objects.filter(
+            task_type=Task.TaskType.SWEEP_CONNECTIONS,
+            status=Task.Status.PENDING,
+            payload={},
+        ).update(status=Task.Status.COMPLETED, completed_at=timezone.now())
+        if retired_legacy_sweeps:
+            logger.info(
+                "Retired %d legacy unscoped sweep_connections task(s)",
+                retired_legacy_sweeps,
+            )
+
+        # Bring forward this account's sweep_connections task so it runs first
+        # on startup. Sweeps are account-scoped because the Connections page is
+        # tied to the logged-in LinkedIn account.
         _bring_task_forward(
             Task.TaskType.SWEEP_CONNECTIONS,
-            {},
+            {"operator": our_operator},
             timezone.now(),
-            dedup_keys=[],
+            dedup_keys=["operator"],
         )
     else:
         cancelled_sweep = Task.objects.filter(

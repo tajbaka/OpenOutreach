@@ -8,6 +8,7 @@ from linkedin.db.deals import set_profile_state
 from linkedin.db.leads import create_enriched_lead, promote_lead_to_deal
 from linkedin.models import Campaign, Task
 from linkedin.enums import ProfileState
+from linkedin.operators import resolve_operator
 
 
 SAMPLE_PROFILE = {
@@ -127,6 +128,7 @@ class TestHealTasks:
         assert Task.objects.filter(
             task_type=Task.TaskType.SWEEP_CONNECTIONS,
             status=Task.Status.PENDING,
+            payload__operator=resolve_operator(fake_session.linkedin_profile.linkedin_username),
         ).exists()
 
     def test_retires_legacy_check_pending_tasks(self, fake_session):

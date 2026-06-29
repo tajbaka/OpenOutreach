@@ -13,7 +13,7 @@ as. Two real leaks motivated this scoping:
 `claim_next` / `seconds_to_next` filter the queue via `_operator_scope_q`:
   - follow_up  → payload.operator must match;
   - connect    → payload.campaign_id must be one the daemon owns;
-  - sweep_connections → account-agnostic.
+  - sweep_connections → payload.operator must match.
 """
 from datetime import timedelta
 
@@ -107,16 +107,20 @@ def test_claim_next_can_be_restricted_to_followups_only():
 
 
 @pytest.mark.django_db
-def test_sweep_connections_stays_account_agnostic():
-    """sweep_connections has no per-account identity — its handler only
-    touches the claiming daemon's own campaigns — so it passes the
-    filter for any operator."""
-    sweep_t = _mk(Task.TaskType.SWEEP_CONNECTIONS, scheduled_offset_s=-1)
+def test_sweep_connections_scoped_to_matching_operator():
+    sweep_t = _mk(Task.TaskType.SWEEP_CONNECTIONS, operator="Arian", scheduled_offset_s=-1)
+    _mk(Task.TaskType.SWEEP_CONNECTIONS, operator="Chuka", scheduled_offset_s=-20)
     _mk(Task.TaskType.FOLLOW_UP, operator="Chuka")  # not Arian's — filtered out
 
     claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[2])
     assert claimed.pk == sweep_t.pk
     assert claimed.status == Task.Status.RUNNING
+
+
+@pytest.mark.django_db
+def test_sweep_connections_for_other_operator_is_never_claimed():
+    _mk(Task.TaskType.SWEEP_CONNECTIONS, operator="Chuka", scheduled_offset_s=-5)
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
 
 
 @pytest.mark.django_db
