@@ -7,8 +7,8 @@ The list_id is the numeric ID from the URL:
     linkedin.com/sales/lists/people/<list_id>
 
 Output: leads/sales_nav_<list_id>.csv
-The CSV format matches what `manage.py add_seeds --csv` expects:
-    Profile URL, First Name, Last Name, Company
+The CSV format remains compatible with `manage.py add_seeds --csv`:
+    Profile URL, First Name, Last Name, Company, Title, Geo Region, Degree
 
 So the typical workflow is:
     1. Export:  python manage.py export_sales_list 7453236290411655169
@@ -30,7 +30,15 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand
 
-CSV_HEADER = ["Profile URL", "First Name", "Last Name", "Company"]
+CSV_HEADER = [
+    "Profile URL",
+    "First Name",
+    "Last Name",
+    "Company",
+    "Title",
+    "Geo Region",
+    "Degree",
+]
 
 
 class Command(BaseCommand):
@@ -176,6 +184,9 @@ class Command(BaseCommand):
                     row["first_name"] or profile.get("first_name", ""),
                     row["last_name"] or profile.get("last_name", ""),
                     row["company_name"],
+                    row["title"],
+                    row["geo_region"],
+                    row["degree"] or "",
                 ])
                 f.flush()  # crash-safe — partial CSV is still usable
                 written += 1

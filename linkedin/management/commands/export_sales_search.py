@@ -8,8 +8,8 @@ Where <search_url> is the Sales Nav search URL with filters applied:
 
 Output: leads/sales_nav_search_<sha8>.csv  (sha8 = first 8 chars of SHA1(url))
 
-The CSV format matches what `manage.py add_seeds --csv` expects:
-    Profile URL, First Name, Last Name, Company
+The CSV format remains compatible with `manage.py add_seeds --csv`:
+    Profile URL, First Name, Last Name, Company, Title, Geo Region, Degree
 
 Auth: same separate LinkedIn account as `export_sales_list`, via env vars:
     SALES_NAV_LINKEDIN_USERNAME
@@ -25,7 +25,15 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand
 
-CSV_HEADER = ["Profile URL", "First Name", "Last Name", "Company"]
+CSV_HEADER = [
+    "Profile URL",
+    "First Name",
+    "Last Name",
+    "Company",
+    "Title",
+    "Geo Region",
+    "Degree",
+]
 
 
 class Command(BaseCommand):
@@ -158,6 +166,9 @@ class Command(BaseCommand):
                     row["first_name"] or profile.get("first_name", ""),
                     row["last_name"] or profile.get("last_name", ""),
                     row["company_name"],
+                    row["title"],
+                    row["geo_region"],
+                    row["degree"] or "",
                 ])
                 f.flush()  # crash-safe — partial CSV is still usable
                 written += 1

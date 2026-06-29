@@ -6,10 +6,11 @@ HTTP only, and never touches the browser. The EnrichmentWorker sets the
 task's final status from the returned EnrichmentResult.
 
 A lead carries multiple numbers — `Lead.phones` accrues one entry per
-provider that returns a hit. `Lead.phone_providers_tried` records every
-provider that gave a definitive answer (FOUND or NOT_FOUND), so a provider
-that already answered is never billed again; API_FAILURE is not recorded
-and stays retryable.
+provider that returns a hit. Provider-specific requests return a cached
+`Lead.phones` entry before calling the API. `Lead.phone_providers_tried`
+records every provider that gave a definitive answer (FOUND or NOT_FOUND),
+so a provider that already answered is never billed again; API_FAILURE is
+not recorded and stays retryable.
 """
 from __future__ import annotations
 
@@ -39,6 +40,49 @@ def _normalize_phone(raw: str) -> str:
     return f"+{digits}" if digits else ""
 
 
+def _existing_phone_for_provider(lead, provider: str) -> str:
+    """Return a stored number for this provider, if one exists.
+
+    This covers legacy/manual rows where `phones` was populated before
+    `phone_providers_tried` was stamped. Provider-specific Slack requests
+    should return the cached answer instead of billing the same provider again.
+    """
+    if not provider or provider == "waterfall":
+        return ""
+    for entry in lead.phones or []:
+        if entry.get("provider") == provider:
+            return _normalize_phone(entry.get("number", ""))
+    return ""
+
+
+def _cached_result_for_provider(
+    lead,
+    provider: str,
+    tried: list[str],
+) -> EnrichmentResult | None:
+    existing_phone = _existing_phone_for_provider(lead, provider)
+    if not existing_phone:
+        return None
+
+    if provider not in tried:
+        tried.append(provider)
+        lead.phone_providers_tried = tried
+        lead.save(update_fields=["phone_providers_tried"])
+
+    result = EnrichmentResult(
+        status=EnrichmentStatus.FOUND,
+        provider=provider,
+        phone=existing_phone,
+        raw={"cached": True},
+    )
+    notify_phone_enriched(lead=lead, result=result)
+    logger.info(
+        "enrich_phone: lead %s — returning cached %s phone",
+        lead.id, provider,
+    )
+    return result
+
+
 def handle_enrich_phone(task) -> EnrichmentResult | None:
     """Enrich one lead's phone number.
 
@@ -63,13 +107,21 @@ def handle_enrich_phone(task) -> EnrichmentResult | None:
 
     # Per-provider skip — never bill a provider that already answered.
     if provider == "waterfall":
+        for candidate in PROVIDER_CHAIN:
+            cached = _cached_result_for_provider(lead, candidate.name, tried)
+            if cached is not None:
+                return cached
         if all(p.name in tried for p in PROVIDER_CHAIN):
             logger.info(
                 "enrich_phone: lead %s — all providers already tried, skipping",
                 lead_id,
             )
             return None
-    elif provider in tried:
+    else:
+        cached = _cached_result_for_provider(lead, provider, tried)
+        if cached is not None:
+            return cached
+    if provider != "waterfall" and provider in tried:
         logger.info(
             "enrich_phone: lead %s — provider %s already tried, skipping",
             lead_id, provider,
@@ -77,7 +129,11 @@ def handle_enrich_phone(task) -> EnrichmentResult | None:
         return None
 
     if provider == "waterfall":
-        result = run_waterfall(lead, task)
+        result = run_waterfall(
+            lead,
+            task,
+            chain=[p for p in PROVIDER_CHAIN if p.name not in tried],
+        )
     else:
         chosen = PROVIDERS_BY_NAME.get(provider)
         if chosen is None:

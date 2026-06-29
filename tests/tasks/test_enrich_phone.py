@@ -154,6 +154,30 @@ def test_single_provider_already_tried_is_skipped():
 
 
 @pytest.mark.django_db
+def test_single_provider_cached_phone_returns_without_api_call():
+    lead = _lead(
+        phones=[{
+            "number": "+1 904 945 0716",
+            "provider": "bettercontact",
+            "found_at": "x",
+        }],
+        phone_providers_tried=[],
+    )
+    task = _task(lead, "bettercontact")
+    with patch("linkedin.tasks.enrich_phone.run_waterfall") as mock_wf, \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched") as mock_notify:
+        result = handle_enrich_phone(task)
+    lead.refresh_from_db()
+    assert result.status == EnrichmentStatus.FOUND
+    assert result.provider == "bettercontact"
+    assert result.phone == "+19049450716"
+    assert result.raw == {"cached": True}
+    assert lead.phone_providers_tried == ["bettercontact"]
+    mock_wf.assert_not_called()
+    mock_notify.assert_called_once()
+
+
+@pytest.mark.django_db
 def test_waterfall_skipped_when_all_providers_tried():
     lead = _lead(phone_providers_tried=["bettercontact", "leadmagic", "prospeo"])
     task = _task(lead, "waterfall")
@@ -165,6 +189,8 @@ def test_waterfall_skipped_when_all_providers_tried():
 
 @pytest.mark.django_db
 def test_waterfall_runs_when_some_providers_untried():
+    from linkedin.enrichment.waterfall import PROVIDERS_BY_NAME
+
     lead = _lead(phone_providers_tried=["bettercontact"])
     task = _task(lead, "waterfall")
     found = EnrichmentResult(
@@ -174,6 +200,34 @@ def test_waterfall_runs_when_some_providers_untried():
          patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
         handle_enrich_phone(task)
     wf.assert_called_once()
+    assert wf.call_args.kwargs["chain"] == [
+        PROVIDERS_BY_NAME["leadmagic"],
+        PROVIDERS_BY_NAME["prospeo"],
+    ]
+
+
+@pytest.mark.django_db
+def test_waterfall_cached_phone_returns_without_api_call():
+    lead = _lead(
+        phones=[{
+            "number": "+1 904 945 0716",
+            "provider": "bettercontact",
+            "found_at": "x",
+        }],
+        phone_providers_tried=[],
+    )
+    task = _task(lead, "waterfall")
+    with patch("linkedin.tasks.enrich_phone.run_waterfall") as mock_wf, \
+         patch("linkedin.tasks.enrich_phone.notify_phone_enriched") as mock_notify:
+        result = handle_enrich_phone(task)
+    lead.refresh_from_db()
+    assert result.status == EnrichmentStatus.FOUND
+    assert result.provider == "bettercontact"
+    assert result.phone == "+19049450716"
+    assert result.raw == {"cached": True}
+    assert lead.phone_providers_tried == ["bettercontact"]
+    mock_wf.assert_not_called()
+    mock_notify.assert_called_once()
 
 
 @pytest.mark.django_db
@@ -201,6 +255,8 @@ def test_missing_lead_is_skipped():
 
 @pytest.mark.django_db
 def test_waterfall_provider_runs_full_chain():
+    from linkedin.enrichment.waterfall import PROVIDER_CHAIN
+
     lead = _lead()
     task = _task(lead, "waterfall")
     found = EnrichmentResult(
@@ -210,11 +266,13 @@ def test_waterfall_provider_runs_full_chain():
          patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
         handle_enrich_phone(task)
     assert wf.call_count == 1
-    assert "chain" not in wf.call_args.kwargs
+    assert wf.call_args.kwargs["chain"] == PROVIDER_CHAIN
 
 
 @pytest.mark.django_db
 def test_absent_provider_runs_full_chain():
+    from linkedin.enrichment.waterfall import PROVIDER_CHAIN
+
     lead = _lead()
     task = _task(lead)  # legacy payload — no "provider" key
     found = EnrichmentResult(
@@ -223,7 +281,7 @@ def test_absent_provider_runs_full_chain():
     with patch("linkedin.tasks.enrich_phone.run_waterfall", return_value=found) as wf, \
          patch("linkedin.tasks.enrich_phone.notify_phone_enriched"):
         handle_enrich_phone(task)
-    assert "chain" not in wf.call_args.kwargs
+    assert wf.call_args.kwargs["chain"] == PROVIDER_CHAIN
 
 
 @pytest.mark.django_db

@@ -122,6 +122,7 @@ Three apps in `INSTALLED_APPS`:
 - **`setup/self_profile.py`** — `ensure_self_profile()`.
 - **`setup/seeds.py`** — User-provided seed profiles: parse URLs, create Leads + QUALIFIED Deals.
 - **`management/commands/discover_inbox_leads.py`** — Standalone LinkedIn Messaging inbox lead discovery. Uses the same env-backed `StandaloneLinkedInSession` account slots as message backfill (`LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` and `BACKFILL_LINKEDIN_USERNAME`/`BACKFILL_LINKEDIN_PASSWORD`). After login it opens the visible browser to `/messaging/`, then crawls Voyager messaging conversations from that authenticated browser context. The first batch uses LinkedIn's recent-conversation query; older pages use the same `lastUpdatedBefore` / `nextCursor` category query emitted by scrolling the conversation list in the UI, stopping at the 90-day default window or `--max-pages`. It skips existing leads by canonical LinkedIn URL, `Lead.public_identifier`, stored profile URN, or existing `crm.Message.thread_external_id`, and classifies non-duplicate 1:1 threads with the Boundera/FedRAMP-specific `inbox_lead_relevance.j2` prompt. Campaign objective/docs are deliberately ignored for relevance; `--campaign` only chooses the destination Deal campaign. Full Voyager profile enrichment is preferred; when LinkedIn returns private/restricted 403s, the command falls back to the inbox participant payload (name, headline, profile URL / `fsd_profile` URN). Default mode is dry-run; `--apply` creates `Lead` + `Deal(state=CONNECTED)` rows, stamps canonical `Lead.icp` (`CSPs`, `3PAOs/Assessors`, `Advisors`, `Channel`), stores the LinkedIn thread through `persist_thread`, and stamps `Deal.last_reply_at` from newest inbound. It does not enqueue `Task` rows.
+- **`management/commands/export_sales_search.py` / `export_sales_list.py`** — Sales Navigator people-search/list exporters using the dedicated `SALES_NAV_LINKEDIN_USERNAME` / `SALES_NAV_LINKEDIN_PASSWORD` session. The exported CSV remains compatible with `add_seeds --csv` and includes review metadata: `Profile URL`, `First Name`, `Last Name`, `Company`, `Title`, `Geo Region`, `Degree`. Prefer writing exploratory exports under ignored `artifacts/leads/`; keep `leads/` for intentional import-ready inputs.
 - **`management/setup_crm.py`** — Idempotent CRM bootstrap (Site creation).
 - **`admin.py`** — Django Admin: Campaign, LinkedInProfile, SearchKeyword, ActionLog, Task, ChatMessage.
 - **`django_settings.py`** — Django settings (SQLite at `db.sqlite3`). Apps: crm, chat, linkedin.
@@ -318,8 +319,12 @@ already present); `Lead.phone_numbers` is a bare-string convenience property.
 `Lead.phone_providers_tried` records every provider that returned a definitive
 result (`FOUND` or `NOT_FOUND`); `API_FAILURE` is not recorded, so it stays
 retryable. Skip is per-provider — a single-provider task skips if that
-provider is already in `phone_providers_tried`; a waterfall task skips only
-once every provider is. `FOUND`/`NOT_FOUND` post a Slack message via
+provider is already in `phone_providers_tried`, but first returns a cached
+`Lead.phones` number for that same provider when one exists so the provider API
+is not billed again for legacy/manual rows. A waterfall task first returns any
+cached phone from the provider chain, otherwise runs only providers not already
+in `phone_providers_tried`, and skips once every provider is tried.
+`FOUND`/`NOT_FOUND` post a Slack message via
 `notify_phone_enriched`; all-`API_FAILURE` posts nothing and marks the task
 `failed`.
 
