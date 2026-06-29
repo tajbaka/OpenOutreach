@@ -175,6 +175,8 @@ def test_claim_next_excludes_non_linkedin_tasks_but_claims_manual_reply():
     assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
     assert Task.objects.seconds_to_next() is None
     assert Task.objects.next_enrichment().pk == enrich.pk
+    assert Task.objects.next_gmail(operator="Arian").payload["operator"] == "Arian"
+    assert Task.objects.next_gmail(operator="Chuka") is None
 
 
 @pytest.mark.django_db

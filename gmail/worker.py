@@ -12,7 +12,8 @@ from gmail.tasks.follow_up import handle_gmail_follow_up
 
 
 class GmailWorker:
-    def __init__(self, poll_interval: float = 10.0):
+    def __init__(self, *, operator: str = "", poll_interval: float = 10.0):
+        self._operator = operator
         self._poll_interval = poll_interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -28,7 +29,7 @@ class GmailWorker:
             daemon=True,
         )
         self._thread.start()
-        logger.info("Gmail worker started")
+        logger.info("Gmail worker started (operator=%s)", self._operator or "unscoped")
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
@@ -59,7 +60,7 @@ class GmailWorker:
     def _run_once(self) -> bool:
         from linkedin.models import Task
 
-        task = Task.objects.next_gmail()
+        task = Task.objects.next_gmail(operator=self._operator)
         if task is None:
             return False
 

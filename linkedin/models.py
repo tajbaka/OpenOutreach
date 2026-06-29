@@ -475,9 +475,12 @@ class TaskQuerySet(models.QuerySet):
             ],
         ).first()
 
-    def next_gmail(self) -> "Task | None":
-        """The next due browserless Gmail follow-up task."""
-        return self.due().filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).first()
+    def next_gmail(self, operator: str | None = None) -> "Task | None":
+        """The next due browserless Gmail follow-up task for this daemon."""
+        qs = self.due().filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP)
+        if operator:
+            qs = qs.filter(payload__operator=operator)
+        return qs.first()
 
 
 class Task(models.Model):

@@ -270,6 +270,12 @@ tokens request Gmail send, compose/draft, settings, and readonly scopes;
 `manage.py gmail_send_test` sends a direct live test message through the mapped
 operator alias.
 
+Each daemon starts its `GmailWorker` with the daemon's resolved operator handle,
+and `Task.objects.next_gmail(operator=...)` filters on `payload.operator`. This
+keeps multi-node deployments from letting one sender's daemon claim another
+sender's Gmail task and fail because that local node lacks the mapped OAuth
+token.
+
 **Worker.** `EnrichmentWorker` (`worker.py`) is a single background thread
 `run_daemon` always spawns alongside the listener supervisor (no longer
 flag-gated — the Slack menu is always available so enrichment must always be

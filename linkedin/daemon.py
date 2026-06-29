@@ -626,7 +626,7 @@ def run_daemon(session):
     enrichment_worker.start()
 
     from gmail.worker import GmailWorker
-    gmail_worker = GmailWorker()
+    gmail_worker = GmailWorker(operator=our_operator)
     gmail_worker.start()
 
     # Node monitoring — a background thread that beats this daemon's
