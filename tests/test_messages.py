@@ -392,6 +392,8 @@ def test_lead_outbound_operators_canonicalizes_known_aliases(db):
         "eddy@tryfedrampgpt.com",
         "leili amirshahi",
         "leili.ash2011@yahoo.com",
+        "athena aghdami",
+        "athenaaghdami@gmail.com",
     )):
         Message.objects.create(
             lead=lead,
@@ -402,7 +404,7 @@ def test_lead_outbound_operators_canonicalizes_known_aliases(db):
             body="hi",
             sent_at=datetime(2026, 4, 1, 10, 0, tzinfo=timezone.utc),
         )
-    assert lead_outbound_operators(lead) == {"Chuka", "Leili"}
+    assert lead_outbound_operators(lead) == {"Chuka", "Leili", "Athena"}
 
 
 def test_lead_outbound_operators_skips_inbound_and_gmail(db):
