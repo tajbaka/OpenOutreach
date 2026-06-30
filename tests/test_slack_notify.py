@@ -540,9 +540,11 @@ class TestNotifySweepSummary:
             mock_open.return_value.__enter__.return_value.status = 200
             slack_mod.notify_sweep_summary(
                 sender="Leili", connects_today=18, followups_today=5,
+                email_followups_today=3,
             )
         mock_open.assert_called_once()
         body = mock_open.call_args[0][0].data.decode("utf-8")
         assert "Leili" in body
         assert "18 invites" in body
-        assert "5 follow-ups" in body
+        assert "5 LinkedIn follow-ups" in body
+        assert "3 email follow-ups" in body

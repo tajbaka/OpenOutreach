@@ -124,6 +124,44 @@ def _lead_context_body(
     return urlencode({"payload": json.dumps(payload)})
 
 
+def _reply_draft_body(current_reply: str = "", metadata=None) -> str:
+    metadata = metadata or {
+        "lead_id": 42,
+        "operator": "Chuka",
+        "channel_id": "C123",
+        "message_ts": "171234.567",
+        "response_url": "https://hooks.slack.com/actions/T/B/R",
+        "thread_external_id": "thread-chuka",
+        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "hi"}}],
+        "thread_blocks": [{"type": "section", "block_id": "linkedin_thread_preview_header"}],
+    }
+    payload = {
+        "type": "block_actions",
+        "view": {
+            "id": "V-reply",
+            "hash": "h-reply",
+            "callback_id": "linkedin_reply_modal",
+            "private_metadata": json.dumps(metadata),
+            "state": {
+                "values": {
+                    "linkedin_reply_message": {
+                        "linkedin_reply_body": {"value": current_reply},
+                    },
+                },
+            },
+        },
+        "actions": [{
+            "action_id": "linkedin_reply_draft_button",
+            "value": json.dumps({
+                "lead_id": 42,
+                "operator": "Chuka",
+                "thread_external_id": "thread-chuka",
+            }),
+        }],
+    }
+    return urlencode({"payload": json.dumps(payload)})
+
+
 def _reply_modal_body(message: str = "Sounds good", metadata=None) -> str:
     payload = {
         "type": "view_submission",
@@ -198,6 +236,7 @@ def test_interaction_intent_routes_known_actions():
         (_lead_context_body("linkedin_lead_context_button"), "lead_context"),
         (_lead_context_body("linkedin_lead_context_ai_button"), "lead_context_ai"),
         (_lead_context_body("linkedin_lead_context_draft_button"), "lead_context_draft"),
+        (_reply_draft_body(), "reply_draft"),
         (_interaction_body("42:waterfall"), "enrich_phone"),
         (_reply_modal_body(), "reply_submission"),
     ]
@@ -451,10 +490,13 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     assert sent["trigger_id"] == "trigger-123"
     assert sent["view"]["callback_id"] == "linkedin_reply_modal"
     assert sent["view"]["blocks"][0]["block_id"] == "linkedin_thread_preview_header"
-    assert sent["view"]["blocks"][-1]["type"] == "input"
+    assert sent["view"]["blocks"][-2]["type"] == "input"
+    assert sent["view"]["blocks"][-1]["block_id"] == "linkedin_reply_actions"
+    assert sent["view"]["blocks"][-1]["elements"][0]["action_id"] == "linkedin_reply_draft_button"
     metadata = json.loads(sent["view"]["private_metadata"])
     assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
     assert metadata["thread_external_id"] == "thread-arian"
+    assert metadata["thread_blocks"][0]["block_id"] == "linkedin_thread_preview_header"
 
 
 def test_update_slack_view_can_persist_lead_context_metadata(monkeypatch):
@@ -536,7 +578,53 @@ def test_parse_lead_context_button_preserves_generated_modal_metadata():
     assert out["draft_reply"] == "Existing draft\n\nWith spacing"
 
 
-def test_render_lead_context_blocks_includes_ai_and_draft_actions():
+def test_parse_reply_draft_button_extracts_reply_modal_metadata():
+    out = slack_enrich.parse_reply_draft_button(
+        _reply_draft_body("Existing typed reply"),
+    )
+
+    assert out["lead_id"] == 42
+    assert out["operator"] == "Chuka"
+    assert out["thread_external_id"] == "thread-chuka"
+    assert out["view_id"] == "V-reply"
+    assert out["view_hash"] == "h-reply"
+    assert out["current_reply"] == "Existing typed reply"
+    assert out["metadata"]["channel_id"] == "C123"
+    assert out["metadata"]["thread_blocks"][0]["block_id"] == "linkedin_thread_preview_header"
+
+
+def test_update_reply_modal_prefills_generated_draft(monkeypatch):
+    monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+    metadata = {
+        "lead_id": 42,
+        "operator": "Chuka",
+        "channel_id": "C123",
+        "message_ts": "171234.567",
+        "thread_external_id": "thread-chuka",
+        "blocks": [],
+        "thread_blocks": [{"type": "section", "block_id": "linkedin_thread_preview_header"}],
+    }
+
+    with patch.object(slack_enrich.request, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        slack_enrich.update_reply_modal(
+            view_id="V-reply",
+            metadata=metadata,
+            initial_reply="Suggested reply",
+        )
+
+    req = mock_open.call_args[0][0]
+    assert req.full_url.endswith("/views.update")
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["view"]["callback_id"] == "linkedin_reply_modal"
+    blocks = sent["view"]["blocks"]
+    assert blocks[0]["block_id"] == "linkedin_thread_preview_header"
+    reply_input = next(b for b in blocks if b.get("block_id") == "linkedin_reply_message")
+    assert reply_input["element"]["initial_value"] == "Suggested reply"
+    assert blocks[-1]["block_id"] == "linkedin_reply_actions"
+
+
+def test_render_lead_context_blocks_includes_ai_action_only():
     context = {
         "lead": {
             "id": 42,
@@ -577,10 +665,7 @@ def test_render_lead_context_blocks_includes_ai_and_draft_actions():
     assert "Happy to explain" in body
     actions = next(b for b in blocks if b.get("block_id") == "lead_context_actions")
     action_ids = {el["action_id"] for el in actions["elements"]}
-    assert action_ids == {
-        "linkedin_lead_context_ai_button",
-        "linkedin_lead_context_draft_button",
-    }
+    assert action_ids == {"linkedin_lead_context_ai_button"}
 
 
 def test_render_lead_context_blocks_hides_actions_while_loading():

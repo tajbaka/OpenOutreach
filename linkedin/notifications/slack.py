@@ -595,6 +595,7 @@ def notify_sweep_summary(
     sender: str,
     connects_today: int,
     followups_today: int,
+    email_followups_today: int = 0,
     connect_runs_today: int | None = None,
     qualified: int | None = None,
     newly_connected: int | None = None,
@@ -606,7 +607,8 @@ def notify_sweep_summary(
     account that ran the sweep — all counts are scoped to that sender.
     Silent no-op when the ops webhook is unset.
 
-      - connects_today / followups_today — actions sent today (ActionLog)
+      - connects_today / followups_today — LinkedIn actions sent today (ActionLog)
+      - email_followups_today — Gmail follow-up sends today (crm.Message ledger)
       - connect_runs_today / qualified / newly_connected — optional pipeline
         context from the sweep task
     """
@@ -616,7 +618,8 @@ def notify_sweep_summary(
     headline = f":bar_chart: *Connection sweep — {sender}*"
     body = (
         f"*Sent today:* {connects_today} invites\n"
-        f"*Follow-ups today:* {followups_today}"
+        f"*LinkedIn follow-ups today:* {followups_today}\n"
+        f"*Email follow-ups today:* {email_followups_today}"
     )
     if newly_connected is not None:
         body += f"\n*Newly accepted this sweep:* {newly_connected}"
@@ -631,7 +634,8 @@ def notify_sweep_summary(
     fallback = (
         f":bar_chart: Sweep ({sender}): "
         f"{connects_today} invites sent today, "
-        f"{followups_today} follow-ups sent today"
+        f"{followups_today} LinkedIn follow-ups sent today, "
+        f"{email_followups_today} email follow-ups sent today"
     )
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"sweep-summary ({sender})")

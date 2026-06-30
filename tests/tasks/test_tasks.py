@@ -433,6 +433,19 @@ class TestHandleSweepConnections:
         mock_scrape.return_value = []
         _make_qualified(fake_session, "alice")
         _make_qualified(fake_session, "bob")
+        from crm.models import Lead, Message
+
+        lead = Lead.objects.get(public_identifier="alice")
+        sender = resolve_operator(fake_session.linkedin_profile.linkedin_username)
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.GMAIL,
+            direction=Message.Direction.OUTBOUND,
+            sender="sender@example.com",
+            external_id=f"gmail-send:{sender}:alice:gmail_fallback:step-0:test",
+            sent_at=timezone.now(),
+            body="Email follow-up",
+        )
 
         today = timezone.now()
         Task.objects.create(
@@ -460,6 +473,7 @@ class TestHandleSweepConnections:
         kwargs = mock_notify.call_args.kwargs
         assert kwargs["connect_runs_today"] == 2
         assert kwargs["qualified"] == 2
+        assert kwargs["email_followups_today"] == 1
 
 
 # ── handle_follow_up tests ─────────────────────────────────────

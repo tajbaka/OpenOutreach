@@ -48,6 +48,7 @@ _REPLY_STATUS_PREFIX = "reply_status"
 _ENRICH_PHONE_ACTION_ID = "enrich_phone_select"
 _REPLY_ACTION_ID = "linkedin_reply_button"
 _REPLY_CANCEL_ACTION_ID = "linkedin_reply_cancel_button"
+_REPLY_DRAFT_ACTION_ID = "linkedin_reply_draft_button"
 _REPLY_MODAL_CALLBACK_ID = "linkedin_reply_modal"
 _REPLY_BODY_ACTION_ID = "linkedin_reply_body"
 _LEAD_CONTEXT_ACTION_ID = "linkedin_lead_context_button"
@@ -67,6 +68,7 @@ _INTENT_REPLY_SUBMISSION = "reply_submission"
 _INTENT_ENRICH_PHONE = "enrich_phone"
 _INTENT_REPLY_BUTTON = "reply_button"
 _INTENT_REPLY_CANCEL = "reply_cancel"
+_INTENT_REPLY_DRAFT = "reply_draft"
 _INTENT_LEAD_CONTEXT = "lead_context"
 _INTENT_LEAD_CONTEXT_AI = "lead_context_ai"
 _INTENT_LEAD_CONTEXT_DRAFT = "lead_context_draft"
@@ -75,6 +77,7 @@ _INTENT_BY_ACTION_ID = {
     _ENRICH_PHONE_ACTION_ID: _INTENT_ENRICH_PHONE,
     _REPLY_ACTION_ID: _INTENT_REPLY_BUTTON,
     _REPLY_CANCEL_ACTION_ID: _INTENT_REPLY_CANCEL,
+    _REPLY_DRAFT_ACTION_ID: _INTENT_REPLY_DRAFT,
     _LEAD_CONTEXT_ACTION_ID: _INTENT_LEAD_CONTEXT,
     _LEAD_CONTEXT_AI_ACTION_ID: _INTENT_LEAD_CONTEXT_AI,
     _LEAD_CONTEXT_DRAFT_ACTION_ID: _INTENT_LEAD_CONTEXT_DRAFT,
@@ -85,6 +88,7 @@ _HANDLER_BY_INTENT = {
     _INTENT_ENRICH_PHONE: "_handle_enrichment_pick",
     _INTENT_REPLY_BUTTON: "_handle_reply_button",
     _INTENT_REPLY_CANCEL: "_handle_reply_cancel",
+    _INTENT_REPLY_DRAFT: "_handle_reply_draft",
     _INTENT_LEAD_CONTEXT: "_handle_lead_context_button",
     _INTENT_LEAD_CONTEXT_AI: "_handle_lead_context_ai",
     _INTENT_LEAD_CONTEXT_DRAFT: "_handle_lead_context_draft",
@@ -307,6 +311,7 @@ def _compact_metadata(metadata: dict) -> str:
         return encoded
     metadata = dict(metadata)
     metadata["blocks"] = []
+    metadata["thread_blocks"] = []
     return json.dumps(metadata, separators=(",", ":"))
 
 
@@ -343,6 +348,73 @@ def _compact_metadata_text(text: str, *, limit: int = _LEAD_CONTEXT_METADATA_TEX
     if len(value) <= limit:
         return value
     return value[: limit - 3].rstrip() + "..."
+
+
+def _reply_draft_action_value(metadata: dict) -> str:
+    return json.dumps({
+        "lead_id": metadata.get("lead_id"),
+        "operator": metadata.get("operator") or "",
+        "thread_external_id": metadata.get("thread_external_id") or "",
+    }, separators=(",", ":"))
+
+
+def render_reply_modal_blocks(
+    *,
+    metadata: dict,
+    thread_blocks: list | None = None,
+    initial_reply: str = "",
+    loading: str = "",
+    draft_error: str = "",
+) -> list[dict]:
+    """Render the Slack modal body for composing a manual LinkedIn reply."""
+    input_element = {
+        "type": "plain_text_input",
+        "action_id": _REPLY_BODY_ACTION_ID,
+        "multiline": True,
+        "placeholder": {
+            "type": "plain_text",
+            "text": "Type the LinkedIn reply to queue...",
+        },
+    }
+    if initial_reply.strip():
+        input_element["initial_value"] = _compact_metadata_text(
+            initial_reply,
+            limit=2800,
+        )
+
+    blocks: list[dict] = [
+        *(thread_blocks or []),
+        {
+            "type": "input",
+            "block_id": "linkedin_reply_message",
+            "label": {"type": "plain_text", "text": "Reply"},
+            "element": input_element,
+        },
+    ]
+    if loading:
+        blocks.append({
+            "type": "section",
+            "block_id": "linkedin_reply_draft_loading",
+            "text": {"type": "mrkdwn", "text": f":hourglass_flowing_sand: *{_slack_escape(loading)}*"},
+        })
+    elif draft_error:
+        blocks.append({
+            "type": "section",
+            "block_id": "linkedin_reply_draft_error",
+            "text": {"type": "mrkdwn", "text": f":warning: *Draft failed* — `{_slack_escape(draft_error)}`"},
+        })
+
+    blocks.append({
+        "type": "actions",
+        "block_id": "linkedin_reply_actions",
+        "elements": [{
+            "type": "button",
+            "action_id": _REPLY_DRAFT_ACTION_ID,
+            "text": {"type": "plain_text", "text": "Draft reply"},
+            "value": _reply_draft_action_value(metadata),
+        }],
+    })
+    return blocks
 
 
 def fetch_lead_context_artifacts(
@@ -531,7 +603,9 @@ def open_reply_modal(
         "response_url": response_url,
         "thread_external_id": thread_external_id or "",
         "blocks": original_blocks,
+        "thread_blocks": thread_blocks or [],
     })
+    metadata_obj = json.loads(metadata)
     _slack_api("views.open", {
         "trigger_id": trigger_id,
         "view": {
@@ -541,25 +615,45 @@ def open_reply_modal(
             "title": {"type": "plain_text", "text": "LinkedIn reply"},
             "submit": {"type": "plain_text", "text": "Queue reply"},
             "close": {"type": "plain_text", "text": "Cancel"},
-            "blocks": [
-                *(thread_blocks or []),
-                {
-                    "type": "input",
-                    "block_id": "linkedin_reply_message",
-                    "label": {"type": "plain_text", "text": "Reply"},
-                    "element": {
-                        "type": "plain_text_input",
-                        "action_id": _REPLY_BODY_ACTION_ID,
-                        "multiline": True,
-                        "placeholder": {
-                            "type": "plain_text",
-                            "text": "Type the LinkedIn reply to queue...",
-                        },
-                    },
-                },
-            ],
+            "blocks": render_reply_modal_blocks(
+                metadata=metadata_obj,
+                thread_blocks=metadata_obj.get("thread_blocks") or [],
+            ),
         },
     })
+
+
+def update_reply_modal(
+    *,
+    view_id: str,
+    view_hash: str = "",
+    metadata: dict,
+    initial_reply: str = "",
+    loading: str = "",
+    draft_error: str = "",
+) -> None:
+    """Update an already-open manual reply modal."""
+    payload = {
+        "view_id": view_id,
+        "view": {
+            "type": "modal",
+            "callback_id": _REPLY_MODAL_CALLBACK_ID,
+            "private_metadata": _compact_metadata(metadata),
+            "title": {"type": "plain_text", "text": "LinkedIn reply"},
+            "submit": {"type": "plain_text", "text": "Queue reply"},
+            "close": {"type": "plain_text", "text": "Cancel"},
+            "blocks": render_reply_modal_blocks(
+                metadata=metadata,
+                thread_blocks=metadata.get("thread_blocks") or [],
+                initial_reply=initial_reply,
+                loading=loading,
+                draft_error=draft_error,
+            ),
+        },
+    }
+    if view_hash:
+        payload["hash"] = view_hash
+    _slack_api("views.update", payload)
 
 
 def update_slack_message(*, channel_id: str, message_ts: str, blocks: list, text: str) -> None:
@@ -740,6 +834,44 @@ def parse_lead_context_button(body: str) -> dict:
         "action_id": action_id,
         "ai_summary": view_metadata.get("ai_summary") or "",
         "draft_reply": view_metadata.get("draft_reply") or "",
+    }
+
+
+def parse_reply_draft_button(body: str) -> dict:
+    """Extract metadata needed to generate a draft inside the reply modal."""
+    fields = parse_qs(body)
+    raw = (fields.get("payload") or [None])[0]
+    if not raw:
+        raise ValueError("no payload field")
+    payload = json.loads(raw)
+    actions = payload.get("actions") or []
+    if not actions:
+        raise ValueError("no actions in payload")
+    action = actions[0]
+    if action.get("action_id") != _REPLY_DRAFT_ACTION_ID:
+        raise ValueError("not a reply draft action")
+    value = _parse_action_value(action.get("value") or "")
+    view = payload.get("view") or {}
+    view_metadata = json.loads(view.get("private_metadata") or "{}")
+    values = ((view.get("state") or {}).get("values") or {})
+    current_reply = ""
+    for block_values in values.values():
+        field = block_values.get(_REPLY_BODY_ACTION_ID)
+        if field:
+            current_reply = (field.get("value") or "").strip()
+            break
+    return {
+        "lead_id": int(value.get("lead_id") or view_metadata["lead_id"]),
+        "operator": value.get("operator") or view_metadata.get("operator") or "",
+        "thread_external_id": (
+            value.get("thread_external_id")
+            or view_metadata.get("thread_external_id")
+            or ""
+        ),
+        "view_id": view.get("id") or "",
+        "view_hash": view.get("hash") or "",
+        "current_reply": current_reply,
+        "metadata": view_metadata,
     }
 
 
@@ -1087,21 +1219,12 @@ def render_lead_context_blocks(
         blocks.append({
             "type": "actions",
             "block_id": "lead_context_actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "action_id": _LEAD_CONTEXT_AI_ACTION_ID,
-                    "text": {"type": "plain_text", "text": "Generate AI summary"},
-                    "value": value,
-                },
-                {
-                    "type": "button",
-                    "action_id": _LEAD_CONTEXT_DRAFT_ACTION_ID,
-                    "text": {"type": "plain_text", "text": "Draft reply"},
-                    "style": "primary",
-                    "value": value,
-                },
-            ],
+            "elements": [{
+                "type": "button",
+                "action_id": _LEAD_CONTEXT_AI_ACTION_ID,
+                "text": {"type": "plain_text", "text": "Generate AI summary"},
+                "value": value,
+            }],
         })
     return blocks[:100]
 
@@ -1300,6 +1423,67 @@ class handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001 — Slack API failure
             self._respond_text(500, "slack modal error")
             return
+        self._respond_text(200, "")
+
+    def _handle_reply_draft(self, body: str) -> None:
+        try:
+            data = parse_reply_draft_button(body)
+            with psycopg.connect(DATABASE_URL) as conn:
+                context = fetch_lead_context(
+                    conn,
+                    data["lead_id"],
+                    operator=data.get("operator", ""),
+                    thread_external_id=data.get("thread_external_id", ""),
+                )
+        except (ValueError, json.JSONDecodeError):
+            self._respond_text(400, "malformed reply draft action")
+            return
+        except Exception:  # noqa: BLE001 — DB failure
+            self._respond_text(500, "lead context error")
+            return
+
+        view_id = data.get("view_id") or ""
+        metadata = data.get("metadata") or {}
+        current_reply = data.get("current_reply") or ""
+        if view_id:
+            try:
+                update_reply_modal(
+                    view_id=view_id,
+                    view_hash=data.get("view_hash") or "",
+                    metadata=metadata,
+                    initial_reply=current_reply,
+                    loading="Drafting reply...",
+                )
+            except Exception:
+                pass
+
+        try:
+            draft = generate_ai_draft_reply(context)
+            with psycopg.connect(DATABASE_URL) as conn:
+                upsert_lead_context_artifact(
+                    conn,
+                    lead_id=data["lead_id"],
+                    operator=data.get("operator", ""),
+                    thread_external_id=data.get("thread_external_id", ""),
+                    kind=_ARTIFACT_DRAFT_REPLY,
+                    content=draft,
+                )
+            update_reply_modal(
+                view_id=view_id,
+                metadata=metadata,
+                initial_reply=draft,
+            )
+        except Exception as exc:  # noqa: BLE001 — show recoverable model failure in modal
+            try:
+                update_reply_modal(
+                    view_id=view_id,
+                    metadata=metadata,
+                    initial_reply=current_reply,
+                    draft_error=str(exc),
+                )
+            except Exception:
+                self._respond_text(500, "slack modal error")
+                return
         self._respond_text(200, "")
 
     def _handle_lead_context_button(self, body: str) -> None:

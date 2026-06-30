@@ -198,13 +198,15 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
     disturbs the sweep.
 
     All counts are scoped to the account that ran this sweep:
-      - sends today from ActionLog (this LinkedInProfile).
+      - LinkedIn sends today from ActionLog (this LinkedInProfile).
+      - Gmail sends today from the durable crm.Message ledger.
     """
-    from crm.models import Deal
+    from crm.models import Deal, Message
     from linkedin.operators import resolve_operator
 
     try:
         today_start = active_day_start()
+        sender = resolve_operator(session.linkedin_profile.linkedin_username)
         connects_today = ActionLog.objects.filter(
             linkedin_profile=session.linkedin_profile,
             action_type=ActionLog.ActionType.CONNECT,
@@ -214,6 +216,12 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
             linkedin_profile=session.linkedin_profile,
             action_type=ActionLog.ActionType.FOLLOW_UP,
             created_at__gte=today_start,
+        ).count()
+        email_followups_today = Message.objects.filter(
+            source=Message.Source.GMAIL,
+            direction=Message.Direction.OUTBOUND,
+            sent_at__gte=today_start,
+            external_id__startswith=f"gmail-send:{sender}:",
         ).count()
         connect_runs_today = Task.objects.filter(
             task_type=Task.TaskType.CONNECT,
@@ -227,9 +235,10 @@ def _post_sweep_summary(session, newly_connected: int) -> None:
         ).count()
 
         notify_sweep_summary(
-            sender=resolve_operator(session.linkedin_profile.linkedin_username),
+            sender=sender,
             connects_today=connects_today,
             followups_today=followups_today,
+            email_followups_today=email_followups_today,
             connect_runs_today=connect_runs_today,
             qualified=qualified,
             newly_connected=newly_connected,
