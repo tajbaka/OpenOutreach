@@ -24,9 +24,10 @@ def test_render_for_lead_uses_gmail_templates():
         step_index=0,
     )
 
-    assert rendered.subject == "FedRAMP 20x path at Analytical Engines"
+    assert rendered.subject == "FedRAMP 20x evidence question at Analytical Engines"
     assert "Hi Ada" in rendered.body
     assert "Analytical Engines" in rendered.body
+    assert "June 24 consolidated rules" in rendered.body
 
 
 def test_render_for_lead_uses_safe_company_fallback():
