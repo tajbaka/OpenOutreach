@@ -55,10 +55,10 @@ _LEAD_CONTEXT_ACTION_ID = "linkedin_lead_context_button"
 _LEAD_CONTEXT_AI_ACTION_ID = "linkedin_lead_context_ai_button"
 _LEAD_CONTEXT_DRAFT_ACTION_ID = "linkedin_lead_context_draft_button"
 _LEAD_CONTEXT_MODAL_CALLBACK_ID = "linkedin_lead_context_modal"
-_THREAD_PREVIEW_LIMIT = 8
+_THREAD_PREVIEW_LIMIT = 12
 _THREAD_MESSAGE_LIMIT = 320
 _THREAD_SECTION_LIMIT = 2800
-_CONTEXT_MESSAGE_LIMIT = 6
+_CONTEXT_MESSAGE_LIMIT = 12
 _LLM_TIMEOUT_SECONDS = 8
 _LEAD_CONTEXT_METADATA_TEXT_LIMIT = 1200
 _ARTIFACT_AI_SUMMARY = "ai_summary"
@@ -1342,14 +1342,18 @@ def generate_ai_lead_summary(context: dict) -> str:
 
 
 def generate_ai_draft_reply(context: dict) -> str:
-    """Draft a short LinkedIn reply grounded in Boundera sales posture."""
+    """Draft a short LinkedIn reply grounded in the full recent thread."""
     prompt = (
         "Draft one LinkedIn reply for this conversation. Return only the message text. "
-        "Write like a direct founder, not a sequence. Use short paragraphs. "
-        "Acknowledge the latest message first, add at most one useful Boundera context "
-        "sentence, and ask one clear question. Do not invent facts or claim outcomes. "
-        "If the prospect says no, respect it and reduce friction. If they are confused, "
-        "clarify the ask before adding product detail.\n\n"
+        "Use the full recent message history, including the connection note and any short "
+        "emoji/reaction messages, so the reply feels like the next natural message in the "
+        "thread. Write like a warm founder trying to learn, not a sales sequence. The goal "
+        "is psychological warmth and conversation momentum toward a call later, not a product "
+        "pitch right now. Use short paragraphs. Acknowledge the latest message first, clarify "
+        "the ask if they are confused, and ask one easy question. Do not invent facts, claim "
+        "outcomes, or push Boundera unless product context is needed to answer what they asked. "
+        "If context is needed, keep it to one low-pressure sentence and frame it as learning "
+        "about how teams are handling FedRAMP 20x, not selling software.\n\n"
         "Boundera context: Boundera helps software vendors working through FedRAMP "
         "reduce manual evidence work, KSI/package readiness friction, gap tracking, "
         "remediation ownership, and ongoing monitoring. For FedRAMP 20x, focus on "

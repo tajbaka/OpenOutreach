@@ -82,6 +82,7 @@ def handle_manual_reply(task, session, qualifiers):
             external_id_kind="manual-reply",
             prefer_direct=True,
             allow_api_fallback=False,
+            raise_on_failure=True,
         )
         if not sent:
             raise RuntimeError(f"LinkedIn send failed for lead {lead.pk}")

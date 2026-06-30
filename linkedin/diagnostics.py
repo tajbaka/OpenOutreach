@@ -12,7 +12,7 @@ from linkedin.conf import DIAGNOSTICS_DIR
 logger = logging.getLogger(__name__)
 
 
-def capture_failure(session, error: BaseException) -> None:
+def capture_failure(session, error: BaseException):
     """Save page HTML, screenshot, and error details into a per-failure folder."""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     error_name = type(error).__name__
@@ -27,7 +27,7 @@ def capture_failure(session, error: BaseException) -> None:
     if page is None or page.is_closed():
         logger.debug("No live page — skipping HTML/screenshot capture")
         (folder / "page.html").write_text("<!-- page was None or closed -->")
-        return
+        return folder
 
     try:
         (folder / "page.html").write_text(page.content())
@@ -40,6 +40,7 @@ def capture_failure(session, error: BaseException) -> None:
         logger.debug("Failed to capture screenshot: %s", exc)
 
     logger.info("Failure diagnostics saved → %s", folder)
+    return folder
 
 
 @contextmanager
@@ -49,7 +50,9 @@ def failure_diagnostics(session):
         yield
     except Exception as exc:
         try:
-            capture_failure(session, exc)
+            folder = capture_failure(session, exc)
+            if folder is not None:
+                setattr(exc, "diagnostics_path", str(folder))
         except Exception as cap_exc:
             logger.debug("Diagnostic capture itself failed: %s", cap_exc)
         raise

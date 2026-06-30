@@ -24,6 +24,10 @@ SELECTORS = {
 }
 
 
+class MessageSendError(RuntimeError):
+    """Raised when a caller needs the concrete UI/API send failure reason."""
+
+
 def send_raw_message(
     session,
     profile: Dict[str, Any],
@@ -36,6 +40,7 @@ def send_raw_message(
     external_id_kind: str = "daemon-send",
     prefer_direct: bool = False,
     allow_api_fallback: bool = True,
+    raise_on_failure: bool = False,
 ) -> bool:
     """Send an arbitrary message to a profile and persist it. Returns True if sent."""
     from linkedin.db.chat import save_chat_message
@@ -43,7 +48,12 @@ def send_raw_message(
     public_identifier = profile.get("public_identifier")
 
     if prefer_direct:
-        sent = _send_message(session, profile, message)
+        sent = _send_message(
+            session,
+            profile,
+            message,
+            raise_on_failure=raise_on_failure and not allow_api_fallback,
+        )
         if not sent and allow_api_fallback:
             sent = _send_message_via_api(session, profile, message)
     else:
@@ -54,6 +64,8 @@ def send_raw_message(
             sent = _send_message_via_api(session, profile, message)
     if not sent:
         logger.error("All send methods failed for %s", public_identifier)
+        if raise_on_failure:
+            raise MessageSendError(f"All send methods failed for {public_identifier}")
         return False
 
     save_chat_message(
@@ -119,7 +131,13 @@ def _send_msg_pop_up(session: "AccountSession", profile: Dict[str, Any], message
         return False
 
 
-def _send_message(session: "AccountSession", profile: Dict[str, Any], message: str) -> bool:
+def _send_message(
+    session: "AccountSession",
+    profile: Dict[str, Any],
+    message: str,
+    *,
+    raise_on_failure: bool = False,
+) -> bool:
     """Compose-and-send via URN-keyed direct thread URL.
 
     Pre-2026-05-12 behavior: navigate to `/messaging/thread/new/` (no
@@ -141,7 +159,10 @@ def _send_message(session: "AccountSession", profile: Dict[str, Any], message: s
     try:
         target_urn = resolve_urn(public_identifier, session=session)
         if not target_urn:
-            logger.error("Direct-thread send for %s → could not resolve URN", public_identifier)
+            error = f"Direct-thread send for {public_identifier} failed: could not resolve URN"
+            logger.error(error)
+            if raise_on_failure:
+                raise MessageSendError(error)
             return False
 
         direct_url = f"{LINKEDIN_MESSAGING_URL}?recipient={encode_urn(target_urn)}"
@@ -164,7 +185,10 @@ def _send_message(session: "AccountSession", profile: Dict[str, Any], message: s
         logger.info("Message sent to %s (direct thread, URN-keyed)", public_identifier)
         return True
     except (PlaywrightError, TimeoutError) as e:
-        logger.error("Failed to send message to %s (direct thread) → %s", public_identifier, e)
+        error = f"Direct-thread send for {public_identifier} failed: {e}"
+        logger.error(error)
+        if raise_on_failure:
+            raise MessageSendError(error) from e
         return False
 
 

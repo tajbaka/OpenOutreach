@@ -55,6 +55,7 @@ def test_handle_manual_reply_sends_without_state_or_quota_side_effects(
     assert send_raw.call_args.kwargs["external_id_kind"] == "manual-reply"
     assert send_raw.call_args.kwargs["prefer_direct"] is True
     assert send_raw.call_args.kwargs["allow_api_fallback"] is False
+    assert send_raw.call_args.kwargs["raise_on_failure"] is True
     notify_sent.assert_called_once()
     deal.refresh_from_db()
     assert deal.state == ProfileState.CONNECTED

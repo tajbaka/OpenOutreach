@@ -167,6 +167,23 @@ def test_send_raw_message_can_disable_api_fallback(fake_session):
     api.assert_not_called()
 
 
+def test_send_raw_message_can_raise_direct_failure(fake_session):
+    from linkedin.actions import message as message_mod
+
+    profile = {"public_identifier": "alice-no-urn"}
+
+    with patch("linkedin.db.leads.resolve_urn", return_value=""):
+        with pytest.raises(message_mod.MessageSendError, match="could not resolve URN"):
+            message_mod.send_raw_message(
+                fake_session,
+                profile,
+                "manual body",
+                prefer_direct=True,
+                allow_api_fallback=False,
+                raise_on_failure=True,
+            )
+
+
 # ---------------------------------------------------------------------------
 # B.3 — persist_thread helper
 # ---------------------------------------------------------------------------

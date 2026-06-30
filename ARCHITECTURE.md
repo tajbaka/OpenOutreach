@@ -201,11 +201,16 @@ The function uses raw `psycopg` (no Django import), and `SLACK_BOT_TOKEN` is
 required for `views.open` / `views.update`; queued status updates prefer the
 interaction `response_url` and fall back to `chat.update` when metadata is
 available, while daemon sent/failed status uses `chat.update` with the task's
-saved Slack blocks. The reply modal fetches the recent LinkedIn `crm.Message`
+saved Slack blocks. Manual reply sends opt into detailed send exceptions, so a
+browser/UI send failure records the underlying send reason plus the diagnostic
+screenshot/HTML folder path in `Task.error` instead of only a generic lead id.
+The reply modal fetches the recent LinkedIn `crm.Message`
 thread via raw SQL and renders a compact transcript above the reply textbox;
 its bottom-left "Draft reply" action calls the configured OpenAI-compatible
 endpoint (`LLM_API_KEY`, `AI_MODEL`, optional `LLM_API_BASE`) and fills the
-reply textbox with the suggested LinkedIn reply. New reply/context buttons
+reply textbox with the suggested LinkedIn reply. Drafts use a larger recent
+thread window and are prompted to warm up the conversation, clarify the ask,
+and avoid pitching Boundera unless product context is needed. New reply/context buttons
 scope that preview by the triggering `thread_external_id`, while legacy
 buttons fall back to the latest inbound LinkedIn thread for that lead. The
 Lead context modal fetches deterministic Lead/Deal/profile/thread context via

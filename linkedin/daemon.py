@@ -481,6 +481,15 @@ def _safe_mark_failed(task, error_text: str) -> bool:
             return False
 
 
+def _format_task_error(exc: BaseException) -> str:
+    """Return traceback text plus any diagnostic artifact path."""
+    error_text = traceback.format_exc()
+    diagnostics_path = getattr(exc, "diagnostics_path", "")
+    if diagnostics_path:
+        error_text = f"{error_text}\nDiagnostics: {diagnostics_path}"
+    return error_text
+
+
 def _campaign_has_connect_work(campaign) -> bool:
     """Whether a campaign still has leads the connect lane can process."""
     if ENABLE_AUTO_DISCOVERY:
@@ -818,7 +827,7 @@ def run_daemon(session):
             with failure_diagnostics(session):
                 handler(task, session, qualifiers)
         except Exception as exc:
-            _safe_mark_failed(task, traceback.format_exc())
+            _safe_mark_failed(task, _format_task_error(exc))
             failure_tracker.record_failure()
             logger.exception("Task %s failed", task)
             notify_error(
