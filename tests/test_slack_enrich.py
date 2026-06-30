@@ -365,6 +365,35 @@ def test_parse_reply_modal_submission_rejects_empty_message():
         slack_enrich.parse_reply_modal_submission(_reply_modal_body("   "))
 
 
+def test_compact_metadata_preserves_source_blocks_before_thread_preview():
+    source_blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": "source"}},
+        {"type": "actions", "elements": []},
+    ]
+    thread_blocks = [
+        {
+            "type": "section",
+            "block_id": f"linkedin_thread_preview:{idx}",
+            "text": {"type": "mrkdwn", "text": "x" * 400},
+        }
+        for idx in range(10)
+    ]
+
+    out = json.loads(slack_enrich._compact_metadata({
+        "lead_id": 42,
+        "operator": "Chuka",
+        "channel_id": "C123",
+        "message_ts": "171234.567",
+        "response_url": "https://hooks.slack.com/actions/T/B/R",
+        "blocks": source_blocks,
+        "thread_blocks": thread_blocks,
+    }))
+
+    assert out["blocks"] == source_blocks
+    assert out["thread_blocks"] == []
+    assert len(json.dumps(out, separators=(",", ":"))) <= 2800
+
+
 def test_render_reply_status_keeps_actions_and_replaces_old_status():
     original = [
         {"type": "section", "text": {"type": "mrkdwn", "text": "reply"}},

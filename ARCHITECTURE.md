@@ -213,12 +213,15 @@ raw SQL; its AI summary button updates the same modal. Generated summary/draft
 text is saved to `linkedin.SlackLeadContextArtifact`, scoped by `(lead,
 operator, thread_external_id, kind)`, so closing and reopening context/reply
 flows can reuse the latest sender-specific sections. Slack `private_metadata`
-only carries a compact open-modal cache while another action runs. The loading
-row and newly generated section render at the bottom of the active modal so
-progress and result appear below existing context. The queued Slack
-status includes a cancel button whose payload points at the inserted task id;
-cancelling deletes the task only if it is still pending. If the preview fetch
-fails, the reply modal falls back to a plain textbox. The `Task` table is the entire contract between
+only carries a compact open-modal cache while another action runs; when that
+cache is too large, the reply-modal thread preview is discarded before the
+original Slack source blocks so queued/cancel/sent status updates can still
+replace the source notification. The loading row and newly generated section
+render at the bottom of the active modal so progress and result appear below
+existing context. The queued Slack status includes a cancel button whose
+payload points at the inserted task id; cancelling deletes the task only if it
+is still pending. If the preview fetch fails, the reply modal falls back to a
+plain textbox. The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
 against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
 `(lead, provider)` (best-effort — a duplicate is harmless); two *different*

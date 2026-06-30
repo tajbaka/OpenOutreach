@@ -305,13 +305,16 @@ def _post_response_url(response_url: str, payload: dict) -> None:
 
 
 def _compact_metadata(metadata: dict) -> str:
-    """Slack private_metadata is small; drop blocks if the payload is large."""
+    """Slack private_metadata is small; drop recoverable modal blocks first."""
     encoded = json.dumps(metadata, separators=(",", ":"))
     if len(encoded) <= 2800:
         return encoded
     metadata = dict(metadata)
-    metadata["blocks"] = []
     metadata["thread_blocks"] = []
+    encoded = json.dumps(metadata, separators=(",", ":"))
+    if len(encoded) <= 2800:
+        return encoded
+    metadata["blocks"] = []
     return json.dumps(metadata, separators=(",", ":"))
 
 
@@ -415,6 +418,19 @@ def render_reply_modal_blocks(
         }],
     })
     return blocks
+
+
+def _reply_thread_blocks_from_view(blocks: list) -> list:
+    """Return the existing thread-preview blocks from a reply modal view."""
+    thread_blocks: list = []
+    for block in blocks or []:
+        block_id = block.get("block_id") or ""
+        if block_id == "linkedin_reply_message" or block_id == "linkedin_reply_actions":
+            break
+        if block_id.startswith("linkedin_reply_draft_"):
+            continue
+        thread_blocks.append(block)
+    return thread_blocks
 
 
 def fetch_lead_context_artifacts(
@@ -617,7 +633,7 @@ def open_reply_modal(
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": render_reply_modal_blocks(
                 metadata=metadata_obj,
-                thread_blocks=metadata_obj.get("thread_blocks") or [],
+                thread_blocks=thread_blocks or [],
             ),
         },
     })
@@ -853,6 +869,10 @@ def parse_reply_draft_button(body: str) -> dict:
     value = _parse_action_value(action.get("value") or "")
     view = payload.get("view") or {}
     view_metadata = json.loads(view.get("private_metadata") or "{}")
+    if not view_metadata.get("thread_blocks"):
+        view_metadata["thread_blocks"] = _reply_thread_blocks_from_view(
+            view.get("blocks") or [],
+        )
     values = ((view.get("state") or {}).get("values") or {})
     current_reply = ""
     for block_values in values.values():
