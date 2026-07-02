@@ -603,7 +603,7 @@ class Task(models.Model):
             raise ValidationError({"payload": errors})
 
     def save(self, *args, **kwargs):
-        self.full_clean(exclude=["payload"])
+        self.full_clean(exclude=["payload", "task_type"])
         return super().save(*args, **kwargs)
 
     def mark_running(self):

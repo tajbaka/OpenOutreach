@@ -1234,8 +1234,19 @@ def test_enrich_phone_task_type_exists():
     assert Task.TaskType.GMAIL_FOLLOW_UP == "gmail_follow_up"
     assert Task.TaskType.MANUAL_REPLY == "manual_reply"
     assert Task.TaskType.STATUS_SUMMARY == "status_summary"
-    assert "enrich_phone" in {choice[0] for choice in Task.TaskType.choices}
-    assert "enrich_email" in {choice[0] for choice in Task.TaskType.choices}
-    assert "gmail_follow_up" in {choice[0] for choice in Task.TaskType.choices}
-    assert "manual_reply" in {choice[0] for choice in Task.TaskType.choices}
-    assert "status_summary" in {choice[0] for choice in Task.TaskType.choices}
+
+
+@pytest.mark.django_db
+def test_unknown_task_type_can_be_marked_failed():
+    task = Task.objects.create(
+        task_type="future_task",
+        status=Task.Status.RUNNING,
+        scheduled_at=timezone.now(),
+        payload={},
+    )
+
+    task.mark_failed("Unknown task type: future_task")
+
+    task.refresh_from_db()
+    assert task.status == Task.Status.FAILED
+    assert task.error == "Unknown task type: future_task"
