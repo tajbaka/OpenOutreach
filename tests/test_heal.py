@@ -131,6 +131,13 @@ class TestHealTasks:
             payload__operator=resolve_operator(fake_session.linkedin_profile.linkedin_username),
         ).exists()
 
+    def test_seeds_status_summary_task(self, fake_session):
+        heal_tasks(fake_session)
+        assert Task.objects.filter(
+            task_type=Task.TaskType.STATUS_SUMMARY,
+            status=Task.Status.PENDING,
+        ).exists()
+
     def test_retires_legacy_check_pending_tasks(self, fake_session):
         Task.objects.create(
             task_type=Task.TaskType.CHECK_PENDING,

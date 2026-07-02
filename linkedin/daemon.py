@@ -49,6 +49,7 @@ from linkedin.tasks.connect import (
 )
 from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.manual_reply import handle_manual_reply
+from linkedin.tasks.status_summary import enqueue_status_summary, handle_status_summary
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ _HANDLERS = {
     Task.TaskType.FOLLOW_UP: handle_follow_up,
     Task.TaskType.MANUAL_REPLY: handle_manual_reply,
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
+    Task.TaskType.STATUS_SUMMARY: handle_status_summary,
 }
 
 _LOW_POOL_ALERTED: set[int] = set()
@@ -371,7 +373,11 @@ def heal_tasks(session):
                 cancelled_sweep,
             )
 
-    # 5. Follow-up tasks (post-accept DMs — gated separately).
+    # 5. Hourly all-sender Slack status summary. Account-agnostic: any daemon
+    # may claim it, then it self-reschedules for the next hour.
+    enqueue_status_summary(delay_seconds=0, since=timezone.now() - timedelta(hours=1))
+
+    # 6. Follow-up tasks (post-accept DMs — gated separately).
     if not ENABLE_FOLLOW_UP:
         cancelled_fu = Task.objects.filter(
             task_type=Task.TaskType.FOLLOW_UP,
@@ -677,19 +683,23 @@ def run_daemon(session):
 
         pause = seconds_until_active(session.linkedin_profile)
         claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
-        manual_reply_bypass = False
+        outside_hours_bypass = False
         if pause > 0:
-            manual_wait = Task.objects.seconds_to_next(
+            always_on_task_types = {
+                Task.TaskType.MANUAL_REPLY,
+                Task.TaskType.STATUS_SUMMARY,
+            }
+            always_on_wait = Task.objects.seconds_to_next(
                 operator=our_operator,
                 campaign_ids=our_campaign_ids,
-                task_types={Task.TaskType.MANUAL_REPLY},
+                task_types=always_on_task_types,
             )
-            if manual_wait is not None and manual_wait <= 0:
-                claimable_task_types = {Task.TaskType.MANUAL_REPLY}
-                manual_reply_bypass = True
+            if always_on_wait is not None and always_on_wait <= 0:
+                claimable_task_types = always_on_task_types
+                outside_hours_bypass = True
             else:
-                if manual_wait is not None:
-                    pause = min(pause, max(manual_wait, 1))
+                if always_on_wait is not None:
+                    pause = min(pause, max(always_on_wait, 1))
                 pause = min(pause, MANUAL_REPLY_POLL_SECONDS)
                 _sync_listener_supervisor(listener_supervisor)
                 h, m = int(pause // 3600), int(pause % 3600 // 60)
@@ -698,13 +708,16 @@ def run_daemon(session):
                 time.sleep(pause)
                 continue
 
-        if manual_reply_bypass:
-            logger.info("Outside active hours — sending queued manual reply")
+        if outside_hours_bypass:
+            logger.info("Outside active hours — handling always-on task")
 
         _sync_listener_supervisor(listener_supervisor)
 
-        if claimable_task_types is not None and not manual_reply_bypass:
-            claimable_task_types = set(claimable_task_types) | {Task.TaskType.MANUAL_REPLY}
+        if claimable_task_types is not None and not outside_hours_bypass:
+            claimable_task_types = set(claimable_task_types) | {
+                Task.TaskType.MANUAL_REPLY,
+                Task.TaskType.STATUS_SUMMARY,
+            }
 
         task = Task.objects.claim_next(
             operator=our_operator, campaign_ids=our_campaign_ids,
@@ -794,7 +807,11 @@ def run_daemon(session):
 
         # Account-wide tasks (e.g. sweep_connections) span all campaigns and
         # don't carry a campaign_id; the handler sets session.campaign as needed.
-        if task.task_type in {Task.TaskType.SWEEP_CONNECTIONS, Task.TaskType.MANUAL_REPLY}:
+        if task.task_type in {
+            Task.TaskType.SWEEP_CONNECTIONS,
+            Task.TaskType.MANUAL_REPLY,
+            Task.TaskType.STATUS_SUMMARY,
+        }:
             session.campaign = session.campaigns.first()
         else:
             campaign = Campaign.objects.filter(pk=task.payload.get("campaign_id")).first()

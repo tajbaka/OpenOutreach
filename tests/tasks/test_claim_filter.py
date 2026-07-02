@@ -14,6 +14,7 @@ as. Two real leaks motivated this scoping:
   - follow_up  → payload.operator must match;
   - connect    → payload.campaign_id must be one the daemon owns;
   - sweep_connections → payload.operator must match.
+  - status_summary → account-agnostic; any daemon can claim it.
 """
 from datetime import timedelta
 
@@ -121,6 +122,18 @@ def test_sweep_connections_scoped_to_matching_operator():
 def test_sweep_connections_for_other_operator_is_never_claimed():
     _mk(Task.TaskType.SWEEP_CONNECTIONS, operator="Chuka", scheduled_offset_s=-5)
     assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
+
+
+@pytest.mark.django_db
+def test_status_summary_is_account_agnostic():
+    status = _mk(
+        Task.TaskType.STATUS_SUMMARY,
+        payload_extra={},
+        scheduled_offset_s=-5,
+    )
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+    assert claimed is not None and claimed.pk == status.pk
+    assert claimed.status == Task.Status.RUNNING
 
 
 @pytest.mark.django_db

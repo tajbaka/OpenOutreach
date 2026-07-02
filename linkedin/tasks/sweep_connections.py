@@ -20,11 +20,10 @@ from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS, ENABLE_SWEEP_CONNECTI
 from linkedin.db.deals import set_profile_state
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
-from linkedin.models import ActionLog, Task, active_day_start
+from linkedin.models import Task
 from linkedin.notifications.slack import (
     latest_reply_from_lead,
     notify_connection_accepted,
-    notify_sweep_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,10 +155,6 @@ def handle_sweep_connections(task, session, qualifiers):
         pending_deals.count(), matched, len(entries),
     )
 
-    # Lean per-sender analytics snapshot to the ops channel — one post per
-    # sweep, so its cadence is CONNECTION_SWEEP_INTERVAL_HOURS for free.
-    _post_sweep_summary(session, newly_connected=matched)
-
     # Self-reschedule.
     from linkedin.operators import resolve_operator
 
@@ -190,58 +185,3 @@ def enqueue_sweep_connections(*, operator: str, delay_seconds: float | None = No
         scheduled_at=timezone.now() + timedelta(seconds=delay_seconds),
         payload={"operator": operator},
     )
-
-
-def _post_sweep_summary(session, newly_connected: int) -> None:
-    """Gather minimal per-sender send counts and post them to the ops
-    Slack channel. Best-effort — any failure here is logged and never
-    disturbs the sweep.
-
-    All counts are scoped to the account that ran this sweep:
-      - LinkedIn sends today from ActionLog (this LinkedInProfile).
-      - Gmail sends today from the durable crm.Message ledger.
-    """
-    from crm.models import Deal, Message
-    from linkedin.operators import resolve_operator
-
-    try:
-        today_start = active_day_start()
-        sender = resolve_operator(session.linkedin_profile.linkedin_username)
-        connects_today = ActionLog.objects.filter(
-            linkedin_profile=session.linkedin_profile,
-            action_type=ActionLog.ActionType.CONNECT,
-            created_at__gte=today_start,
-        ).count()
-        followups_today = ActionLog.objects.filter(
-            linkedin_profile=session.linkedin_profile,
-            action_type=ActionLog.ActionType.FOLLOW_UP,
-            created_at__gte=today_start,
-        ).count()
-        email_followups_today = Message.objects.filter(
-            source=Message.Source.GMAIL,
-            direction=Message.Direction.OUTBOUND,
-            sent_at__gte=today_start,
-            external_id__startswith=f"gmail-send:{sender}:",
-        ).count()
-        connect_runs_today = Task.objects.filter(
-            task_type=Task.TaskType.CONNECT,
-            payload__campaign_id__in=[c.pk for c in session.campaigns],
-            started_at__gte=today_start,
-        ).count()
-        qualified = Deal.objects.filter(
-            campaign__in=session.campaigns,
-            state=ProfileState.QUALIFIED,
-            lead__disqualified=False,
-        ).count()
-
-        notify_sweep_summary(
-            sender=sender,
-            connects_today=connects_today,
-            followups_today=followups_today,
-            email_followups_today=email_followups_today,
-            connect_runs_today=connect_runs_today,
-            qualified=qualified,
-            newly_connected=newly_connected,
-        )
-    except Exception as e:
-        logger.warning("sweep summary post failed: %s", e)

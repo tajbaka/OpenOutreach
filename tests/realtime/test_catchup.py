@@ -14,6 +14,17 @@ def test_missing_heartbeat_is_infinite_gap():
         assert catchup.compute_gap_minutes("arian@x.com") == float("inf")
 
 
+def test_backfill_prompt_timeout_is_ten_seconds():
+    assert catchup.BACKFILL_PROMPT_TIMEOUT_SECONDS == 10
+
+
+def test_prompt_defaults_no_when_select_unavailable():
+    with patch("linkedin.realtime.catchup.select.select", side_effect=OSError), \
+         patch("builtins.input") as mock_input:
+        assert catchup._prompt_yes_no_default_no("Run? ", timeout_seconds=10) == "n"
+    mock_input.assert_not_called()
+
+
 def test_recent_heartbeat_is_small_gap():
     recent = timezone.now() - timedelta(minutes=3)
     with patch("linkedin.realtime.catchup.read_heartbeat", return_value=recent):

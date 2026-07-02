@@ -425,55 +425,16 @@ class TestHandleSweepConnections:
             payload__operator=resolve_operator(fake_session.linkedin_profile.linkedin_username),
         ).exclude(pk=task.pk).exists()
 
-    @patch("linkedin.tasks.sweep_connections.notify_sweep_summary")
     @patch("linkedin.tasks.sweep_connections.scrape_connections")
-    def test_posts_connect_runs_and_qualified_counts(
-        self, mock_scrape, mock_notify, fake_session,
-    ):
+    def test_sweep_does_not_post_status_summary(self, mock_scrape, fake_session):
         mock_scrape.return_value = []
-        _make_qualified(fake_session, "alice")
-        _make_qualified(fake_session, "bob")
-        from crm.models import Lead, Message
-
-        lead = Lead.objects.get(public_identifier="alice")
-        sender = resolve_operator(fake_session.linkedin_profile.linkedin_username)
-        Message.objects.create(
-            lead=lead,
-            source=Message.Source.GMAIL,
-            direction=Message.Direction.OUTBOUND,
-            sender="sender@example.com",
-            external_id=f"gmail-send:{sender}:alice:gmail_fallback:step-0:test",
-            sent_at=timezone.now(),
-            body="Email follow-up",
-        )
-
-        today = timezone.now()
-        Task.objects.create(
-            task_type=Task.TaskType.CONNECT,
-            status=Task.Status.COMPLETED,
-            scheduled_at=today,
-            started_at=today,
-            completed_at=today,
-            payload={"campaign_id": fake_session.campaign.pk},
-        )
-        Task.objects.create(
-            task_type=Task.TaskType.CONNECT,
-            status=Task.Status.COMPLETED,
-            scheduled_at=today,
-            started_at=today,
-            completed_at=today,
-            payload={"campaign_id": fake_session.campaign.pk},
-        )
 
         task = _make_task(Task.TaskType.SWEEP_CONNECTIONS, {})
         qualifiers = _build_context(fake_session)
-        handle_sweep_connections(task, fake_session, qualifiers)
+        with patch("linkedin.notifications.slack.notify_sweep_summary") as mock_notify:
+            handle_sweep_connections(task, fake_session, qualifiers)
 
-        mock_notify.assert_called_once()
-        kwargs = mock_notify.call_args.kwargs
-        assert kwargs["connect_runs_today"] == 2
-        assert kwargs["qualified"] == 2
-        assert kwargs["email_followups_today"] == 1
+        mock_notify.assert_not_called()
 
 
 # ── handle_follow_up tests ─────────────────────────────────────
@@ -1272,7 +1233,9 @@ def test_enrich_phone_task_type_exists():
     assert Task.TaskType.ENRICH_EMAIL == "enrich_email"
     assert Task.TaskType.GMAIL_FOLLOW_UP == "gmail_follow_up"
     assert Task.TaskType.MANUAL_REPLY == "manual_reply"
+    assert Task.TaskType.STATUS_SUMMARY == "status_summary"
     assert "enrich_phone" in {choice[0] for choice in Task.TaskType.choices}
     assert "enrich_email" in {choice[0] for choice in Task.TaskType.choices}
     assert "gmail_follow_up" in {choice[0] for choice in Task.TaskType.choices}
     assert "manual_reply" in {choice[0] for choice in Task.TaskType.choices}
+    assert "status_summary" in {choice[0] for choice in Task.TaskType.choices}

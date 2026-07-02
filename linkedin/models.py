@@ -493,6 +493,7 @@ class Task(models.Model):
         ENRICH_EMAIL = "enrich_email"
         GMAIL_FOLLOW_UP = "gmail_follow_up"
         MANUAL_REPLY = "manual_reply"
+        STATUS_SUMMARY = "status_summary"
 
     class Status(models.TextChoices):
         PENDING = "pending"

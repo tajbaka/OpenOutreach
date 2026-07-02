@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Seven surfaces:
+Nine surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted *and* the lead replied during the sweep. Single Block Kit message
@@ -21,17 +21,19 @@ Seven surfaces:
 5. `notify_degraded` — fires from the monitoring layer when a peer node
    looks down, or this node is alive but failing (task-failure streak,
    stale realtime listener).
-6. `notify_sweep_summary` — fires once per connection sweep with a lean
-   per-sender analytics snapshot (sends today, pipeline state counts).
-7. `notify_connect_button_missing` — fires when the connect workflow lands
+6. `notify_status_summary` — fires from the hourly account-agnostic
+   `status_summary` task with all-sender send counts and pipeline counts.
+7. `notify_sweep_summary` — legacy per-sweep analytics helper retained for
+   compatibility; connection sweeps no longer call it.
+8. `notify_connect_button_missing` — fires when the connect workflow lands
    on a profile that looks not-connected but no Connect CTA can be found.
-8. `notify_connect_send_failed` — fires when the connect workflow opens
+9. `notify_connect_send_failed` — fires when the connect workflow opens
    the invite flow but cannot actually submit the request (missing note UI,
    missing send button, etc.).
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
-    + `notify_sweep_summary` + `notify_connect_button_missing`
+    + `notify_status_summary` + `notify_sweep_summary` + `notify_connect_button_missing`
     + `notify_connect_send_failed`
     → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
@@ -639,6 +641,45 @@ def notify_sweep_summary(
     )
     payload = {"text": fallback, "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"sweep-summary ({sender})")
+
+
+def notify_status_summary(*, rows: list[dict], since, generated_at) -> None:
+    """Post an all-sender hourly send-count snapshot to the ops channel."""
+    if not SLACK_WEBHOOK_URL:
+        return
+
+    def line(label: str, key: str) -> str:
+        parts = [f"{row['sender']} - {row.get(key, 0)}" for row in rows]
+        return f"*{label}:* " + ", ".join(parts)
+
+    body = "\n".join([
+        line("Sent today", "connects_today"),
+        line("LinkedIn follow-ups today", "linkedin_followups_today"),
+        line("Email follow-ups today", "email_followups_today"),
+        line("Manual replies today", "manual_replies_today"),
+        line("Newly accepted since last status", "newly_connected"),
+        line("Connect tasks run today", "connect_runs_today"),
+        line("Qualified remaining", "qualified_remaining"),
+    ])
+    window = (
+        f"_Window: {since:%Y-%m-%d %H:%M} to {generated_at:%H:%M} "
+        f"{generated_at.tzname() or 'local'}_"
+    )
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": ":bar_chart: *Hourly sender status*"},
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": body}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": window}]},
+    ]
+    fallback = "Hourly sender status: " + " | ".join(
+        f"{row['sender']} {row.get('connects_today', 0)} invites, "
+        f"{row.get('linkedin_followups_today', 0)} LI FUs, "
+        f"{row.get('email_followups_today', 0)} email FUs"
+        for row in rows
+    )
+    _post_to_slack(SLACK_WEBHOOK_URL, {"text": fallback, "blocks": blocks}, "status-summary")
 
 
 def notify_error(

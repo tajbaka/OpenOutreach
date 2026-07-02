@@ -51,6 +51,7 @@ _OPERATOR_ALIASES: dict[str, str] = {
     "athena": "Athena",
     "athena aghdami": "Athena",
     "athenaaghdami@gmail.com": "Athena",
+    "athena@getboundera.com": "Athena",
 }
 
 

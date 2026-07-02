@@ -26,7 +26,7 @@ from linkedin.realtime.heartbeat import read_heartbeat
 
 logger = logging.getLogger(__name__)
 
-BACKFILL_PROMPT_TIMEOUT_SECONDS = 5
+BACKFILL_PROMPT_TIMEOUT_SECONDS = 10
 
 
 def compute_gap_minutes(username: str, now=None) -> float:
@@ -43,14 +43,14 @@ def _prompt_yes_no_default_no(prompt: str, *, timeout_seconds: int) -> str:
 
     `input()` cannot time out, so use select on stdin for the daemon's TTY
     startup prompt. In test/non-standard stdin environments where select is not
-    supported, fall back to `input()` so existing mocks still exercise the
-    branch.
+    supported, continue startup with the default "no" instead of blocking.
     """
     print(prompt, end="", flush=True)
     try:
         readable, _, _ = select.select([sys.stdin], [], [], timeout_seconds)
     except (OSError, ValueError):
-        return input().strip().lower()
+        print("n")
+        return "n"
 
     if not readable:
         print("n")
