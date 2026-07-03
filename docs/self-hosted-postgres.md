@@ -41,6 +41,10 @@ overridden.
 scripts/restore_neon_to_selfhost_test.sh --confirm-reset-local
 ```
 
+The restore script uses local `pg_dump`/`pg_restore` when they are installed.
+On a Docker-only host, it falls back to the running
+`openoutreach-postgres-test` container's Postgres clients.
+
 Smoke-test the copied data with outbound automation disabled:
 
 ```bash
@@ -76,6 +80,15 @@ that machine is in `docs/self-hosted-postgres-host-readme.md`.
 
 ```bash
 SELFHOST_POSTGRES_BIND=0.0.0.0 SELFHOST_POSTGRES_PORT=5432 make selfhost-db-up
+make selfhost-db-ps
+```
+
+On a machine that should stay public across restarts, create ignored
+`compose/.env` with:
+
+```text
+SELFHOST_POSTGRES_BIND=0.0.0.0
+SELFHOST_POSTGRES_PORT=5432
 ```
 
 Minimum public setup:
@@ -85,6 +98,7 @@ Minimum public setup:
 - long random password
 - SSL enabled
 - `DATABASE_URL=postgresql://openoutreach:<password>@<host>:5432/openoutreach?sslmode=require`
+- host/router forwards inbound TCP `5432` to the Docker host
 - nightly `pg_dump` backups copied off the host
 
 This project accepts public Postgres with password + SSL as an intentional

@@ -49,10 +49,18 @@ For the real shared host, bind Postgres publicly on port `5432`:
 SELFHOST_POSTGRES_BIND=0.0.0.0 SELFHOST_POSTGRES_PORT=5432 make selfhost-db-up
 ```
 
+For a host that should remain public after ordinary `make selfhost-db-up`
+restarts, create ignored `compose/.env`:
+
+```text
+SELFHOST_POSTGRES_BIND=0.0.0.0
+SELFHOST_POSTGRES_PORT=5432
+```
+
 Confirm it is healthy:
 
 ```bash
-docker compose -f compose/selfhost-postgres.yml ps
+make selfhost-db-ps
 ```
 
 ## 5. Get The Connection URL
@@ -89,6 +97,18 @@ For staging, restore a copy first. From a machine with `.env` pointing at Neon:
 make selfhost-db-restore-copy
 ```
 
+If the host runs on public port `5432`, target that port explicitly:
+
+```bash
+TARGET_DATABASE_URL='postgresql://openoutreach:<password>@127.0.0.1:5432/openoutreach?sslmode=require' \
+ALLOW_NONLOCAL_TARGET=true \
+make selfhost-db-restore-copy
+```
+
+The restore script uses local `pg_dump`/`pg_restore` when available. If those
+client tools are not installed on the host, it falls back to the running
+`openoutreach-postgres-test` container's Postgres clients.
+
 For final production cutover:
 
 1. Stop all OpenOutreach daemons.
@@ -105,6 +125,12 @@ few days.
 
 This setup intentionally uses username/password plus SSL rather than IP
 allowlisting. The host must allow inbound TCP `5432`.
+
+If the host is behind a NAT router, add a port-forwarding rule:
+
+```text
+external TCP 5432 -> <db-host-lan-ip>:5432
+```
 
 Minimum precautions:
 

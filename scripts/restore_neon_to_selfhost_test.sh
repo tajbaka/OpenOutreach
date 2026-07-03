@@ -58,15 +58,31 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Dumping source database..."
-pg_dump "$SOURCE_DATABASE_URL" --format=custom --no-owner --no-acl --file "$dump_file"
+if command -v pg_dump >/dev/null 2>&1 && command -v pg_restore >/dev/null 2>&1; then
+  pg_dump "$SOURCE_DATABASE_URL" --format=custom --no-owner --no-acl --file "$dump_file"
 
-echo "Restoring into local self-host test database..."
-pg_restore \
-  --clean \
-  --if-exists \
-  --no-owner \
-  --no-acl \
-  --dbname "$TARGET_DATABASE_URL" \
-  "$dump_file"
+  echo "Restoring into local self-host test database..."
+  pg_restore \
+    --clean \
+    --if-exists \
+    --no-owner \
+    --no-acl \
+    --dbname "$TARGET_DATABASE_URL" \
+    "$dump_file"
+else
+  echo "Local pg_dump/pg_restore not found; using openoutreach-postgres-test container clients..."
+  docker exec \
+    -e SOURCE_DATABASE_URL="$SOURCE_DATABASE_URL" \
+    -e TARGET_DATABASE_URL="$TARGET_DATABASE_URL" \
+    openoutreach-postgres-test \
+    bash -lc '
+      set -euo pipefail
+      dump_file="/tmp/openoutreach-neon-copy.dump"
+      rm -f "$dump_file"
+      pg_dump "$SOURCE_DATABASE_URL" --format=custom --no-owner --no-acl --file "$dump_file"
+      pg_restore --clean --if-exists --no-owner --no-acl --dbname "$TARGET_DATABASE_URL" "$dump_file"
+      rm -f "$dump_file"
+    '
+fi
 
 echo "Restore complete."

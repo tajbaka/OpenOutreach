@@ -23,9 +23,11 @@ make build / make up / make stop / make attach / make up-view
 # Self-hosted Postgres test target (local-only, does not cut over .env)
 make selfhost-db-prepare       # generate ignored local DB password + SSL cert
 make selfhost-db-up            # Postgres 17 on 127.0.0.1:55432 with SSL
+make selfhost-db-ps            # show self-hosted Postgres container status
 make selfhost-db-restore-copy  # pg_dump current DATABASE_URL and restore local copy
 make selfhost-db-stop
 # Real shared host: SELFHOST_POSTGRES_BIND=0.0.0.0 SELFHOST_POSTGRES_PORT=5432 make selfhost-db-up
+# Persistent public host: ignored compose/.env can pin SELFHOST_POSTGRES_BIND=0.0.0.0 and SELFHOST_POSTGRES_PORT=5432
 
 # Local dev
 make setup    # install deps + browsers + migrate + bootstrap CRM

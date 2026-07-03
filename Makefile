@@ -1,5 +1,8 @@
 .DEFAULT_GOAL := help
-.PHONY: help attach test docker-test stop build up up-view install setup run supervise run-awake admin view selfhost-db-prepare selfhost-db-up selfhost-db-stop selfhost-db-logs selfhost-db-restore-copy
+.PHONY: help attach test docker-test stop build up up-view install setup run supervise run-awake admin view selfhost-db-prepare selfhost-db-up selfhost-db-stop selfhost-db-ps selfhost-db-logs selfhost-db-restore-copy
+-include compose/.env
+SELFHOST_POSTGRES_BIND ?= 127.0.0.1
+SELFHOST_POSTGRES_PORT ?= 55432
 
 help:
 	@perl -nle'print $& if m{^[a-zA-Z_-]+:.*?## .*$$}' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -66,13 +69,16 @@ selfhost-db-prepare: ## generate local-only self-hosted Postgres secrets/certs
 	scripts/selfhost_postgres_prepare.sh
 
 selfhost-db-up: ## start local self-hosted Postgres test DB on 127.0.0.1:55432
-	docker compose -f compose/selfhost-postgres.yml up -d
+	cd compose && SELFHOST_POSTGRES_BIND="$(SELFHOST_POSTGRES_BIND)" SELFHOST_POSTGRES_PORT="$(SELFHOST_POSTGRES_PORT)" docker compose -f selfhost-postgres.yml up -d
 
 selfhost-db-stop: ## stop local self-hosted Postgres test DB
-	docker compose -f compose/selfhost-postgres.yml stop
+	cd compose && SELFHOST_POSTGRES_BIND="$(SELFHOST_POSTGRES_BIND)" SELFHOST_POSTGRES_PORT="$(SELFHOST_POSTGRES_PORT)" docker compose -f selfhost-postgres.yml stop
+
+selfhost-db-ps: ## show local self-hosted Postgres container status
+	cd compose && SELFHOST_POSTGRES_BIND="$(SELFHOST_POSTGRES_BIND)" SELFHOST_POSTGRES_PORT="$(SELFHOST_POSTGRES_PORT)" docker compose -f selfhost-postgres.yml ps
 
 selfhost-db-logs: ## follow local self-hosted Postgres logs
-	docker compose -f compose/selfhost-postgres.yml logs -f postgres
+	cd compose && SELFHOST_POSTGRES_BIND="$(SELFHOST_POSTGRES_BIND)" SELFHOST_POSTGRES_PORT="$(SELFHOST_POSTGRES_PORT)" docker compose -f selfhost-postgres.yml logs -f postgres
 
 selfhost-db-restore-copy: ## restore current Neon DATABASE_URL into local self-host test DB
 	scripts/restore_neon_to_selfhost_test.sh --confirm-reset-local
