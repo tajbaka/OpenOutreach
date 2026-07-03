@@ -1,0 +1,45 @@
+# Local self-hosted Postgres test target.
+#
+# This is intentionally separate from local.yml, which runs the OpenOutreach
+# app container. The DB binds to localhost:55432 by default so it cannot
+# accidentally replace a local or production Postgres listener on 5432. For a
+# real shared host, run with:
+#   SELFHOST_POSTGRES_BIND=0.0.0.0 SELFHOST_POSTGRES_PORT=5432 make selfhost-db-up
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: openoutreach-postgres-test
+    env_file:
+      - ../secrets/selfhost-postgres/postgres.env
+    ports:
+      - "${SELFHOST_POSTGRES_BIND:-127.0.0.1}:${SELFHOST_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - openoutreach_postgres_test_data:/var/lib/postgresql/data
+      - ../secrets/selfhost-postgres/certs:/certs:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        if [ ! -f /certs/server.crt ] || [ ! -f /certs/server.key ]; then
+          echo "Missing SSL certs. Run: make selfhost-db-prepare" >&2
+          exit 1
+        fi
+        cp /certs/server.crt /var/lib/postgresql/server.crt
+        cp /certs/server.key /var/lib/postgresql/server.key
+        chown postgres:postgres /var/lib/postgresql/server.crt /var/lib/postgresql/server.key
+        chmod 600 /var/lib/postgresql/server.key
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/var/lib/postgresql/server.crt \
+          -c ssl_key_file=/var/lib/postgresql/server.key \
+          -c password_encryption=scram-sha-256
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openoutreach -d openoutreach"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  openoutreach_postgres_test_data:
