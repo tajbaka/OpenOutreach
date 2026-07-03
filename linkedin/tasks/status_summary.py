@@ -8,7 +8,14 @@ from django.utils import timezone
 
 from linkedin.conf import EXPECTED_OUTBOUND_SENDERS
 from linkedin.enums import ProfileState
-from linkedin.models import ActionLog, Campaign, LinkedInProfile, Task, active_day_start
+from linkedin.models import (
+    ActionLog,
+    Campaign,
+    DaemonHeartbeat,
+    LinkedInProfile,
+    Task,
+    active_day_start,
+)
 from linkedin.notifications.slack import notify_status_summary
 from linkedin.operators import resolve_operator
 
@@ -95,6 +102,32 @@ def _manual_reply_counts_by_sender(today_start) -> dict[str, int]:
     return counts
 
 
+def _profile_for_sender(sender: str):
+    profile = (
+        LinkedInProfile.objects.filter(active=True)
+        .filter(linkedin_username__iexact=sender)
+        .first()
+    )
+    if profile is not None:
+        return profile
+    for candidate in LinkedInProfile.objects.filter(active=True):
+        if resolve_operator(candidate.linkedin_username) == sender:
+            return candidate
+    return None
+
+
+def _sender_should_report(sender: str, profile, today_start) -> tuple[bool, str]:
+    """Whether this sender should appear in the hourly Slack status summary."""
+    heartbeat = DaemonHeartbeat.objects.filter(sender=sender).first()
+    if heartbeat is None or heartbeat.last_alive is None or heartbeat.last_alive < today_start:
+        return False, "no heartbeat today"
+    if profile is None:
+        return False, "no active profile"
+    if not profile.can_execute(ActionLog.ActionType.CONNECT):
+        return False, "connect limit reached"
+    return True, ""
+
+
 def build_status_summary_rows(*, since) -> list[dict]:
     """Return all per-sender metrics for the Slack status snapshot."""
     from crm.models import Deal
@@ -108,16 +141,11 @@ def build_status_summary_rows(*, since) -> list[dict]:
     rows: list[dict] = []
     for sender in senders:
         campaign_ids = campaign_ids_by_sender.get(sender, [])
-        profile = (
-            LinkedInProfile.objects.filter(active=True)
-            .filter(linkedin_username__iexact=sender)
-            .first()
-        )
-        if profile is None:
-            for candidate in LinkedInProfile.objects.filter(active=True):
-                if resolve_operator(candidate.linkedin_username) == sender:
-                    profile = candidate
-                    break
+        profile = _profile_for_sender(sender)
+        should_report, reason = _sender_should_report(sender, profile, today_start)
+        if not should_report:
+            logger.info("status_summary: suppressing %s (%s)", sender, reason)
+            continue
 
         action_logs = ActionLog.objects.filter(created_at__gte=today_start)
         if profile is not None:
@@ -187,7 +215,10 @@ def handle_status_summary(task, session, qualifiers) -> None:
     since = _parse_since((task.payload or {}).get("since"))
     try:
         rows = build_status_summary_rows(since=since)
-        notify_status_summary(rows=rows, since=since, generated_at=now)
-        logger.info("status_summary posted for %d sender(s)", len(rows))
+        if rows:
+            notify_status_summary(rows=rows, since=since, generated_at=now)
+            logger.info("status_summary posted for %d sender(s)", len(rows))
+        else:
+            logger.info("status_summary suppressed: no active sender rows")
     finally:
         enqueue_status_summary(delay_seconds=STATUS_SUMMARY_INTERVAL_SECONDS, since=now)
