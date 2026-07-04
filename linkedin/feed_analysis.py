@@ -69,7 +69,7 @@ def serialize_posts_for_codex(posts: Iterable[LinkedInFeedPost]) -> dict:
 
 
 def load_decisions(path: str | Path) -> list[tuple[int, FeedPostAnalysisResult]]:
-    payload = json.loads(Path(path).read_text())
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
     rows = payload if isinstance(payload, list) else payload.get("decisions", [])
     if not isinstance(rows, list):
         raise ValueError("Decision JSON must be a list or an object with a decisions list.")

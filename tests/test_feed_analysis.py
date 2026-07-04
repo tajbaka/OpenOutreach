@@ -97,15 +97,37 @@ def test_load_decisions_requires_post_id(tmp_path):
         load_decisions(path)
 
 
+def test_load_decisions_reads_utf8_payload(tmp_path):
+    path = tmp_path / "decisions.json"
+    path.write_text(json.dumps({
+        "decisions": [{
+            "post_id": 123,
+            "is_relevant": True,
+            "should_alert": True,
+            "intent": "high",
+            "audience": "advisor_partner",
+            "topics": ["GRC"],
+            "relevance_reason": "Signal includes emoji 👇 and GRC hiring intent.",
+            "suggested_action": "Review.",
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    decisions = load_decisions(path)
+
+    assert decisions[0][0] == 123
+    assert "👇" in decisions[0][1].relevance_reason
+
+
 @pytest.mark.django_db
 def test_analyze_linkedin_feed_exports_codex_queue(tmp_path):
-    post = _post(content_hash="export")
+    post = _post(content_hash="export", post_text="FedRAMP advisor opportunity 👇")
     out = tmp_path / "queue.json"
 
     call_command("analyze_linkedin_feed", output=str(out), limit=10)
 
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     assert payload["posts"][0]["id"] == post.id
+    assert "👇" in payload["posts"][0]["post_text"]
     assert "schema" in payload
 
 
@@ -118,7 +140,7 @@ def test_analyze_linkedin_feed_exports_all_unanalyzed_posts_by_default(tmp_path)
 
     call_command("analyze_linkedin_feed", output=str(out))
 
-    payload = json.loads(out.read_text())
+    payload = json.loads(out.read_text(encoding="utf-8"))
     exported_ids = {row["id"] for row in payload["posts"]}
     assert exported_ids == {first.id, second.id}
     assert analyzed.id not in exported_ids

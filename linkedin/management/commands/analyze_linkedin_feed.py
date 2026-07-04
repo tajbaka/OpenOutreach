@@ -71,7 +71,7 @@ class Command(BaseCommand):
         if opts.get("output"):
             path = Path(opts["output"])
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(encoded)
+            path.write_text(encoded, encoding="utf-8")
             self.stdout.write(f"Wrote Codex feed review queue to {path}")
         else:
             self.stdout.write(encoded)
