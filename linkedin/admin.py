@@ -7,6 +7,9 @@ from linkedin.models import (
     ActionLog,
     Campaign,
     ConnectIssueLog,
+    LinkedInFeedCollectionJob,
+    LinkedInFeedObservation,
+    LinkedInFeedPost,
     LinkedInProfile,
     OutreachSuppression,
     SearchKeyword,
@@ -71,6 +74,57 @@ class ConnectIssueLogAdmin(admin.ModelAdmin):
         "linkedin_profile", "campaign", "public_id", "profile_url",
         "issue_type", "reason", "metadata", "created_at",
     )
+
+
+@admin.register(LinkedInFeedCollectionJob)
+class LinkedInFeedCollectionJobAdmin(admin.ModelAdmin):
+    list_display = (
+        "operator", "account_username", "collection_date", "status",
+        "scheduled_for", "posts_seen", "posts_created", "observations_created",
+    )
+    list_filter = ("status", "operator")
+    search_fields = ("operator", "account_username", "error")
+    readonly_fields = (
+        "operator", "account_username", "collection_date", "status",
+        "scheduled_for", "started_at", "finished_at", "error",
+        "posts_seen", "posts_created", "observations_created",
+        "created_at", "updated_at",
+    )
+    date_hierarchy = "scheduled_for"
+
+
+@admin.register(LinkedInFeedPost)
+class LinkedInFeedPostAdmin(admin.ModelAdmin):
+    list_display = (
+        "author_name", "intent", "audience", "analyzed_at",
+        "slack_notified_at", "last_seen_at", "post_url",
+    )
+    list_filter = ("intent", "audience", "analyzed_at", "slack_notified_at")
+    search_fields = (
+        "activity_urn", "post_url", "author_name", "author_headline",
+        "post_text", "relevance_reason", "suggested_action",
+    )
+    readonly_fields = (
+        "activity_urn", "post_url", "content_hash", "author_name",
+        "author_headline", "author_profile_url", "post_text", "posted_at",
+        "raw_payload", "analyzed_at", "intent", "audience", "topics",
+        "relevance_reason", "suggested_action", "raw_analysis",
+        "slack_notified_at", "first_seen_at", "last_seen_at", "created_at",
+        "updated_at",
+    )
+    date_hierarchy = "last_seen_at"
+
+
+@admin.register(LinkedInFeedObservation)
+class LinkedInFeedObservationAdmin(admin.ModelAdmin):
+    list_display = ("operator", "account_username", "post", "last_seen_at", "seen_count")
+    list_filter = ("operator",)
+    raw_id_fields = ("post", "job")
+    readonly_fields = (
+        "post", "job", "operator", "account_username",
+        "first_seen_at", "last_seen_at", "seen_count",
+    )
+    date_hierarchy = "last_seen_at"
 
 
 @admin.register(Task)

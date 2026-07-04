@@ -346,6 +346,157 @@ def log_connect_issue(
     )
 
 
+class LinkedInFeedCollectionJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    operator = models.CharField(max_length=80, db_index=True)
+    account_username = models.CharField(max_length=200, db_index=True)
+    collection_date = models.DateField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    scheduled_for = models.DateTimeField(db_index=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    posts_seen = models.PositiveIntegerField(default=0)
+    posts_created = models.PositiveIntegerField(default=0)
+    observations_created = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["operator", "account_username", "collection_date"],
+                name="linkedin_feed_one_job_per_sender_day",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "scheduled_for"], name="linkedin_feed_job_due_idx"),
+            models.Index(
+                fields=["operator", "account_username", "collection_date"],
+                name="lfeed_job_sender_day_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"feed collection {self.operator} {self.collection_date} "
+            f"[{self.status}]"
+        )
+
+
+class LinkedInFeedPost(models.Model):
+    class Intent(models.TextChoices):
+        NONE = "none", "None"
+        LOW = "low", "Low"
+        MEDIUM = "medium", "Medium"
+        HIGH = "high", "High"
+        URGENT = "urgent", "Urgent"
+
+    class Audience(models.TextChoices):
+        CSP = "csp", "CSP"
+        ADVISOR_PARTNER = "advisor_partner", "Advisor / Partner"
+        ASSESSOR = "assessor", "Assessor"
+        CHANNEL = "channel", "Channel"
+        OTHER = "other", "Other"
+        NOT_RELEVANT = "not_relevant", "Not Relevant"
+
+    activity_urn = models.CharField(max_length=200, blank=True, default="", db_index=True)
+    post_url = models.URLField(max_length=1000, blank=True, default="")
+    content_hash = models.CharField(max_length=64, unique=True)
+    author_name = models.CharField(max_length=200, blank=True, default="")
+    author_headline = models.TextField(blank=True, default="")
+    author_profile_url = models.URLField(max_length=1000, blank=True, default="")
+    post_text = models.TextField(blank=True, default="")
+    posted_at = models.DateTimeField(null=True, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    analyzed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    intent = models.CharField(
+        max_length=20,
+        choices=Intent.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    audience = models.CharField(
+        max_length=40,
+        choices=Audience.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    topics = models.JSONField(default=list, blank=True)
+    relevance_reason = models.TextField(blank=True, default="")
+    suggested_action = models.TextField(blank=True, default="")
+    raw_analysis = models.JSONField(default=dict, blank=True)
+    slack_notified_at = models.DateTimeField(null=True, blank=True)
+    first_seen_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["activity_urn"],
+                condition=~models.Q(activity_urn=""),
+                name="linkedin_feed_unique_activity_urn",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["last_seen_at"], name="linkedin_feed_post_seen_idx"),
+            models.Index(fields=["author_name"], name="linkedin_feed_post_author_idx"),
+        ]
+
+    def __str__(self):
+        author = self.author_name or "unknown author"
+        return f"{author}: {self.post_text[:80]}"
+
+
+class LinkedInFeedObservation(models.Model):
+    post = models.ForeignKey(
+        LinkedInFeedPost,
+        on_delete=models.CASCADE,
+        related_name="observations",
+    )
+    job = models.ForeignKey(
+        LinkedInFeedCollectionJob,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="observations",
+    )
+    operator = models.CharField(max_length=80, db_index=True)
+    account_username = models.CharField(max_length=200, db_index=True)
+    first_seen_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    seen_count = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        app_label = "linkedin"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["post", "operator", "account_username"],
+                name="linkedin_feed_unique_observation",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["operator", "account_username", "last_seen_at"],
+                name="lfeed_obs_sender_seen_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.operator} saw post {self.post_id} ({self.seen_count}x)"
+
+
 def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     """Q filter restricting the task queue to work a daemon owns.
 

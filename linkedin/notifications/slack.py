@@ -564,6 +564,57 @@ def notify_phone_enriched(*, lead, result) -> None:
     )
 
 
+def notify_feed_intent_signal(*, post) -> bool:
+    """Post a high-intent LinkedIn feed signal to the replies channel."""
+    if not SLACK_REPLIES_WEBHOOK_URL:
+        return False
+
+    author = post.author_name or "Unknown author"
+    author_md = f"<{post.author_profile_url}|{author}>" if post.author_profile_url else author
+    post_md = f"<{post.post_url}|Open post>" if post.post_url else "Post URL unavailable"
+    topics = ", ".join(post.topics or []) or "uncategorized"
+    headline = (post.author_headline or "").strip()
+    excerpt = (post.post_text or "").strip().replace("\n", " ")
+    if len(excerpt) > 500:
+        excerpt = excerpt[:497].rstrip() + "..."
+
+    observations = list(post.observations.order_by("operator", "account_username")[:8])
+    seen_by = ", ".join(
+        sorted({obs.operator or obs.account_username for obs in observations if obs.operator or obs.account_username})
+    )
+    context_elements: list[dict] = [
+        {"type": "mrkdwn", "text": f"*Intent:* {post.intent or 'unknown'}"},
+        {"type": "mrkdwn", "text": f"*Audience:* {post.audience or 'unknown'}"},
+        {"type": "mrkdwn", "text": f"*Topics:* {topics}"},
+    ]
+    if seen_by:
+        context_elements.append({"type": "mrkdwn", "text": f"*Seen by:* {seen_by}"})
+
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":rotating_light: *High-intent LinkedIn feed post*\n*{author_md}*",
+            },
+        },
+    ]
+    if headline:
+        blocks.append({"type": "context", "elements": [
+            {"type": "mrkdwn", "text": headline[:300]},
+        ]})
+    blocks.extend([
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"> {excerpt or '(no text)'}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Why it matters:*\n{post.relevance_reason or 'No reason saved.'}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Suggested action:*\n{post.suggested_action or 'Review the post.'}"}},
+        {"type": "context", "elements": context_elements},
+        {"type": "section", "text": {"type": "mrkdwn", "text": post_md}},
+    ])
+    payload = {"text": f"High-intent LinkedIn feed post: {author}", "blocks": blocks}
+    _post_to_slack(SLACK_REPLIES_WEBHOOK_URL, payload, f"feed-intent ({author})")
+    return True
+
+
 def notify_degraded(*, sender: str, title: str, detail: str) -> None:
     """Post a monitoring alert to the ops channel (SLACK_WEBHOOK_URL).
 

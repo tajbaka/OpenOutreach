@@ -26,6 +26,7 @@ from linkedin.browser.nav import goto_page, human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
     BROWSER_SLOW_MO,
+    ENABLE_LINKEDIN_FEED_COLLECTOR,
     ENABLE_REALTIME_LISTENER,
     LISTENER_CDP_PORT,
 )
@@ -189,7 +190,9 @@ def start_browser_session(session: "AccountSession", handle: str):
 
     linkedin_username = session.linkedin_profile.linkedin_username
     profile_dir = profile_dir_for(linkedin_username)
-    cdp_port = LISTENER_CDP_PORT if ENABLE_REALTIME_LISTENER else None
+    cdp_port = LISTENER_CDP_PORT if (
+        ENABLE_REALTIME_LISTENER or ENABLE_LINKEDIN_FEED_COLLECTOR
+    ) else None
 
     seed_cookies = None
     if not profile_dir.exists():

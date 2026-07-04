@@ -60,7 +60,7 @@ GPR (sklearn, ConstantKernel * RBF) inside Pipeline(StandardScaler, GPR) with BA
 
 Three apps in `INSTALLED_APPS`:
 
-- **`linkedin`** — Main app: Campaign (owned by one User), LinkedInProfile, SearchKeyword, ActionLog, Task models. All automation logic.
+- **`linkedin`** — Main app: Campaign (owned by one User), LinkedInProfile, SearchKeyword, ActionLog, Task models, and LinkedIn feed collection job/post/observation models. All automation logic.
 - **`crm`** — Lead (with embedding) and Deal models (in `crm/models/lead.py` and `crm/models/deal.py`). Also defines `ClosingReason` enum.
 - **`chat`** — `ChatMessage` model (GenericForeignKey to any object, content, owner, answer_to threading, topic).
 
@@ -73,11 +73,14 @@ Three apps in `INSTALLED_APPS`:
 - **Lead** (`crm/models/lead.py`) — Per LinkedIn URL (`linkedin_url` = unique). `public_identifier` (derived from URL). `first_name`, `last_name`, `company_name`. `description` = parsed profile JSON. `embedding` = 384-dim float32 BinaryField (nullable). `disqualified` = permanent exclusion. `embedding_array` property for numpy access. `get_labeled_arrays(campaign)` classmethod returns (X, y) for GP warm start. Labels: non-FAILED state → 1, FAILED+DISQUALIFIED → 0, other FAILED → skipped.
 - **Deal** (`crm/models/deal.py`) — Per campaign (campaign-scoped via FK). `state` = CharField (ProfileState choices). `closing_reason` = CharField (ClosingReason choices: COMPLETED/FAILED/DISQUALIFIED). `reason` = qualification/failure reason. `connect_attempts` = retry count. `backoff_hours` = check_pending backoff. `creation_date`, `update_date`.
 - **Task** (`linkedin/models.py`) — `task_type` (`Task.TaskType` choices; `Task.save()` skips task-type choice validation so deploy-skew rows can still be marked failed), `status` (pending/running/completed/failed), `scheduled_at`, `payload` (JSONField), `error`, `started_at`, `completed_at`. Composite index on `(status, scheduled_at)`. Pending/running `sweep_connections` rows require `payload.operator` so each sender account runs its own acceptance sweep.
+- **LinkedInFeedCollectionJob / LinkedInFeedPost / LinkedInFeedObservation** (`linkedin/models.py`) — feed collector ledger. Jobs are one per sender/day and carry retry/completion state. Posts are canonical activity/text records. Observations record which sender account saw each post and how often.
 - **ChatMessage** (`chat/models.py`) — GenericForeignKey to any object. `content`, `owner`, `answer_to` (self FK), `topic` (self FK), `recipients`, `to` (M2M to User).
 
 ## Key Modules
 
 - **`daemon.py`** — Worker loop with active-hours guard (`ENABLE_ACTIVE_HOURS` flag, `seconds_until_active()`), `_build_qualifiers()`, `heal_tasks()`, freemium import, `_FreemiumRotator`.
+- **`feed_collection.py`** — Daily LinkedIn home-feed collector helpers: sender/day job scheduling, CDP page collection, DOM extraction, canonical post upsert, and per-sender observation dedupe.
+- **`management/commands/collect_linkedin_feed.py`** — Short-lived collector child command spawned by `daemon_supervisor.py`; connects to the daemon browser over CDP and stores feed posts.
 - **`diagnostics.py`** — `failure_diagnostics()` context manager, `capture_failure()` saves page HTML/screenshot/traceback to `/tmp/openoutreach-diagnostics/`.
 - **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`. Connect-note rendering uses `icp_outbound.safe_company_name()` so `"Unknown Company"` never leaks into outbound notes.
 - **`tasks/sweep_connections.py`** — `handle_sweep_connections`, `enqueue_sweep_connections`. Replaces legacy `check_pending`.
@@ -138,7 +141,7 @@ The listener runs as a **separate child process** — `manage.py listen_realtime
 
 **Why a separate process is required.** Playwright's sync API is built on a greenlet model: one event loop per process, and CDP event handlers and Playwright's task loop share it. An earlier in-process design (v1) attempted to drive CDP `Network.dataReceived` event callbacks while the daemon's task loop also drove sync Playwright — this corrupted Playwright's sync greenlet state and made the approach unworkable. Running the listener in its own process gives it a clean, independent Playwright/asyncio loop with no contention.
 
-**Persistent browser context.** The daemon launches Chromium using `launch_persistent_context` (storing state under `data/profile-<account>/`) with a fixed `--remote-debugging-port` controlled by `LISTENER_CDP_PORT` (default 9222, localhost-only). This port is opened only when `ENABLE_REALTIME_LISTENER` is on. The listener calls `connect_over_cdp` to attach to this already-running browser and shares its one browser context — one device fingerprint, one cookie jar. From LinkedIn's perspective this looks like one browser with two tabs, not two browsers, which is the correct bot-detection posture.
+**Persistent browser context.** The daemon launches Chromium using `launch_persistent_context` (storing state under `data/profile-<account>/`) with a fixed `--remote-debugging-port` controlled by `LISTENER_CDP_PORT` (default 9222, localhost-only). This port is opened when `ENABLE_REALTIME_LISTENER` or `ENABLE_LINKEDIN_FEED_COLLECTOR` is on. The listener calls `connect_over_cdp` to attach to this already-running browser and shares its one browser context — one device fingerprint, one cookie jar. From LinkedIn's perspective this looks like one browser with two tabs, not two browsers, which is the correct bot-detection posture.
 
 **`StandaloneLinkedInSession`** (used by `backfill_messages` and sales-nav flows) stays on `launch()` + per-account JSON cookie files (`data/<label>_cookies.json`). It is not migrated to a persistent context; only the daemon uses `launch_persistent_context`.
 
@@ -403,11 +406,42 @@ no self-alerting "realtime listener looks stuck" check. All monitoring alerts
 route to the ops Slack channel (`SLACK_WEBHOOK_URL`). Monitoring is an
 enhancement — tick exceptions are logged and never crash the outreach daemon.
 
+## LinkedIn Feed Collection
+
+The feed feature is split into collection and Codex-reviewed analysis. Collection saves LinkedIn home-feed posts visible to each sender account. The app never calls an analyzer LLM for this lane; a daily Codex automation reads the exported review queue, decides which posts matter, then applies structured decisions back to the DB. Slack alerts are sent only when Codex decisions mark high/urgent hits.
+
+**Trigger.** `daemon_supervisor.py` is the daily wake-up process. When `ENABLE_LINKEDIN_FEED_COLLECTOR=true`, it starts a nonblocking child after `LINKEDIN_FEED_COLLECTION_HOUR:LINKEDIN_FEED_COLLECTION_MINUTE` in `LINKEDIN_FEED_COLLECTION_TIMEZONE` (default 17:00 America/Toronto):
+
+```
+.venv/bin/python manage.py collect_linkedin_feed
+```
+
+The supervisor tracks the child separately from the main daemon, so feed scrolling cannot block daemon restarts or git polling. A nonzero collector exit is retried after `LINKEDIN_FEED_COLLECTION_RETRY_MINUTES`.
+
+For manual historical collection, `manage.py collect_linkedin_feed --since-days 14 --max-posts 1000 --stop-after-seen 200` forces a one-off backfill to `now - 14 days` for the current daemon sender, while still writing through the normal job/post/observation tables.
+
+**Browser/session.** The collector resolves the same daemon account as outbound automation (`get_daemon_handle()` -> `LinkedInProfile` -> `resolve_operator()`), connects to the daemon's existing Chromium over CDP (`LISTENER_CDP_PORT`), opens a new `/feed/` page in the shared context, extracts visible post cards, closes its tab, and exits. There is no standalone LinkedIn login fallback in v1; if CDP is unavailable, the job fails cleanly and becomes retryable.
+
+**Sequential cutoff.** Each job computes a sender-specific cutoff before scrolling. If a previous completed job exists for the same `(operator, account_username)`, the cutoff is that job's `scheduled_for` plus `LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES` (default 1). If this is the first job, the cutoff is the previous local day's scheduled collection time plus the same overlap. LinkedIn's rendered relative labels (`5h`, `1d`, `2w`, etc.) are parsed into approximate `posted_at` values; once the collector reaches a parsed post timestamp at or before the cutoff, it stops without saving that older post. This makes daily collection sequential by date/time while keeping a one-minute boundary overlap.
+
+**Storage.**
+
+- `LinkedInFeedCollectionJob` — one job per `(operator, account_username, collection_date)`, with `pending/running/completed/failed`, scheduled/start/finish timestamps, retry error, and collection counts.
+- `LinkedInFeedPost` — canonical post record keyed by activity URN when available and a content hash fallback. Stores author metadata, post URL, post text, raw extraction payload, and first/last seen timestamps.
+- `LinkedInFeedObservation` — per-sender visibility record keyed by `(post, operator, account_username)` with first/last seen timestamps and `seen_count`.
+
+The same post may appear in several sender feeds, so analysis should happen at the post level while response context can inspect observations to see which sender accounts saw it.
+
+**Collection limits.** The date/time cutoff is the primary stop rule. `LINKEDIN_FEED_COLLECTION_MAX_POSTS` caps total extracted posts per run. `LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN` remains a safety stop when LinkedIn returns unparseable or non-chronological feed items and the sender keeps re-encountering already-observed posts. `LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS` controls the wait between scrolls.
+
+**Analyzer.** `manage.py analyze_linkedin_feed` has two modes and does not call an LLM. Export mode selects posts with `analyzed_at IS NULL`, newest first, and writes every matching row to a JSON review queue for Codex (`--output`, `--since-days`, `--reanalyze`; `--limit` is only an optional manual/debug cap). Apply mode reads Codex-produced decision JSON (`--apply-json`) and saves `analyzed_at`, `intent` (`none/low/medium/high/urgent`), `audience` (`csp/advisor_partner/assessor/channel/other/not_relevant`), `topics`, `relevance_reason`, `suggested_action`, and `raw_analysis` onto `LinkedInFeedPost`. High/urgent posts in CSP/advisor/assessor/channel buckets post to `SLACK_REPLIES_WEBHOOK_URL` unless `--no-slack` is passed; successful alerts stamp `slack_notified_at`. The Codex review instructions explicitly include: people who want a GRC automation tool, FedRAMP tool, FedRAMP 20x tool, CMMC/FedRAMP/GRC help, or want to work as / find a GRC, FedRAMP, CMMC, 3PAO, assessor, advisor, channel, or partner resource. A Pete Strouse-style FedRAMP advisory/partner opportunity is high-intent.
+
 ## Configuration
 
 - **`.env`** (project root) — `DATABASE_URL` (required for non-test runtimes), `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
 - **`conf.py` schedule** — `ACTIVE_START_HOUR` (9), `ACTIVE_END_HOUR` (17), `ACTIVE_TIMEZONE` ("UTC"), `REST_DAYS` ((5, 6) = Sat+Sun). Daemon sleeps outside this window.
 - **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30), `LISTENER_ACTIVE_START_HOUR` (0), `LISTENER_ACTIVE_END_HOUR` (24), `LISTENER_REST_DAYS` (empty).
+- **`conf.py` feed collection** — `ENABLE_LINKEDIN_FEED_COLLECTOR` (default `false`), `LINKEDIN_FEED_COLLECTION_HOUR` (17), `LINKEDIN_FEED_COLLECTION_MINUTE` (0), `LINKEDIN_FEED_COLLECTION_TIMEZONE` ("America/Toronto"), `LINKEDIN_FEED_COLLECTION_RETRY_MINUTES` (60), `LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES` (1), `LINKEDIN_FEED_COLLECTION_MAX_POSTS` (200), `LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN` (15), `LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS` (2).
 - **`conf.py` node monitoring** — `ENABLE_NODE_MONITOR` (default `true`), `MONITOR_INTERVAL_SECONDS` (300), `PEER_STALE_MINUTES` (15), `DEGRADED_REALERT_HOURS` (6), `TASK_FAILURE_STREAK_THRESHOLD` (5), `EXPECTED_OUTBOUND_SENDERS` (empty → infer), `SENDER_ACTIVITY_GRACE_MINUTES` (60), `SENDER_ACTIVITY_STALE_MINUTES` (90).
 - **`conf.py:CAMPAIGN_CONFIG`** — `min_ready_to_connect_prob` (0.9), `min_positive_pool_prob` (0.20), `connect_delay_seconds` (10), `connect_no_candidate_delay_seconds` (300), `check_pending_recheck_after_hours` (24), `check_pending_jitter_factor` (0.2), `qualification_n_mc_samples` (100), `enrich_min_interval` (1), `min_action_interval` (120), `embedding_model` ("BAAI/bge-small-en-v1.5").
 - **Prompt templates** (at `linkedin/templates/prompts/`) — `qualify_lead.j2` (temp 0.7), `search_keywords.j2` (temp 0.9), `follow_up_agent.j2`.

@@ -18,10 +18,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from shutil import which
+from zoneinfo import ZoneInfo
 
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_POLL_SECONDS = 300
+FEED_COLLECTOR_CHECK_SECONDS = 60
 REQUIREMENT_PATHS = (
     "requirements/base.txt",
     "requirements/local.txt",
@@ -30,6 +32,15 @@ REQUIREMENT_PATHS = (
 )
 
 logger = logging.getLogger("daemon_supervisor")
+
+
+def _load_env() -> None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT_DIR / ".env")
+    except Exception as exc:
+        logger.debug("Could not load .env: %s", exc)
 
 
 def _resolve_executable(name: str) -> str:
@@ -256,6 +267,17 @@ def _start_daemon(*, restart_reason: str = "") -> subprocess.Popen:
     return subprocess.Popen([sys.executable, "manage.py"], cwd=ROOT_DIR, env=env)
 
 
+def _start_feed_collector() -> subprocess.Popen:
+    env = os.environ.copy()
+    env["OPENOUTREACH_SUPERVISED"] = "1"
+    logger.warning("Starting LinkedIn feed collector child")
+    return subprocess.Popen(
+        [sys.executable, "manage.py", "collect_linkedin_feed"],
+        cwd=ROOT_DIR,
+        env=env,
+    )
+
+
 def _stop_daemon(proc: subprocess.Popen, timeout_seconds: int = 30) -> None:
     if proc.poll() is not None:
         return
@@ -272,6 +294,48 @@ def _stop_daemon(proc: subprocess.Popen, timeout_seconds: int = 30) -> None:
     proc.wait(timeout=10)
 
 
+def _stop_process(proc: subprocess.Popen, *, label: str, timeout_seconds: int = 30) -> None:
+    if proc.poll() is not None:
+        return
+    logger.warning("Stopping %s child pid=%s", label, proc.pid)
+    try:
+        proc.terminate()
+        proc.wait(timeout=timeout_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        logger.warning("%s did not stop after %ss; killing", label, timeout_seconds)
+    except ProcessLookupError:
+        return
+    proc.kill()
+    proc.wait(timeout=10)
+
+
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _feed_collector_enabled() -> bool:
+    return _env_bool("ENABLE_LINKEDIN_FEED_COLLECTOR", "false")
+
+
+def _feed_collection_local_now() -> datetime:
+    tz_name = os.getenv("LINKEDIN_FEED_COLLECTION_TIMEZONE", "America/Toronto")
+    return datetime.now(ZoneInfo(tz_name))
+
+
+def _feed_collection_due_today(now: datetime | None = None) -> bool:
+    if not _feed_collector_enabled():
+        return False
+    now = now or _feed_collection_local_now()
+    hour = int(os.getenv("LINKEDIN_FEED_COLLECTION_HOUR", "17") or 17)
+    minute = int(os.getenv("LINKEDIN_FEED_COLLECTION_MINUTE", "0") or 0)
+    return (now.hour, now.minute) >= (hour, minute)
+
+
+def _feed_collection_retry_seconds() -> int:
+    return int(os.getenv("LINKEDIN_FEED_COLLECTION_RETRY_MINUTES", "60") or 60) * 60
+
+
 def supervise(args: argparse.Namespace) -> int:
     if args.once:
         updated = _pull_update(
@@ -283,6 +347,9 @@ def supervise(args: argparse.Namespace) -> int:
 
     stop = False
     child: subprocess.Popen | None = None
+    feed_child: subprocess.Popen | None = None
+    feed_spawned_date = None
+    feed_retry_after = 0.0
 
     def _handle_signal(signum, _frame):
         nonlocal stop
@@ -290,6 +357,8 @@ def supervise(args: argparse.Namespace) -> int:
         stop = True
         if child is not None:
             _stop_daemon(child)
+        if feed_child is not None:
+            _stop_process(feed_child, label="LinkedIn feed collector")
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -301,6 +370,7 @@ def supervise(args: argparse.Namespace) -> int:
     )
     child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
     next_poll = time.monotonic() + args.poll_seconds
+    next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
 
     while not stop:
         code = child.poll()
@@ -314,9 +384,31 @@ def supervise(args: argparse.Namespace) -> int:
                 time.sleep(args.restart_delay)
             if stop:
                 break
+            if feed_child is not None and feed_child.poll() is None:
+                _stop_process(feed_child, label="LinkedIn feed collector")
+                feed_child = None
+                feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
             child = _start_daemon(restart_reason="process_exit")
             next_poll = time.monotonic() + args.poll_seconds
             continue
+
+        if feed_child is not None:
+            feed_code = feed_child.poll()
+            if feed_code is not None:
+                if feed_code == 0:
+                    feed_spawned_date = _feed_collection_local_now().date()
+                    logger.warning("LinkedIn feed collector exited cleanly")
+                else:
+                    feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
+                    logger.error(
+                        "LinkedIn feed collector exited with status %s; retrying later",
+                        feed_code,
+                    )
+                    _notify(
+                        "LinkedIn feed collector failed",
+                        f"Exit status `{feed_code}`. Supervisor will retry later.",
+                    )
+                feed_child = None
 
         if time.monotonic() >= next_poll:
             if _pull_update(
@@ -324,16 +416,33 @@ def supervise(args: argparse.Namespace) -> int:
                 migrate=not args.no_migrate,
                 requirements_file=args.requirements,
             ):
+                if feed_child is not None and feed_child.poll() is None:
+                    _stop_process(feed_child, label="LinkedIn feed collector")
+                    feed_child = None
+                    feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
                 _stop_daemon(child)
                 if stop:
                     break
                 child = _start_daemon(restart_reason="git_pull")
             next_poll = time.monotonic() + args.poll_seconds
 
+        if time.monotonic() >= next_feed_check:
+            local_now = _feed_collection_local_now()
+            if (
+                _feed_collection_due_today(local_now)
+                and feed_child is None
+                and feed_spawned_date != local_now.date()
+                and time.monotonic() >= feed_retry_after
+            ):
+                feed_child = _start_feed_collector()
+            next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
+
         time.sleep(1)
 
     if child is not None:
         _stop_daemon(child)
+    if feed_child is not None:
+        _stop_process(feed_child, label="LinkedIn feed collector")
     return 0
 
 
@@ -350,6 +459,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    _load_env()
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

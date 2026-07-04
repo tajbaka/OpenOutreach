@@ -191,6 +191,13 @@ ENABLE_REALTIME_LISTENER = os.getenv("ENABLE_REALTIME_LISTENER", "false").strip(
     "1", "true", "yes", "on",
 }
 
+# Kill-switch for daily LinkedIn home-feed collection. The outer
+# daemon_supervisor.py wakes the collector; the collector connects to this
+# daemon browser over CDP and opens its own /feed/ tab.
+ENABLE_LINKEDIN_FEED_COLLECTOR = os.getenv(
+    "ENABLE_LINKEDIN_FEED_COLLECTOR", "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+
 # Startup catch-up threshold. If the listener heartbeat is older than this
 # many minutes when the daemon boots, the catch-up surfaces the gap (prompt
 # on a TTY, WARNING log when headless). A quick restart stays below it.
@@ -212,11 +219,33 @@ LISTENER_REST_DAYS = tuple(
     if day.strip()
 )
 
-# Fixed CDP port the daemon exposes on its Chromium (`--remote-debugging-port`)
-# and the realtime listener child process connects to (`connect_over_cdp`).
-# Localhost-only. The daemon only opens the port when ENABLE_REALTIME_LISTENER
-# is on; the listener connects to it.
+# Fixed CDP port the daemon exposes on its Chromium (`--remote-debugging-port`).
+# Localhost-only. The daemon opens it when realtime listening or feed
+# collection needs a sibling process to attach to the shared browser context.
 LISTENER_CDP_PORT = int(os.getenv("LISTENER_CDP_PORT") or 9222)
+
+# Daily feed collector schedule/tuning. Time is local to
+# LINKEDIN_FEED_COLLECTION_TIMEZONE; the default is 5:00 PM Toronto time.
+LINKEDIN_FEED_COLLECTION_HOUR = int(os.getenv("LINKEDIN_FEED_COLLECTION_HOUR") or 17)
+LINKEDIN_FEED_COLLECTION_MINUTE = int(os.getenv("LINKEDIN_FEED_COLLECTION_MINUTE") or 0)
+LINKEDIN_FEED_COLLECTION_TIMEZONE = os.getenv(
+    "LINKEDIN_FEED_COLLECTION_TIMEZONE", "America/Toronto",
+)
+LINKEDIN_FEED_COLLECTION_RETRY_MINUTES = int(
+    os.getenv("LINKEDIN_FEED_COLLECTION_RETRY_MINUTES") or 60,
+)
+LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES = int(
+    os.getenv("LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES") or 1,
+)
+LINKEDIN_FEED_COLLECTION_MAX_POSTS = int(
+    os.getenv("LINKEDIN_FEED_COLLECTION_MAX_POSTS") or 200,
+)
+LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN = int(
+    os.getenv("LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN") or 15,
+)
+LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS = float(
+    os.getenv("LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS") or 2,
+)
 
 # ----------------------------------------------------------------------
 # Phone enrichment (multi-provider waterfall — see linkedin/enrichment/)
