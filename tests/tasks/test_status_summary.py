@@ -1,5 +1,6 @@
 from datetime import timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.contrib.auth.models import User
@@ -8,7 +9,17 @@ from django.utils import timezone
 from crm.models import Deal, Lead, Message
 from linkedin.enums import ProfileState
 from linkedin.models import ActionLog, Campaign, DaemonHeartbeat, LinkedInProfile, Task
-from linkedin.tasks.status_summary import build_status_summary_rows, handle_status_summary
+from linkedin.tasks.status_summary import (
+    build_status_summary_rows,
+    handle_status_summary,
+    should_post_status_summary_now,
+)
+
+
+def _local_dt(year, month, day, hour, minute=0):
+    return timezone.datetime(
+        year, month, day, hour, minute, tzinfo=ZoneInfo("America/Toronto"),
+    )
 
 
 @pytest.mark.django_db
@@ -79,7 +90,8 @@ def test_build_status_summary_rows_groups_all_sender_counts(fake_session):
 
 @pytest.mark.django_db
 @patch("linkedin.tasks.status_summary.notify_status_summary")
-def test_handle_status_summary_posts_and_reschedules(mock_notify, fake_session):
+def test_handle_status_summary_posts_and_reschedules(mock_notify, fake_session, monkeypatch):
+    monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_ACTIVE_HOURS", False)
     fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
     fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
     DaemonHeartbeat.objects.create(sender="Arian", last_alive=timezone.now())
@@ -99,6 +111,93 @@ def test_handle_status_summary_posts_and_reschedules(mock_notify, fake_session):
         status=Task.Status.PENDING,
     )
     assert next_task.scheduled_at > timezone.now() + timedelta(minutes=55)
+
+
+@pytest.mark.django_db
+@patch("linkedin.tasks.status_summary.notify_status_summary")
+def test_handle_status_summary_suppresses_off_hours_without_catchup(
+    mock_notify,
+    fake_session,
+    monkeypatch,
+):
+    monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_PACING_CATCH_UP", False)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_START_HOUR", 9)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_END_HOUR", 17)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr("linkedin.tasks.status_summary.REST_DAYS", ())
+    fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+    fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
+    DaemonHeartbeat.objects.create(sender="Arian", last_alive=timezone.now())
+    task = Task.objects.create(
+        task_type=Task.TaskType.STATUS_SUMMARY,
+        status=Task.Status.RUNNING,
+        scheduled_at=timezone.now(),
+        started_at=timezone.now(),
+        payload={"since": (timezone.now() - timedelta(hours=1)).isoformat()},
+    )
+
+    with patch(
+        "linkedin.tasks.status_summary.timezone.now",
+        return_value=_local_dt(2026, 3, 18, 20),
+    ):
+        handle_status_summary(task, fake_session, qualifiers={})
+
+    mock_notify.assert_not_called()
+    assert Task.objects.filter(
+        task_type=Task.TaskType.STATUS_SUMMARY,
+        status=Task.Status.PENDING,
+    ).exists()
+
+
+@pytest.mark.django_db
+@patch("linkedin.tasks.connect._is_behind_normal_window_pace", return_value=True)
+@patch("linkedin.tasks.status_summary.notify_status_summary")
+def test_handle_status_summary_posts_after_hours_when_catchup_is_active(
+    mock_notify,
+    _mock_behind,
+    fake_session,
+    monkeypatch,
+):
+    monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_PACING_CATCH_UP", True)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_START_HOUR", 9)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_END_HOUR", 17)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr("linkedin.tasks.status_summary.REST_DAYS", ())
+    fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+    fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
+    DaemonHeartbeat.objects.create(sender="Arian", last_alive=timezone.now())
+    task = Task.objects.create(
+        task_type=Task.TaskType.STATUS_SUMMARY,
+        status=Task.Status.RUNNING,
+        scheduled_at=timezone.now(),
+        started_at=timezone.now(),
+        payload={"since": (timezone.now() - timedelta(hours=1)).isoformat()},
+    )
+
+    with patch(
+        "linkedin.tasks.status_summary.timezone.now",
+        return_value=_local_dt(2026, 3, 18, 20),
+    ):
+        handle_status_summary(task, fake_session, qualifiers={})
+
+    mock_notify.assert_called_once()
+
+
+def test_should_post_status_summary_now_allows_normal_active_hours(monkeypatch):
+    monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_START_HOUR", 9)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_END_HOUR", 17)
+    monkeypatch.setattr("linkedin.tasks.status_summary.ACTIVE_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr("linkedin.tasks.status_summary.REST_DAYS", ())
+
+    should_post, reason = should_post_status_summary_now(
+        now=_local_dt(2026, 3, 18, 12),
+    )
+
+    assert should_post is True
+    assert reason == ""
 
 
 @pytest.mark.django_db

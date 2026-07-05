@@ -3,10 +3,19 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
-from linkedin.conf import EXPECTED_OUTBOUND_SENDERS
+from linkedin.conf import (
+    ACTIVE_END_HOUR,
+    ACTIVE_START_HOUR,
+    ACTIVE_TIMEZONE,
+    ENABLE_ACTIVE_HOURS,
+    ENABLE_PACING_CATCH_UP,
+    EXPECTED_OUTBOUND_SENDERS,
+    REST_DAYS,
+)
 from linkedin.enums import ProfileState
 from linkedin.models import (
     ActionLog,
@@ -62,6 +71,49 @@ def _campaign_ids_by_sender() -> dict[str, list[int]]:
         if campaign_ids:
             out.setdefault(sender, []).extend(campaign_ids)
     return out
+
+
+def _active_outbound_profiles():
+    profiles = LinkedInProfile.objects.filter(active=True).select_related("user")
+    for profile in profiles:
+        if Campaign.objects.filter(user=profile.user, status=Campaign.Status.ACTIVE).exists():
+            yield profile
+
+
+def _catch_up_enabled_for_any_sender(*, now) -> bool:
+    """Whether any sender is intentionally allowed to send after hours."""
+    if not ENABLE_PACING_CATCH_UP:
+        return False
+    local_now = timezone.localtime(now, timezone=ZoneInfo(ACTIVE_TIMEZONE))
+    if local_now.weekday() in REST_DAYS or local_now.hour < ACTIVE_END_HOUR:
+        return False
+
+    from linkedin.tasks.connect import _is_behind_normal_window_pace
+
+    for profile in _active_outbound_profiles():
+        if (
+            _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT)
+            or _is_behind_normal_window_pace(profile, ActionLog.ActionType.FOLLOW_UP)
+        ):
+            return True
+    return False
+
+
+def should_post_status_summary_now(*, now=None) -> tuple[bool, str]:
+    """Return whether the hourly sender status is expected to be actionable."""
+    if not ENABLE_ACTIVE_HOURS:
+        return True, ""
+    now = now or timezone.now()
+    local_now = timezone.localtime(now, timezone=ZoneInfo(ACTIVE_TIMEZONE))
+    is_normal_active = (
+        local_now.weekday() not in REST_DAYS
+        and ACTIVE_START_HOUR <= local_now.hour < ACTIVE_END_HOUR
+    )
+    if is_normal_active:
+        return True, ""
+    if _catch_up_enabled_for_any_sender(now=now):
+        return True, ""
+    return False, "outside active hours and no pacing catch-up lane is active"
 
 
 def _gmail_counts_by_sender(today_start) -> dict[str, int]:
@@ -214,6 +266,11 @@ def handle_status_summary(task, session, qualifiers) -> None:
     now = timezone.now()
     since = _parse_since((task.payload or {}).get("since"))
     try:
+        should_post, reason = should_post_status_summary_now(now=now)
+        if not should_post:
+            logger.info("status_summary suppressed: %s", reason)
+            return
+
         rows = build_status_summary_rows(since=since)
         if rows:
             notify_status_summary(rows=rows, since=since, generated_at=now)
