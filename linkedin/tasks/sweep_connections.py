@@ -20,7 +20,7 @@ from linkedin.conf import CONNECTION_SWEEP_INTERVAL_HOURS, ENABLE_SWEEP_CONNECTI
 from linkedin.db.deals import set_profile_state
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
-from linkedin.models import Task
+from linkedin.models import ActionLog, Task
 from linkedin.notifications.slack import (
     latest_reply_from_lead,
     notify_connection_accepted,
