@@ -81,13 +81,14 @@ class ApplyResult:
 
 class InboxLeadDecision(BaseModel):
     should_import: bool = Field(
-        description="True only when this is a relevant Boundera/FedRAMP business prospect."
+        description="True only when this is a relevant Boundera FedRAMP/CMMC business prospect."
     )
     icp: str = Field(
         default="",
         description=(
             "Canonical ICP bucket for imports: CSPs, 3PAOs/Assessors, Advisors, "
-            "or Channel. Empty for rejected conversations."
+            "Channel, CMMC Buyers, or CMMC Advisor/Channel. Empty for rejected "
+            "conversations."
         ),
     )
     category: str = Field(

@@ -38,7 +38,9 @@ whatever `42 % len(variants)` resolves to), not a random new one.
 Routing: ROLE → ICP via the same `FU_ROLE_TO_ICP` mapping the Sheets
 path uses, so a lead the followup workflow classifies as `ROLE=CSP`
 gets the `CSPs` template here. Channel has its own partner/routing
-bucket, while Assessor rolls into 3PAOs/Assessors.
+bucket, while Assessor rolls into 3PAOs/Assessors. CMMC buckets are
+not inferred from generic profile text; stamp them from the CSV `ICP`
+column at import so CMMC buyer/advisor leads do not receive FedRAMP copy.
 """
 from __future__ import annotations
 
@@ -52,7 +54,7 @@ from pathlib import Path
 from linkedin.conf import ROOT_DIR
 from linkedin.exceptions import SheetsError
 from linkedin.name_utils import greeting_first_name
-from linkedin.notifications.sheets import FU_ROLE_TO_ICP
+from linkedin.notifications.sheets import FU_ROLE_TO_ICP, LEAD_ICP_BUCKETS
 from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
@@ -77,7 +79,7 @@ _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
 # Trailing "" = ROOT_DIR itself for legacy callers.
 _ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
 ICP_MESSAGES_BASE_HEADERS = ["ICP", "Connect Message"]
-ICP_MESSAGES_SHEET_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors", "Channel")
+ICP_MESSAGES_SHEET_BUCKETS = LEAD_ICP_BUCKETS
 # Follow-up sequences are arbitrary-length: the sheet grows one
 # `Followup Message N` column per step, sized per sender to the longest
 # sequence across its ICP buckets (always at least one column).

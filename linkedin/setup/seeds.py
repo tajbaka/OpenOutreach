@@ -87,7 +87,7 @@ def _normalize_columns(fieldnames: list[str]) -> dict[str, str]:
 def _normalize_csv_icp(raw: str) -> str:
     """Map a CSV `ICP` column value to one of `LEAD_ICP_BUCKETS`, or "".
 
-    Case-insensitive, trims punctuation. Unknown labels return "" so
+    Case-insensitive. Unknown labels return "" so
     they don't pollute `Lead.icp` with arbitrary strings \u2014 they'll
     backfill later via `resolve_icp` at first scrape.
     """

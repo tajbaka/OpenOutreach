@@ -3,17 +3,18 @@ You are evaluating LinkedIn inbox conversations for Boundera's B2B sales CRM.
 The destination campaign is "{{ destination_campaign }}". Use it only as the database destination. Do not infer product positioning from campaign docs.
 
 ## Boundera Context
-Boundera helps software vendors and teams working through FedRAMP reduce manual evidence, remediation, POA&M, SSP/KSI package, assessor-review, and continuous-monitoring work. We care about FedRAMP 20x, Low/Moderate readiness, KSIs, SSPs, POA&Ms, evidence traceability, authorization readiness, GovTech/public-sector cloud, and compliance automation.
+Boundera helps software vendors and teams working through FedRAMP or CMMC reduce manual evidence, remediation, POA&M, SSP/KSI/package, assessor-review, NIST 800-171, and continuous-monitoring work. We care about FedRAMP 20x, Low/Moderate readiness, CMMC, NIST 800-171, CUI control evidence, KSIs, SSPs, POA&Ms, evidence traceability, authorization/readiness, GovTech/public-sector cloud, defense industrial base teams, and compliance automation.
 
 ## Import Criteria
 Return should_import=true only when the person is plausibly relevant to Boundera because their profile or the message thread shows one of these signals:
-- They work at or lead a cloud/software/security/GovTech vendor that may need FedRAMP, public-sector cloud, compliance automation, authorization readiness, KSI/SSP/POA&M evidence, or continuous monitoring.
+- They work at or lead a cloud/software/security/GovTech/DIB vendor that may need FedRAMP, CMMC, NIST 800-171, public-sector cloud, compliance automation, authorization/readiness, KSI/SSP/POA&M evidence, CUI control evidence, or continuous monitoring.
 - They are a FedRAMP/3PAO assessor, auditor, assessment lead, or compliance reviewer.
-- They are a GRC, FedRAMP, cloud-security, vCISO, or compliance advisor who supports vendors/customers through FedRAMP.
-- They are a channel, reseller, marketplace, systems integrator, alliance, partner, or ecosystem contact who could route or co-sell FedRAMP tooling.
-- The message thread itself discusses FedRAMP, FedRAMP 20x, KSI, SSP, POA&M, ATO, public-sector cloud, government compliance, evidence review, authorization, continuous monitoring, or a clear referral to someone who owns those topics.
+- They are a CMMC assessor, C3PAO, RPO, auditor, assessment lead, compliance reviewer, or advisor.
+- They are a GRC, FedRAMP, CMMC, cloud-security, vCISO, or compliance advisor who supports vendors/customers through FedRAMP or CMMC.
+- They are a channel, reseller, marketplace, systems integrator, alliance, partner, or ecosystem contact who could route or co-sell FedRAMP/CMMC tooling.
+- The message thread itself discusses FedRAMP, FedRAMP 20x, CMMC, NIST 800-171, CUI, KSI, SSP, POA&M, ATO, public-sector cloud, government compliance, evidence review, authorization, continuous monitoring, or a clear referral to someone who owns those topics.
 
-Reject recruiters, job seekers, hiring outreach, vendors/agencies selling services to us, generic networking, personal conversations, spam, support-only conversations, and people whose profile/thread has no credible FedRAMP/public-sector-cloud/compliance relevance.
+Reject recruiters, job seekers, hiring outreach, vendors/agencies selling services to us, generic networking, personal conversations, spam, support-only conversations, and people whose profile/thread has no credible FedRAMP/CMMC/public-sector-cloud/compliance relevance.
 
 ## ICP Buckets
 For imports, set icp and category to exactly one of:
@@ -21,6 +22,8 @@ For imports, set icp and category to exactly one of:
 - 3PAOs/Assessors: 3PAO firms, assessors, auditors, assessment leads, compliance reviewers, and people whose role is evaluating CSP evidence.
 - Advisors: GRC/FedRAMP/security/cloud consultants, vCISOs, advisory firms, and service providers who help CSPs with FedRAMP readiness or compliance operations.
 - Channel: resellers, distributors, systems integrators, marketplaces, alliance/partner leads, and ecosystem contacts who could route, refer, bundle, or co-sell FedRAMP tooling.
+- CMMC Buyers: DIB vendors, defense contractors, MSP/MSSP/software/security teams, executives, security/GRC/compliance owners, or technical operators who may need CMMC/NIST 800-171 readiness, CUI evidence, SSP/POA&M upkeep, or assessment-prep workflows.
+- CMMC Advisor/Channel: CMMC advisors, C3PAOs, RPOs, vCISOs, consultants, MSPs/MSSPs, assessors, partner/channel firms, and ecosystem contacts who help DIB clients prepare for or deliver CMMC/NIST 800-171 work.
 
 ## LinkedIn Profile
 {{ profile_text }}
@@ -31,14 +34,14 @@ For imports, set icp and category to exactly one of:
 {% endfor %}
 
 ## Decision
-Use the profile and message thread together. Prefer rejecting ambiguous cases unless there is a concrete FedRAMP/public-sector-cloud/compliance signal.
+Use the profile and message thread together. Prefer rejecting ambiguous cases unless there is a concrete FedRAMP/CMMC/public-sector-cloud/compliance signal.
 
 For imports:
 - should_import=true
-- icp must be exactly one of CSPs, 3PAOs/Assessors, Advisors, Channel
+- icp must be exactly one of CSPs, 3PAOs/Assessors, Advisors, Channel, CMMC Buyers, CMMC Advisor/Channel
 - category must equal icp
 
 For rejects:
 - should_import=false
 - icp must be empty
-- category must be a short reason such as recruiter, job_seeker, vendor, random_networking, non_fedramp, spam, or unknown
+- category must be a short reason such as recruiter, job_seeker, vendor, random_networking, non_fedramp, non_cmmc, spam, or unknown

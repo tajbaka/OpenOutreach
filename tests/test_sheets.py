@@ -107,7 +107,7 @@ def test_fu_headers_match_expected_schema():
     """Locks the followups tab layout. Reordering breaks every saved
     operator-edit and downstream column-index lookups."""
     assert sheets.FU_HEADERS == [
-        "Name", "Status", "Cohort", "ROLE", "PRIORITY",
+        "Name", "Status", "State", "ROLE", "PRIORITY",
         "Days since", "Days since connection", "CONVO",
         "Draft Email", "Email Link", "Sent Email (manual toggle)",
         "Draft LinkedIn", "LinkedIn Message Url", "Sent LinkedIn (manual toggle)",
@@ -174,7 +174,7 @@ def test_followup_cell_passthrough_for_other_columns():
 def test_followup_section_key_routes_post_meeting_by_status():
     row = {
         sheets.FU_COL_STATUS: sheets.STATUS_HAD_MEETING,
-        sheets.FU_COL_COHORT: sheets.COHORT_BALL_ON_US,
+        sheets.FU_COL_STATE: sheets.STATE_BALL_ON_US,
     }
     assert sheets._followup_section_key(row) == sheets.SECTION_MET
 
@@ -182,7 +182,7 @@ def test_followup_section_key_routes_post_meeting_by_status():
 def test_followup_section_key_routes_pre_meeting_by_status():
     row = {
         sheets.FU_COL_STATUS: sheets.STATUS_MEETING_BOOKED,
-        sheets.FU_COL_COHORT: sheets.COHORT_ACTIVE_IN_FLIGHT,
+        sheets.FU_COL_STATE: sheets.STATE_BALL_ON_THEM,
     }
     assert sheets._followup_section_key(row) == sheets.SECTION_SCHEDULING
 
@@ -190,7 +190,7 @@ def test_followup_section_key_routes_pre_meeting_by_status():
 def test_followup_section_key_routes_reply_lane_by_cohort():
     row = {
         sheets.FU_COL_STATUS: sheets.STATUS_REPLIED,
-        sheets.FU_COL_COHORT: sheets.COHORT_COLD_THREAD,
+        sheets.FU_COL_STATE: sheets.STATE_COLD_THREAD,
     }
     assert sheets._followup_section_key(row) == sheets.SECTION_REPLIED
 
@@ -198,7 +198,7 @@ def test_followup_section_key_routes_reply_lane_by_cohort():
 def test_followup_section_key_routes_active_lane_by_cohort():
     row = {
         sheets.FU_COL_STATUS: sheets.STATUS_CONNECTED,
-        sheets.FU_COL_COHORT: sheets.COHORT_ACTIVE_IN_FLIGHT,
+        sheets.FU_COL_STATE: sheets.STATE_ACTIVE_IN_FLIGHT_LEGACY,
     }
     assert sheets._followup_section_key(row) == sheets.SECTION_ACTIVE_IN_FLIGHT
 
@@ -206,7 +206,7 @@ def test_followup_section_key_routes_active_lane_by_cohort():
 def test_followup_section_key_routes_preserved_rows_to_sent_history():
     row = {
         sheets.FU_COL_STATUS: sheets.STATUS_REPLIED,
-        sheets.FU_COL_COHORT: sheets.COHORT_BALL_ON_US,
+        sheets.FU_COL_STATE: sheets.STATE_BALL_ON_US,
     }
     assert sheets._followup_section_key(row, preserved_sent=True) == sheets.SECTION_SENT
 

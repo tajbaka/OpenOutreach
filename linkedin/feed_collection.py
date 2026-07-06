@@ -140,6 +140,54 @@ def ensure_collection_jobs(
     return job
 
 
+def ensure_backfill_collection_jobs(
+    *,
+    operator: str,
+    account_username: str,
+    days: int,
+    now: datetime | None = None,
+) -> list[LinkedInFeedCollectionJob]:
+    """Create one sender/day job for a historical bootstrap window.
+
+    Backfill jobs are returned oldest-to-newest so each completed job becomes
+    the previous cutoff for the next daily timeline.
+    """
+    if days <= 0:
+        raise ValueError("days must be positive")
+    now = now or timezone.now()
+    end_day = today_collection_date(now)
+    start_day = end_day - timedelta(days=days - 1)
+    jobs: list[LinkedInFeedCollectionJob] = []
+    for offset in range(days):
+        collection_date = start_day + timedelta(days=offset)
+        job, _ = LinkedInFeedCollectionJob.objects.get_or_create(
+            operator=operator,
+            account_username=account_username,
+            collection_date=collection_date,
+            defaults={"scheduled_for": scheduled_for_local_day(collection_date)},
+        )
+        jobs.append(job)
+    return jobs
+
+
+def collection_window_end_for_job(
+    job: LinkedInFeedCollectionJob,
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Latest post timestamp a historical job should claim.
+
+    Normal daily collection has no explicit upper bound because it runs near
+    scheduled time. A historical bootstrap may replay old sender/day windows
+    much later, so cap older jobs at their scheduled collection time and cap
+    today's job at the actual run time.
+    """
+    now = now or timezone.now()
+    if job.collection_date >= today_collection_date(now):
+        return now
+    return job.scheduled_for
+
+
 def claim_due_collection_job(
     *,
     operator: str,
@@ -227,6 +275,7 @@ def collect_feed_for_job(
     *,
     cdp_port: int | None = None,
     cutoff_at: datetime | None = None,
+    window_end_at: datetime | None = None,
     max_posts: int | None = None,
     stop_after_seen: int | None = None,
     scroll_pause_seconds: float | None = None,
@@ -253,6 +302,7 @@ def collect_feed_for_job(
                 page,
                 job=job,
                 cutoff_at=cutoff_at or collection_cutoff_for_job(job),
+                window_end_at=window_end_at,
                 max_posts=max_posts,
                 stop_after_seen=stop_after_seen,
                 scroll_pause_seconds=scroll_pause_seconds,
@@ -272,6 +322,7 @@ def _collect_from_page(
     max_posts: int,
     stop_after_seen: int,
     scroll_pause_seconds: float,
+    window_end_at: datetime | None = None,
 ) -> CollectionResult:
     page.goto(FEED_URL, wait_until="domcontentloaded", timeout=30_000)
     page.wait_for_timeout(2000)
@@ -280,11 +331,12 @@ def _collect_from_page(
     posts_created = 0
     observations_created = 0
     repeated_observations = 0
+    posts_seen = 0
     idle_scrolls = 0
     cutoff_reached = False
 
     while (
-        len(processed) < max_posts
+        posts_seen < max_posts
         and repeated_observations < stop_after_seen
         and not cutoff_reached
     ):
@@ -297,12 +349,19 @@ def _collect_from_page(
                 cutoff_reached = True
                 break
             processed.add(identity)
+            if (
+                window_end_at is not None
+                and record.posted_at is not None
+                and record.posted_at > window_end_at
+            ):
+                continue
+            posts_seen += 1
             post_created, observation_created = upsert_feed_record(record, job=job)
             posts_created += int(post_created)
             observations_created += int(observation_created)
             repeated_observations += int(not observation_created)
 
-            if len(processed) >= max_posts or repeated_observations >= stop_after_seen:
+            if posts_seen >= max_posts or repeated_observations >= stop_after_seen:
                 break
 
         if cutoff_reached:
@@ -319,7 +378,7 @@ def _collect_from_page(
         page.wait_for_timeout(int(scroll_pause_seconds * 1000))
 
     return CollectionResult(
-        posts_seen=len(processed),
+        posts_seen=posts_seen,
         posts_created=posts_created,
         observations_created=observations_created,
         repeated_observations=repeated_observations,

@@ -8,97 +8,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI saw FedRAMP's June 24 consolidated rules update and have been asking CSP teams a simple question: how are you thinking about 20x evidence now that the emphasis is more on measures, verification, automation sufficiency, and validation?\n\nIs {company_name} actively interpreting 20x yet, or still focused on the Rev 5 path?"
+            "Appreciate the connection, {first_name}.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nIs this something that has crossed your path yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nIf useful, happy to compare notes on what we are seeing from CSPs right now."
-          ]
-        }
-      ],
-      "media": [
-        "demo.gif"
-      ]
-    },
-    "3PAOs/Assessors": {
-      "linkedin_connect_note": [
-        "Hi {first_name}, saw your FedRAMP assessment work at {company_name}. Curious how assessors are reading the June 2026 20x rules around evidence and validation. Good to connect?"
-      ],
-      "linkedin_connect_followup": [
-        {
-          "delay_hours": 0,
-          "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nCurious how you are reading the June 24 consolidated rules from the assessor side.\n\nMy read is that 20x does not remove review judgment; it shifts more of the burden to whether measures, automation, and validation are explainable and repeatable.\n\nAre you seeing CSPs prepare for that yet?"
-          ]
-        },
-        {
-          "delay_hours": 72,
-          "variants": [
-            "Hi {first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nWould be useful to compare notes if you are thinking through the same shift."
-          ]
-        }
-      ]
-    },
-    "Advisors": {
-      "linkedin_connect_note": [
-        "Hi {first_name}, saw your security/compliance work at {company_name}. FedRAMP's June 2026 rules made 20x readiness more concrete for CSPs. Curious what clients are asking. Good to connect?"
-      ],
-      "linkedin_connect_followup": [
-        {
-          "delay_hours": 0,
-          "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update.\n\nThe practical question seems to be: can a client explain the KSI measures, prove they persist, and show verification/validation without turning it into another spreadsheet exercise?\n\nAre clients asking about 20x yet?"
-          ]
-        },
-        {
-          "delay_hours": 72,
-          "variants": [
-            "Hi {first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nI am trying to separate real market movement from conference noise."
-          ]
-        }
-      ],
-      "media": [
-        "demo.gif"
-      ]
-    },
-    "Channel": {
-      "linkedin_connect_note": [
-        "Hi {first_name}, saw your federal cloud/security work. With FedRAMP's June 2026 rules update, curious how vendors/agencies are reading 20x evidence sharing. Good to connect?"
-      ],
-      "linkedin_connect_followup": [
-        {
-          "delay_hours": 0,
-          "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
-          ]
-        },
-        {
-          "delay_hours": 72,
-          "variants": [
-            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with?"
-          ]
-        }
-      ]
-    }
-  },
-  "Chuka": {
-    "CSPs": {
-      "linkedin_connect_note": [
-        "Hi {first_name}, saw {company_name} in public-sector cloud. FedRAMP's June 2026 rules made 20x evidence/measures more concrete. Curious how your team is reading it. Good to connect?"
-      ],
-      "linkedin_connect_followup": [
-        {
-          "delay_hours": 0,
-          "variants": [
-            "Appreciate the connection, {first_name}.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nIs this something that has crossed your path yet?"
-          ]
-        },
-        {
-          "delay_hours": 72,
-          "variants": [
-            "{first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nInterested to compare notes on what we are seeing from CSPs right now?"
+            "{first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nInterested in comparing notes on what we are seeing from CSPs right now?"
           ]
         }
       ],
@@ -114,13 +30,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nAre you seeing CSPs prepare for that yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre you seeing CSPs prepare for that yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested to compare notes on the shift?"
+            "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
       ]
@@ -133,13 +49,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nAre your clients asking about 20x yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre your clients asking about 20x yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "{first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested to compare notes?"
+            "{first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested in comparing notes?"
           ]
         }
       ],
@@ -155,13 +71,173 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with?"
+            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
+          ]
+        }
+      ]
+    },
+    "CMMC Buyers": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, was looking at {company_name} since I'm in the CMMC space myself. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
+          ]
+        }
+      ]
+    },
+    "CMMC Advisor/Channel": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your CMMC/security compliance work at {company_name}. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
+          ]
+        }
+      ]
+    }
+  },
+  "Chuka": {
+    "CSPs": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} in public-sector cloud. FedRAMP's June 2026 rules made 20x evidence/measures more concrete. Curious how your team is reading it. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connection, {first_name}.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nIs this something that has crossed your path yet?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nInterested in comparing notes on what we are seeing from CSPs right now?"
+          ]
+        }
+      ],
+      "media": [
+        "demo.gif"
+      ]
+    },
+    "3PAOs/Assessors": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your assessment work at {company_name}. Curious how assessors are reading the 20x rules since the consolidated rules were published recently. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre you seeing CSPs prepare for that yet?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
+          ]
+        }
+      ]
+    },
+    "Advisors": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your security/compliance work at {company_name}. FedRAMP's June 2026 rules made 20x readiness more concrete for CSPs. Curious what clients are asking. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre your clients asking about 20x yet?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested in comparing notes?"
+          ]
+        }
+      ],
+      "media": [
+        "demo.gif"
+      ]
+    },
+    "Channel": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your federal cloud/security work. With FedRAMP's June 2026 rules update, curious how vendors/agencies are reading 20x evidence sharing. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
+          ]
+        }
+      ]
+    },
+    "CMMC Buyers": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, was looking at {company_name} since I'm in the CMMC space myself. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
+          ]
+        }
+      ]
+    },
+    "CMMC Advisor/Channel": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your CMMC/security compliance work at {company_name}. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
           ]
         }
       ]
@@ -176,13 +252,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI saw FedRAMP's June 24 consolidated rules update and have been asking CSP teams a simple question: how are you thinking about 20x evidence now that the emphasis is more on measures, verification, automation sufficiency, and validation?\n\nIs {company_name} actively interpreting 20x yet, or still focused on the Rev 5 path?"
+            "Appreciate the connection, {first_name}.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nIs this something that has crossed your path yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nIf useful, happy to compare notes on what we are seeing from CSPs right now."
+            "{first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nInterested in comparing notes on what we are seeing from CSPs right now?"
           ]
         }
       ],
@@ -192,19 +268,19 @@
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw your FedRAMP assessment work at {company_name}. Curious how assessors are reading the June 2026 20x rules around evidence and validation. Good to connect?"
+        "Hi {first_name}, saw your assessment work at {company_name}. Curious how assessors are reading the 20x rules since the consolidated rules were published recently. Good to connect?"
       ],
       "linkedin_connect_followup": [
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nCurious how you are reading the June 24 consolidated rules from the assessor side.\n\nMy read is that 20x does not remove review judgment; it shifts more of the burden to whether measures, automation, and validation are explainable and repeatable.\n\nAre you seeing CSPs prepare for that yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre you seeing CSPs prepare for that yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nWould be useful to compare notes if you are thinking through the same shift."
+            "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
       ]
@@ -217,13 +293,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update.\n\nThe practical question seems to be: can a client explain the KSI measures, prove they persist, and show verification/validation without turning it into another spreadsheet exercise?\n\nAre clients asking about 20x yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre your clients asking about 20x yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nI am trying to separate real market movement from conference noise."
+            "{first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested in comparing notes?"
           ]
         }
       ],
@@ -239,13 +315,51 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with?"
+            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
+          ]
+        }
+      ]
+    },
+    "CMMC Buyers": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, was looking at {company_name} since I'm in the CMMC space myself. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
+          ]
+        }
+      ]
+    },
+    "CMMC Advisor/Channel": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your CMMC/security compliance work at {company_name}. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
           ]
         }
       ]
@@ -260,13 +374,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI saw FedRAMP's June 24 consolidated rules update and have been asking CSP teams a simple question: how are you thinking about 20x evidence now that the emphasis is more on measures, verification, automation sufficiency, and validation?\n\nIs {company_name} actively interpreting 20x yet, or still focused on the Rev 5 path?"
+            "Appreciate the connection, {first_name}.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nIs this something that has crossed your path yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nIf useful, happy to compare notes on what we are seeing from CSPs right now."
+            "{first_name}, one more thought.\n\nThe part of 20x that seems under-discussed is not automation by itself. It is whether a team can show why each measure exists, how often it runs, and whether the evidence is working as intended.\n\nInterested in comparing notes on what we are seeing from CSPs right now?"
           ]
         }
       ],
@@ -276,19 +390,19 @@
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw your FedRAMP assessment work at {company_name}. Curious how assessors are reading the June 2026 20x rules around evidence and validation. Good to connect?"
+        "Hi {first_name}, saw your assessment work at {company_name}. Curious how assessors are reading the 20x rules since the consolidated rules were published recently. Good to connect?"
       ],
       "linkedin_connect_followup": [
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nCurious how you are reading the June 24 consolidated rules from the assessor side.\n\nMy read is that 20x does not remove review judgment; it shifts more of the burden to whether measures, automation, and validation are explainable and repeatable.\n\nAre you seeing CSPs prepare for that yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre you seeing CSPs prepare for that yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nWould be useful to compare notes if you are thinking through the same shift."
+            "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
       ]
@@ -301,13 +415,13 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update.\n\nThe practical question seems to be: can a client explain the KSI measures, prove they persist, and show verification/validation without turning it into another spreadsheet exercise?\n\nAre clients asking about 20x yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre your clients asking about 20x yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "Hi {first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nI am trying to separate real market movement from conference noise."
+            "{first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested in comparing notes?"
           ]
         }
       ],
@@ -323,13 +437,51 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Hi {first_name}, appreciate the connect.\n\nI am building in the Fedramp 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after Fedramp published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
+            "{first_name}, appreciate the connect.\n\nI am building in the FedRAMP 20x space and wanted to connect with industry leaders to learn more about how they are navigating 20x, after FedRAMP published the consolidated rules update.\n\nAre vendors asking about 20x yet?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with?"
+            "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
+          ]
+        }
+      ]
+    },
+    "CMMC Buyers": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, was looking at {company_name} since I'm in the CMMC space myself. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
+          ]
+        }
+      ]
+    },
+    "CMMC Advisor/Channel": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your CMMC/security compliance work at {company_name}. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "{first_name}, one more thought.\n\nWith Boundera, we've built a CMMC automation tool that helps teams move faster and cheaper before working with their C3PAO.\n\nAs an industry leader yourself, I would love to compare notes. Interested in a quick call?"
           ]
         }
       ]

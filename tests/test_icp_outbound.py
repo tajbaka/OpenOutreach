@@ -29,7 +29,7 @@ def test_load_icp_messages_returns_known_buckets():
     under each sender's block."""
     for sender in ("Arian", "Chuka"):
         messages = icp_outbound.load_icp_messages(sender)
-        for icp in ("CSPs", "3PAOs/Assessors", "Advisors"):
+        for icp in icp_outbound.ICP_MESSAGES_SHEET_BUCKETS:
             assert icp in messages, f"{sender} missing {icp}"
 
 
@@ -387,13 +387,21 @@ def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
                 "linkedin_connect_note": ["channel preserved"],
                 "linkedin_connect_followup": ["channel preserved"],
             },
+            "CMMC Buyers": {
+                "linkedin_connect_note": ["cmmc buyer connect"],
+                "linkedin_connect_followup": ["cmmc buyer followup"],
+            },
+            "CMMC Advisor/Channel": {
+                "linkedin_connect_note": ["cmmc advisor connect"],
+                "linkedin_connect_followup": ["cmmc advisor followup"],
+            },
         },
     }))
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
     monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", gmail_path)
 
     rows = icp_outbound.icp_messages_rows("Leili")
-    assert [row[0] for row in rows[1:]] == ["CSPs", "3PAOs/Assessors", "Advisors", "Channel"]
+    assert [row[0] for row in rows[1:]] == list(icp_outbound.ICP_MESSAGES_SHEET_BUCKETS)
     parsed = icp_outbound.parse_icp_messages_rows(rows)
     assert parsed == {
         icp: icp_outbound.load_icp_messages("Leili")[icp]
@@ -696,9 +704,8 @@ def test_fill_message_missing_first_name_renders_empty():
         first_name="",
         variant_index=0,
     )
-    # Variant 0 starts with "Hi {first_name}, ..." → "Hi , ...".
-    assert out.body.startswith("Hi ,")
-    assert "FedRAMP 20x" in out.body
+    assert "Appreciate the connection" in out.body
+    assert "20x" in out.body
     assert "{" not in out.body
 
 

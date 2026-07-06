@@ -19,3 +19,15 @@ def test_parse_csv_leads_accepts_linkedin_url_header():
     assert len(rows) == 1
     assert rows[0]["url"] == "https://www.linkedin.com/in/jane-doe/"
     assert rows[0]["first_name"] == "Jane"
+
+
+def test_parse_csv_leads_normalizes_cmmc_icp_labels():
+    rows = parse_csv_leads(
+        "Profile URL,First Name,ICP\n"
+        "https://www.linkedin.com/in/jane-doe/,Jane,CMMC Buyers\n"
+        "https://www.linkedin.com/in/john-doe/,John,keep_advisor_channel\n"
+    )
+    assert [row["icp"] for row in rows] == [
+        "CMMC Buyers",
+        "CMMC Advisor/Channel",
+    ]

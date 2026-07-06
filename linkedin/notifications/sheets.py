@@ -722,7 +722,14 @@ FU_ROLE_TO_ICP = {
 # `linkedin/icp_messages.json` key on these strings; connect-note +
 # follow-up + sheets ROLE column all converge here. Adding a bucket means
 # adding a key in the JSON and listing it here.
-LEAD_ICP_BUCKETS = ("CSPs", "3PAOs/Assessors", "Advisors", "Channel")
+LEAD_ICP_BUCKETS = (
+    "CSPs",
+    "3PAOs/Assessors",
+    "Advisors",
+    "Channel",
+    "CMMC Buyers",
+    "CMMC Advisor/Channel",
+)
 
 # Operator's Sales Nav search labels (the values in the merged CSV's
 # `ICP` column) normalized to the persisted vocab. `add_seeds` applies
@@ -739,6 +746,24 @@ CSV_ICP_TO_LEAD_ICP = {
     "3paos":            "3PAOs/Assessors",
     "3paos/assessors":  "3PAOs/Assessors",
     "assessors":        "3PAOs/Assessors",
+    "cmmc buyers":      "CMMC Buyers",
+    "cmmc buyer":       "CMMC Buyers",
+    "cmmc-buyer":       "CMMC Buyers",
+    "cmmc-buyers":      "CMMC Buyers",
+    "cmmc_buyers":      "CMMC Buyers",
+    "buyer":            "CMMC Buyers",
+    "buyers":           "CMMC Buyers",
+    "keep_buyer":       "CMMC Buyers",
+    "cmmc advisor/channel":   "CMMC Advisor/Channel",
+    "cmmc advisors/channel":  "CMMC Advisor/Channel",
+    "cmmc advisor channel":   "CMMC Advisor/Channel",
+    "cmmc advisors channels": "CMMC Advisor/Channel",
+    "cmmc advisor":           "CMMC Advisor/Channel",
+    "cmmc advisors":          "CMMC Advisor/Channel",
+    "cmmc channel":           "CMMC Advisor/Channel",
+    "cmmc channels":          "CMMC Advisor/Channel",
+    "cmmc_advisor_channel":   "CMMC Advisor/Channel",
+    "keep_advisor_channel":   "CMMC Advisor/Channel",
 }
 
 

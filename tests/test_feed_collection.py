@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 import pytest
+from django.core.management import call_command
 from django.utils import timezone
 
 from linkedin.feed_collection import (
@@ -11,7 +12,9 @@ from linkedin.feed_collection import (
     _collect_from_page,
     claim_due_collection_job,
     collection_cutoff_for_job,
+    collection_window_end_for_job,
     content_hash_for,
+    ensure_backfill_collection_jobs,
     ensure_collection_jobs,
     mark_job_completed,
     mark_job_failed,
@@ -75,6 +78,44 @@ def test_claim_due_collection_job_noops_before_scheduled_time(monkeypatch):
     assert job is None
     stored = LinkedInFeedCollectionJob.objects.get()
     assert stored.status == LinkedInFeedCollectionJob.Status.PENDING
+
+
+@pytest.mark.django_db
+def test_ensure_backfill_collection_jobs_creates_oldest_to_newest(monkeypatch):
+    monkeypatch.setattr("linkedin.feed_collection.LINKEDIN_FEED_COLLECTION_HOUR", 17)
+    monkeypatch.setattr("linkedin.feed_collection.LINKEDIN_FEED_COLLECTION_MINUTE", 0)
+    now = datetime(2026, 7, 6, 23, 0, tzinfo=dt_timezone.utc)
+
+    jobs = ensure_backfill_collection_jobs(
+        operator="Arian",
+        account_username="arian@example.com",
+        days=3,
+        now=now,
+    )
+
+    assert [job.collection_date for job in jobs] == [
+        date(2026, 7, 4),
+        date(2026, 7, 5),
+        date(2026, 7, 6),
+    ]
+    assert [job.scheduled_for for job in jobs] == [
+        scheduled_for_local_day(date(2026, 7, 4)),
+        scheduled_for_local_day(date(2026, 7, 5)),
+        scheduled_for_local_day(date(2026, 7, 6)),
+    ]
+
+
+@pytest.mark.django_db
+def test_collection_window_end_caps_historical_jobs_at_scheduled_time():
+    now = datetime(2026, 7, 6, 23, 0, tzinfo=dt_timezone.utc)
+    job = LinkedInFeedCollectionJob.objects.create(
+        operator="Arian",
+        account_username="arian@example.com",
+        collection_date=date(2026, 7, 5),
+        scheduled_for=datetime(2026, 7, 5, 21, 0, tzinfo=dt_timezone.utc),
+    )
+
+    assert collection_window_end_for_job(job, now=now) == job.scheduled_for
 
 
 @pytest.mark.django_db
@@ -243,6 +284,45 @@ def test_collect_from_page_stops_at_cutoff_before_saving_old_post(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_collect_from_page_skips_posts_newer_than_window_end(monkeypatch):
+    now = timezone.now()
+    job = ensure_collection_jobs(
+        operator="Arian",
+        account_username="arian@example.com",
+        now=now,
+    )
+
+    newer = _record(activity_urn="urn:li:activity:111", posted_at=now - timedelta(hours=1))
+    in_window = _record(activity_urn="urn:li:activity:222", posted_at=now - timedelta(days=2))
+    old = _record(activity_urn="urn:li:activity:333", posted_at=now - timedelta(days=4))
+    monkeypatch.setattr(
+        "linkedin.feed_collection.extract_posts_from_page",
+        lambda page: [newer, in_window, old],
+    )
+
+    class FakePage:
+        def goto(self, *_args, **_kwargs):
+            pass
+
+        def wait_for_timeout(self, *_args):
+            pass
+
+    result = _collect_from_page(
+        FakePage(),
+        job=job,
+        cutoff_at=now - timedelta(days=3),
+        window_end_at=now - timedelta(days=1),
+        max_posts=10,
+        stop_after_seen=10,
+        scroll_pause_seconds=0,
+    )
+
+    assert result.posts_seen == 1
+    assert LinkedInFeedPost.objects.count() == 1
+    assert LinkedInFeedPost.objects.get().activity_urn == "urn:li:activity:222"
+
+
+@pytest.mark.django_db
 def test_upsert_feed_record_upgrades_hash_match_with_activity_urn():
     job = ensure_collection_jobs(
         operator="Arian",
@@ -269,3 +349,46 @@ def test_upsert_feed_record_upgrades_hash_match_with_activity_urn():
     post = LinkedInFeedPost.objects.get()
     assert post.activity_urn == "urn:li:activity:456"
     assert LinkedInFeedObservation.objects.get().seen_count == 2
+
+
+@pytest.mark.django_db
+def test_collect_linkedin_feed_backfill_days_runs_daily_windows(
+    fake_session,
+    monkeypatch,
+):
+    fake_session.linkedin_profile.linkedin_username = "arian@example.com"
+    fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
+    monkeypatch.setenv("LINKEDIN_USERNAME", "arian@example.com")
+
+    class FakeGuard:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def acquire(self):
+            pass
+
+        def release(self):
+            pass
+
+    calls = []
+
+    def fake_collect(job, **kwargs):
+        calls.append((job.collection_date, kwargs["cutoff_at"], kwargs["window_end_at"]))
+        return CollectionResult(
+            posts_seen=1,
+            posts_created=1,
+            observations_created=1,
+            repeated_observations=0,
+        )
+
+    monkeypatch.setattr("linkedin.single_instance.SingleInstanceGuard", FakeGuard)
+    monkeypatch.setattr("linkedin.feed_collection.collect_feed_for_job", fake_collect)
+
+    call_command("collect_linkedin_feed", backfill_days=2)
+
+    assert len(calls) == 2
+    assert calls[0][0] < calls[1][0]
+    assert LinkedInFeedCollectionJob.objects.filter(
+        account_username="arian@example.com",
+        status=LinkedInFeedCollectionJob.Status.COMPLETED,
+    ).count() == 2
