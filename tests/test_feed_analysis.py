@@ -169,7 +169,7 @@ def test_analyze_linkedin_feed_applies_codex_decision_and_posts_slack(
             "suggested_action": "Reach out.",
         }],
     }))
-    monkeypatch.setattr(slack, "SLACK_REPLIES_WEBHOOK_URL", "https://hooks.slack.test/replies")
+    monkeypatch.setattr(slack, "SLACK_HIGH_SIGNAL_URL", "https://hooks.slack.test/high-signal")
 
     call_command("analyze_linkedin_feed", apply_json=str(decisions))
 

@@ -39,6 +39,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Ops webhook for errors, new connections, monitoring, and sweeps."),
     EnvVar("SLACK_REPLIES_WEBHOOK_URL", False, True, None, "slack",
            "Replies webhook for inbound DMs and phone enrichment notices."),
+    EnvVar("SLACK_HIGH_SIGNAL_URL", False, True, None, "slack",
+           "High-signal webhook for Codex-reviewed LinkedIn feed intent alerts."),
     EnvVar("SLACK_SIGNING_SECRET", False, True, None, "slack",
            "Signing secret for the Slack enrichment endpoint."),
     EnvVar("SLACK_BOT_TOKEN", False, True, None, "slack",

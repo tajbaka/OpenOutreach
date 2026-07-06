@@ -57,7 +57,12 @@ from urllib.error import URLError
 
 import certifi
 
-from linkedin.conf import SLACK_BOT_TOKEN, SLACK_WEBHOOK_URL, SLACK_REPLIES_WEBHOOK_URL
+from linkedin.conf import (
+    SLACK_BOT_TOKEN,
+    SLACK_HIGH_SIGNAL_URL,
+    SLACK_REPLIES_WEBHOOK_URL,
+    SLACK_WEBHOOK_URL,
+)
 from linkedin.icp_outbound import is_unknown_company_name
 
 logger = logging.getLogger(__name__)
@@ -565,8 +570,8 @@ def notify_phone_enriched(*, lead, result) -> None:
 
 
 def notify_feed_intent_signal(*, post) -> bool:
-    """Post a high-intent LinkedIn feed signal to the replies channel."""
-    if not SLACK_REPLIES_WEBHOOK_URL:
+    """Post a high-intent LinkedIn feed signal to the high-signal channel."""
+    if not SLACK_HIGH_SIGNAL_URL:
         return False
 
     author = post.author_name or "Unknown author"
@@ -611,7 +616,7 @@ def notify_feed_intent_signal(*, post) -> bool:
         {"type": "section", "text": {"type": "mrkdwn", "text": post_md}},
     ])
     payload = {"text": f"High-intent LinkedIn feed post: {author}", "blocks": blocks}
-    _post_to_slack(SLACK_REPLIES_WEBHOOK_URL, payload, f"feed-intent ({author})")
+    _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent ({author})")
     return True
 
 

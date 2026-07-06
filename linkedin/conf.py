@@ -145,6 +145,7 @@ ENABLE_SWEEP_CONNECTIONS = os.getenv("ENABLE_SWEEP_CONNECTIONS", "true").strip()
 # Web API calls, e.g. opening manual-reply modals and updating messages.
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip()
 SLACK_REPLIES_WEBHOOK_URL = os.getenv("SLACK_REPLIES_WEBHOOK_URL", "").strip()
+SLACK_HIGH_SIGNAL_URL = os.getenv("SLACK_HIGH_SIGNAL_URL", "").strip()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 MANUAL_REPLY_POLL_SECONDS = int(os.getenv("MANUAL_REPLY_POLL_SECONDS", "60"))
 
