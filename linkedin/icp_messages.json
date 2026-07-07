@@ -55,7 +55,7 @@
         {
           "delay_hours": 72,
           "variants": [
-            "{first_name}, one more question.\n\nAre advisors getting more \"can we use 20x?\" questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested in comparing notes?"
+            "{first_name}, one more question.\n\nAre advisors getting more can we use 20x questions from CSPs, or are most clients still defaulting to Rev 5 because it is better understood?\n\nInterested in comparing notes?"
           ]
         }
       ],
@@ -212,7 +212,7 @@
         {
           "delay_hours": 0,
           "variants": [
-            "{first_name}, appreciate the connect.\n\nAre you catching all the World Cup games? Some of them have been so dramatic."
+            "{first_name}, appreciate the connect.\n\nAre you catching all the worldcup games? some of them have been so dramatic."
           ]
         },
         {
