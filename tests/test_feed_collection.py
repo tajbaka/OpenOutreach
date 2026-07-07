@@ -16,9 +16,12 @@ from linkedin.feed_collection import (
     content_hash_for,
     ensure_backfill_collection_jobs,
     ensure_collection_jobs,
+    extract_posts_from_page,
+    is_specific_post_url,
     mark_job_completed,
     mark_job_failed,
     parse_relative_timestamp,
+    post_url_for_activity_urn,
     scheduled_for_local_day,
     upsert_feed_record,
 )
@@ -219,6 +222,59 @@ def test_parse_relative_timestamp():
     )
     assert parse_relative_timestamp("now", reference=reference) == reference
     assert parse_relative_timestamp("Promoted", reference=reference) is None
+
+
+def test_specific_post_url_detection_rejects_author_posts_listing():
+    assert is_specific_post_url("https://www.linkedin.com/feed/update/urn:li:activity:123/")
+    assert is_specific_post_url("https://www.linkedin.com/posts/petestrouse_post-123-abc/")
+    assert not is_specific_post_url("https://www.linkedin.com/company/scotiabank/posts/")
+    assert not is_specific_post_url("https://www.linkedin.com/in/person/recent-activity/all/")
+
+
+def test_extract_posts_from_page_uses_activity_urn_permalink_when_post_url_is_listing():
+    class FakePage:
+        def evaluate(self, *_args):
+            return [{
+                "dataUrn": "",
+                "dataId": "",
+                "descendantActivityUrn": "urn:li:activity:987",
+                "postUrl": "https://www.linkedin.com/company/scotiabank/posts/",
+                "authorName": "Santiago Negret Rey",
+                "authorHeadline": "MBA Candidate",
+                "authorProfileUrl": "https://www.linkedin.com/in/santiago-negret-rey/",
+                "postText": "I'm joining Scotiabank as an intern.",
+                "timestampText": "5h",
+                "text": "Feed post\nSantiago Negret Rey\n5h\nI'm joining Scotiabank.",
+            }]
+
+    records = extract_posts_from_page(FakePage())
+
+    assert len(records) == 1
+    assert records[0].activity_urn == "urn:li:activity:987"
+    assert records[0].post_url == post_url_for_activity_urn("urn:li:activity:987")
+
+
+def test_extract_posts_from_page_drops_non_specific_post_listing_without_activity_urn():
+    class FakePage:
+        def evaluate(self, *_args):
+            return [{
+                "dataUrn": "",
+                "dataId": "",
+                "descendantActivityUrn": "",
+                "postUrl": "https://www.linkedin.com/company/scotiabank/posts/",
+                "authorName": "Santiago Negret Rey",
+                "authorHeadline": "MBA Candidate",
+                "authorProfileUrl": "https://www.linkedin.com/in/santiago-negret-rey/",
+                "postText": "I'm joining Scotiabank as an intern.",
+                "timestampText": "5h",
+                "text": "Feed post\nSantiago Negret Rey\n5h\nI'm joining Scotiabank.",
+            }]
+
+    records = extract_posts_from_page(FakePage())
+
+    assert len(records) == 1
+    assert records[0].activity_urn == ""
+    assert records[0].post_url == ""
 
 
 @pytest.mark.django_db

@@ -270,6 +270,29 @@ def content_hash_for(
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 
+def post_url_for_activity_urn(activity_urn: str) -> str:
+    if not activity_urn:
+        return ""
+    return f"https://www.linkedin.com/feed/update/{activity_urn}/"
+
+
+def is_specific_post_url(value: str) -> bool:
+    parts = urlsplit(value or "")
+    path = parts.path.rstrip("/")
+    if not parts.netloc.endswith("linkedin.com"):
+        return False
+    if "/feed/update/" in path:
+        return True
+    if "urn:li:activity" in value:
+        return True
+    if "/posts/" not in path:
+        return False
+    if re.search(r"/(?:company|school|showcase)/[^/]+/posts$", path):
+        return False
+    suffix = path.split("/posts/", 1)[1]
+    return bool(suffix)
+
+
 def collect_feed_for_job(
     job: LinkedInFeedCollectionJob,
     *,
@@ -446,11 +469,52 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
               }
               return '';
             };
-            const postLink = pickHref([
-              'a[href*="/feed/update/"]',
-              'a[href*="/posts/"]',
-              'a[href*="urn:li:activity"]'
-            ]);
+            const findAttr = (names) => {
+              const nodes = [node, ...Array.from(node.querySelectorAll('*'))];
+              for (const el of nodes) {
+                for (const name of names) {
+                  const value = (el.getAttribute && el.getAttribute(name) || '').trim();
+                  if (value && value.includes('urn:li:activity')) return value;
+                }
+              }
+              return '';
+            };
+            const links = Array.from(node.querySelectorAll('a[href]')).map((el) => ({
+              href: (el.href || '').trim(),
+              text: (el.innerText || '').trim(),
+              ariaLabel: (el.getAttribute('aria-label') || '').trim(),
+              className: (el.className || '').toString()
+            })).filter((link) => link.href);
+            const isSpecificPostLink = (href) => {
+              try {
+                const url = new URL(href);
+                const path = url.pathname.replace(/\\/+$/, '');
+                if (!url.hostname.endsWith('linkedin.com')) return false;
+                if (path.includes('/feed/update/')) return true;
+                if (href.includes('urn:li:activity')) return true;
+                if (!path.includes('/posts/')) return false;
+                if (new RegExp('/(?:company|school|showcase)/[^/]+/posts$').test(path)) return false;
+                return path.split('/posts/')[1].length > 0;
+              } catch (_e) {
+                return false;
+              }
+            };
+            const looksLikeTimestampLink = (link) => {
+              const text = `${link.text} ${link.ariaLabel} ${link.className}`.toLowerCase();
+              return (
+                new RegExp('(^|\\s)(now|\\d+\\s*(s|m|h|d|w|mo|yr|y))(\\s|$)').test(text)
+                || text.includes('actor__sub-description')
+                || text.includes('feed-shared-actor__sub-description')
+              );
+            };
+            const postLink = (
+              links.find((link) => isSpecificPostLink(link.href) && looksLikeTimestampLink(link))
+              || links.find((link) => isSpecificPostLink(link.href))
+              || {href: pickHref([
+                'a[href*="/feed/update/"]',
+                'a[href*="urn:li:activity"]'
+              ])}
+            ).href || '';
             const profileLink = pickHref([
               'a.update-components-actor__meta-link[href*="/in/"]',
               'a.feed-shared-actor__container-link[href*="/in/"]',
@@ -470,7 +534,11 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
             return {
               dataUrn: attr('data-urn'),
               dataId: attr('data-id'),
+              descendantActivityUrn: findAttr([
+                'data-urn', 'data-id', 'data-activity-urn', 'data-chameleon-result-urn'
+              ]),
               postUrl: postLink,
+              candidateLinks: links.slice(0, 80),
               authorName: pickText([
                 '.update-components-actor__name',
                 '.feed-shared-actor__name',
@@ -504,12 +572,17 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
             continue
         raw_url = row.get("postUrl") or ""
         raw_identity = " ".join(
-            str(row.get(key) or "") for key in ("dataUrn", "dataId", "postUrl")
+            str(row.get(key) or "")
+            for key in ("dataUrn", "dataId", "descendantActivityUrn", "postUrl")
         )
+        activity_urn = _extract_activity_urn(raw_identity)
+        post_url = _normalize_url(raw_url)
+        if not is_specific_post_url(post_url):
+            post_url = post_url_for_activity_urn(activity_urn)
         records.append(
             FeedPostRecord(
-                activity_urn=_extract_activity_urn(raw_identity),
-                post_url=_normalize_url(raw_url),
+                activity_urn=activity_urn,
+                post_url=post_url,
                 author_name=_normalize_text(
                     row.get("authorName") or _extract_author_from_rendered_text(rendered_text),
                 ),
