@@ -116,6 +116,55 @@ def _eligible_deals(*, sender: str, campaign_id: int | None):
     return qs
 
 
+def _external_ids_from_parsed(parsed: list[dict]) -> set[str]:
+    return {
+        (message.get("entity_urn") or "").strip()
+        for message in parsed
+        if (message.get("entity_urn") or "").strip()
+    }
+
+
+def _notify_new_inbound_messages(
+    *,
+    lead,
+    parsed: list[dict],
+    existing_external_ids: set[str],
+    operator: str,
+) -> int:
+    """Slack-notify inbound messages newly created by this backfill fetch.
+
+    The realtime listener notifies immediately from the SSE event. During
+    downtime, `get_conversation()` persists missed messages as a side effect;
+    this helper sends the same notification for only the message IDs that did
+    not exist before the fetch, so rerunning backfill stays idempotent.
+    """
+    candidate_ids = _external_ids_from_parsed(parsed) - existing_external_ids
+    if not candidate_ids:
+        return 0
+
+    from linkedin.notifications.slack import notify_message_received
+
+    notified = 0
+    messages = (
+        Message.objects.filter(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            direction=Message.Direction.INBOUND,
+            external_id__in=candidate_ids,
+        )
+        .order_by("sent_at", "id")
+    )
+    for message in messages:
+        notify_message_received(
+            lead=lead,
+            text=message.body,
+            operator=operator,
+            thread_external_id=message.thread_external_id,
+        )
+        notified += 1
+    return notified
+
+
 def _run_prereq_gate_for_accounts(configured: list[tuple[str, str, str]]) -> bool:
     """Stack one prereq report per configured account, prompt once.
 
@@ -253,6 +302,9 @@ class Command(BaseCommand):
 
     def _run_pass(self, *, session, sender: str, campaign_id: int | None,
                   limit: int, dry_run: bool):
+        from linkedin.operators import resolve_operator
+
+        operator = resolve_operator(sender)
         deals = list(_eligible_deals(sender=sender, campaign_id=campaign_id))
         total = len(deals)
         if limit > 0:
@@ -275,7 +327,7 @@ class Command(BaseCommand):
         self.stdout.write("Opening LinkedIn Messaging inbox.")
         _open_messaging_inbox(session)
 
-        fetched, persisted, errors, skipped = 0, 0, 0, 0
+        fetched, persisted, errors, skipped, slack_notified = 0, 0, 0, 0, 0
         for i, deal in enumerate(deals, 1):
             lead = deal.lead
             pid = lead.public_identifier
@@ -283,6 +335,12 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
             session.campaign = deal.campaign
+            existing_external_ids = set(
+                Message.objects.filter(
+                    lead=lead,
+                    source=Message.Source.LINKEDIN,
+                ).values_list("external_id", flat=True)
+            )
 
             try:
                 parsed = get_conversation(session, pid)
@@ -302,6 +360,13 @@ class Command(BaseCommand):
                 ).count()
                 if count_now > 0:
                     persisted += 1
+                slack_notified_now = _notify_new_inbound_messages(
+                    lead=lead,
+                    parsed=parsed,
+                    existing_external_ids=existing_external_ids,
+                    operator=operator,
+                )
+                slack_notified += slack_notified_now
 
                 # Stamp Deal.last_reply_at from the newest inbound message we
                 # just persisted. Without this, Stage stays at Prospecting
@@ -322,7 +387,7 @@ class Command(BaseCommand):
 
                 self.stdout.write(
                     f"  [{i}/{len(deals)}] {pid}: fetched {len(parsed)} msgs, "
-                    f"persisted={count_now}{stamped}"
+                    f"persisted={count_now}, slack_notified={slack_notified_now}{stamped}"
                 )
             else:
                 self.stdout.write(f"  [{i}/{len(deals)}] {pid}: no conversation found")
@@ -332,7 +397,8 @@ class Command(BaseCommand):
 
         self.stdout.write(
             f"Done. Processed {len(deals)} Leads → fetched {fetched} threads "
-            f"→ persisted {persisted}. Errors: {errors}. Skipped (no public_id): {skipped}."
+            f"→ persisted {persisted}. Slack notified: {slack_notified}. "
+            f"Errors: {errors}. Skipped (no public_id): {skipped}."
         )
 
         # Record the pass so the followup workflow's staleness check knows
@@ -340,10 +406,9 @@ class Command(BaseCommand):
         # Arian's pass each have their own latest-run timestamp.
         if not dry_run:
             from linkedin.models import WorkflowRun
-            from linkedin.operators import resolve_operator
             WorkflowRun.objects.create(
                 name="backfill-messages",
-                operator=resolve_operator(sender),
+                operator=operator,
                 summary=(
                     f"sender={sender!r} processed={len(deals)} "
                     f"fetched={fetched} persisted={persisted} "
@@ -353,6 +418,7 @@ class Command(BaseCommand):
                     "deals_eligible": len(deals),
                     "threads_fetched": fetched,
                     "messages_persisted": persisted,
+                    "slack_notified": slack_notified,
                     "errors": errors,
                     "skipped_no_pid": skipped,
                 },

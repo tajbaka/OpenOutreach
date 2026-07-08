@@ -182,7 +182,7 @@ CDP Network.dataReceived (base64 chunk)
 .venv/bin/python manage.py backfill_messages --account primary --skip-prereq-gate
 ```
 
-`--skip-prereq-gate` bypasses the interactive staleness prompt inside `backfill_messages` so it can be called non-interactively.
+`--skip-prereq-gate` bypasses the interactive staleness prompt inside `backfill_messages` so it can be called non-interactively. `backfill_messages` snapshots existing LinkedIn message IDs before each thread fetch; after the thread is persisted, any newly created inbound `crm.Message` rows emit the same `notify_message_received` Slack reply notification as realtime listener events. Existing message IDs are not re-notified on reruns.
 
 ## Enrichment (`linkedin/enrichment/`)
 

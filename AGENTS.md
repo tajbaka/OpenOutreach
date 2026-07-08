@@ -56,6 +56,8 @@ pytest -k test_name                # single test
 #   BACKFILL_LINKEDIN_USERNAME + BACKFILL_LINKEDIN_PASSWORD  (backfill account)
 # Set both pairs to sync both accounts; either pair alone is fine if you only have one.
 # Run periodically (cron) since the daemon stops watching threads after the initial accept.
+# Newly persisted inbound LinkedIn messages emit the same Slack reply notification as
+# realtime listener events; existing message IDs are not re-notified on reruns.
 # --account primary|backfill restricts the run to one configured slot;
 # --skip-prereq-gate skips the interactive staleness gate (used by the
 # daemon's realtime-listener startup catch-up).
