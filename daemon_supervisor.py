@@ -332,6 +332,60 @@ def _feed_collection_due_today(now: datetime | None = None) -> bool:
     return (now.hour, now.minute) >= (hour, minute)
 
 
+def _missed_feed_collection_due() -> bool:
+    """Whether this sender has a previously due feed job waiting.
+
+    The normal daily scheduler is wall-clock based. This catches the case where
+    the supervisor was offline at collection time and restarts before today's
+    configured collection time.
+    """
+    if not _feed_collector_enabled():
+        return False
+    try:
+        import django
+        from django.utils import timezone
+
+        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
+        django.setup()
+
+        from linkedin.conf import get_daemon_handle
+        from linkedin.feed_collection import ensure_collection_jobs
+        from linkedin.models import LinkedInFeedCollectionJob, LinkedInProfile
+        from linkedin.operators import resolve_operator
+
+        handle = get_daemon_handle()
+        if not handle:
+            return False
+        profile = (
+            LinkedInProfile.objects
+            .filter(user__username=handle)
+            .only("linkedin_username")
+            .first()
+        )
+        if profile is None:
+            return False
+
+        account_username = profile.linkedin_username
+        operator = resolve_operator(account_username)
+        ensure_collection_jobs(operator=operator, account_username=account_username)
+        return LinkedInFeedCollectionJob.objects.filter(
+            operator=operator,
+            account_username=account_username,
+            status__in=[
+                LinkedInFeedCollectionJob.Status.PENDING,
+                LinkedInFeedCollectionJob.Status.FAILED,
+            ],
+            scheduled_for__lte=timezone.now(),
+        ).exists()
+    except Exception as exc:
+        logger.debug("Could not check missed feed collection job: %s", exc)
+        return False
+
+
+def _feed_collection_should_start(now: datetime | None = None) -> bool:
+    return _feed_collection_due_today(now) or _missed_feed_collection_due()
+
+
 def _feed_collection_retry_seconds() -> int:
     return int(os.getenv("LINKEDIN_FEED_COLLECTION_RETRY_MINUTES", "60") or 60) * 60
 
@@ -429,7 +483,7 @@ def supervise(args: argparse.Namespace) -> int:
         if time.monotonic() >= next_feed_check:
             local_now = _feed_collection_local_now()
             if (
-                _feed_collection_due_today(local_now)
+                _feed_collection_should_start(local_now)
                 and feed_child is None
                 and feed_spawned_date != local_now.date()
                 and time.monotonic() >= feed_retry_after

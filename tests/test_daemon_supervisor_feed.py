@@ -24,3 +24,25 @@ def test_feed_collection_due_today_respects_feature_flag(monkeypatch):
     now = datetime(2026, 7, 3, 18, 0, tzinfo=ZoneInfo("America/Toronto"))
 
     assert daemon_supervisor._feed_collection_due_today(now) is False
+
+
+def test_feed_collection_should_start_for_missed_due_job_before_configured_time(monkeypatch):
+    monkeypatch.setenv("ENABLE_LINKEDIN_FEED_COLLECTOR", "true")
+    monkeypatch.setenv("LINKEDIN_FEED_COLLECTION_HOUR", "17")
+    monkeypatch.setenv("LINKEDIN_FEED_COLLECTION_MINUTE", "0")
+    monkeypatch.setattr(daemon_supervisor, "_missed_feed_collection_due", lambda: True)
+
+    before = datetime(2026, 7, 3, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
+
+    assert daemon_supervisor._feed_collection_should_start(before) is True
+
+
+def test_feed_collection_should_wait_before_time_when_no_missed_job(monkeypatch):
+    monkeypatch.setenv("ENABLE_LINKEDIN_FEED_COLLECTOR", "true")
+    monkeypatch.setenv("LINKEDIN_FEED_COLLECTION_HOUR", "17")
+    monkeypatch.setenv("LINKEDIN_FEED_COLLECTION_MINUTE", "0")
+    monkeypatch.setattr(daemon_supervisor, "_missed_feed_collection_due", lambda: False)
+
+    before = datetime(2026, 7, 3, 9, 0, tzinfo=ZoneInfo("America/Toronto"))
+
+    assert daemon_supervisor._feed_collection_should_start(before) is False
