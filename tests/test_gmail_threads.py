@@ -63,7 +63,7 @@ def test_persist_creates_messages_with_direction_inferred(lead):
         ],
     }]
     created = gmail_threads.persist_gmail_threads(
-        lead=lead, threads=threads, host_email=HOST,
+        lead=lead, threads=threads, self_emails=[HOST],
     )
     assert created == 2
 
@@ -85,8 +85,8 @@ def test_persist_is_idempotent(lead):
             _gmail_msg(id="dup", from_=HOST, body="hi", when=when),
         ],
     }]
-    a = gmail_threads.persist_gmail_threads(lead=lead, threads=threads, host_email=HOST)
-    b = gmail_threads.persist_gmail_threads(lead=lead, threads=threads, host_email=HOST)
+    a = gmail_threads.persist_gmail_threads(lead=lead, threads=threads, self_emails=[HOST])
+    b = gmail_threads.persist_gmail_threads(lead=lead, threads=threads, self_emails=[HOST])
     assert a == 1 and b == 0
     assert lead.messages.count() == 1
 
@@ -101,8 +101,8 @@ def test_persist_team_emails_count_as_outbound(lead):
         ],
     }]
     gmail_threads.persist_gmail_threads(
-        lead=lead, threads=threads, host_email=HOST,
-        team_emails=["arian@tryfedrampgpt.com"],
+        lead=lead, threads=threads,
+        self_emails=[HOST, "arian@tryfedrampgpt.com"],
     )
     msg = lead.messages.get()
     assert msg.direction == Message.Direction.OUTBOUND
@@ -118,7 +118,7 @@ def test_persist_unknown_sender_is_inbound(lead):
         "messages": [_gmail_msg(id="m1", from_="someone@elsewhere.com",
                                 body="text", when=when)],
     }]
-    gmail_threads.persist_gmail_threads(lead=lead, threads=threads, host_email=HOST)
+    gmail_threads.persist_gmail_threads(lead=lead, threads=threads, self_emails=[HOST])
     assert lead.messages.get().direction == Message.Direction.INBOUND
 
 
@@ -132,7 +132,7 @@ def test_persist_skips_messages_without_id(lead):
         ],
     }]
     created = gmail_threads.persist_gmail_threads(
-        lead=lead, threads=threads, host_email=HOST,
+        lead=lead, threads=threads, self_emails=[HOST],
     )
     assert created == 1
 
@@ -140,15 +140,12 @@ def test_persist_skips_messages_without_id(lead):
 def test_persist_raises_when_host_email_missing(lead, monkeypatch):
     """Without a known sender to mark outbound, direction inference is
     meaningless. Crash early per the project's error-handling rule.
-    Monkeypatch the conf-level defaults so a populated dev .env doesn't
-    silently rescue the test."""
+    """
     from linkedin.exceptions import SheetsError
-    monkeypatch.setattr(gmail_threads, "HOST_EMAIL", "")
-    monkeypatch.setattr(gmail_threads, "TEAM_EMAILS", ())
     threads = [{"id": "t1", "messages": []}]
     with pytest.raises(SheetsError):
         gmail_threads.persist_gmail_threads(
-            lead=lead, threads=threads, host_email="", team_emails=[],
+            lead=lead, threads=threads, self_emails=[],
         )
 
 
@@ -164,7 +161,7 @@ def test_persist_handles_internalDate_only(lead):
             "internalDate": str(when_ms),
         }],
     }]
-    gmail_threads.persist_gmail_threads(lead=lead, threads=threads, host_email=HOST)
+    gmail_threads.persist_gmail_threads(lead=lead, threads=threads, self_emails=[HOST])
     msg = lead.messages.get()
     assert msg.sent_at == datetime(2026, 4, 8, 16, 0, tzinfo=timezone.utc)
 

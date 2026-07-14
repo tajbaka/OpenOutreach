@@ -93,6 +93,7 @@ Three apps in `INSTALLED_APPS`:
 - **`pipeline/pools.py`** — Composable generators: `search_source` → `qualify_source` → `ready_source`.
 - **`pipeline/freemium_pool.py`** — Seed priority + undiscovered pool, ranked by qualifier.
 - **`lead_analysis.py`** — Offline Codex lead review queue/apply helper. Serializes leads awaiting qualification with profile and campaign context, validates Codex decision JSON, and applies decisions as campaign-scoped Deals without calling an LLM.
+- **`followup_analysis.py`** — Offline Codex followup queue/apply helper. Exports merged LinkedIn/Gmail messages, meeting notes, People-tab status, ICP goal, freshness posture, and sheet-row scaffolding for manual followup candidates. Apply mode validates Codex-produced draft rows and writes the operator Followups tabs through `notifications/sheets.write_followups()` without sending messages or calling an LLM.
 - **`ml/qualifier.py`** — `Qualifier` protocol, `BayesianQualifier`, `KitQualifier`, `qualify_with_llm()`.
 - **`ml/embeddings.py`** — FastEmbed utilities, `embed_profile()`.
 - **`ml/profile_text.py`** — `build_profile_text()`.
@@ -107,6 +108,7 @@ Three apps in `INSTALLED_APPS`:
 - **`db/chat.py`** — `save_chat_message()`.
 - **`db/urls.py`** — `url_to_public_id()`, `public_id_to_url()` — LinkedIn URL ↔ public identifier conversion.
 - **`db/messages.py`** — `persist_thread()`: idempotent get_or_create per `(source, external_id)`; derives LinkedIn direction from a normalized sender match against the Lead name, stripping common honorifics like `Dr.` while explicit daemon operator senders still force outbound. LinkedIn invite-note echoes that arrive with the lead as sender are also forced outbound when they match stored `sent_note` text or a narrow legacy connect-note pattern. Falls back to `now()` on malformed timestamps. Called from `actions/conversations.py:get_conversation` as a best-effort side effect — never breaks the caller.
+- **`gmail/data_sync.py`** — Direct Gmail data-sync helpers. Decodes Gmail API thread/message payloads, resolves self-emails from Gmail Profile + Send-As aliases, persists prospect email threads into `crm.Message`, and persists Gmail-delivered Gemini/Meet notes into `crm.Meeting.gemini_notes_raw` with conservative title/date/lead matching.
 - **`conf.py`** — Config loading (dotenv), `CAMPAIGN_CONFIG`, path constants, `get_first_active_profile_handle()`.
 - **`exceptions.py`** — `AuthenticationError`, `TerminalStateError`, `SkipProfile`, `ReachedConnectionLimit`, `SheetsError`.
 - **`onboarding.py`** — Interactive setup.
@@ -127,7 +129,9 @@ Three apps in `INSTALLED_APPS`:
 - **`setup/self_profile.py`** — `ensure_self_profile()`.
 - **`setup/seeds.py`** — User-provided seed profiles: parse URLs, create Leads + QUALIFIED Deals.
 - **`management/commands/discover_inbox_leads.py`** — Standalone LinkedIn Messaging inbox lead discovery. Uses the same env-backed `StandaloneLinkedInSession` account slots as message backfill (`LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` and `BACKFILL_LINKEDIN_USERNAME`/`BACKFILL_LINKEDIN_PASSWORD`). After login it opens the visible browser to `/messaging/`, then crawls Voyager messaging conversations from that authenticated browser context. The first batch uses LinkedIn's recent-conversation query; older pages use the same `lastUpdatedBefore` / `nextCursor` category query emitted by scrolling the conversation list in the UI, stopping at the 90-day default window or `--max-pages`. It skips existing leads by canonical LinkedIn URL, `Lead.public_identifier`, stored profile URN, or existing `crm.Message.thread_external_id`, and classifies non-duplicate 1:1 threads with the Boundera FedRAMP/CMMC `inbox_lead_relevance.j2` prompt. Campaign objective/docs are deliberately ignored for relevance; `--campaign` only chooses the destination Deal campaign. Full Voyager profile enrichment is preferred; when LinkedIn returns private/restricted 403s, the command falls back to the inbox participant payload (name, headline, profile URL / `fsd_profile` URN). Default mode is dry-run; `--apply` creates `Lead` + `Deal(state=CONNECTED)` rows, stamps canonical `Lead.icp` (`CSPs`, `3PAOs/Assessors`, `Advisors`, `Channel`, `CMMC Buyers`, `CMMC Advisor/Channel`), stores the LinkedIn thread through `persist_thread`, and stamps `Deal.last_reply_at` from newest inbound. It does not enqueue `Task` rows.
+- **`management/commands/sync_gmail_context.py`** — Direct Gmail data-sync command for followup context. `--dry-run` previews writes; `--operator` / `--account` scope the Gmail OAuth account; `--campaign`, `--lead-id`, `--limit`, and `--all-leads` scope CRM candidates. `--skip-threads` runs only Gemini/Meet note ingestion; `--skip-notes` runs only prospect email-thread ingestion. Non-dry-runs write `WorkflowRun(name="data-sync")` rows for all operators that share the synced Gmail account.
 - **`management/commands/analyze_lead_qualification.py`** — Offline Codex lead qualification review. Export mode writes leads awaiting qualification to JSON with headline, profile text, company, location, public LinkedIn URL, current state, campaign objective, product docs, and an explicit decision schema. Apply mode reads Codex decisions (`lead_id`, optional `campaign_id`, `qualified`, `confidence`, `icp`, `reason`, `suggested_action`) and creates/updates campaign-scoped Deals: positives become `QUALIFIED` or `READY_TO_CONNECT` with `--ready`, rejects become `FAILED` with `ClosingReason.DISQUALIFIED`. It does not set global `Lead.disqualified=True`, does not call an app LLM, and is not in the daemon live connect loop.
+- **`management/commands/generate_followups.py`** — Offline Codex followup-tab workflow. Export mode can optionally run `sync_gmail_context` and `sync_sheets`, then writes a JSON queue with candidates and schema instructions. Apply mode reads Codex row JSON (`lead_id`, `operator`, `status`, `state`, `role`, `priority`, `convo`, `draft_email`, `draft_linkedin`) and rebuilds the relevant `<Operator> - Followups` tabs via `write_followups()`, recording `WorkflowRun(name="followup")` unless disabled. Canonical scheduled-run instructions live in `docs/codex-followup-automation.md`.
 - **`management/commands/export_sales_search.py` / `export_sales_list.py`** — Sales Navigator people-search/list exporters using the dedicated `SALES_NAV_LINKEDIN_USERNAME` / `SALES_NAV_LINKEDIN_PASSWORD` session. The exported CSV remains compatible with `add_seeds --csv` and includes review metadata: `Profile URL`, `First Name`, `Last Name`, `Company`, `Title`, `Geo Region`, `Degree`. Prefer writing exploratory exports under ignored `artifacts/leads/`; keep `leads/` for intentional import-ready inputs.
 - **`management/setup_crm.py`** — Idempotent CRM bootstrap (Site creation).
 - **`admin.py`** — Django Admin: Campaign, LinkedInProfile, SearchKeyword, ActionLog, Task, ChatMessage.
@@ -285,6 +289,21 @@ clears the Sheet.
 tokens request Gmail send, compose/draft, settings, and readonly scopes;
 `manage.py gmail_send_test` sends a direct live test message through the mapped
 operator alias.
+
+`gmail/data_sync.py` is the Gmail-backed replacement for the Gmail-accessible
+parts of the old Claude data-sync workflow. `manage.py sync_gmail_context` uses
+the same OAuth tokens to search prospect email threads by `Lead.email`, persists
+them through `linkedin.notifications.gmail_threads.persist_gmail_threads`, and
+searches Gmail-delivered Gemini/Meet note emails from `gemini-notes@google.com`
+or `meetings-noreply@google.com`. Note emails attach to existing `crm.Meeting`
+rows by title/date; when no meeting row exists, the command creates a synthetic
+Meeting only if the note title uniquely identifies one Lead. Generic notes are
+reported as unmatched rather than guessed. Successful non-dry-runs write
+`WorkflowRun(name="data-sync")` for every operator mapped to the synced mailbox,
+so the followup workflow's freshness check sees this direct-Gmail sync. This
+path does not fetch Google Calendar attendee metadata or full Drive docs; those
+still require Calendar/Drive API support if Gmail's note email is missing or
+ambiguous.
 
 Each daemon starts its `GmailWorker` with the daemon's resolved operator handle,
 and `Task.objects.next_gmail(operator=...)` filters on `payload.operator`. This
