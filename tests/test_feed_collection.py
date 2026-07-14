@@ -331,12 +331,59 @@ def test_collect_from_page_stops_at_cutoff_before_saving_old_post(monkeypatch):
         cutoff_at=now - timedelta(hours=2),
         max_posts=10,
         stop_after_seen=10,
+        stop_after_stale=1,
         scroll_pause_seconds=0,
     )
 
     assert result.posts_seen == 1
     assert LinkedInFeedPost.objects.count() == 1
     assert LinkedInFeedPost.objects.get().activity_urn == "urn:li:activity:111"
+
+
+@pytest.mark.django_db
+def test_collect_from_page_keeps_scrolling_after_out_of_order_old_post(monkeypatch):
+    now = timezone.now()
+    job = ensure_collection_jobs(
+        operator="Arian",
+        account_username="arian@example.com",
+        now=now,
+    )
+
+    old = _record(activity_urn="urn:li:activity:111", posted_at=now - timedelta(hours=3))
+    fresh = _record(activity_urn="urn:li:activity:222", posted_at=now - timedelta(hours=1))
+    calls = {"count": 0}
+
+    def fake_extract(_page):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return [old]
+        return [old, fresh]
+
+    monkeypatch.setattr("linkedin.feed_collection.extract_posts_from_page", fake_extract)
+
+    class FakePage:
+        def goto(self, *_args, **_kwargs):
+            pass
+
+        def wait_for_timeout(self, *_args):
+            pass
+
+        def evaluate(self, *_args):
+            pass
+
+    result = _collect_from_page(
+        FakePage(),
+        job=job,
+        cutoff_at=now - timedelta(hours=2),
+        max_posts=10,
+        stop_after_seen=10,
+        stop_after_stale=3,
+        scroll_pause_seconds=0,
+    )
+
+    assert result.posts_seen == 1
+    assert LinkedInFeedPost.objects.count() == 1
+    assert LinkedInFeedPost.objects.get().activity_urn == "urn:li:activity:222"
 
 
 @pytest.mark.django_db
@@ -370,6 +417,7 @@ def test_collect_from_page_skips_posts_newer_than_window_end(monkeypatch):
         window_end_at=now - timedelta(days=1),
         max_posts=10,
         stop_after_seen=10,
+        stop_after_stale=1,
         scroll_pause_seconds=0,
     )
 

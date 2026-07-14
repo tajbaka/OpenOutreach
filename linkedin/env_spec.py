@@ -131,6 +131,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "feed_collection", "Hard cap on posts extracted per collection run."),
     EnvVar("LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN", False, False, "15",
            "feed_collection", "Safety stop after this many already-observed posts."),
+    EnvVar("LINKEDIN_FEED_COLLECTION_STOP_AFTER_STALE", False, False, "25",
+           "feed_collection", "Safety stop after this many old out-of-window posts."),
     EnvVar("LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS", False, False, "2",
            "feed_collection", "Pause between LinkedIn feed scrolls."),
     EnvVar("ENRICHMENT_MAX_DURATION_SECONDS", False, False, "600", "enrichment_tuning",

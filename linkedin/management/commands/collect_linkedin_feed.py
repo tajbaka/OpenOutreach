@@ -24,6 +24,11 @@ class Command(BaseCommand):
             help="Override repeated seen-observation stop threshold.",
         )
         parser.add_argument(
+            "--stop-after-stale",
+            type=int,
+            help="Override old out-of-window post stop threshold.",
+        )
+        parser.add_argument(
             "--scroll-pause-seconds",
             type=float,
             help="Override pause between feed scrolls.",
@@ -97,6 +102,7 @@ class Command(BaseCommand):
                 cdp_port=opts.get("cdp_port"),
                 max_posts=opts.get("max_posts"),
                 stop_after_seen=opts.get("stop_after_seen"),
+                stop_after_stale=opts.get("stop_after_stale"),
                 scroll_pause_seconds=opts.get("scroll_pause_seconds"),
             )
             return
@@ -141,6 +147,7 @@ class Command(BaseCommand):
                 cutoff_at=cutoff_at,
                 max_posts=opts.get("max_posts"),
                 stop_after_seen=opts.get("stop_after_seen"),
+                stop_after_stale=opts.get("stop_after_stale"),
                 scroll_pause_seconds=opts.get("scroll_pause_seconds"),
             )
             mark_job_completed(job, result)
@@ -169,6 +176,7 @@ class Command(BaseCommand):
         cdp_port,
         max_posts,
         stop_after_seen,
+        stop_after_stale,
         scroll_pause_seconds,
     ):
         from linkedin.feed_collection import (
@@ -241,6 +249,7 @@ class Command(BaseCommand):
                         window_end_at=window_end_at,
                         max_posts=max_posts,
                         stop_after_seen=stop_after_seen,
+                        stop_after_stale=stop_after_stale,
                         scroll_pause_seconds=scroll_pause_seconds,
                     )
                 except Exception as exc:

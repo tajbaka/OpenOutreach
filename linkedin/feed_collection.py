@@ -20,6 +20,7 @@ from linkedin.conf import (
     LINKEDIN_FEED_COLLECTION_RETRY_MINUTES,
     LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS,
     LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN,
+    LINKEDIN_FEED_COLLECTION_STOP_AFTER_STALE,
     LINKEDIN_FEED_COLLECTION_TIMEZONE,
     LISTENER_CDP_PORT,
 )
@@ -301,6 +302,7 @@ def collect_feed_for_job(
     window_end_at: datetime | None = None,
     max_posts: int | None = None,
     stop_after_seen: int | None = None,
+    stop_after_stale: int | None = None,
     scroll_pause_seconds: float | None = None,
 ) -> CollectionResult:
     cdp_port = LISTENER_CDP_PORT if cdp_port is None else cdp_port
@@ -308,6 +310,10 @@ def collect_feed_for_job(
     stop_after_seen = (
         LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN
         if stop_after_seen is None else stop_after_seen
+    )
+    stop_after_stale = (
+        LINKEDIN_FEED_COLLECTION_STOP_AFTER_STALE
+        if stop_after_stale is None else stop_after_stale
     )
     scroll_pause_seconds = (
         LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS
@@ -328,6 +334,7 @@ def collect_feed_for_job(
                 window_end_at=window_end_at,
                 max_posts=max_posts,
                 stop_after_seen=stop_after_seen,
+                stop_after_stale=stop_after_stale,
                 scroll_pause_seconds=scroll_pause_seconds,
             )
         finally:
@@ -344,6 +351,7 @@ def _collect_from_page(
     cutoff_at: datetime,
     max_posts: int,
     stop_after_seen: int,
+    stop_after_stale: int,
     scroll_pause_seconds: float,
     window_end_at: datetime | None = None,
 ) -> CollectionResult:
@@ -354,14 +362,14 @@ def _collect_from_page(
     posts_created = 0
     observations_created = 0
     repeated_observations = 0
+    stale_posts_seen = 0
     posts_seen = 0
     idle_scrolls = 0
-    cutoff_reached = False
 
     while (
         posts_seen < max_posts
         and repeated_observations < stop_after_seen
-        and not cutoff_reached
+        and stale_posts_seen < stop_after_stale
     ):
         before = len(processed)
         for record in extract_posts_from_page(page):
@@ -369,8 +377,11 @@ def _collect_from_page(
             if not identity or identity in processed:
                 continue
             if record.posted_at is not None and record.posted_at <= cutoff_at:
-                cutoff_reached = True
-                break
+                processed.add(identity)
+                stale_posts_seen += 1
+                if stale_posts_seen >= stop_after_stale:
+                    break
+                continue
             processed.add(identity)
             if (
                 window_end_at is not None
@@ -378,6 +389,7 @@ def _collect_from_page(
                 and record.posted_at > window_end_at
             ):
                 continue
+            stale_posts_seen = 0
             posts_seen += 1
             post_created, observation_created = upsert_feed_record(record, job=job)
             posts_created += int(post_created)
@@ -387,7 +399,7 @@ def _collect_from_page(
             if posts_seen >= max_posts or repeated_observations >= stop_after_seen:
                 break
 
-        if cutoff_reached:
+        if stale_posts_seen >= stop_after_stale:
             break
 
         if len(processed) == before:
