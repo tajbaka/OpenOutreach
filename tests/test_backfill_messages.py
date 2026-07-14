@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from crm.models import Deal, Lead, Message
 from linkedin.enums import ProfileState
-from linkedin.management.commands.backfill_messages import Command
+from linkedin.management.commands.backfill_messages import Command, _eligible_deals
 from linkedin.models import Campaign
 
 
@@ -125,6 +125,90 @@ def test_backfill_notifies_newly_persisted_inbound_message(monkeypatch):
     assert notify.call_args.kwargs["text"] == "Missed you while the daemon was down."
     assert notify.call_args.kwargs["operator"] == "Athena"
     assert notify.call_args.kwargs["thread_external_id"] == "thread-1"
+
+
+@pytest.mark.django_db
+def test_backfill_includes_owned_pending_deal_with_existing_linkedin_thread():
+    user = User.objects.create_user(username="athenaaghdami")
+    campaign = Campaign.objects.create(name="Athena pending thread", user=user)
+    lead = Lead.objects.create(
+        first_name="Rolan",
+        last_name="Parscal",
+        public_identifier="rolan-parscal",
+        linkedin_url="https://www.linkedin.com/in/rolan-parscal/",
+    )
+    deal = Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.PENDING)
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.OUTBOUND,
+        external_id="invite-note-echo",
+        sender="rolan parscal",
+        body="Hi Rolan, good to connect?",
+        sent_at=timezone.now(),
+        thread_external_id="thread-rolan",
+    )
+
+    eligible = _eligible_deals(sender="Athena Aghdami", campaign_id=None)
+
+    assert deal in eligible
+
+
+@pytest.mark.django_db
+def test_backfill_promotes_pending_deal_when_inbound_reply_is_found():
+    user = User.objects.create_user(username="athenaaghdami")
+    campaign = Campaign.objects.create(name="Athena pending reply", user=user)
+    lead = Lead.objects.create(
+        first_name="Rolan",
+        last_name="Parscal",
+        public_identifier="rolan-parscal-reply",
+        linkedin_url="https://www.linkedin.com/in/rolan-parscal-reply/",
+    )
+    deal = Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.PENDING)
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.OUTBOUND,
+        external_id="invite-note-echo-reply",
+        sender="rolan parscal",
+        body="Hi Rolan, good to connect?",
+        sent_at=timezone.now(),
+        thread_external_id="thread-rolan-reply",
+    )
+    inbound_at = timezone.now()
+
+    def fake_get_conversation(_session, public_identifier):
+        assert public_identifier == "rolan-parscal-reply"
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            direction=Message.Direction.INBOUND,
+            external_id="inbound-rolan",
+            sender="rolan parscal",
+            body="Ya of course!",
+            sent_at=inbound_at,
+            thread_external_id="thread-rolan-reply",
+        )
+        return [{"entity_urn": "inbound-rolan"}]
+
+    with patch("linkedin.management.commands.backfill_messages._open_messaging_inbox"), \
+         patch(
+             "linkedin.management.commands.backfill_messages.get_conversation",
+             side_effect=fake_get_conversation,
+         ), \
+         patch("linkedin.notifications.slack.notify_message_received"):
+        Command()._run_pass(
+            session=SimpleNamespace(campaign=None),
+            sender="Athena Aghdami",
+            campaign_id=None,
+            limit=0,
+            dry_run=False,
+        )
+
+    deal.refresh_from_db()
+    assert deal.state == ProfileState.CONNECTED
+    assert deal.last_reply_at == inbound_at
+    assert deal.connected_at == inbound_at
 
 
 @pytest.mark.django_db

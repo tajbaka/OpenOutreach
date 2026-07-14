@@ -40,6 +40,7 @@ from crm.models import Deal, Message
 from linkedin.actions.conversations import get_conversation
 from linkedin.actions.standalone_session import StandaloneLinkedInSession
 from linkedin.api.client import PlaywrightLinkedinAPI
+from linkedin.db.deals import stamp_inbound_linkedin_reply
 from linkedin.enums import ProfileState
 
 logger = logging.getLogger(__name__)
@@ -95,14 +96,17 @@ def _self_display_name(session) -> str:
 
 
 def _eligible_deals(*, sender: str, campaign_id: int | None):
-    states_with_thread = [
+    from linkedin.operators import resolve_operator
+
+    operator = resolve_operator(sender)
+    states_with_sender = [
         ProfileState.CONNECTED,
         ProfileState.COMPLETED,
         ProfileState.FAILED,
     ]
-    qs = (
-        Deal.objects.filter(state__in=states_with_thread, lead_id__isnull=False)
-        .select_related("lead", "campaign")
+    sender_qs = (
+        Deal.objects.filter(state__in=states_with_sender, lead_id__isnull=False)
+        .select_related("lead", "campaign", "campaign__user")
         .filter(
             lead__messages__direction="outbound",
             lead__messages__source=Message.Source.LINKEDIN,
@@ -112,8 +116,60 @@ def _eligible_deals(*, sender: str, campaign_id: int | None):
         .distinct()
     )
     if campaign_id is not None:
-        qs = qs.filter(campaign_id=campaign_id)
-    return qs
+        sender_qs = sender_qs.filter(campaign_id=campaign_id)
+
+    owned_campaign_ids = _campaign_ids_for_operator(
+        operator=operator,
+        campaign_id=campaign_id,
+    )
+    pending_deals = []
+    if owned_campaign_ids:
+        thread_lead_ids = (
+            Message.objects.filter(source=Message.Source.LINKEDIN)
+            .exclude(thread_external_id="")
+            .values("lead_id")
+        )
+        pending_deals = list(
+            Deal.objects.filter(
+                state=ProfileState.PENDING,
+                lead_id__isnull=False,
+                lead_id__in=thread_lead_ids,
+                campaign_id__in=owned_campaign_ids,
+            )
+            .select_related("lead", "campaign", "campaign__user")
+            .order_by("update_date")
+        )
+
+    return sorted(
+        [*sender_qs, *pending_deals],
+        key=lambda deal: deal.update_date,
+    )
+
+
+def _campaign_ids_for_operator(*, operator: str, campaign_id: int | None) -> list[int]:
+    if not operator:
+        return []
+    from linkedin.models import Campaign
+
+    qs = Campaign.objects.select_related("user")
+    if campaign_id is not None:
+        qs = qs.filter(pk=campaign_id)
+    return [
+        campaign.pk for campaign in qs
+        if _user_matches_operator(campaign.user, operator)
+    ]
+
+
+def _user_matches_operator(user, operator: str) -> bool:
+    from linkedin.operators import resolve_operator
+
+    candidates = [
+        getattr(user, "username", ""),
+        getattr(user, "email", ""),
+        f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip(),
+        getattr(user, "first_name", ""),
+    ]
+    return operator in {resolve_operator(value) for value in candidates if value}
 
 
 def _external_ids_from_parsed(parsed: list[dict]) -> set[str]:
@@ -369,21 +425,24 @@ class Command(BaseCommand):
                 slack_notified += slack_notified_now
 
                 # Stamp Deal.last_reply_at from the newest inbound message we
-                # just persisted. Without this, Stage stays at Prospecting
-                # even after a reply is in the DB (sync_sheets gates the
-                # Prospecting → Qualification transition on this field).
+                # just persisted. Pending invite-reply threads are also
+                # promoted to CONNECTED so sync_sheets renders them as Replied
+                # instead of Invite Sent.
                 latest_inbound = Message.objects.filter(
                     lead=lead, source=Message.Source.LINKEDIN,
                     direction=Message.Direction.INBOUND,
                 ).order_by("-sent_at").first()
                 stamped = ""
-                if latest_inbound and (
-                    deal.last_reply_at is None
-                    or latest_inbound.sent_at > deal.last_reply_at
-                ):
-                    deal.last_reply_at = latest_inbound.sent_at
-                    deal.save(update_fields=["last_reply_at"])
-                    stamped = f" → last_reply_at={latest_inbound.sent_at.isoformat()}"
+                if latest_inbound:
+                    updated, promoted = stamp_inbound_linkedin_reply(
+                        lead=lead,
+                        sent_at=latest_inbound.sent_at,
+                        deal=deal,
+                    )
+                    if updated:
+                        stamped = f" → last_reply_at={latest_inbound.sent_at.isoformat()}"
+                        if promoted:
+                            stamped += " → state=Connected"
 
                 self.stdout.write(
                     f"  [{i}/{len(deals)}] {pid}: fetched {len(parsed)} msgs, "

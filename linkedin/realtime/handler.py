@@ -80,6 +80,7 @@ def _maybe_enqueue_enrichment(lead) -> None:
 
 def _handle(event: dict, *, operator: str) -> None:
     from crm.models import Message
+    from linkedin.db.deals import stamp_inbound_linkedin_reply
     from linkedin.db.messages import persist_thread
 
     parsed = parse_realtime_event(event)
@@ -120,6 +121,10 @@ def _handle(event: dict, *, operator: str) -> None:
         source=Message.Source.LINKEDIN, external_id=parsed.entity_urn,
     )
     if msg.direction == Message.Direction.INBOUND:
+        stamp_inbound_linkedin_reply(
+            lead=lead,
+            sent_at=msg.sent_at,
+        )
         logger.info("Realtime inbound message persisted for %s", lead)
         notify_message_received(
             lead=lead,

@@ -147,7 +147,7 @@ class TestHandleConnect:
         note = build_connection_note(lead.id, sender="Arian")
 
         assert "Unknown Company" not in note
-        assert "noticed your team in the FedRAMP/public-sector space" in note
+        assert "public-sector cloud" in note
 
     def _candidate(self):
         return {"public_identifier": "alice", "url": "https://www.linkedin.com/in/alice/", "profile": SAMPLE_PROFILE}
@@ -487,7 +487,7 @@ class TestHandleFollowUp:
         # icp_messages.json is keyed by operator (sender) at the top level
         # and has no shared default — give the daemon's account a username
         # that `resolve_operator` maps to a real sender block ("Arian"), so
-        # `fill_for_lead` finds templates instead of raising SheetsError.
+        # `fill_message` finds templates instead of raising SheetsError.
         fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
         _make_connected(fake_session)
         # Seed an outbound so the "no-thread" guard doesn't short-circuit.
@@ -536,6 +536,50 @@ class TestHandleFollowUp:
         assert send_kwargs["sequence_name"] == "linkedin_connect_followup"
         assert send_kwargs["step_index"] == 0
         assert send_kwargs["operator"] == "Arian"
+
+    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_follow_up_uses_persisted_lead_icp_not_role_fallback(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
+    ):
+        """A CMMC-imported lead can look like a generic CSP by profile text.
+
+        Follow-up must honor the persisted sourcing bucket, otherwise a CMMC
+        connect note is followed by a FedRAMP 20x CSP pitch.
+        """
+        from crm.models import Lead, Message
+
+        fake_session.linkedin_profile.linkedin_username = "athenaaghdami@gmail.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        lead.icp = "CMMC Buyers"
+        lead.company_name = "Ensign-Bickford Aerospace & Defense Company (EBAD)"
+        lead.description = ""
+        lead.save(update_fields=["icp", "company_name", "description"])
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:cmmc-note",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="Hi Alice, was looking at EBAD since I'm in the CMMC space myself.",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        sent_message = (
+            mock_send_media.call_args.args[2] if mock_send_media.called
+            else mock_send.call_args.args[2]
+        )
+        assert "CMMC" in sent_message
+        assert "FedRAMP 20x" not in sent_message
 
     @patch("linkedin.actions.message.send_media_message", return_value=True)
     @patch("linkedin.actions.message.send_raw_message", return_value=True)

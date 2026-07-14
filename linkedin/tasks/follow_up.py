@@ -7,8 +7,9 @@ Flow per task:
      If they replied — auto-pin stops, mark Completed, return. We never
      re-pitch over an active human thread; the operator picks it up via
      the followup sheet's MET / Replied cohort.
-  3. Classify ROLE via `linkedin.icp_outbound.classify_role(lead)`, look
-     up the matching ICP template, fill `{first_name}` (the only dynamic
+  3. Resolve the lead's persisted ICP bucket via
+     `linkedin.icp_outbound.resolve_icp(lead)`, look up the matching ICP
+     template, fill `{first_name}` (the only dynamic
      span), send via `send_raw_message`.
   4. On success: mark Completed, record an ActionLog.
      On failure: re-enqueue in 24h.
@@ -48,7 +49,7 @@ from linkedin.conf import (
 )
 from linkedin.db.deals import get_profile_dict_for_public_id, set_profile_state
 from linkedin.db.urls import public_id_to_url
-from linkedin.icp_outbound import channel_steps_for_lead, classify_role, fill_for_lead
+from linkedin.icp_outbound import channel_steps, fill_message, resolve_icp
 from linkedin.models import ActionLog
 
 logger = logging.getLogger(__name__)
@@ -310,8 +311,8 @@ def handle_follow_up(task, session, qualifiers):
     # can complete old rows without needing a sender template block; step-
     # aware dedup needs the sequence length to know whether this step is
     # final or whether the next step must stay queued.
-    role = classify_role(deal.lead)
-    steps = channel_steps_for_lead(sender=our_operator, role=role, channel=channel)
+    icp = resolve_icp(deal.lead)
+    steps = channel_steps(sender=our_operator, icp=icp, channel=channel)
 
     if step_already_sent:
         next_step_index = step_index + 1
@@ -345,9 +346,16 @@ def handle_follow_up(task, session, qualifiers):
     # also embed `{add <filename>}` placeholders to attach a media file
     # (looked up in assets/followup/ then ROOT_DIR) — handled in
     # `_send_with_attachments_or_text` below.
-    filled = fill_for_lead(
-        sender=our_operator, role=role, channel=channel,
-        lead=deal.lead, my_name=our_operator, step_index=step_index,
+    filled = fill_message(
+        sender=our_operator,
+        icp=icp,
+        channel=channel,
+        first_name=deal.lead.first_name or "",
+        last_name=deal.lead.last_name or "",
+        company_name=deal.lead.company_name or "",
+        my_name=our_operator,
+        lead_id=deal.lead_id,
+        step_index=step_index,
     )
     # If the template included {add <filename>} placeholders, send via
     # the media path (first attachment only — LinkedIn's message form
@@ -423,12 +431,12 @@ def handle_follow_up(task, session, qualifiers):
         if next_step_index < len(steps):
             set_profile_state(
                 session, public_id, "Connected",
-                reason=f"Sent ICP-{role} follow-up step {step_index}",
+                reason=f"Sent ICP-{icp} follow-up step {step_index}",
             )
         else:
             set_profile_state(
                 session, public_id, "Completed",
-                reason=f"Sent ICP-{role} follow-up DM",
+                reason=f"Sent ICP-{icp} follow-up DM",
             )
 
     # Post-send state write — critical: if `set_profile_state` doesn't run,
@@ -446,4 +454,4 @@ def handle_follow_up(task, session, qualifiers):
         )
         connections.close_all()
         _record_success_state()
-    logger.info("follow_up sent to %s (role=%s, step=%s/%s)", public_id, role, step_index, len(steps) - 1)
+    logger.info("follow_up sent to %s (icp=%s, step=%s/%s)", public_id, icp, step_index, len(steps) - 1)

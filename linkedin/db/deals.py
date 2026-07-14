@@ -126,6 +126,45 @@ def set_profile_state(session, public_identifier: str, new_state: str, reason: s
         logger.debug("%s %s (unchanged)%s", public_identifier, label, suffix)
 
 
+def stamp_inbound_linkedin_reply(*, lead, sent_at, deal=None) -> tuple[int, int]:
+    """Record an inbound LinkedIn reply on one Deal or all Deals for a Lead.
+
+    A LinkedIn reply proves there is an active DM channel even when the
+    sweep has not yet flipped the Deal out of PENDING. Promote only that
+    state to CONNECTED; terminal states keep their state but still get the
+    latest reply timestamp for audit/sheet synthesis.
+
+    Returns ``(updated_count, promoted_count)``.
+    """
+    from crm.models import Deal
+
+    if sent_at is None:
+        return 0, 0
+
+    qs = Deal.objects.filter(pk=deal.pk) if deal is not None else Deal.objects.filter(lead=lead)
+    updated = 0
+    promoted = 0
+    for current in qs:
+        update_fields: list[str] = []
+        if current.last_reply_at is None or sent_at > current.last_reply_at:
+            current.last_reply_at = sent_at
+            update_fields.append("last_reply_at")
+
+        if current.state == ProfileState.PENDING:
+            current.state = ProfileState.CONNECTED
+            update_fields.append("state")
+            promoted += 1
+            if current.connected_at is None:
+                current.connected_at = sent_at
+                update_fields.append("connected_at")
+
+        if update_fields:
+            current.save(update_fields=update_fields)
+            updated += 1
+
+    return updated, promoted
+
+
 # ── State queries ──
 
 

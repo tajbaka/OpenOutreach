@@ -139,14 +139,14 @@ def test_follow_up_post_send_retries_on_dead_conn(db, fake_session, monkeypatch)
     # Patch out the LinkedIn-side calls so we only exercise the DB-write
     # half. Treat the send as "succeeded" (the bug-scenario trigger).
     monkeypatch.setattr(fu_mod, "get_profile_dict_for_public_id", lambda *a, **k: {"profile": {}})
-    monkeypatch.setattr(fu_mod, "classify_role", lambda lead: "CSP")
+    monkeypatch.setattr(fu_mod, "resolve_icp", lambda lead: "CSP")
     monkeypatch.setattr(
-        fu_mod, "fill_for_lead",
-        lambda lead, role, channel, **kw: type("F", (), {"body": "hi", "attachments": []})(),
+        fu_mod, "fill_message",
+        lambda **kw: type("F", (), {"body": "hi", "attachments": []})(),
     )
     monkeypatch.setattr(
         fu_mod,
-        "channel_steps_for_lead",
+        "channel_steps",
         lambda **kw: [type("S", (), {"delay_hours": 0})()],
     )
 
@@ -225,14 +225,14 @@ def test_follow_up_state_retry_does_not_duplicate_next_step(db, fake_session, mo
     )
 
     monkeypatch.setattr(fu_mod, "get_profile_dict_for_public_id", lambda *a, **k: {"profile": {}})
-    monkeypatch.setattr(fu_mod, "classify_role", lambda lead: "CSP")
+    monkeypatch.setattr(fu_mod, "resolve_icp", lambda lead: "CSP")
     monkeypatch.setattr(
-        fu_mod, "fill_for_lead",
-        lambda lead, role, channel, **kw: type("F", (), {"body": "hi", "attachments": []})(),
+        fu_mod, "fill_message",
+        lambda **kw: type("F", (), {"body": "hi", "attachments": []})(),
     )
     monkeypatch.setattr(
         fu_mod,
-        "channel_steps_for_lead",
+        "channel_steps",
         lambda **kw: [
             type("S", (), {"delay_hours": 0})(),
             type("S", (), {"delay_hours": 48})(),

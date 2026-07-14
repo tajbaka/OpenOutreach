@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from crm.models import Lead, Message
+from django.contrib.auth.models import User
+
+from crm.models import Deal, Lead, Message
+from linkedin.enums import ProfileState
+from linkedin.models import Campaign
 
 from linkedin.realtime.handler import handle_realtime_event
 from linkedin.realtime.parser import ParsedRealtimeMessage
@@ -49,6 +53,23 @@ def test_inbound_message_persists_and_notifies(db):
     assert msg.lead == lead
     mock_notify.assert_called_once()
     assert mock_notify.call_args.kwargs["thread_external_id"] == CONV
+
+
+def test_inbound_message_promotes_pending_deal_and_stamps_reply(db):
+    user = User.objects.create_user(username="arian")
+    campaign = Campaign.objects.create(name="Realtime pending reply", user=user)
+    lead = _seed_lead(db)
+    deal = Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.PENDING)
+
+    with patch("linkedin.realtime.handler.parse_realtime_event", return_value=_inbound(lead)), \
+         patch("linkedin.realtime.handler.notify_message_received"):
+        handle_realtime_event({"data": "ignored"}, operator="Arian")
+
+    msg = Message.objects.get(external_id="urn:li:msg:rt1")
+    deal.refresh_from_db()
+    assert deal.state == ProfileState.CONNECTED
+    assert deal.last_reply_at == msg.sent_at
+    assert deal.connected_at == msg.sent_at
 
 
 def test_duplicate_event_is_idempotent(db):
