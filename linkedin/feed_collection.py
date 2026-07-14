@@ -14,6 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from linkedin.conf import (
     LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES,
+    LINKEDIN_FEED_COLLECTION_CATCHUP_DAYS,
     LINKEDIN_FEED_COLLECTION_HOUR,
     LINKEDIN_FEED_COLLECTION_MAX_POSTS,
     LINKEDIN_FEED_COLLECTION_MINUTE,
@@ -87,6 +88,12 @@ def scheduled_for_local_day(day: date) -> datetime:
 def today_collection_date(now: datetime | None = None) -> date:
     now = now or timezone.now()
     return timezone.localtime(now, collection_timezone()).date()
+
+
+def catchup_start_date(now: datetime | None = None) -> date:
+    """Oldest local collection date the unattended collector should drain."""
+    days = max(LINKEDIN_FEED_COLLECTION_CATCHUP_DAYS, 1)
+    return today_collection_date(now) - timedelta(days=days - 1)
 
 
 def collection_cutoff_for_job(job: LinkedInFeedCollectionJob) -> datetime:
@@ -198,10 +205,12 @@ def claim_due_collection_job(
 ) -> LinkedInFeedCollectionJob | None:
     now = now or timezone.now()
     ensure_collection_jobs(operator=operator, account_username=account_username, now=now)
+    oldest_collection_date = catchup_start_date(now)
     with transaction.atomic():
         qs = LinkedInFeedCollectionJob.objects.select_for_update().filter(
             operator=operator,
             account_username=account_username,
+            collection_date__gte=oldest_collection_date,
             status__in=[
                 LinkedInFeedCollectionJob.Status.PENDING,
                 LinkedInFeedCollectionJob.Status.FAILED,

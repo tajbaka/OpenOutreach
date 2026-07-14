@@ -11,6 +11,7 @@ from linkedin.feed_collection import (
     FeedPostRecord,
     _collect_from_page,
     claim_due_collection_job,
+    catchup_start_date,
     collection_cutoff_for_job,
     collection_window_end_for_job,
     content_hash_for,
@@ -106,6 +107,42 @@ def test_ensure_backfill_collection_jobs_creates_oldest_to_newest(monkeypatch):
         scheduled_for_local_day(date(2026, 7, 5)),
         scheduled_for_local_day(date(2026, 7, 6)),
     ]
+
+
+def test_catchup_start_date_defaults_to_two_week_window(monkeypatch):
+    monkeypatch.setattr("linkedin.feed_collection.LINKEDIN_FEED_COLLECTION_CATCHUP_DAYS", 14)
+    now = datetime(2026, 7, 14, 18, 0, tzinfo=dt_timezone.utc)
+
+    assert catchup_start_date(now) == date(2026, 7, 1)
+
+
+@pytest.mark.django_db
+def test_claim_due_collection_job_ignores_jobs_older_than_catchup_window(monkeypatch):
+    monkeypatch.setattr("linkedin.feed_collection.LINKEDIN_FEED_COLLECTION_HOUR", 17)
+    monkeypatch.setattr("linkedin.feed_collection.LINKEDIN_FEED_COLLECTION_MINUTE", 0)
+    monkeypatch.setattr("linkedin.feed_collection.LINKEDIN_FEED_COLLECTION_CATCHUP_DAYS", 14)
+    now = datetime(2026, 7, 14, 22, 30, tzinfo=dt_timezone.utc)
+    LinkedInFeedCollectionJob.objects.create(
+        operator="Arian",
+        account_username="arian@example.com",
+        collection_date=date(2026, 6, 20),
+        scheduled_for=datetime(2026, 6, 20, 21, 0, tzinfo=dt_timezone.utc),
+    )
+    recent = LinkedInFeedCollectionJob.objects.create(
+        operator="Arian",
+        account_username="arian@example.com",
+        collection_date=date(2026, 7, 13),
+        scheduled_for=datetime(2026, 7, 13, 21, 0, tzinfo=dt_timezone.utc),
+    )
+
+    job = claim_due_collection_job(
+        operator="Arian",
+        account_username="arian@example.com",
+        now=now,
+    )
+
+    assert job is not None
+    assert job.pk == recent.pk
 
 
 @pytest.mark.django_db

@@ -349,7 +349,7 @@ def _missed_feed_collection_due() -> bool:
         django.setup()
 
         from linkedin.conf import get_daemon_handle
-        from linkedin.feed_collection import ensure_collection_jobs
+        from linkedin.feed_collection import catchup_start_date, ensure_collection_jobs
         from linkedin.models import LinkedInFeedCollectionJob, LinkedInProfile
         from linkedin.operators import resolve_operator
 
@@ -371,6 +371,7 @@ def _missed_feed_collection_due() -> bool:
         return LinkedInFeedCollectionJob.objects.filter(
             operator=operator,
             account_username=account_username,
+            collection_date__gte=catchup_start_date(),
             status__in=[
                 LinkedInFeedCollectionJob.Status.PENDING,
                 LinkedInFeedCollectionJob.Status.FAILED,
@@ -382,8 +383,23 @@ def _missed_feed_collection_due() -> bool:
         return False
 
 
-def _feed_collection_should_start(now: datetime | None = None) -> bool:
-    return _feed_collection_due_today(now) or _missed_feed_collection_due()
+def _feed_collection_should_start(
+    now: datetime | None = None,
+    *,
+    spawned_date=None,
+) -> bool:
+    """Whether the supervisor should spawn the feed collector.
+
+    Due DB jobs override the once-per-local-day guard so a restarted machine
+    drains missed feed windows one child process at a time. The wall-clock
+    daily trigger still uses the guard to avoid spawning no-op collectors over
+    and over after today's queue is caught up.
+    """
+    missed_due = _missed_feed_collection_due()
+    if missed_due:
+        return True
+    now = now or _feed_collection_local_now()
+    return _feed_collection_due_today(now) and spawned_date != now.date()
 
 
 def _feed_collection_retry_seconds() -> int:
@@ -483,9 +499,8 @@ def supervise(args: argparse.Namespace) -> int:
         if time.monotonic() >= next_feed_check:
             local_now = _feed_collection_local_now()
             if (
-                _feed_collection_should_start(local_now)
+                _feed_collection_should_start(local_now, spawned_date=feed_spawned_date)
                 and feed_child is None
-                and feed_spawned_date != local_now.date()
                 and time.monotonic() >= feed_retry_after
             ):
                 feed_child = _start_feed_collector()
