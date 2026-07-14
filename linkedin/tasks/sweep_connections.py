@@ -138,11 +138,13 @@ def handle_sweep_connections(task, session, qualifiers):
                 )
 
         from linkedin.operators import resolve_operator
+        from linkedin.icp_outbound import resolve_icp
         operator = resolve_operator(session.linkedin_profile.linkedin_username)
         enqueue_follow_up(
             deal.campaign.pk,
             public_id,
             operator=operator,
+            icp=resolve_icp(deal.lead),
             delay_seconds=delay_seconds,
         )
         from gmail.handoff import maybe_schedule_gmail_sequence

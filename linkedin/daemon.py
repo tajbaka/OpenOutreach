@@ -397,6 +397,7 @@ def heal_tasks(session):
     # Tasks owned by other operators are skipped so the catch-up only enqueues
     # work this daemon's account can actually do.
     from linkedin.db.messages import lead_outbound_operators
+    from linkedin.icp_outbound import resolve_icp
     from linkedin.operators import resolve_operator
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
 
@@ -430,8 +431,10 @@ def heal_tasks(session):
                     "campaign_id": campaign.pk,
                     "public_id": public_id,
                     "operator": our_operator,
+                    "icp": resolve_icp(deal.lead),
                 },
                 target_time,
+                dedup_keys=["campaign_id", "public_id", "operator"],
             )
             created += int(was_created)
             rescheduled += int(was_rescheduled)

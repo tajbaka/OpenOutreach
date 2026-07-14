@@ -145,6 +145,7 @@ def handle_follow_up(task, session, qualifiers):
     sequence_name = payload.get("sequence_name") or DEFAULT_SEQUENCE_NAME
     channel = payload.get("channel") or sequence_name or DEFAULT_CHANNEL
     step_index = int(payload.get("step_index") or 0)
+    queued_icp = (payload.get("icp") or "").strip()
 
     logger.info(
         "[%s] %s %s",
@@ -158,6 +159,7 @@ def handle_follow_up(task, session, qualifiers):
         enqueue_follow_up(
             campaign_id, public_id,
             operator=our_operator,
+            icp=queued_icp or None,
             delay_seconds=_seconds_until_tomorrow(),
             sequence_name=sequence_name,
             channel=channel,
@@ -311,7 +313,13 @@ def handle_follow_up(task, session, qualifiers):
     # can complete old rows without needing a sender template block; step-
     # aware dedup needs the sequence length to know whether this step is
     # final or whether the next step must stay queued.
-    icp = resolve_icp(deal.lead)
+    resolved_icp = resolve_icp(deal.lead)
+    icp = queued_icp or resolved_icp
+    if queued_icp and resolved_icp and queued_icp != resolved_icp:
+        logger.info(
+            "follow_up using queued ICP %s for %s; current Lead.icp resolves to %s",
+            queued_icp, public_id, resolved_icp,
+        )
     steps = channel_steps(sender=our_operator, icp=icp, channel=channel)
 
     if step_already_sent:
@@ -321,6 +329,7 @@ def handle_follow_up(task, session, qualifiers):
                 campaign_id,
                 public_id,
                 operator=our_operator,
+                icp=icp,
                 delay_seconds=_delay_seconds_to_active_due(
                     steps[next_step_index].delay_hours,
                     reference_time=deal.connected_at,
@@ -385,6 +394,7 @@ def handle_follow_up(task, session, qualifiers):
         enqueue_follow_up(
             campaign_id, public_id,
             operator=our_operator,
+            icp=icp,
             delay_seconds=24 * 3600,
             sequence_name=sequence_name,
             channel=channel,
@@ -421,6 +431,7 @@ def handle_follow_up(task, session, qualifiers):
             campaign_id,
             public_id,
             operator=our_operator,
+            icp=icp,
             delay_seconds=delay_seconds,
             sequence_name=sequence_name,
             channel=channel,

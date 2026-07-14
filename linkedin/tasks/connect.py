@@ -386,10 +386,16 @@ def handle_connect(task, session, qualifiers):
                 campaign=session.campaign,
             ).select_related("lead").first()
             operator = resolve_operator(session.linkedin_profile.linkedin_username)
+            icp = None
+            if deal is not None:
+                from linkedin.icp_outbound import resolve_icp
+
+                icp = resolve_icp(deal.lead)
             enqueue_follow_up(
                 campaign_id,
                 public_id,
                 operator=operator,
+                icp=icp,
                 delay_seconds=recommended_action_delay(
                     session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                 ),
@@ -452,10 +458,16 @@ def handle_connect(task, session, qualifiers):
                     campaign=session.campaign,
                 ).select_related("lead").first()
                 operator = resolve_operator(session.linkedin_profile.linkedin_username)
+                icp = None
+                if deal is not None:
+                    from linkedin.icp_outbound import resolve_icp
+
+                    icp = resolve_icp(deal.lead)
                 enqueue_follow_up(
                     campaign_id,
                     public_id,
                     operator=operator,
+                    icp=icp,
                     delay_seconds=recommended_action_delay(
                         session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
                     ),
@@ -512,12 +524,18 @@ def _enqueue_task(task_type: "Task.TaskType", payload: dict, delay_seconds: floa
     for key in (dedup_keys if dedup_keys is not None else payload):
         filter_kwargs[f"payload__{key}"] = payload[key]
 
-    if not Task.objects.filter(**filter_kwargs).exists():
+    existing = Task.objects.filter(**filter_kwargs).order_by("scheduled_at").first()
+    if existing is None:
         Task.objects.create(
             task_type=task_type,
             scheduled_at=timezone.now() + timedelta(seconds=delay_seconds),
             payload=payload,
         )
+        return
+
+    if existing.payload != payload:
+        existing.payload = payload
+        existing.save(update_fields=["payload"])
 
 
 def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
@@ -539,6 +557,7 @@ def enqueue_follow_up(
     sequence_name: str | None = None,
     channel: str | None = None,
     step_index: int | None = None,
+    icp: str | None = None,
 ):
     """Enqueue a follow_up Task.
 
@@ -560,8 +579,11 @@ def enqueue_follow_up(
         payload["channel"] = channel
     if step_index is not None:
         payload["step_index"] = step_index
+    if icp:
+        payload["icp"] = icp
     _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,
         payload=payload,
         delay_seconds=delay_seconds,
+        dedup_keys=[key for key in payload if key != "icp"],
     )

@@ -18,6 +18,7 @@ from linkedin.operators import resolve_operator
 from linkedin.tasks.connect import (
     ConnectStrategy,
     build_connection_note,
+    enqueue_follow_up,
     handle_connect,
     recommended_action_delay,
 )
@@ -99,6 +100,37 @@ def _build_context(fake_session):
     qualifier = BayesianQualifier(seed=42)
     qualifier.rank_profiles = lambda profiles, **kw: profiles
     return {fake_session.campaign.pk: qualifier}
+
+
+@pytest.mark.django_db
+def test_enqueue_follow_up_freezes_icp_without_duplication():
+    Task.objects.create(
+        task_type=Task.TaskType.FOLLOW_UP,
+        status=Task.Status.PENDING,
+        scheduled_at=timezone.now(),
+        payload={
+            "campaign_id": 1,
+            "public_id": "alice",
+            "operator": "Athena",
+        },
+    )
+
+    enqueue_follow_up(
+        1,
+        "alice",
+        operator="Athena",
+        icp="CMMC Buyers",
+        delay_seconds=0,
+    )
+
+    tasks = list(Task.objects.filter(task_type=Task.TaskType.FOLLOW_UP))
+    assert len(tasks) == 1
+    assert tasks[0].payload == {
+        "campaign_id": 1,
+        "public_id": "alice",
+        "operator": "Athena",
+        "icp": "CMMC Buyers",
+    }
 
 
 # ── handle_connect tests ────────────────────────────────────────
@@ -570,6 +602,50 @@ class TestHandleFollowUp:
         task = _make_task(
             Task.TaskType.FOLLOW_UP,
             {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+
+        handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        sent_message = (
+            mock_send_media.call_args.args[2] if mock_send_media.called
+            else mock_send.call_args.args[2]
+        )
+        assert "CMMC" in sent_message
+        assert "FedRAMP 20x" not in sent_message
+
+    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_follow_up_uses_queued_icp_for_in_process_sequence(
+        self, mock_conversation, mock_send, mock_send_media, fake_session,
+    ):
+        """A later Lead.icp edit must not change an already-queued sequence."""
+        from crm.models import Lead, Message
+
+        fake_session.linkedin_profile.linkedin_username = "athenaaghdami@gmail.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        lead.icp = "CSPs"
+        lead.company_name = "Ensign-Bickford Aerospace & Defense Company (EBAD)"
+        lead.description = ""
+        lead.save(update_fields=["icp", "company_name", "description"])
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="urn:li:msg:queued-cmmc-note",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="Hi Alice, was looking at EBAD since I'm in the CMMC space myself.",
+            sent_at=timezone.now() - timedelta(days=5),
+        )
+
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {
+                "campaign_id": fake_session.campaign.pk,
+                "public_id": "alice",
+                "icp": "CMMC Buyers",
+            },
         )
 
         handle_follow_up(task, fake_session, _build_context(fake_session))

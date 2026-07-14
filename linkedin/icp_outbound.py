@@ -35,12 +35,13 @@ the same variant across re-runs — useful when the operator edits a
 draft mid-run and re-renders. Lead `42` always lands on variant 0 (or
 whatever `42 % len(variants)` resolves to), not a random new one.
 
-Routing: ROLE → ICP via the same `FU_ROLE_TO_ICP` mapping the Sheets
-path uses, so a lead the followup workflow classifies as `ROLE=CSP`
-gets the `CSPs` template here. Channel has its own partner/routing
-bucket, while Assessor rolls into 3PAOs/Assessors. CMMC buckets are
-not inferred from generic profile text; stamp them from the CSV `ICP`
-column at import so CMMC buyer/advisor leads do not receive FedRAMP copy.
+Routing: callers should use `resolve_icp(lead)`, which returns stamped
+`Lead.icp` first and uses the legacy ROLE → ICP classifier only to backfill
+blank rows. Queued follow-up tasks freeze that result in `payload.icp` so a
+later lead edit cannot change an in-process sequence. Channel has its own
+partner/routing bucket, while Assessor rolls into 3PAOs/Assessors. CMMC
+buckets are not inferred from generic profile text; stamp them from the CSV
+`ICP` column at import so CMMC buyer/advisor leads do not receive FedRAMP copy.
 """
 from __future__ import annotations
 
@@ -193,15 +194,10 @@ def safe_company_name(company_name: str | None, *, fallback: str = "your team") 
     return fallback if is_unknown_company_name(cleaned) else cleaned
 
 
-# ROLE classification — used by the daemon's follow_up Task handler to
-# pick which ICP template fires for a given Lead. The followup-sheet
-# workflow runs a fancier per-lead classifier inside its drafting
-# subagents (Phase 5 of `docs/followup-generation-workflow.md`); this
-# is the lighter-weight pure-Python version for the always-on daemon
-# path, where we can't afford an LLM call per send. Misclassification
-# downside is small — CSP is the default and the three templates all
-# read fine to anyone in the FedRAMP universe; the bucket only tunes
-# the angle (referral program vs assessor-portal vs CSP pitch).
+# ROLE classification — fallback used by `resolve_icp` only when Lead.icp is
+# blank. Normal daemon follow-up tasks freeze the resolved bucket in
+# payload.icp when queued, so later row edits do not move an in-process
+# sequence between template buckets.
 TIER1_3PAO_FIRMS = {
     "coalfire", "schellman", "prescient", "a-lign", "alignsec",
     "barr advisory", "barr", "kratos", "knowx", "fortreum",

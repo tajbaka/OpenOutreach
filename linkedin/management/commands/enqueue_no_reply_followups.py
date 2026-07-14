@@ -31,6 +31,7 @@ from crm.models import Deal, Message
 from linkedin.db.messages import lead_outbound_operators
 from linkedin.db.urls import url_to_public_id
 from linkedin.enums import ProfileState
+from linkedin.icp_outbound import resolve_icp
 from linkedin.models import LinkedInProfile, Task
 from linkedin.operators import resolve_operator
 from linkedin.tasks.connect import enqueue_follow_up
@@ -201,6 +202,7 @@ class Command(BaseCommand):
             enqueue_follow_up(
                 deal.campaign_id, public_id,
                 operator=operator,
+                icp=resolve_icp(deal.lead),
                 delay_seconds=i * stagger,
             )
             from gmail.handoff import maybe_schedule_gmail_sequence
