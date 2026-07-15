@@ -620,6 +620,92 @@ def notify_feed_intent_signal(*, post) -> bool:
     return True
 
 
+def notify_feed_intent_signal_group(*, posts: list) -> bool:
+    """Post one high-signal alert for a related set of feed posts/reposts."""
+    if not SLACK_HIGH_SIGNAL_URL:
+        return False
+    if not posts:
+        return False
+    if len(posts) == 1:
+        return notify_feed_intent_signal(post=posts[0])
+
+    primary = _pick_primary_feed_post(posts)
+    author = primary.author_name or "Unknown author"
+    topics = ", ".join(primary.topics or []) or "uncategorized"
+    reason = primary.relevance_reason or "Related high-signal LinkedIn feed activity."
+    suggested = primary.suggested_action or "Review the original post and related sightings."
+
+    title = ":rotating_light: *Grouped LinkedIn feed signal*"
+    summary = _feed_post_excerpt(primary, limit=420)
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"{title}\n*Primary:* {_feed_post_author_md(primary)}"},
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"> {summary or '(no text)'}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Why it matters:*\n{reason}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Suggested action:*\n{suggested}"}},
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f"*Intent:* {primary.intent or 'unknown'}"},
+                {"type": "mrkdwn", "text": f"*Audience:* {primary.audience or 'unknown'}"},
+                {"type": "mrkdwn", "text": f"*Topics:* {topics}"},
+                {"type": "mrkdwn", "text": f"*Related sightings:* {len(posts)}"},
+            ],
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": _feed_group_links_text(posts)}},
+    ]
+    payload = {
+        "text": f"Grouped LinkedIn feed signal: {author} + {len(posts) - 1} related",
+        "blocks": blocks,
+    }
+    _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent-group ({author})")
+    return True
+
+
+def _pick_primary_feed_post(posts: list):
+    def score(post) -> tuple[int, int, object]:
+        intent_rank = {"urgent": 4, "high": 3, "medium": 2, "low": 1}.get(post.intent or "", 0)
+        has_url = 1 if post.post_url else 0
+        return (intent_rank, has_url, post.last_seen_at)
+
+    return sorted(posts, key=score, reverse=True)[0]
+
+
+def _feed_post_author_md(post) -> str:
+    author = post.author_name or "Unknown author"
+    return f"<{post.author_profile_url}|{author}>" if post.author_profile_url else author
+
+
+def _feed_post_excerpt(post, *, limit: int) -> str:
+    excerpt = (post.post_text or "").strip().replace("\n", " ")
+    if len(excerpt) > limit:
+        excerpt = excerpt[: limit - 3].rstrip() + "..."
+    return excerpt
+
+
+def _feed_group_links_text(posts: list) -> str:
+    lines = ["*Links / sightings:*"]
+    for idx, post in enumerate(posts[:8], start=1):
+        observations = list(post.observations.order_by("operator", "account_username")[:6])
+        seen_by = ", ".join(
+            sorted({
+                obs.operator or obs.account_username
+                for obs in observations
+                if obs.operator or obs.account_username
+            }),
+        )
+        link = f"<{post.post_url}|Open post>" if post.post_url else "Post URL unavailable"
+        snippet = _feed_post_excerpt(post, limit=120)
+        label = post.author_name or f"Post {post.id}"
+        seen = f" - seen by {seen_by}" if seen_by else ""
+        lines.append(f"{idx}. *{label}*{seen}\n{link}\n_{snippet}_")
+    if len(posts) > 8:
+        lines.append(f"...and {len(posts) - 8} more related sightings.")
+    return "\n".join(lines)[:_SLACK_SECTION_TEXT_LIMIT]
+
+
 def notify_degraded(*, sender: str, title: str, detail: str) -> None:
     """Post a monitoring alert to the ops channel (SLACK_WEBHOOK_URL).
 

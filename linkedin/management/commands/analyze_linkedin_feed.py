@@ -25,30 +25,35 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         from linkedin.feed_analysis import (
+            group_feed_posts_for_alert,
             load_decisions,
-            mark_feed_post_slack_notified,
+            mark_feed_posts_slack_notified,
             save_feed_post_analysis,
             serialize_posts_for_codex,
             should_notify_feed_post,
         )
         from linkedin.models import LinkedInFeedPost
-        from linkedin.notifications.slack import notify_feed_intent_signal
+        from linkedin.notifications.slack import notify_feed_intent_signal_group
 
         if opts.get("apply_json"):
             decisions = load_decisions(opts["apply_json"])
             applied = 0
             alerts = 0
+            alert_posts = []
             for post_id, result in decisions:
                 post = LinkedInFeedPost.objects.get(pk=post_id)
                 save_feed_post_analysis(post, result)
                 applied += 1
-                if result.should_alert and should_notify_feed_post(post) and not opts["no_slack"]:
-                    if notify_feed_intent_signal(post=post):
-                        mark_feed_post_slack_notified(post)
+                if result.should_alert and should_notify_feed_post(post):
+                    alert_posts.append(post)
+            if not opts["no_slack"]:
+                for group in group_feed_posts_for_alert(alert_posts):
+                    if notify_feed_intent_signal_group(posts=group):
+                        mark_feed_posts_slack_notified(group)
                         alerts += 1
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Applied {applied} Codex feed decisions; Slack alerts sent: {alerts}.",
+                    f"Applied {applied} Codex feed decisions; Slack alert groups sent: {alerts}.",
                 ),
             )
             return

@@ -9,12 +9,14 @@ from django.utils import timezone
 
 from linkedin.feed_analysis import (
     decision_from_mapping,
+    feed_post_group_key,
+    group_feed_posts_for_alert,
     load_decisions,
     save_feed_post_analysis,
     serialize_posts_for_codex,
     should_notify_feed_post,
 )
-from linkedin.models import LinkedInFeedPost
+from linkedin.models import LinkedInFeedObservation, LinkedInFeedPost
 
 
 def _post(**overrides):
@@ -97,6 +99,27 @@ def test_decision_from_mapping_catches_fedramp_advisory_opportunity():
     assert result.intent == LinkedInFeedPost.Intent.HIGH
     assert result.audience == LinkedInFeedPost.Audience.ADVISOR_PARTNER
     assert "FedRAMP" in result.topics
+
+
+@pytest.mark.django_db
+def test_feed_post_group_key_groups_soc2_class_a_original_and_repost():
+    original = _post(
+        content_hash="soc2-original",
+        author_name="Pete Dudek likes this",
+        post_text="Matt Bruggeman says: Have a SOC 2 and always wanted FedRAMP?",
+    )
+    repost = _post(
+        content_hash="soc2-repost",
+        author_name="Dan Chandler",
+        post_text=(
+            "Class A is a way federal decision makers can review tools. "
+            "Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?"
+        ),
+    )
+
+    assert feed_post_group_key(original) == "trigger:fedramp-class-a-soc2"
+    assert feed_post_group_key(repost) == feed_post_group_key(original)
+    assert group_feed_posts_for_alert([original]) == [[repost, original]]
 
 
 @pytest.mark.django_db
@@ -211,3 +234,80 @@ def test_analyze_linkedin_feed_applies_codex_decision_and_posts_slack(
     assert post.intent == LinkedInFeedPost.Intent.HIGH
     assert post.slack_notified_at is not None
     mock_post.assert_called_once()
+
+
+@pytest.mark.django_db
+@patch("linkedin.notifications.slack._post_to_slack")
+def test_analyze_linkedin_feed_groups_related_reposts_into_one_slack_alert(
+    mock_post,
+    monkeypatch,
+    tmp_path,
+):
+    from linkedin.notifications import slack
+
+    original = _post(
+        content_hash="group-original",
+        author_name="Pete Dudek likes this",
+        post_url="https://www.linkedin.com/feed/update/urn:li:share:original/",
+        post_text="Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?",
+    )
+    repost = _post(
+        content_hash="group-repost",
+        author_name="Dan Chandler",
+        post_url="https://www.linkedin.com/feed/update/urn:li:share:repost/",
+        post_text=(
+            "Class A helps federal decision makers evaluate tools. "
+            "Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?"
+        ),
+    )
+    LinkedInFeedObservation.objects.create(
+        post=original,
+        operator="Leili",
+        account_username="leili@example.com",
+    )
+    LinkedInFeedObservation.objects.create(
+        post=repost,
+        operator="Chuka",
+        account_username="chuka@example.com",
+    )
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({
+        "decisions": [
+            {
+                "post_id": original.id,
+                "is_relevant": True,
+                "should_alert": True,
+                "intent": "high",
+                "audience": "assessor",
+                "topics": ["FedRAMP", "Class A"],
+                "relevance_reason": "FedRAMP Class A path: Have a SOC 2 and always wanted FedRAMP?",
+                "suggested_action": "Review original and related sightings.",
+            },
+            {
+                "post_id": repost.id,
+                "is_relevant": True,
+                "should_alert": False,
+                "intent": "medium",
+                "audience": "assessor",
+                "topics": ["FedRAMP", "Class A"],
+                "relevance_reason": "Related repost/commentary.",
+                "suggested_action": "Keep as context.",
+            },
+        ],
+    }))
+    monkeypatch.setattr(slack, "SLACK_HIGH_SIGNAL_URL", "https://hooks.slack.test/high-signal")
+
+    call_command("analyze_linkedin_feed", apply_json=str(decisions))
+
+    original.refresh_from_db()
+    repost.refresh_from_db()
+    assert original.slack_notified_at is not None
+    assert repost.slack_notified_at is not None
+    mock_post.assert_called_once()
+    payload = mock_post.call_args.args[1]
+    rendered = json.dumps(payload)
+    assert "Grouped LinkedIn feed signal" in rendered
+    assert "Leili" in rendered
+    assert "Chuka" in rendered
+    assert "urn:li:share:original" in rendered
+    assert "urn:li:share:repost" in rendered

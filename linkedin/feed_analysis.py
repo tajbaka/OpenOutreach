@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit, urlunsplit
@@ -19,6 +21,14 @@ ALERT_AUDIENCES = {
     LinkedInFeedPost.Audience.ADVISOR_PARTNER,
     LinkedInFeedPost.Audience.ASSESSOR,
     LinkedInFeedPost.Audience.CHANNEL,
+}
+GROUP_LOOKBACK_DAYS = 14
+_WHITESPACE_RE = re.compile(r"\s+")
+
+MARKET_TRIGGER_PHRASES = {
+    "have a soc 2 and always wanted fedramp": "fedramp-class-a-soc2",
+    "class a certifications allow you to get fedramp certified": "fedramp-class-a-soc2",
+    "fedramp marketplace from your existing soc 2 report": "fedramp-class-a-soc2",
 }
 
 
@@ -48,7 +58,11 @@ def codex_review_instructions() -> str:
         "external opportunity to act on. Use crm_matches as grounding when "
         "assigning audience: assessor/advisory firms such as A-LIGN, 3PAOs, "
         "auditors, and consultants should be assessor or advisor_partner rather "
-        "than csp even if the post discusses CSPs or FedRAMP."
+        "than csp even if the post discusses CSPs or FedRAMP. Treat timely "
+        "FedRAMP 20x, Class A, SOC 2-to-FedRAMP, CMMC suspension, and similar "
+        "ecosystem trigger posts as alert-worthy high signal when they create "
+        "a useful outreach/research angle, even if the top-level post is a "
+        "repost, comment, or market observation rather than direct buyer intent."
     )
 
 
@@ -146,6 +160,16 @@ def mark_feed_post_slack_notified(post: LinkedInFeedPost) -> None:
     post.save(update_fields=["slack_notified_at", "updated_at"])
 
 
+def mark_feed_posts_slack_notified(posts: Iterable[LinkedInFeedPost]) -> None:
+    now = timezone.now()
+    ids = [post.id for post in posts]
+    if ids:
+        LinkedInFeedPost.objects.filter(id__in=ids).update(
+            slack_notified_at=now,
+            updated_at=now,
+        )
+
+
 def should_notify_feed_post(post: LinkedInFeedPost) -> bool:
     return (
         post.slack_notified_at is None
@@ -153,6 +177,57 @@ def should_notify_feed_post(post: LinkedInFeedPost) -> bool:
         and post.audience in ALERT_AUDIENCES
         and bool(post.relevance_reason)
     )
+
+
+def feed_post_group_key(post: LinkedInFeedPost) -> str:
+    text = _normalize_group_text(post.post_text)
+    for phrase, key in MARKET_TRIGGER_PHRASES.items():
+        if phrase in text:
+            return f"trigger:{key}"
+    if "fedramp" in text and "class a" in text and "soc 2" in text:
+        return "trigger:fedramp-class-a-soc2"
+    if "cmmc" in text and "suspend" in text and "phase" in text:
+        return "trigger:cmmc-suspension"
+    if post.activity_urn:
+        return f"urn:{post.activity_urn}"
+    if post.post_url:
+        return f"url:{post.post_url.rstrip('/')}"
+    return f"hash:{post.content_hash}"
+
+
+def group_feed_posts_for_alert(
+    alert_posts: Iterable[LinkedInFeedPost],
+    *,
+    lookback_days: int = GROUP_LOOKBACK_DAYS,
+) -> list[list[LinkedInFeedPost]]:
+    alert_posts = list(alert_posts)
+    if not alert_posts:
+        return []
+
+    wanted_keys = {feed_post_group_key(post) for post in alert_posts}
+    cutoff = timezone.now() - timedelta(days=lookback_days)
+    recent = (
+        LinkedInFeedPost.objects
+        .prefetch_related("observations")
+        .filter(last_seen_at__gte=cutoff)
+        .order_by("-last_seen_at")
+    )
+    by_key: dict[str, list[LinkedInFeedPost]] = {key: [] for key in wanted_keys}
+    for post in recent:
+        key = feed_post_group_key(post)
+        if key in by_key:
+            by_key[key].append(post)
+
+    groups: list[list[LinkedInFeedPost]] = []
+    seen_post_ids: set[int] = set()
+    for post in alert_posts:
+        key = feed_post_group_key(post)
+        group = [item for item in by_key.get(key, [post]) if item.id not in seen_post_ids]
+        if not group:
+            continue
+        seen_post_ids.update(item.id for item in group)
+        groups.append(group)
+    return groups
 
 
 def _serialize_post(post: LinkedInFeedPost) -> dict:
@@ -182,6 +257,10 @@ def _serialize_post(post: LinkedInFeedPost) -> dict:
 def _normalize_choice(value: str, allowed: set[str], default: str) -> str:
     cleaned = (value or "").strip().lower()
     return cleaned if cleaned in allowed else default
+
+
+def _normalize_group_text(value: str) -> str:
+    return _WHITESPACE_RE.sub(" ", (value or "").lower()).strip()
 
 
 def crm_matches_for_feed_post(post: LinkedInFeedPost) -> list[dict]:
