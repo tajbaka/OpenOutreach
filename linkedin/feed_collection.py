@@ -364,7 +364,7 @@ def _collect_from_page(
     scroll_pause_seconds: float,
     window_end_at: datetime | None = None,
 ) -> CollectionResult:
-    page.goto(FEED_URL, wait_until="domcontentloaded", timeout=30_000)
+    page.goto(FEED_URL, wait_until="commit", timeout=45_000)
     page.wait_for_timeout(2000)
 
     processed: set[str] = set()
@@ -432,7 +432,7 @@ def _collect_from_page(
 def _scroll_feed_page(page) -> None:
     page.evaluate(
         """
-        () => {
+        async () => {
           const workspace = document.querySelector('main#workspace');
           if (workspace && workspace.scrollHeight > workspace.clientHeight) {
             workspace.scrollTop = Math.min(
@@ -450,7 +450,7 @@ def _scroll_feed_page(page) -> None:
 def extract_posts_from_page(page) -> list[FeedPostRecord]:
     rows = page.evaluate(
         """
-        () => {
+        async () => {
           const selectors = [
             'div.feed-shared-update-v2',
             'div[data-urn*="urn:li:activity"]',
@@ -474,7 +474,37 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
             if (!text || text.length < 20) continue;
             unique.push(node);
           }
-          return unique.map((node) => {
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const findMenuPostUrn = async (node) => {
+            const menuButton = node.querySelector('button[aria-label^="Open control menu for post by"]');
+            if (!menuButton) return '';
+            try {
+              document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+              await wait(100);
+              node.scrollIntoView({block: 'center', inline: 'nearest'});
+              await wait(100);
+              menuButton.click();
+              await wait(500);
+              const menuLinks = Array.from(document.querySelectorAll(
+                '[role="menu"] a[href*="targetUrn="],'
+                + '[role="menu"] a[href*="entityUrn="],'
+                + '[role="menu"] a[href*="updateUrn="]'
+              ));
+              for (const link of menuLinks) {
+                const href = decodeURIComponent((link.href || '').trim());
+                if (href.includes('urn:li:activity') || href.includes('urn:li:share')) {
+                  document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+                  return href;
+                }
+              }
+              document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+            } catch (_e) {
+              document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
+            }
+            return '';
+          };
+          const rows = [];
+          for (const node of unique) {
             const attr = (name) => node.getAttribute(name) || '';
             const pickText = (items) => {
               for (const sel of items) {
@@ -542,6 +572,7 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
                 'a[href*="urn:li:share"]'
               ])}
             ).href || '';
+            const menuPostUrn = postLink ? '' : await findMenuPostUrn(node);
             const profileLink = pickHref([
               'a.update-components-actor__meta-link[href*="/in/"]',
               'a.feed-shared-actor__container-link[href*="/in/"]',
@@ -558,13 +589,14 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
               '.feed-shared-actor__sub-description',
               'time'
             ]);
-            return {
+            rows.push({
               dataUrn: attr('data-urn'),
               dataId: attr('data-id'),
               descendantActivityUrn: findAttr([
                 'data-urn', 'data-id', 'data-activity-urn', 'data-chameleon-result-urn'
               ]),
-              postUrl: postLink,
+              menuPostUrn,
+              postUrl: postLink || menuPostUrn,
               candidateLinks: links.slice(0, 80),
               authorName: pickText([
                 '.update-components-actor__name',
@@ -580,8 +612,9 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
               postText,
               timestampText: timestamp,
               text: node.innerText || ''
-            };
-          });
+            });
+          }
+          return rows;
         }
         """,
     )
@@ -600,7 +633,7 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
         raw_url = row.get("postUrl") or ""
         raw_identity = " ".join(
             str(row.get(key) or "")
-            for key in ("dataUrn", "dataId", "descendantActivityUrn", "postUrl")
+            for key in ("dataUrn", "dataId", "descendantActivityUrn", "menuPostUrn", "postUrl")
         )
         activity_urn = _extract_activity_urn(raw_identity)
         post_url = _normalize_url(raw_url)
@@ -661,6 +694,9 @@ def upsert_feed_record(
         created = True
     else:
         created = False
+        effective_activity_urn = record.activity_urn or post.activity_urn
+        if not defaults["post_url"]:
+            defaults["post_url"] = post.post_url or post_url_for_activity_urn(effective_activity_urn)
         if record.posted_at is None and post.posted_at is not None:
             defaults["posted_at"] = post.posted_at
         for field, value in defaults.items():

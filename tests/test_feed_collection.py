@@ -314,6 +314,36 @@ def test_extract_posts_from_page_uses_share_urn_permalink_when_available():
     assert records[0].post_url == post_url_for_activity_urn("urn:li:share:7475780780439314432")
 
 
+def test_extract_posts_from_page_uses_menu_urn_permalink_when_card_has_no_post_link():
+    class FakePage:
+        def evaluate(self, *_args):
+            return [{
+                "dataUrn": "",
+                "dataId": "",
+                "descendantActivityUrn": "",
+                "menuPostUrn": (
+                    "https://www.linkedin.com/preload/embed-modal/"
+                    "?targetUrn=urn:li:share:7483212390117879809"
+                ),
+                "postUrl": (
+                    "https://www.linkedin.com/preload/embed-modal/"
+                    "?targetUrn=urn:li:share:7483212390117879809"
+                ),
+                "authorName": "Sean Doherty",
+                "authorHeadline": "CEO at GovDash",
+                "authorProfileUrl": "https://www.linkedin.com/in/sean-doherty/",
+                "postText": "Agents on GovDash continue to go exponential.",
+                "timestampText": "1m",
+                "text": "Feed post\nSean Doherty\n1m\nAgents on GovDash continue to go exponential.",
+            }]
+
+    records = extract_posts_from_page(FakePage())
+
+    assert len(records) == 1
+    assert records[0].activity_urn == "urn:li:share:7483212390117879809"
+    assert records[0].post_url == post_url_for_activity_urn("urn:li:share:7483212390117879809")
+
+
 def test_extract_posts_from_page_drops_non_specific_post_listing_without_activity_urn():
     class FakePage:
         def evaluate(self, *_args):
@@ -513,6 +543,30 @@ def test_upsert_feed_record_upgrades_hash_match_with_activity_urn():
     post = LinkedInFeedPost.objects.get()
     assert post.activity_urn == "urn:li:activity:456"
     assert LinkedInFeedObservation.objects.get().seen_count == 2
+
+
+@pytest.mark.django_db
+def test_upsert_feed_record_fills_blank_url_from_existing_share_urn():
+    job = ensure_collection_jobs(
+        operator="Arian",
+        account_username="arian@example.com",
+        now=timezone.now(),
+    )
+    record = _record(
+        activity_urn="urn:li:share:7482977423408660480",
+        post_url="",
+        post_text="JOIN OUR TEAM! We're growing and looking for talented people.",
+    )
+
+    assert upsert_feed_record(record, job=job) == (True, True)
+    post = LinkedInFeedPost.objects.get(activity_urn="urn:li:share:7482977423408660480")
+    post.post_url = ""
+    post.save(update_fields=["post_url"])
+
+    assert upsert_feed_record(record, job=job) == (False, False)
+
+    post.refresh_from_db()
+    assert post.post_url == post_url_for_activity_urn("urn:li:share:7482977423408660480")
 
 
 @pytest.mark.django_db
