@@ -291,6 +291,29 @@ def test_extract_posts_from_page_uses_activity_urn_permalink_when_post_url_is_li
     assert records[0].post_url == post_url_for_activity_urn("urn:li:activity:987")
 
 
+def test_extract_posts_from_page_uses_share_urn_permalink_when_available():
+    class FakePage:
+        def evaluate(self, *_args):
+            return [{
+                "dataUrn": "",
+                "dataId": "",
+                "descendantActivityUrn": "urn:li:share:7475780780439314432",
+                "postUrl": "https://www.linkedin.com/feed/",
+                "authorName": "Matt Bruggeman",
+                "authorHeadline": "Director of Federal GTM",
+                "authorProfileUrl": "https://www.linkedin.com/in/matt-bruggeman/",
+                "postText": "Have a SOC 2 and always wanted FedRAMP?",
+                "timestampText": "2h",
+                "text": "Feed post\nMatt Bruggeman\n2h\nHave a SOC 2 and always wanted FedRAMP?",
+            }]
+
+    records = extract_posts_from_page(FakePage())
+
+    assert len(records) == 1
+    assert records[0].activity_urn == "urn:li:share:7475780780439314432"
+    assert records[0].post_url == post_url_for_activity_urn("urn:li:share:7475780780439314432")
+
+
 def test_extract_posts_from_page_drops_non_specific_post_listing_without_activity_urn():
     class FakePage:
         def evaluate(self, *_args):

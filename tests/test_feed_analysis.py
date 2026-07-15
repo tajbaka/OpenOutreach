@@ -47,6 +47,40 @@ def test_serialize_posts_for_codex_includes_grc_tool_and_advisor_criteria():
     assert "interesting opportunity" in payload["posts"][0]["post_text"]
 
 
+@pytest.mark.django_db
+def test_serialize_posts_for_codex_includes_crm_matches_from_embedded_links():
+    from crm.models import Lead
+
+    post = _post(
+        content_hash="crm-context",
+        author_name="Pete Dudek likes this",
+        author_profile_url="https://www.linkedin.com/in/pete-dudek-a4509a77/",
+        raw_payload={
+            "candidateLinks": [
+                {"href": "https://www.linkedin.com/in/pete-dudek-a4509a77/", "text": "Pete Dudek"},
+                {"href": "https://www.linkedin.com/in/matt-bruggeman/", "text": "Matt Bruggeman"},
+            ],
+        },
+        post_text="Matt Bruggeman says: Have a SOC 2 and always wanted FedRAMP?",
+    )
+    Lead.objects.create(
+        first_name="Matt",
+        last_name="Bruggeman",
+        company_name="A-LIGN",
+        linkedin_url="https://www.linkedin.com/in/matt-bruggeman/",
+        icp="assessor",
+        description="Director of Federal GTM at A-LIGN, an assessor and compliance advisory company.",
+    )
+
+    payload = serialize_posts_for_codex([post])
+
+    assert "crm_matches" in payload["schema"]
+    matches = payload["posts"][0]["crm_matches"]
+    assert matches[0]["company_name"] == "A-LIGN"
+    assert matches[0]["icp"] == "assessor"
+    assert "assessor" in payload["instructions"]
+
+
 def test_decision_from_mapping_catches_fedramp_advisory_opportunity():
     result = decision_from_mapping({
         "post_id": 123,

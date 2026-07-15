@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlsplit, urlunsplit
 
 from django.utils import timezone
 
@@ -44,7 +45,10 @@ def codex_review_instructions() -> str:
         "should be high intent. Ignore generic ads, generic cybersecurity news, "
         "broad thought leadership with no ask/pain/opportunity, generic hiring "
         "outside GRC/FedRAMP/CMMC, and Boundera's own posts unless there is an "
-        "external opportunity to act on."
+        "external opportunity to act on. Use crm_matches as grounding when "
+        "assigning audience: assessor/advisory firms such as A-LIGN, 3PAOs, "
+        "auditors, and consultants should be assessor or advisor_partner rather "
+        "than csp even if the post discusses CSPs or FedRAMP."
     )
 
 
@@ -63,6 +67,10 @@ def serialize_posts_for_codex(posts: Iterable[LinkedInFeedPost]) -> dict:
             "topics": ["short strings such as FedRAMP, CMMC, GRC automation"],
             "relevance_reason": "short reason, quote the signal when useful",
             "suggested_action": "short suggested action for the human operator",
+            "crm_matches": (
+                "read-only context for profile/company matches in our CRM; use "
+                "it to avoid misclassifying assessors/advisors as CSPs"
+            ),
         },
         "posts": [_serialize_post(post) for post in posts],
     }
@@ -167,9 +175,64 @@ def _serialize_post(post: LinkedInFeedPost) -> dict:
             }
             for obs in post.observations.order_by("operator", "account_username")[:10]
         ],
+        "crm_matches": crm_matches_for_feed_post(post),
     }
 
 
 def _normalize_choice(value: str, allowed: set[str], default: str) -> str:
     cleaned = (value or "").strip().lower()
     return cleaned if cleaned in allowed else default
+
+
+def crm_matches_for_feed_post(post: LinkedInFeedPost) -> list[dict]:
+    urls = _profile_urls_for_post(post)
+    if not urls:
+        return []
+
+    from crm.models import Lead
+
+    leads = Lead.objects.filter(linkedin_url__in=urls).order_by("company_name", "last_name", "first_name")
+    return [
+        {
+            "lead_id": lead.id,
+            "full_name": lead.full_name,
+            "company_name": lead.company_name,
+            "linkedin_url": lead.linkedin_url,
+            "public_identifier": lead.public_identifier,
+            "description": lead.description[:500],
+            "icp": lead.icp,
+            "disqualified": lead.disqualified,
+        }
+        for lead in leads[:12]
+    ]
+
+
+def _profile_urls_for_post(post: LinkedInFeedPost) -> list[str]:
+    urls: list[str] = []
+    if post.author_profile_url:
+        urls.append(post.author_profile_url)
+    raw_payload = post.raw_payload or {}
+    for link in raw_payload.get("candidateLinks") or []:
+        href = str(link.get("href") or "")
+        if "/in/" in href:
+            urls.append(href)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        clean = _normalize_profile_url(url)
+        if clean and clean not in seen:
+            normalized.append(clean)
+            seen.add(clean)
+    return normalized
+
+
+def _normalize_profile_url(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    parts = urlsplit(value)
+    if not parts.netloc.endswith("linkedin.com") or "/in/" not in parts.path:
+        return ""
+    path = parts.path.rstrip("/") + "/"
+    return urlunsplit((parts.scheme or "https", parts.netloc, path, "", ""))

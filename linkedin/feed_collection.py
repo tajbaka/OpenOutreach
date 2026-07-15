@@ -454,7 +454,9 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
           const selectors = [
             'div.feed-shared-update-v2',
             'div[data-urn*="urn:li:activity"]',
-            'div[data-id*="urn:li:activity"]'
+            'div[data-id*="urn:li:activity"]',
+            'div[data-urn*="urn:li:share"]',
+            'div[data-id*="urn:li:share"]'
           ];
           const nodes = Array.from(document.querySelectorAll(selectors.join(',')));
           for (const node of document.querySelectorAll('[role="listitem"]')) {
@@ -495,7 +497,10 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
               for (const el of nodes) {
                 for (const name of names) {
                   const value = (el.getAttribute && el.getAttribute(name) || '').trim();
-                  if (value && value.includes('urn:li:activity')) return value;
+                  if (
+                    value
+                    && (value.includes('urn:li:activity') || value.includes('urn:li:share'))
+                  ) return value;
                 }
               }
               return '';
@@ -512,7 +517,7 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
                 const path = url.pathname.replace(/\\/+$/, '');
                 if (!url.hostname.endsWith('linkedin.com')) return false;
                 if (path.includes('/feed/update/')) return true;
-                if (href.includes('urn:li:activity')) return true;
+                if (href.includes('urn:li:activity') || href.includes('urn:li:share')) return true;
                 if (!path.includes('/posts/')) return false;
                 if (new RegExp('/(?:company|school|showcase)/[^/]+/posts$').test(path)) return false;
                 return path.split('/posts/')[1].length > 0;
@@ -533,7 +538,8 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
               || links.find((link) => isSpecificPostLink(link.href))
               || {href: pickHref([
                 'a[href*="/feed/update/"]',
-                'a[href*="urn:li:activity"]'
+                'a[href*="urn:li:activity"]',
+                'a[href*="urn:li:share"]'
               ])}
             ).href || '';
             const profileLink = pickHref([
