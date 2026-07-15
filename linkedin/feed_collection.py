@@ -13,6 +13,8 @@ from django.utils import timezone
 from playwright.sync_api import sync_playwright
 
 from linkedin.conf import (
+    LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MAX_SECONDS,
+    LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MIN_SECONDS,
     LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES,
     LINKEDIN_FEED_COLLECTION_CATCHUP_DAYS,
     LINKEDIN_FEED_COLLECTION_HOUR,
@@ -450,7 +452,7 @@ def _scroll_feed_page(page) -> None:
 def extract_posts_from_page(page) -> list[FeedPostRecord]:
     rows = page.evaluate(
         """
-        async () => {
+        async ({actionDelayMinMs, actionDelayMaxMs}) => {
           const selectors = [
             'div.feed-shared-update-v2',
             'div[data-urn*="urn:li:activity"]',
@@ -475,16 +477,21 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
             unique.push(node);
           }
           const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const actionWait = async () => {
+            const min = Math.max(0, actionDelayMinMs || 0);
+            const max = Math.max(min, actionDelayMaxMs || min);
+            await wait(min + Math.random() * (max - min));
+          };
           const findMenuPostUrn = async (node) => {
             const menuButton = node.querySelector('button[aria-label^="Open control menu for post by"]');
             if (!menuButton) return '';
             try {
               document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}));
-              await wait(100);
+              await actionWait();
               node.scrollIntoView({block: 'center', inline: 'nearest'});
-              await wait(100);
+              await actionWait();
               menuButton.click();
-              await wait(500);
+              await actionWait();
               const menuLinks = Array.from(document.querySelectorAll(
                 '[role="menu"] a[href*="targetUrn="],'
                 + '[role="menu"] a[href*="entityUrn="],'
@@ -617,6 +624,10 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
           return rows;
         }
         """,
+        {
+            "actionDelayMinMs": int(LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MIN_SECONDS * 1000),
+            "actionDelayMaxMs": int(LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MAX_SECONDS * 1000),
+        },
     )
     records: list[FeedPostRecord] = []
     reference_time = timezone.now()

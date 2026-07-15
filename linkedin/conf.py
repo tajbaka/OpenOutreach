@@ -253,6 +253,12 @@ LINKEDIN_FEED_COLLECTION_STOP_AFTER_STALE = int(
 LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS = float(
     os.getenv("LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS") or 2,
 )
+LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MIN_SECONDS = float(
+    os.getenv("LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MIN_SECONDS") or 0.7,
+)
+LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MAX_SECONDS = float(
+    os.getenv("LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MAX_SECONDS") or 1.8,
+)
 
 # ----------------------------------------------------------------------
 # Phone enrichment (multi-provider waterfall — see linkedin/enrichment/)
