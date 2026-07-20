@@ -45,6 +45,7 @@ def test_serialize_posts_for_codex_includes_grc_tool_and_advisor_criteria():
     assert "FedRAMP 20x tool" in payload["instructions"]
     assert "GRC automation tool" in payload["instructions"]
     assert "wants to work as" in payload["instructions"]
+    assert "CMMC-only posts" in payload["instructions"]
     assert payload["posts"][0]["id"] == post.id
     assert "interesting opportunity" in payload["posts"][0]["post_text"]
 
@@ -99,6 +100,37 @@ def test_decision_from_mapping_catches_fedramp_advisory_opportunity():
     assert result.intent == LinkedInFeedPost.Intent.HIGH
     assert result.audience == LinkedInFeedPost.Audience.ADVISOR_PARTNER
     assert "FedRAMP" in result.topics
+
+
+def test_decision_from_mapping_suppresses_cmmc_only_alerts():
+    result = decision_from_mapping({
+        "post_id": 123,
+        "is_relevant": True,
+        "should_alert": True,
+        "intent": "high",
+        "audience": "advisor_partner",
+        "topics": ["CMMC", "CMMC suspension"],
+        "relevance_reason": "CMMC assessor commentary on CMMC pause.",
+        "suggested_action": "Use as CMMC market angle.",
+    })
+
+    assert result.should_alert is False
+    assert result.intent == LinkedInFeedPost.Intent.HIGH
+
+
+def test_decision_from_mapping_allows_cmmc_when_fedramp_is_present():
+    result = decision_from_mapping({
+        "post_id": 123,
+        "is_relevant": True,
+        "should_alert": True,
+        "intent": "high",
+        "audience": "advisor_partner",
+        "topics": ["FedRAMP", "CMMC"],
+        "relevance_reason": "FedRAMP advisory opportunity with CMMC context.",
+        "suggested_action": "Review FedRAMP angle.",
+    })
+
+    assert result.should_alert is True
 
 
 @pytest.mark.django_db

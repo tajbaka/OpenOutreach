@@ -48,21 +48,24 @@ def codex_review_instructions() -> str:
     return (
         "Review these LinkedIn feed posts for Boundera. Flag high/urgent intent "
         "when someone wants a GRC automation tool, FedRAMP tool, FedRAMP 20x "
-        "tool, CMMC/FedRAMP/GRC help, compliance automation, evidence/SSP/POA&M "
-        "support, or wants to work as / hire / find a GRC, FedRAMP, CMMC, "
+        "tool, FedRAMP/GRC help, compliance automation, evidence/SSP/POA&M "
+        "support, or wants to work as / hire / find a GRC, FedRAMP, "
         "3PAO, assessor, advisor, channel, or partner resource. A Pete "
         "Strouse-style post about an interesting FedRAMP advisory opportunity "
         "should be high intent. Ignore generic ads, generic cybersecurity news, "
         "broad thought leadership with no ask/pain/opportunity, generic hiring "
-        "outside GRC/FedRAMP/CMMC, and Boundera's own posts unless there is an "
-        "external opportunity to act on. Use crm_matches as grounding when "
+        "outside GRC/FedRAMP, CMMC-only posts, and Boundera's own posts unless "
+        "there is an external opportunity to act on. Use crm_matches as grounding when "
         "assigning audience: assessor/advisory firms such as A-LIGN, 3PAOs, "
         "auditors, and consultants should be assessor or advisor_partner rather "
         "than csp even if the post discusses CSPs or FedRAMP. Treat timely "
-        "FedRAMP 20x, Class A, SOC 2-to-FedRAMP, CMMC suspension, and similar "
+        "FedRAMP 20x, Class A, SOC 2-to-FedRAMP, and similar "
         "ecosystem trigger posts as alert-worthy high signal when they create "
         "a useful outreach/research angle, even if the top-level post is a "
-        "repost, comment, or market observation rather than direct buyer intent."
+        "repost, comment, or market observation rather than direct buyer intent. "
+        "Do not alert on CMMC-only commentary, CMMC-only news, or CMMC-only "
+        "advisor/assessor posts unless there is also a clear FedRAMP, GRC "
+        "automation, compliance automation, or Boundera-relevant opportunity."
     )
 
 
@@ -78,7 +81,7 @@ def serialize_posts_for_codex(posts: Iterable[LinkedInFeedPost]) -> dict:
                 "csp", "advisor_partner", "assessor", "channel",
                 "other", "not_relevant",
             ],
-            "topics": ["short strings such as FedRAMP, CMMC, GRC automation"],
+            "topics": ["short strings such as FedRAMP, GRC automation"],
             "relevance_reason": "short reason, quote the signal when useful",
             "suggested_action": "short suggested action for the human operator",
             "crm_matches": (
@@ -121,6 +124,7 @@ def decision_from_mapping(row: dict) -> FeedPostAnalysisResult:
         and is_relevant
         and intent in ALERT_INTENTS
         and audience in ALERT_AUDIENCES
+        and not _is_cmmc_only_alert(row)
     )
     topics = [str(topic).strip() for topic in (row.get("topics") or []) if str(topic).strip()]
     return FeedPostAnalysisResult(
@@ -186,8 +190,6 @@ def feed_post_group_key(post: LinkedInFeedPost) -> str:
             return f"trigger:{key}"
     if "fedramp" in text and "class a" in text and "soc 2" in text:
         return "trigger:fedramp-class-a-soc2"
-    if "cmmc" in text and "suspend" in text and "phase" in text:
-        return "trigger:cmmc-suspension"
     if post.activity_urn:
         return f"urn:{post.activity_urn}"
     if post.post_url:
@@ -261,6 +263,29 @@ def _normalize_choice(value: str, allowed: set[str], default: str) -> str:
 
 def _normalize_group_text(value: str) -> str:
     return _WHITESPACE_RE.sub(" ", (value or "").lower()).strip()
+
+
+def _is_cmmc_only_alert(row: dict) -> bool:
+    haystack = _normalize_group_text(
+        " ".join([
+            " ".join(str(topic) for topic in (row.get("topics") or [])),
+            str(row.get("relevance_reason") or ""),
+            str(row.get("suggested_action") or ""),
+        ]),
+    )
+    if "cmmc" not in haystack:
+        return False
+    allowed_terms = (
+        "fedramp",
+        "grc automation",
+        "compliance automation",
+        "evidence automation",
+        "ssp",
+        "poa&m",
+        "poam",
+        "boundera",
+    )
+    return not any(term in haystack for term in allowed_terms)
 
 
 def crm_matches_for_feed_post(post: LinkedInFeedPost) -> list[dict]:
