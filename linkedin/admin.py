@@ -7,6 +7,8 @@ from linkedin.models import (
     ActionLog,
     Campaign,
     ConnectIssueLog,
+    FedRAMPMarketplaceSignal,
+    FedRAMPMarketplaceSourceState,
     LinkedInFeedCollectionJob,
     LinkedInFeedObservation,
     LinkedInFeedPost,
@@ -125,6 +127,45 @@ class LinkedInFeedObservationAdmin(admin.ModelAdmin):
         "first_seen_at", "last_seen_at", "seen_count",
     )
     date_hierarchy = "last_seen_at"
+
+
+@admin.register(FedRAMPMarketplaceSourceState)
+class FedRAMPMarketplaceSourceStateAdmin(admin.ModelAdmin):
+    list_display = (
+        "source_name", "source_exported_at", "last_polled_at", "content_sha256",
+    )
+    search_fields = ("source_name", "source_url", "content_sha256")
+    readonly_fields = (
+        "source_name", "source_url", "content_sha256", "source_exported_at",
+        "snapshot", "last_polled_at", "created_at", "updated_at",
+    )
+
+
+@admin.register(FedRAMPMarketplaceSignal)
+class FedRAMPMarketplaceSignalAdmin(admin.ModelAdmin):
+    list_display = (
+        "provider_name", "offering_name", "signal_type", "priority",
+        "analyzed_at", "slack_notified_at", "recorded_at",
+    )
+    list_filter = (
+        "signal_type", "source_kind", "priority", "is_relevant",
+        "should_alert", "analyzed_at", "slack_notified_at",
+    )
+    search_fields = (
+        "event_key", "source_event_id", "product_id", "provider_name",
+        "offering_name", "relevance_reason", "suggested_action",
+    )
+    readonly_fields = (
+        "event_key", "source_kind", "source_event_id", "signal_type",
+        "icp_bucket", "product_id", "provider_name", "offering_name",
+        "certification_path", "from_status", "to_status", "transition_at",
+        "recorded_at", "source_url", "marketplace_url", "product_context",
+        "raw_payload", "analyzed_at", "is_relevant", "should_alert",
+        "priority", "relevance_reason", "suggested_action", "raw_analysis",
+        "slack_notified_at", "first_seen_at", "last_seen_at", "created_at",
+        "updated_at",
+    )
+    date_hierarchy = "recorded_at"
 
 
 @admin.register(Task)

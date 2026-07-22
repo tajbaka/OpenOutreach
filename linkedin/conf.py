@@ -149,6 +149,22 @@ SLACK_HIGH_SIGNAL_URL = os.getenv("SLACK_HIGH_SIGNAL_URL", "").strip()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 MANUAL_REPLY_POLL_SECONDS = int(os.getenv("MANUAL_REPLY_POLL_SECONDS", "60"))
 
+# Official FedRAMP marketplace JSON feeds used by the periodic marketplace
+# listener. These defaults point at the FedRAMP-owned GitHub repository; env
+# overrides allow a mirror or fixture endpoint on a separate runner machine.
+FEDRAMP_MARKETPLACE_CHANGELOG_URL = os.getenv(
+    "FEDRAMP_MARKETPLACE_CHANGELOG_URL",
+    "https://raw.githubusercontent.com/FedRAMP/marketplace-fedramp-gov-data/main/"
+    "fedramp-status-changelog.json",
+).strip()
+FEDRAMP_MARKETPLACE_DATA_URL = os.getenv(
+    "FEDRAMP_MARKETPLACE_DATA_URL",
+    "https://raw.githubusercontent.com/FedRAMP/marketplace-fedramp-gov-data/main/data.json",
+).strip()
+FEDRAMP_MARKETPLACE_FETCH_TIMEOUT_SECONDS = int(
+    os.getenv("FEDRAMP_MARKETPLACE_FETCH_TIMEOUT_SECONDS", "45")
+)
+
 # Google Sheets CRM sync. GOOGLE_SHEETS_ID is the spreadsheet id from the
 # URL (https://docs.google.com/spreadsheets/d/<id>/edit). CREDENTIALS_PATH
 # points at a service-account JSON key file with Editor access shared on

@@ -80,6 +80,25 @@ def _looks_like_connect_note_echo(text: str, lead) -> bool:
     return has_outreach_context and has_connect_ask
 
 
+def _looks_like_self_addressed_outbound_echo(text: str, lead) -> bool:
+    """Detect outbound LinkedIn echoes misattributed to the lead.
+
+    Realtime can emit an operator's manual send with the lead as actor. If a
+    message is attributed to Ryan and opens with "Hey Ryan," it is almost
+    certainly our outbound copy mirrored under the wrong participant, not a
+    real inbound reply from Ryan.
+    """
+    first = _normalized_name(lead.first_name or "")
+    if not first:
+        return False
+    normalized = _normalized_name(text)
+    return any(
+        normalized.startswith(f"{greeting} {first} ")
+        or normalized == f"{greeting} {first}"
+        for greeting in ("hi", "hey", "hello")
+    )
+
+
 def lead_outbound_operators(lead) -> set[str]:
     """Return canonical operator handles found in the lead's LinkedIn DM outbound senders.
 
@@ -166,7 +185,14 @@ def persist_thread(
             # note back with the lead's name as sender. When the body exactly
             # matches a Deal.sent_note we know it was our outbound invite note,
             # not a real reply from the lead.
-            if text and (text in known_connect_notes or _looks_like_connect_note_echo(text, lead)):
+            if text and (
+                text in known_connect_notes
+                or _looks_like_connect_note_echo(text, lead)
+                or (
+                    is_inbound
+                    and _looks_like_self_addressed_outbound_echo(text, lead)
+                )
+            ):
                 is_inbound = False
             direction = (
                 Message.Direction.INBOUND if is_inbound

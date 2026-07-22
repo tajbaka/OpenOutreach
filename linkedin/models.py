@@ -497,6 +497,96 @@ class LinkedInFeedObservation(models.Model):
         return f"{self.operator} saw post {self.post_id} ({self.seen_count}x)"
 
 
+class FedRAMPMarketplaceSourceState(models.Model):
+    """Durable baseline/cursor for one official FedRAMP marketplace JSON source."""
+
+    source_name = models.CharField(max_length=40, unique=True)
+    source_url = models.URLField(max_length=1000)
+    content_sha256 = models.CharField(max_length=64, blank=True, default="")
+    source_exported_at = models.DateTimeField(null=True, blank=True)
+    snapshot = models.JSONField(default=dict, blank=True)
+    last_polled_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+
+    def __str__(self):
+        return f"FedRAMP marketplace source: {self.source_name}"
+
+
+class FedRAMPMarketplaceSignal(models.Model):
+    """One high-value marketplace transition awaiting or carrying Codex review."""
+
+    class SignalType(models.TextChoices):
+        REV5_READY = "rev5_ready", "Rev5 Ready"
+        TWENTYX_INITIAL = "20x_initial", "20x Initial Implementation"
+
+    class SourceKind(models.TextChoices):
+        CHANGELOG = "changelog", "Status changelog"
+        SNAPSHOT = "snapshot", "Marketplace snapshot diff"
+
+    class Priority(models.TextChoices):
+        NONE = "none", "None"
+        LOW = "low", "Low"
+        MEDIUM = "medium", "Medium"
+        HIGH = "high", "High"
+        URGENT = "urgent", "Urgent"
+
+    event_key = models.CharField(max_length=255, unique=True)
+    source_kind = models.CharField(max_length=20, choices=SourceKind.choices)
+    source_event_id = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    signal_type = models.CharField(max_length=30, choices=SignalType.choices, db_index=True)
+    icp_bucket = models.CharField(max_length=64, db_index=True)
+    product_id = models.CharField(max_length=80, db_index=True)
+    provider_name = models.CharField(max_length=300, db_index=True)
+    offering_name = models.CharField(max_length=300, blank=True, default="")
+    certification_path = models.CharField(max_length=80, blank=True, default="")
+    from_status = models.CharField(max_length=100, blank=True, default="")
+    to_status = models.CharField(max_length=100)
+    transition_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    recorded_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    source_url = models.URLField(max_length=1000)
+    marketplace_url = models.URLField(max_length=1000, blank=True, default="")
+    product_context = models.JSONField(default=dict, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    analyzed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    is_relevant = models.BooleanField(default=False, db_index=True)
+    should_alert = models.BooleanField(default=False, db_index=True)
+    priority = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    relevance_reason = models.TextField(blank=True, default="")
+    suggested_action = models.TextField(blank=True, default="")
+    raw_analysis = models.JSONField(default=dict, blank=True)
+    slack_notified_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    first_seen_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(
+                fields=["signal_type", "recorded_at"],
+                name="fedramp_sig_type_rec_idx",
+            ),
+            models.Index(
+                fields=["analyzed_at", "slack_notified_at"],
+                name="fedramp_sig_review_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_signal_type_display()}: {self.provider_name} / {self.offering_name}"
+
+
 def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     """Q filter restricting the task queue to work a daemon owns.
 

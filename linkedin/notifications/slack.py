@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Nine surfaces:
+Ten surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted *and* the lead replied during the sweep. Single Block Kit message
@@ -30,6 +30,9 @@ Nine surfaces:
 9. `notify_connect_send_failed` — fires when the connect workflow opens
    the invite flow but cannot actually submit the request (missing note UI,
    missing send button, etc.).
+10. `notify_marketplace_signal_group` — posts Codex-reviewed new Rev5 Ready
+    and 20x Initial Implementation transitions from the official FedRAMP JSON
+    feeds.
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
@@ -38,6 +41,7 @@ Routing across two channels:
     → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
     (replies: a lead replied, and the enrichment results that follow).
+  - LinkedIn feed intent and FedRAMP marketplace signals → SLACK_HIGH_SIGNAL_URL.
 
 Each surface no-ops when its target webhook is unset, so callers don't need
 to guard. The two webhooks are independent — an unset SLACK_REPLIES_WEBHOOK_URL
@@ -78,6 +82,10 @@ _SLACK_MESSAGE_BODY_LIMIT = 2900
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
+def _escape_slack_text(value: str) -> str:
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _urlopen(req: request.Request, *, timeout: int):
     """Open Slack HTTPS requests with a bundled CA store.
 
@@ -88,7 +96,7 @@ def _urlopen(req: request.Request, *, timeout: int):
     return request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT)
 
 
-def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
+def _post_to_slack(webhook_url: str, payload: dict, label: str) -> bool:
     """POST a Block Kit payload to a Slack incoming webhook.
 
     Silent no-op when `webhook_url` is empty. `label` identifies the surface
@@ -97,7 +105,7 @@ def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
     re-raises the original exception regardless of what happens here).
     """
     if not webhook_url:
-        return
+        return False
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
         webhook_url,
@@ -109,8 +117,11 @@ def _post_to_slack(webhook_url: str, payload: dict, label: str) -> None:
         with _urlopen(req, timeout=10) as resp:
             if resp.status != 200:
                 logger.warning("Slack webhook returned %d for %s", resp.status, label)
+                return False
+            return True
     except (URLError, TimeoutError) as e:
         logger.warning("Slack webhook failed for %s: %s", label, e)
+        return False
 
 
 def _post_slack_response_url(response_url: str, payload: dict, label: str) -> None:
@@ -704,6 +715,98 @@ def _feed_group_links_text(posts: list) -> str:
     if len(posts) > 8:
         lines.append(f"...and {len(posts) - 8} more related sightings.")
     return "\n".join(lines)[:_SLACK_SECTION_TEXT_LIMIT]
+
+
+def notify_marketplace_signal_group(*, signals: list) -> bool:
+    """Post one company-level FedRAMP marketplace alert to high signal Slack."""
+    if not SLACK_HIGH_SIGNAL_URL or not signals:
+        return False
+
+    priority_rank = {"urgent": 5, "high": 4, "medium": 3, "low": 2, "none": 1, "": 0}
+    primary = sorted(
+        signals,
+        key=lambda signal: (
+            priority_rank.get(signal.priority or "", 0),
+            signal.recorded_at or signal.first_seen_at,
+        ),
+        reverse=True,
+    )[0]
+    provider = _escape_slack_text(primary.provider_name or "Unknown provider")
+    if primary.signal_type == "20x_initial":
+        title = ":rotating_light: *New 20x Initial Implementation entrant*"
+    else:
+        title = ":rotating_light: *New Rev5 Ready marketplace entrant*"
+
+    offerings: list[str] = []
+    for signal in signals[:8]:
+        label = _escape_slack_text(signal.offering_name or signal.product_id)
+        if signal.marketplace_url:
+            offerings.append(f"• <{signal.marketplace_url}|{label}> (`{signal.product_id}`)")
+        else:
+            offerings.append(f"• {label} (`{signal.product_id}`)")
+    if len(signals) > 8:
+        offerings.append(f"• ...and {len(signals) - 8} more offering(s)")
+
+    transition = f"{primary.from_status or '(new)'} → {primary.to_status}"
+    recorded = primary.recorded_at or primary.transition_at
+    context_elements = [
+        {"type": "mrkdwn", "text": f"*Priority:* {primary.priority or 'unrated'}"},
+        {"type": "mrkdwn", "text": f"*ICP:* {primary.icp_bucket}"},
+        {"type": "mrkdwn", "text": f"*Path:* {primary.certification_path or 'not provided'}"},
+        {"type": "mrkdwn", "text": f"*Transition:* {_escape_slack_text(transition)}"},
+    ]
+    if recorded:
+        context_elements.append({
+            "type": "mrkdwn",
+            "text": f"*Recorded:* {recorded:%Y-%m-%d %H:%M %Z}",
+        })
+
+    source_link = (
+        f"<{primary.source_url}|Official FedRAMP JSON source>"
+        if primary.source_url
+        else "Official source URL unavailable"
+    )
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"{title}\n*{provider}*"},
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(offerings)[:_SLACK_SECTION_TEXT_LIMIT]},
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "*Why it matters:*\n"
+                    f"{_escape_slack_text(primary.relevance_reason or 'Official target transition detected.')}"
+                )[:_SLACK_SECTION_TEXT_LIMIT],
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "*Suggested action:*\n"
+                    f"{_escape_slack_text(primary.suggested_action or 'Research the account and identify the right owner.')}"
+                )[:_SLACK_SECTION_TEXT_LIMIT],
+            },
+        },
+        {"type": "context", "elements": context_elements[:10]},
+        {"type": "section", "text": {"type": "mrkdwn", "text": source_link}},
+    ]
+    payload = {
+        "text": f"New FedRAMP marketplace signal: {primary.provider_name}",
+        "blocks": blocks,
+    }
+    return _post_to_slack(
+        SLACK_HIGH_SIGNAL_URL,
+        payload,
+        f"fedramp-marketplace ({primary.provider_name})",
+    )
 
 
 def notify_degraded(*, sender: str, title: str, detail: str) -> None:

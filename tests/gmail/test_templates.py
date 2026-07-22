@@ -71,6 +71,47 @@ def test_render_for_icp_uses_direct_icp_bucket():
     assert "vendors around FedRAMP 20x" in rendered.body
 
 
+def test_render_for_icp_uses_white_label_champion_routing_copy():
+    lead = SimpleNamespace(
+        id=8,
+        first_name="Ada",
+        last_name="Lovelace",
+        company_name="Analytical Engines",
+    )
+
+    rendered = render_for_icp(
+        sender="Arian",
+        icp="White Label Champions",
+        sequence_name="gmail_fallback",
+        lead=lead,
+        step_index=0,
+    )
+
+    assert rendered.subject == "Who is closest to 20x at Analytical Engines?"
+    assert "validation evidence and keeping certification data current" in rendered.body
+
+
+def test_render_for_icp_uses_rev5_ready_program_path_copy():
+    lead = SimpleNamespace(
+        id=8,
+        first_name="Ada",
+        last_name="Lovelace",
+        company_name="Analytical Engines",
+    )
+
+    rendered = render_for_icp(
+        sender="Arian",
+        icp="Rev5 Ready",
+        sequence_name="gmail_fallback",
+        lead=lead,
+        step_index=0,
+    )
+
+    assert rendered.subject == "Is the sponsor still the blocker at Analytical Engines?"
+    assert "20x program path" in rendered.body
+    assert "without an agency sponsor" in rendered.body
+
+
 def test_render_for_icp_uses_gmail_sender_display_name_override():
     lead = SimpleNamespace(
         id=8,

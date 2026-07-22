@@ -74,12 +74,15 @@ Three apps in `INSTALLED_APPS`:
 - **Deal** (`crm/models/deal.py`) — Per campaign (campaign-scoped via FK). `state` = CharField (ProfileState choices). `closing_reason` = CharField (ClosingReason choices: COMPLETED/FAILED/DISQUALIFIED). `reason` = qualification/failure reason. `connect_attempts` = retry count. `backoff_hours` = check_pending backoff. `creation_date`, `update_date`.
 - **Task** (`linkedin/models.py`) — `task_type` (`Task.TaskType` choices; `Task.save()` skips task-type choice validation so deploy-skew rows can still be marked failed), `status` (pending/running/completed/failed), `scheduled_at`, `payload` (JSONField), `error`, `started_at`, `completed_at`. Composite index on `(status, scheduled_at)`. Pending/running `sweep_connections` rows require `payload.operator` so each sender account runs its own acceptance sweep.
 - **LinkedInFeedCollectionJob / LinkedInFeedPost / LinkedInFeedObservation** (`linkedin/models.py`) — feed collector ledger. Jobs are one per sender/day and carry retry/completion state. Posts are canonical activity/text records. Observations record which sender account saw each post and how often.
+- **FedRAMPMarketplaceSourceState / FedRAMPMarketplaceSignal** (`linkedin/models.py`) — durable official-marketplace baseline and review ledger. Source states retain changelog IDs and compact product snapshots. Signals use a unique canonical transition key and retain Codex decisions plus `slack_notified_at`, making collection and notification idempotent across machines that share the database.
 - **ChatMessage** (`chat/models.py`) — GenericForeignKey to any object. `content`, `owner`, `answer_to` (self FK), `topic` (self FK), `recipients`, `to` (M2M to User).
 
 ## Key Modules
 
 - **`daemon.py`** — Worker loop with active-hours guard (`ENABLE_ACTIVE_HOURS` flag, `seconds_until_active()`), `_build_qualifiers()`, `heal_tasks()`, freemium import, `_FreemiumRotator`.
 - **`feed_collection.py`** — Daily LinkedIn home-feed collector helpers: sender/day job scheduling, CDP page collection, DOM extraction, canonical post upsert, and per-sender observation dedupe.
+- **`marketplace_listener.py`** — Fetches and schema-validates the official FedRAMP changelog and full snapshot, detects new legacy Ready and Program-path Initial Implementation transitions, deduplicates the two source paths, and persists source baselines and target signals transactionally.
+- **`marketplace_analysis.py`** — Serializes unreviewed marketplace signals with CRM matches for Codex, validates Codex decisions, gates high-signal alerts, groups offerings by provider, and records Slack notification completion.
 - **`management/commands/collect_linkedin_feed.py`** — Short-lived collector child command spawned by `daemon_supervisor.py`; connects to the daemon browser over CDP and stores feed posts.
 - **`diagnostics.py`** — `failure_diagnostics()` context manager, `capture_failure()` saves page HTML/screenshot/traceback to `/tmp/openoutreach-diagnostics/`.
 - **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`. Connect-note rendering uses `icp_outbound.safe_company_name()` so `"Unknown Company"` never leaks into outbound notes.
@@ -107,7 +110,7 @@ Three apps in `INSTALLED_APPS`:
 - **`db/enrichment.py`** — Lazy enrichment/embedding (`ensure_profile_embedded()`).
 - **`db/chat.py`** — `save_chat_message()`.
 - **`db/urls.py`** — `url_to_public_id()`, `public_id_to_url()` — LinkedIn URL ↔ public identifier conversion.
-- **`db/messages.py`** — `persist_thread()`: idempotent get_or_create per `(source, external_id)`; derives LinkedIn direction from a normalized sender match against the Lead name, stripping common honorifics like `Dr.` while explicit daemon operator senders still force outbound. LinkedIn invite-note echoes that arrive with the lead as sender are also forced outbound when they match stored `sent_note` text or a narrow legacy connect-note pattern. Falls back to `now()` on malformed timestamps. Called from `actions/conversations.py:get_conversation` as a best-effort side effect — never breaks the caller.
+- **`db/messages.py`** — `persist_thread()`: idempotent get_or_create per `(source, external_id)`; derives LinkedIn direction from a normalized sender match against the Lead name, stripping common honorifics like `Dr.` while explicit daemon operator senders still force outbound. LinkedIn outbound echoes that arrive with the lead as sender are also forced outbound when they match stored `sent_note` text, a narrow legacy connect-note pattern, or a self-addressed opener such as `Hey <lead first name>,`. Falls back to `now()` on malformed timestamps. Called from `actions/conversations.py:get_conversation` as a best-effort side effect — never breaks the caller.
 - **`gmail/data_sync.py`** — Direct Gmail data-sync helpers. Decodes Gmail API thread/message payloads, resolves self-emails from Gmail Profile + Send-As aliases, persists prospect email threads into `crm.Message`, and persists Gmail-delivered Gemini/Meet notes into `crm.Meeting.gemini_notes_raw` with conservative title/date/lead matching.
 - **`conf.py`** — Config loading (dotenv), `CAMPAIGN_CONFIG`, path constants, `get_first_active_profile_handle()`.
 - **`exceptions.py`** — `AuthenticationError`, `TerminalStateError`, `SkipProfile`, `ReachedConnectionLimit`, `SheetsError`.
@@ -483,6 +486,10 @@ Self-hosted Postgres testing is separate from the app container: `compose/selfho
 ## Dependencies
 
 `requirements/` files. DjangoCRM's `mysqlclient` excluded via `--no-deps`. `uv pip install` for fast installs.
+
+White-label outreach uses four canonical `Lead.icp` values across CSV normalization, LinkedIn templates, Gmail templates, and the ICP Messages tabs: `White Label Product/Executive`, `White Label Partnerships`, `White Label Delivery`, and `White Label Champions`. Sender copy is populated for Arian and Chuka only, champion rows use an introduction/routing ask, and each LinkedIn connection-note bucket carries two short variants for within-sender message testing.
+
+A1 FedRAMP Ready outreach uses the canonical `Lead.icp` value `Rev5 Ready`. CSV aliases normalize into that value, while Arian and Chuka route LinkedIn and post-accept Gmail copy around the sponsorless 20x Program path and Boundera's Rev5-aware 20x gap assessment.
 
 Core: `playwright`, `playwright-stealth`, `Django`, `django-crm-admin`, `pandas`, `langchain`/`langchain-openai`, `jinja2`, `pydantic`, `jsonpath-ng`, `tendo`, `termcolor`, `tenacity`, `requests`
 ML: `scikit-learn`, `numpy`, `fastembed`, `joblib`

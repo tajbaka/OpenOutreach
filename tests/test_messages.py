@@ -308,6 +308,31 @@ def test_persist_thread_treats_legacy_connect_note_echo_as_outbound(db):
     assert msg.direction == Message.Direction.OUTBOUND
 
 
+def test_persist_thread_treats_self_addressed_lead_echo_as_outbound(db):
+    lead = Lead.objects.create(
+        first_name="Ryan",
+        last_name="Balogh",
+        linkedin_url="https://www.linkedin.com/in/ryan-balogh-a708a5152/",
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:ryan-rampcon-echo",
+        "sender": "Ryan Balogh",
+        "text": (
+            "Hey Ryan,\n\n"
+            "Didn't realize we hadn't connected yet. Great seeing you in person "
+            "at Rampcon.\n\n"
+            "Thanks for all the info about this space, looking forward to "
+            "speaking with you soon."
+        ),
+        "timestamp": "2026-07-15 13:21",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed)
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.OUTBOUND
+
+
 def test_persist_thread_treats_known_operator_sender_as_outbound(db):
     lead = Lead.objects.create(
         first_name="Arian",

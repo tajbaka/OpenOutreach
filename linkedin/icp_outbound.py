@@ -333,19 +333,26 @@ def icp_messages_rows(sender: str) -> list[list[str]]:
     """
     messages = load_icp_messages(sender)
     gmail_messages = load_gmail_messages(sender)
+    # Buckets may be sender-specific. Do not write label-only blank rows for
+    # operators who are not participating in a campaign; the pull parser
+    # correctly treats a non-empty ICP label with empty copy as malformed.
+    sheet_icps = [
+        icp for icp in ICP_MESSAGES_SHEET_BUCKETS
+        if icp in messages or icp in gmail_messages
+    ]
     steps_by_icp = {
         icp: _followup_step_firsts(messages.get(icp, {}).get("linkedin_connect_followup"))
-        for icp in ICP_MESSAGES_SHEET_BUCKETS
+        for icp in sheet_icps
     }
     email_steps_by_icp = {
         icp: _email_step_firsts(gmail_messages.get(icp))
-        for icp in ICP_MESSAGES_SHEET_BUCKETS
+        for icp in sheet_icps
     }
     n_linkedin = max((len(s) for s in steps_by_icp.values()), default=0)
     n_email = max((len(s) for s in email_steps_by_icp.values()), default=0)
     n_cols = max(n_linkedin, n_email, 1)
     rows: list[list[str]] = [icp_messages_headers(n_linkedin, n_email)]
-    for icp in ICP_MESSAGES_SHEET_BUCKETS:
+    for icp in sheet_icps:
         channels = messages.get(icp, {})
         steps = steps_by_icp[icp]
         email_steps = email_steps_by_icp[icp]

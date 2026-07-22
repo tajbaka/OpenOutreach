@@ -28,3 +28,9 @@ class EnrichmentError(Exception):
     response (missing required keys). Transport failures use HttpError and
     convert to API_FAILURE instead — this one is a real bug and propagates."""
     pass
+
+
+class MarketplaceListenerError(Exception):
+    """FedRAMP marketplace source fetch or schema validation failed."""
+
+    pass

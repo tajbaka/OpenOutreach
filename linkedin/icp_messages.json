@@ -82,6 +82,106 @@
         }
       ]
     },
+    "Rev5 Ready": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} is listed as ready on the FedRAMP marketplace. Since the 20x program path does not need an agency sponsor, I'm curious whether that changes the plan there. Good to connect?",
+        "Hi {first_name}, noticed {company_name} is still listed as ready. I'm comparing notes with teams weighing the 20x program path against waiting on a sponsor. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 3,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI saw {company_name} is still listed as ready. The 20x program path does not require an agency sponsor.\n\nIs sponsor timing the main thing holding the program up?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: we built a 20x gap assessment for teams coming from Rev5. It maps the likely path and surfaces where measures and validation evidence still need work.\n\nWant me to send it over?"
+          ]
+        }
+      ]
+    },
+    "White Label Product/Executive": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your product work at {company_name}. I'm looking at whether 20x validation belongs in the product or with a partner. Good to connect?",
+        "Hi {first_name}, saw your federal product work at {company_name}. I'm curious how teams are handling current certification data inside the product. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "{first_name}, the reason I asked is we're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?"
+          ]
+        }
+      ]
+    },
+    "White Label Partnerships": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your partnerships work at {company_name}. I'm looking at whether vendors are asking partners for help keeping 20x validation evidence current. Good to connect?",
+        "Hi {first_name}, saw your partnerships work at {company_name}. Curious whether 20x is showing up in vendor conversations there yet. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "One more question, {first_name}.\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with that 20x workflow. The firm would keep the relationship, while Boundera handles the current evidence and data work.\n\nIs that something you own, or is there someone better internally?"
+          ]
+        }
+      ]
+    },
+    "White Label Delivery": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your FedRAMP delivery work at {company_name}. I'm looking at where keeping 20x validation evidence current gets messy for clients. Good to connect?",
+        "Hi {first_name}, saw your FedRAMP delivery work at {company_name}. Curious what happens after the first 20x review when certification data has to stay current. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "One more thought, {first_name}.\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
+          ]
+        }
+      ]
+    },
+    "White Label Champions": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your federal cloud work at {company_name}. I'm trying to find who owns 20x validation evidence at firms like yours. Thought you might have a read. Good to connect?",
+        "Hi {first_name}, saw your security work at {company_name}. Curious who is closest to the current certification data work there. Thought you might know. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm building in the FedRAMP 20x space and trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current.\n\nIs that close to your world, or does it sit with someone else?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "{first_name}, one more question.\n\nWho is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise."
+          ]
+        }
+      ]
+    },
     "CMMC Buyers": {
       "linkedin_connect_note": [
         "Hi {first_name}, was looking at {company_name} since I'm in the CMMC space myself. Good to connect?"
@@ -200,6 +300,106 @@
           "delay_hours": 72,
           "variants": [
             "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
+          ]
+        }
+      ]
+    },
+    "Rev5 Ready": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} on the FedRAMP marketplace ready list. Curious whether the sponsorless 20x program path is getting a serious look there. Good to connect?",
+        "Hi {first_name}, noticed {company_name} is listed as ready. I'm talking with teams figuring out whether to stay put or move onto the 20x program path. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 3,
+          "variants": [
+            "Thanks for connecting, {first_name}.\n\nI noticed {company_name} is still listed as ready. Since the 20x program path can move without an agency sponsor, I'm curious what is keeping the current effort at ready status.\n\nIs the sponsor still the blocker?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "One thing that may help: Boundera's 20x gap assessment starts from a team's current Rev5 position, then shows the likely path and where measures or validation evidence still need work.\n\nWould it be useful if I sent that over?"
+          ]
+        }
+      ]
+    },
+    "White Label Product/Executive": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your product work at {company_name}. I'm looking at whether 20x validation belongs in the product or with a partner. Good to connect?",
+        "Hi {first_name}, saw your federal product work at {company_name}. I'm curious how teams are handling current certification data inside the product. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "{first_name}, the reason I asked is we're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?"
+          ]
+        }
+      ]
+    },
+    "White Label Partnerships": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your partnerships work at {company_name}. I'm looking at whether vendors are asking partners for help keeping 20x validation evidence current. Good to connect?",
+        "Hi {first_name}, saw your partnerships work at {company_name}. Curious whether 20x is showing up in vendor conversations there yet. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "One more question, {first_name}.\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with that 20x workflow. The firm would keep the relationship, while Boundera handles the current evidence and data work.\n\nIs that something you own, or is there someone better internally?"
+          ]
+        }
+      ]
+    },
+    "White Label Delivery": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your FedRAMP delivery work at {company_name}. I'm looking at where keeping 20x validation evidence current gets messy for clients. Good to connect?",
+        "Hi {first_name}, saw your FedRAMP delivery work at {company_name}. Curious what happens after the first 20x review when certification data has to stay current. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "One more thought, {first_name}.\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
+          ]
+        }
+      ]
+    },
+    "White Label Champions": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your federal cloud work at {company_name}. I'm trying to find who owns 20x validation evidence at firms like yours. Thought you might have a read. Good to connect?",
+        "Hi {first_name}, saw your security work at {company_name}. Curious who is closest to the current certification data work there. Thought you might know. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm building in the FedRAMP 20x space and trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current.\n\nIs that close to your world, or does it sit with someone else?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "{first_name}, one more question.\n\nWho is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise."
           ]
         }
       ]

@@ -1,5 +1,41 @@
 {
   "Arian": {
+    "White Label Product/Executive": [
+      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
+    ],
+    "White Label Partnerships": [
+      {"delay_hours": 0.33, "subject_variants": ["Are vendors asking about 20x yet?"], "body_variants": ["Hi {first_name},\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["Who owns the 20x partner side?"], "body_variants": ["Hi {first_name},\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with the 20x certification data workflow. The firm would keep the relationship, while Boundera handles the data work.\n\nIs that your lane at {company_name}, or is there someone better internally?\n\nBest,\n{my_name}"]}
+    ],
+    "White Label Delivery": [
+      {"delay_hours": 0.33, "subject_variants": ["Where does 20x delivery get awkward?"], "body_variants": ["Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
+    ],
+    "White Label Champions": [
+      {"delay_hours": 0.33, "subject_variants": ["Who is closest to 20x at {company_name}?"], "body_variants": ["Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["20x delivery owner"], "body_variants": ["Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"]}
+    ],
+    "Rev5 Ready": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Is the sponsor still the blocker at {company_name}?"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw {company_name} is listed as ready on the FedRAMP marketplace. The 20x program path can move directly through FedRAMP without an agency sponsor, so I was curious whether that changes the plan there.\n\nIs sponsor timing still the main blocker?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x path from ready status"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nThe reason I reached out: we built a 20x gap assessment for teams coming from Rev5. It maps the likely path and surfaces where measures and validation evidence still need work.\n\nWant me to send it over?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
     "CSPs": [
       {
         "delay_hours": 0.33,
@@ -470,6 +506,42 @@
     ]
   },
   "Chuka": {
+    "White Label Product/Executive": [
+      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
+    ],
+    "White Label Partnerships": [
+      {"delay_hours": 0.33, "subject_variants": ["Are vendors asking about 20x yet?"], "body_variants": ["Hi {first_name},\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["Who owns the 20x partner side?"], "body_variants": ["Hi {first_name},\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with the 20x certification data workflow. The firm would keep the relationship, while Boundera handles the data work.\n\nIs that your lane at {company_name}, or is there someone better internally?\n\nBest,\n{my_name}"]}
+    ],
+    "White Label Delivery": [
+      {"delay_hours": 0.33, "subject_variants": ["Where does 20x delivery get awkward?"], "body_variants": ["Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
+    ],
+    "White Label Champions": [
+      {"delay_hours": 0.33, "subject_variants": ["Who is closest to 20x at {company_name}?"], "body_variants": ["Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 192, "subject_variants": ["20x delivery owner"], "body_variants": ["Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"]}
+    ],
+    "Rev5 Ready": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Does 20x change the plan at {company_name}?"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI noticed {company_name} is still listed as ready. Since the 20x program path can move without an agency sponsor, I was curious what is keeping the current effort at ready status.\n\nIs the sponsor still the blocker?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "A 20x gap assessment from Rev5"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nOne thing that may help: Boundera's 20x gap assessment starts from a team's current Rev5 position, then shows the likely path and where measures or validation evidence still need work.\n\nWould it be useful if I sent that over?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
     "CSPs": [
       {
         "delay_hours": 0.33,

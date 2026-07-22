@@ -51,6 +51,62 @@ def test_load_icp_messages_channels_normalize_to_steps():
                     assert all(isinstance(v, str) for v in step.variants)
 
 
+def test_white_label_connect_notes_are_short_two_variant_experiments():
+    white_label_icps = (
+        "White Label Product/Executive",
+        "White Label Partnerships",
+        "White Label Delivery",
+        "White Label Champions",
+    )
+    for sender in ("Arian", "Chuka"):
+        messages = icp_outbound.load_icp_messages(sender)
+        for icp in white_label_icps:
+            variants = messages[icp]["linkedin_connect_note"]
+            assert len(variants) == 2, f"{sender}.{icp} must keep two test variants"
+            for message in variants:
+                assert 21 <= len(message.split()) <= 40
+                assert len(message) < 300
+                assert message.count("?") == 1
+                assert "http" not in message.lower()
+
+
+def test_white_label_copy_avoids_capitalized_terms_and_internal_strategy_questions():
+    forbidden_exact = ("Certification Data", "Security Decision Record")
+    forbidden_lower = ("becomes part of the product", "stays a services workflow")
+    for sender in ("Arian", "Chuka"):
+        linkedin_messages = icp_outbound.load_icp_messages(sender)
+        gmail_messages = icp_outbound.load_gmail_messages(sender)
+        for icp, channels in linkedin_messages.items():
+            if not icp.startswith("White Label"):
+                continue
+            copy = json.dumps(channels)
+            assert not any(phrase in copy for phrase in forbidden_exact)
+            assert not any(phrase in copy.lower() for phrase in forbidden_lower)
+        for icp, steps in gmail_messages.items():
+            if not icp.startswith("White Label"):
+                continue
+            copy = json.dumps(steps)
+            assert not any(phrase in copy for phrase in forbidden_exact)
+            assert not any(phrase in copy.lower() for phrase in forbidden_lower)
+
+
+def test_rev5_ready_copy_is_a_short_20x_program_path_experiment():
+    for sender in ("Arian", "Chuka"):
+        messages = icp_outbound.load_icp_messages(sender)["Rev5 Ready"]
+        assert len(messages["linkedin_connect_note"]) == 2
+        for message in messages["linkedin_connect_note"]:
+            assert 21 <= len(message.split()) <= 40
+            assert len(message) < 300
+            assert message.count("?") == 1
+            assert "20x program path" in message
+            assert "http" not in message.lower()
+
+        copy = json.dumps(messages)
+        assert "agency sponsor" in copy
+        assert "validation evidence" in copy
+        assert not any(mark in copy for mark in ("—", "–", "--"))
+
+
 def test_load_icp_messages_unknown_sender_raises():
     """An operator handle absent from the JSON must crash loud — no
     shared default, per the project's no-silent-fallback rule. Sending
@@ -401,11 +457,15 @@ def test_icp_messages_rows_round_trip_for_sender(tmp_path, monkeypatch):
     monkeypatch.setattr(icp_outbound, "_GMAIL_MESSAGES_PATH", gmail_path)
 
     rows = icp_outbound.icp_messages_rows("Leili")
-    assert [row[0] for row in rows[1:]] == list(icp_outbound.ICP_MESSAGES_SHEET_BUCKETS)
+    expected_icps = [
+        icp for icp in icp_outbound.ICP_MESSAGES_SHEET_BUCKETS
+        if icp in icp_outbound.load_icp_messages("Leili")
+    ]
+    assert [row[0] for row in rows[1:]] == expected_icps
     parsed = icp_outbound.parse_icp_messages_rows(rows)
     assert parsed == {
         icp: icp_outbound.load_icp_messages("Leili")[icp]
-        for icp in icp_outbound.ICP_MESSAGES_SHEET_BUCKETS
+        for icp in expected_icps
     }
 
 
