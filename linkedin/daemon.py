@@ -26,6 +26,7 @@ from linkedin.conf import (
     ENABLE_AUTO_PHONE_ENRICHMENT,
     ENABLE_NODE_MONITOR,
     ENABLE_REALTIME_LISTENER,
+    ENABLE_STALE_INVITE_WITHDRAWAL,
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
     ENABLE_PACING_CATCH_UP,
@@ -51,6 +52,10 @@ from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.manual_reply import handle_manual_reply
 from linkedin.tasks.status_summary import enqueue_status_summary, handle_status_summary
 from linkedin.tasks.sweep_connections import handle_sweep_connections
+from linkedin.tasks.withdraw_invites import (
+    handle_withdraw_invites,
+    maybe_enqueue_withdraw_invites,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +64,7 @@ _HANDLERS = {
     Task.TaskType.FOLLOW_UP: handle_follow_up,
     Task.TaskType.MANUAL_REPLY: handle_manual_reply,
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
+    Task.TaskType.WITHDRAW_INVITES: handle_withdraw_invites,
     Task.TaskType.STATUS_SUMMARY: handle_status_summary,
 }
 
@@ -373,11 +379,34 @@ def heal_tasks(session):
                 cancelled_sweep,
             )
 
-    # 5. Hourly all-sender Slack status summary. Account-agnostic: any daemon
+    # 5. Event-driven stale-invitation cleanup. A startup may resume after the
+    # sender already hit today's local cap, so enqueue once here as well as
+    # from the connect lane. Never seed it for any other rate-limit reason.
+    from linkedin.operators import resolve_operator
+
+    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+    if ENABLE_STALE_INVITE_WITHDRAWAL:
+        maybe_enqueue_withdraw_invites(
+            session.linkedin_profile,
+            operator=our_operator,
+        )
+    else:
+        cancelled_withdrawals = Task.objects.filter(
+            task_type=Task.TaskType.WITHDRAW_INVITES,
+            status=Task.Status.PENDING,
+        ).update(status=Task.Status.COMPLETED, completed_at=timezone.now())
+        if cancelled_withdrawals:
+            logger.info(
+                "ENABLE_STALE_INVITE_WITHDRAWAL=false — cancelled %d pending "
+                "withdrawal task(s)",
+                cancelled_withdrawals,
+            )
+
+    # 6. Hourly all-sender Slack status summary. Account-agnostic: any daemon
     # may claim it, then it self-reschedules for the next hour.
     enqueue_status_summary(delay_seconds=0, since=timezone.now() - timedelta(hours=1))
 
-    # 6. Follow-up tasks (post-accept DMs — gated separately).
+    # 7. Follow-up tasks (post-accept DMs — gated separately).
     if not ENABLE_FOLLOW_UP:
         cancelled_fu = Task.objects.filter(
             task_type=Task.TaskType.FOLLOW_UP,
@@ -812,6 +841,7 @@ def run_daemon(session):
         # don't carry a campaign_id; the handler sets session.campaign as needed.
         if task.task_type in {
             Task.TaskType.SWEEP_CONNECTIONS,
+            Task.TaskType.WITHDRAW_INVITES,
             Task.TaskType.MANUAL_REPLY,
             Task.TaskType.STATUS_SUMMARY,
         }:

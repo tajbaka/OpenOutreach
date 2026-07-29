@@ -36,6 +36,12 @@ class Deal(models.Model):
     )
     reason = models.TextField(blank=True, default="")
     sent_note = models.TextField(blank=True, default="")
+    # Positive ledger for connection invitations sent by OpenOutreach. A Deal
+    # can also enter PENDING because LinkedIn already showed an invitation, so
+    # state/update_date alone are not proof that this project sent it.
+    invitation_sent_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    invitation_sender = models.CharField(max_length=200, blank=True, default="", db_index=True)
+    invitation_withdrawn_at = models.DateTimeField(null=True, blank=True, db_index=True)
     connect_attempts = models.IntegerField(default=0)
     backoff_hours = models.IntegerField(default=0)
     last_reply_at = models.DateTimeField(null=True, blank=True)

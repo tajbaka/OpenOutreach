@@ -321,6 +321,15 @@ def handle_connect(task, session, qualifiers):
     campaign = session.campaign
     campaign_id = campaign.pk
     strategy = strategy_for(campaign, qualifiers)
+    operator = resolve_operator(session.linkedin_profile.linkedin_username)
+
+    def _maybe_queue_stale_invite_cleanup() -> None:
+        from linkedin.tasks.withdraw_invites import maybe_enqueue_withdraw_invites
+
+        maybe_enqueue_withdraw_invites(
+            session.linkedin_profile,
+            operator=operator,
+        )
 
     def _reschedule():
         elapsed = (timezone.now() - task.started_at).total_seconds() if task.started_at else 0
@@ -334,6 +343,7 @@ def handle_connect(task, session, qualifiers):
 
     # --- Rate limit check ---
     if not session.linkedin_profile.can_execute(ActionLog.ActionType.CONNECT):
+        _maybe_queue_stale_invite_cleanup()
         enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
         return
 
@@ -371,6 +381,22 @@ def handle_connect(task, session, qualifiers):
             deal.save(update_fields=["closing_reason", "reason"])
             enqueue_connect(campaign_id, delay_seconds=0)
             return
+
+        # A confirmed withdrawal is sender-specific negative history. Preserve
+        # the Lead for other operators/manual work, but never let this sender's
+        # automated connect lane re-invite it through another campaign.
+        if Deal.objects.filter(
+            lead=deal.lead,
+            invitation_sender=operator,
+            invitation_withdrawn_at__isnull=False,
+        ).exists():
+            reason = (
+                f"Auto-connect blocked: {operator} previously withdrew a "
+                "project-sent invitation"
+            )
+            set_profile_state(session, public_id, ProfileState.FAILED.value, reason=reason)
+            enqueue_connect(campaign_id, delay_seconds=0)
+            return
     reason = deal.reason if deal else ""
     stats = strategy.qualifier.explain(candidate, session) if strategy.qualifier else ""
     logger.info("[%s] %s", campaign, colored("\u25b6 connect", "cyan", attrs=["bold"]))
@@ -385,7 +411,6 @@ def handle_connect(task, session, qualifiers):
                 lead__linkedin_url=public_id_to_url(public_id),
                 campaign=session.campaign,
             ).select_related("lead").first()
-            operator = resolve_operator(session.linkedin_profile.linkedin_username)
             icp = None
             if deal is not None:
                 from linkedin.icp_outbound import resolve_icp
@@ -413,7 +438,7 @@ def handle_connect(task, session, qualifiers):
         if status == ProfileState.PENDING:
             set_profile_state(session, public_id, status.value)
             enqueue_sweep_connections(
-                operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                operator=operator,
             )
             # No action taken — short delay before next candidate
             enqueue_connect(campaign_id, delay_seconds=10)
@@ -421,7 +446,7 @@ def handle_connect(task, session, qualifiers):
 
         note = build_connection_note(
             candidate.get("lead_id"),
-            sender=resolve_operator(session.linkedin_profile.linkedin_username),
+            sender=operator,
         )
         new_state = send_connection_request(session=session, profile=profile, note=note)
 
@@ -448,16 +473,21 @@ def handle_connect(task, session, qualifiers):
                 Deal.objects.filter(
                     lead__linkedin_url=public_id_to_url(public_id),
                     campaign=session.campaign,
-                ).update(sent_note=note)
-                enqueue_sweep_connections(
-                    operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                ).update(
+                    sent_note=note,
+                    invitation_sent_at=timezone.now(),
+                    invitation_sender=operator,
+                    invitation_withdrawn_at=None,
                 )
+                enqueue_sweep_connections(
+                    operator=operator,
+                )
+                _maybe_queue_stale_invite_cleanup()
             elif new_state == ProfileState.CONNECTED:
                 deal = Deal.objects.filter(
                     lead__linkedin_url=public_id_to_url(public_id),
                     campaign=session.campaign,
                 ).select_related("lead").first()
-                operator = resolve_operator(session.linkedin_profile.linkedin_username)
                 icp = None
                 if deal is not None:
                     from linkedin.icp_outbound import resolve_icp
@@ -486,7 +516,7 @@ def handle_connect(task, session, qualifiers):
         logger.info("%s PENDING (existing invite)", public_id)
         set_profile_state(session, public_id, ProfileState.PENDING.value)
         enqueue_sweep_connections(
-            operator=resolve_operator(session.linkedin_profile.linkedin_username),
+            operator=operator,
         )
         enqueue_connect(campaign_id, delay_seconds=10)
         return

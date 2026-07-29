@@ -18,6 +18,12 @@ class ReachedConnectionLimit(Exception):
     pass
 
 
+class InvitationWithdrawalError(Exception):
+    """A pending invitation could not be safely confirmed or withdrawn."""
+
+    pass
+
+
 class SheetsError(Exception):
     """Google Sheets API call failed (network error, auth error, malformed response)."""
     pass
