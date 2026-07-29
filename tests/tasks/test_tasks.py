@@ -24,6 +24,7 @@ from linkedin.tasks.connect import (
 )
 from linkedin.tasks.follow_up import _delay_seconds_to_active_due, handle_follow_up
 from linkedin.tasks.sweep_connections import handle_sweep_connections
+from linkedin.actions.connections import ConnectionScrapeResult
 
 
 SAMPLE_PROFILE = {
@@ -100,6 +101,19 @@ def _build_context(fake_session):
     qualifier = BayesianQualifier(seed=42)
     qualifier.rank_profiles = lambda profiles, **kw: profiles
     return {fake_session.campaign.pk: qualifier}
+
+
+def _completed_scrape(entries=None):
+    entries = entries or []
+    connected_dates = [entry.connected_on for entry in entries if entry.connected_on]
+    return ConnectionScrapeResult(
+        entries=entries,
+        rounds=2,
+        cards_inspected=len(entries),
+        elapsed_seconds=1.0,
+        stop_reason="idle",
+        oldest_connected_on=min(connected_dates) if connected_dates else None,
+    )
 
 
 @pytest.mark.django_db
@@ -472,17 +486,18 @@ class TestHandleSweepConnections:
     def _db(self, embeddings_db):
         pass
 
-    @patch("linkedin.tasks.sweep_connections.scrape_connections")
+    @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
+    @patch("linkedin.tasks.sweep_connections.scrape_connections_with_stats")
     def test_marks_accepted_connections_and_enqueues_follow_up(
-        self, mock_scrape, fake_session,
+        self, mock_scrape, _mock_recycle, fake_session,
     ):
         from linkedin.actions.connections import ConnectionEntry
         _make_pending(fake_session, "alice")
         _make_pending(fake_session, "bob")
 
-        mock_scrape.return_value = [
+        mock_scrape.return_value = _completed_scrape([
             ConnectionEntry(public_id="alice", name="Alice Smith", connected_on=None),
-        ]
+        ])
 
         task = _make_task(Task.TaskType.SWEEP_CONNECTIONS, {})
         qualifiers = _build_context(fake_session)
@@ -500,9 +515,10 @@ class TestHandleSweepConnections:
             payload__public_id="bob",
         ).exists()
 
-    @patch("linkedin.tasks.sweep_connections.scrape_connections")
-    def test_self_reschedules(self, mock_scrape, fake_session):
-        mock_scrape.return_value = []
+    @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
+    @patch("linkedin.tasks.sweep_connections.scrape_connections_with_stats")
+    def test_self_reschedules(self, mock_scrape, _mock_recycle, fake_session):
+        mock_scrape.return_value = _completed_scrape()
 
         task = _make_task(Task.TaskType.SWEEP_CONNECTIONS, {})
         qualifiers = _build_context(fake_session)
@@ -514,9 +530,15 @@ class TestHandleSweepConnections:
             payload__operator=resolve_operator(fake_session.linkedin_profile.linkedin_username),
         ).exclude(pk=task.pk).exists()
 
-    @patch("linkedin.tasks.sweep_connections.scrape_connections")
-    def test_sweep_does_not_post_status_summary(self, mock_scrape, fake_session):
-        mock_scrape.return_value = []
+    @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
+    @patch("linkedin.tasks.sweep_connections.scrape_connections_with_stats")
+    def test_sweep_does_not_post_status_summary(
+        self,
+        mock_scrape,
+        _mock_recycle,
+        fake_session,
+    ):
+        mock_scrape.return_value = _completed_scrape()
 
         task = _make_task(Task.TaskType.SWEEP_CONNECTIONS, {})
         qualifiers = _build_context(fake_session)

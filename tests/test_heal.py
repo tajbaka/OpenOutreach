@@ -1,6 +1,7 @@
 # tests/test_heal.py
 import json
 import pytest
+from datetime import timedelta
 from django.utils import timezone
 
 from linkedin.daemon import _ensure_connect_task_for_campaign, heal_tasks
@@ -59,6 +60,49 @@ class TestHealTasks:
             task_type=Task.TaskType.CONNECT,
             status=Task.Status.PENDING,
         ).exists()
+
+    def test_does_not_recover_recent_owned_running_task(self, fake_session):
+        task = Task.objects.create(
+            task_type=Task.TaskType.SWEEP_CONNECTIONS,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now() - timedelta(minutes=5),
+            payload={
+                "operator": resolve_operator(
+                    fake_session.linkedin_profile.linkedin_username,
+                ),
+            },
+        )
+
+        heal_tasks(fake_session)
+
+        task.refresh_from_db()
+        assert task.status == Task.Status.RUNNING
+
+    def test_recovers_only_stale_task_owned_by_this_sender(self, fake_session):
+        operator = resolve_operator(fake_session.linkedin_profile.linkedin_username)
+        owned = Task.objects.create(
+            task_type=Task.TaskType.SWEEP_CONNECTIONS,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now() - timedelta(minutes=31),
+            payload={"operator": operator},
+        )
+        foreign = Task.objects.create(
+            task_type=Task.TaskType.SWEEP_CONNECTIONS,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now() - timedelta(hours=4),
+            payload={"operator": "Chuka"},
+        )
+
+        heal_tasks(fake_session)
+
+        owned.refresh_from_db()
+        foreign.refresh_from_db()
+        assert owned.status == Task.Status.PENDING
+        assert owned.started_at is None
+        assert foreign.status == Task.Status.RUNNING
 
     def test_seeds_connect_per_campaign(self, fake_session):
         _make_ready(fake_session, "alice")

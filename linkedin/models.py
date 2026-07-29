@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from linkedin.conf import (
     ACTIVE_TIMEZONE,
+    CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES,
     CONNECT_DAILY_LIMIT,
     CONNECT_WEEKLY_LIMIT,
     FOLLOW_UP_DAILY_LIMIT,
@@ -618,6 +619,23 @@ class FedRAMPMarketplaceSignal(models.Model):
         return f"{self.get_signal_type_display()}: {self.provider_name} / {self.offering_name}"
 
 
+def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
+    """Q filter for browser tasks exclusively owned by one LinkedIn sender."""
+    from django.db.models import Q
+
+    owned = list(campaign_ids or [])
+    return (
+        (Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.WITHDRAW_INVITES) & Q(payload__operator=operator))
+        | (
+            Q(task_type=Task.TaskType.CONNECT)
+            & Q(payload__campaign_id__in=owned)
+        )
+    )
+
+
 def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     """Q filter restricting the task queue to work a daemon owns.
 
@@ -635,22 +653,9 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     """
     from django.db.models import Q
 
-    owned = list(campaign_ids or [])
-    in_owned = Q(payload__campaign_id__in=owned)
-    mine_followup = Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator)
-    mine_manual = Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator)
-    mine_sweep = Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator)
-    mine_withdraw = Q(task_type=Task.TaskType.WITHDRAW_INVITES) & Q(payload__operator=operator)
-    mine_connect = Q(task_type=Task.TaskType.CONNECT) & in_owned
+    linked = _linked_operator_scope_q(operator, campaign_ids)
     account_agnostic = ~Q(task_type__in=Task.linked_account_scoped_task_types())
-    return (
-        mine_followup
-        | mine_manual
-        | mine_sweep
-        | mine_withdraw
-        | mine_connect
-        | account_agnostic
-    )
+    return linked | account_agnostic
 
 
 class TaskQuerySet(models.QuerySet):
@@ -659,6 +664,14 @@ class TaskQuerySet(models.QuerySet):
 
     def due(self):
         return self.pending().filter(scheduled_at__lte=timezone.now())
+
+    def owned_linkedin_by(
+        self,
+        operator: str,
+        campaign_ids: "list[int] | None",
+    ):
+        """Browser tasks this sender alone is allowed to execute."""
+        return self.filter(_linked_operator_scope_q(operator, campaign_ids))
 
     def _claim_candidate(self, candidate: "Task | None") -> "Task | None":
         """Atomically flip a selected pending task to running.
@@ -711,10 +724,41 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
-        manual = qs.filter(task_type=Task.TaskType.MANUAL_REPLY).first()
-        if manual is not None:
-            return self._claim_candidate(manual)
-        return self._claim_candidate(qs.first())
+        # Manual replies remain latency-critical. A maintenance sweep receives
+        # fairness priority only after it has waited beyond the configured
+        # bound; otherwise delivery work wins and a sweep uses the next pacing
+        # gap. Sweeps themselves have a hard runtime budget.
+        priority_queries = [
+            qs.filter(task_type=Task.TaskType.MANUAL_REPLY),
+            qs.filter(
+                task_type=Task.TaskType.SWEEP_CONNECTIONS,
+                scheduled_at__lte=timezone.now() - timedelta(
+                    minutes=CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES,
+                ),
+            ),
+            qs.filter(task_type=Task.TaskType.STATUS_SUMMARY),
+            qs.filter(
+                task_type__in=[
+                    Task.TaskType.FOLLOW_UP,
+                    Task.TaskType.CONNECT,
+                ],
+            ),
+            qs.exclude(
+                task_type__in=[
+                    Task.TaskType.MANUAL_REPLY,
+                    Task.TaskType.STATUS_SUMMARY,
+                    Task.TaskType.FOLLOW_UP,
+                    Task.TaskType.CONNECT,
+                    Task.TaskType.SWEEP_CONNECTIONS,
+                ],
+            ),
+            qs.filter(task_type=Task.TaskType.SWEEP_CONNECTIONS),
+        ]
+        for priority_qs in priority_queries:
+            candidate = priority_qs.first()
+            if candidate is not None:
+                return self._claim_candidate(candidate)
+        return None
 
     def seconds_to_next(
         self,
@@ -968,6 +1012,8 @@ class WorkflowRun(models.Model):
       - "followup"         Drafts → Followups tabs
       - "import-connections"  CSV → Lead/Deal/Message rows
       - "backfill-messages"   LinkedIn DM threads → Message rows
+      - "connection-sweep"    Successful per-sender acceptance watermark
+      - "connection-sweep-incomplete"  Bounded retry telemetry
 
     `operator` is "Chuka" / "Arian" for per-account workflows, "" (empty)
     for whole-system workflows (followup). Free-form string so we don't

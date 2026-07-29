@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Iterator
 
 from linkedin.browser.nav import goto_page
 from linkedin.db.urls import url_to_public_id
@@ -26,6 +26,20 @@ class ConnectionEntry:
     connected_on: date | None
 
 
+@dataclass(frozen=True)
+class ConnectionScrapeResult:
+    entries: list[ConnectionEntry]
+    rounds: int
+    cards_inspected: int
+    elapsed_seconds: float
+    stop_reason: str
+    oldest_connected_on: date | None
+
+    @property
+    def complete(self) -> bool:
+        return self.stop_reason in {"cutoff", "idle", "no_pending"}
+
+
 def _parse_connected_on(text: str) -> date | None:
     m = _CONNECTED_ON_RE.match(text or "")
     if not m:
@@ -40,16 +54,50 @@ def _parse_connected_on(text: str) -> date | None:
     return None
 
 
-def _oldest_connected_on(session) -> date | None:
-    """Return the oldest 'Connected on' date currently rendered on the page."""
-    texts = session.page.locator("p", has_text="Connected on").all_inner_texts()
-    dates = [d for d in (_parse_connected_on(t) for t in texts) if d is not None]
-    return min(dates) if dates else None
+_EXTRACT_VISIBLE_CARDS_JS = """
+(dateNodes) => dateNodes.map((dateNode) => {
+  let card = dateNode;
+  let link = null;
+  while (card && card !== document.body) {
+    link = card.querySelector('a[href*="/in/"]');
+    if (link) break;
+    card = card.parentElement;
+  }
+  if (!link) return null;
+  const nameNode = link.querySelector("p");
+  return {
+    connected_text: (dateNode.textContent || "").trim(),
+    href: link.getAttribute("href") || "",
+    name: nameNode ? (nameNode.textContent || "").trim() : "",
+  };
+}).filter(Boolean)
+"""
 
 
-def _card_count(session) -> int:
-    """Cheap proxy for 'is the list still growing?' — count of date-anchor <p>s."""
-    return session.page.locator("p", has_text="Connected on").count()
+def _extract_visible_cards(session) -> list[ConnectionEntry]:
+    """Read one rendered batch with one browser round-trip.
+
+    LinkedIn may retain every loaded card or virtualize the list and replace
+    earlier DOM nodes. The caller accumulates public IDs across batches, so
+    either rendering strategy is safe.
+    """
+    rows = session.page.locator(
+        "p",
+        has_text="Connected on",
+    ).evaluate_all(_EXTRACT_VISIBLE_CARDS_JS)
+    entries: list[ConnectionEntry] = []
+    for row in rows:
+        public_id = url_to_public_id(row.get("href") or "")
+        if not public_id:
+            continue
+        entries.append(
+            ConnectionEntry(
+                public_id=public_id,
+                name=(row.get("name") or "").strip(),
+                connected_on=_parse_connected_on(row.get("connected_text") or ""),
+            ),
+        )
+    return entries
 
 
 def _scroll_one_step(session) -> None:
@@ -78,10 +126,10 @@ def _scroll_one_step(session) -> None:
     except Exception:
         pass
 
+    date_nodes = page.locator("p", has_text="Connected on")
     try:
-        cards = page.locator("p", has_text="Connected on").all()
-        if cards:
-            cards[-1].scroll_into_view_if_needed(timeout=2000)
+        if date_nodes.count() > 0:
+            date_nodes.last.scroll_into_view_if_needed(timeout=2000)
     except Exception:
         pass
 
@@ -91,107 +139,99 @@ def _scroll_one_step(session) -> None:
         pass
 
 
-def _scroll_to_bottom(
+def _scan_connections_page(
     session,
-    stop_before: date | None = None,
+    *,
+    stop_before: date,
+    max_seconds: float,
+    max_rounds: int,
     max_idle_rounds: int = 3,
     pause_ms: int = 1500,
-) -> None:
-    """Scroll until either the card count stops growing or we pass *stop_before*.
+) -> ConnectionScrapeResult:
+    """Collect rendered batches until the cutoff, idle state, or hard budget.
 
-    Pace is now per-step — pause_ms after each scroll attempt for LinkedIn to
-    paint new cards. We track *card count* rather than scrollHeight because the
-    container's scrollHeight can stay constant even as a virtualized list
-    swaps cards in and out of the DOM.
-
-    *stop_before*: earliest connected_on date we still care about. The
-    Connections list is sorted newest-first, so once the oldest rendered card
-    is older than this cutoff, further scrolling can't surface a match.
+    Progress is based on newly seen profile IDs and the oldest rendered date,
+    not DOM cardinality. That works for both accumulating and virtualized
+    lists. ``max_seconds`` and ``max_rounds`` are independent hard stops so a
+    maintenance sweep can never monopolize the single browser worker.
     """
     page = session.page
+    started = time.monotonic()
     idle = 0
-    last_count = -1
+    last_oldest: date | None = None
     rounds = 0
-    while idle < max_idle_rounds:
-        rounds += 1
-        if stop_before is not None:
-            oldest = _oldest_connected_on(session)
-            if oldest is not None and oldest < stop_before:
-                logger.info(
-                    "Early-stop scroll after %d rounds: oldest rendered %s < cutoff %s "
-                    "(%d cards loaded)",
-                    rounds, oldest, stop_before, _card_count(session),
-                )
-                return
+    entries_by_public_id: dict[str, ConnectionEntry] = {}
+    stop_reason = "max_rounds"
 
-        count = _card_count(session)
-        if count == last_count:
+    while rounds < max_rounds:
+        if time.monotonic() - started >= max_seconds:
+            stop_reason = "max_seconds"
+            break
+
+        rounds += 1
+        batch = _extract_visible_cards(session)
+        before = len(entries_by_public_id)
+        for entry in batch:
+            entries_by_public_id[entry.public_id] = entry
+        added = len(entries_by_public_id) - before
+
+        dates = [
+            entry.connected_on
+            for entry in entries_by_public_id.values()
+            if entry.connected_on is not None
+        ]
+        oldest = min(dates) if dates else None
+        if oldest is not None and oldest < stop_before:
+            stop_reason = "cutoff"
+            break
+
+        if added == 0 and oldest == last_oldest:
             idle += 1
         else:
             idle = 0
-            last_count = count
+        last_oldest = oldest
+        if idle >= max_idle_rounds:
+            stop_reason = "idle" if entries_by_public_id else "empty"
+            break
 
         _scroll_one_step(session)
-        page.wait_for_timeout(pause_ms)
+        remaining_ms = max(
+            int((max_seconds - (time.monotonic() - started)) * 1000),
+            0,
+        )
+        if remaining_ms == 0:
+            stop_reason = "max_seconds"
+            break
+        page.wait_for_timeout(min(pause_ms, remaining_ms))
 
     logger.info(
-        "Scroll idle after %d rounds — %d cards loaded.",
-        rounds, _card_count(session),
+        "Connections scan stopped: reason=%s rounds=%d unique_cards=%d "
+        "oldest=%s cutoff=%s elapsed=%.1fs",
+        stop_reason,
+        rounds,
+        len(entries_by_public_id),
+        last_oldest,
+        stop_before,
+        time.monotonic() - started,
+    )
+    return ConnectionScrapeResult(
+        entries=list(entries_by_public_id.values()),
+        rounds=rounds,
+        cards_inspected=len(entries_by_public_id),
+        elapsed_seconds=time.monotonic() - started,
+        stop_reason=stop_reason,
+        oldest_connected_on=last_oldest,
     )
 
 
-def _iter_cards(session) -> Iterator[ConnectionEntry]:
-    """Yield one ConnectionEntry per connection card on the page."""
-    page = session.page
-    # Anchor: any <p> whose text starts with "Connected on ". From there walk up
-    # to the nearest ancestor that contains a profile anchor (a[href*="/in/"]).
-    date_nodes = page.locator("p", has_text="Connected on").all()
-    seen: set[str] = set()
-    for node in date_nodes:
-        try:
-            connected_text = node.inner_text(timeout=2000)
-        except Exception:
-            continue
-        connected_on = _parse_connected_on(connected_text)
-
-        card = node.locator(
-            "xpath=ancestor::*[.//a[contains(@href, '/in/')]][1]",
-        )
-        if card.count() == 0:
-            continue
-        card = card.first
-
-        link = card.locator('a[href*="/in/"]').first
-        try:
-            href = link.get_attribute("href", timeout=2000) or ""
-        except Exception:
-            continue
-
-        public_id = url_to_public_id(href)
-        if not public_id or public_id in seen:
-            continue
-        seen.add(public_id)
-
-        name = ""
-        name_p = link.locator("p").first
-        if name_p.count() > 0:
-            try:
-                name = name_p.inner_text(timeout=2000).strip()
-            except Exception:
-                pass
-
-        yield ConnectionEntry(public_id=public_id, name=name, connected_on=connected_on)
-
-
-def scrape_connections(
-    session, stop_before: date | None = None,
-) -> list[ConnectionEntry]:
-    """Navigate to the connections page, scroll to load entries, return them.
-
-    *stop_before*: earliest connected_on date of interest. Passing this lets
-    the scroll bail early on accounts with huge networks instead of loading
-    every connection in history.
-    """
+def scrape_connections_with_stats(
+    session,
+    *,
+    stop_before: date,
+    max_seconds: float,
+    max_rounds: int,
+) -> ConnectionScrapeResult:
+    """Navigate to Connections and return a bounded, instrumented scan."""
     session.ensure_browser()
     page = session.page
 
@@ -202,8 +242,31 @@ def scrape_connections(
         error_message="Failed to load My Network → Connections",
     )
     session.wait()
-    _scroll_to_bottom(session, stop_before=stop_before)
+    result = _scan_connections_page(
+        session,
+        stop_before=stop_before,
+        max_seconds=max_seconds,
+        max_rounds=max_rounds,
+    )
 
-    entries = list(_iter_cards(session))
-    logger.info("Scraped %d connections from %s", len(entries), CONNECTIONS_URL)
-    return entries
+    logger.info("Scraped %d connections from %s", len(result.entries), CONNECTIONS_URL)
+    return result
+
+
+def scrape_connections(
+    session,
+    stop_before: date | None = None,
+) -> list[ConnectionEntry]:
+    """Compatibility wrapper for standalone full-history import commands.
+
+    The daemon sweep uses :func:`scrape_connections_with_stats` with explicit
+    budgets. Standalone imports keep their existing list return type but are
+    also bounded to avoid an accidental infinite Connections-page crawl.
+    """
+    cutoff = stop_before or date.min
+    return scrape_connections_with_stats(
+        session,
+        stop_before=cutoff,
+        max_seconds=15 * 60,
+        max_rounds=600,
+    ).entries

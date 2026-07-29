@@ -162,7 +162,14 @@ def handle_withdraw_invites(task, session, qualifiers) -> None:
         reconcile_pending_connections,
     )
 
-    reconcile_pending_connections(session)
+    reconciliation = reconcile_pending_connections(session)
+    if not reconciliation.complete:
+        logger.warning(
+            "withdraw_invites: connection reconciliation stopped at %s; "
+            "skipping withdrawals until a complete sweep succeeds",
+            reconciliation.scrape.stop_reason,
+        )
+        return
 
     successful_today = ActionLog.objects.filter(
         linkedin_profile=session.linkedin_profile,

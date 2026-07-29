@@ -88,6 +88,31 @@ REST_DAYS = tuple(
 # How often to sweep the My Network → Connections page to detect accepted
 # invitations in bulk (replaces per-profile check_pending visits).
 CONNECTION_SWEEP_INTERVAL_HOURS = float(os.getenv("CONNECTION_SWEEP_INTERVAL_HOURS", "2"))
+ENABLE_INCREMENTAL_CONNECTION_SWEEP = os.getenv(
+    "ENABLE_INCREMENTAL_CONNECTION_SWEEP",
+    "true",
+).strip().lower() in {"1", "true", "yes", "on"}
+CONNECTION_SWEEP_OVERLAP_HOURS = float(
+    os.getenv("CONNECTION_SWEEP_OVERLAP_HOURS", "24"),
+)
+CONNECTION_SWEEP_INITIAL_LOOKBACK_DAYS = int(
+    os.getenv("CONNECTION_SWEEP_INITIAL_LOOKBACK_DAYS", "7"),
+)
+CONNECTION_SWEEP_MAX_SECONDS = float(
+    os.getenv("CONNECTION_SWEEP_MAX_SECONDS", "180"),
+)
+CONNECTION_SWEEP_MAX_ROUNDS = int(
+    os.getenv("CONNECTION_SWEEP_MAX_ROUNDS", "120"),
+)
+CONNECTION_SWEEP_INCOMPLETE_RETRY_MINUTES = float(
+    os.getenv("CONNECTION_SWEEP_INCOMPLETE_RETRY_MINUTES", "10"),
+)
+CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES = float(
+    os.getenv("CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES", "30"),
+)
+TASK_RUNNING_STALE_MINUTES = float(
+    os.getenv("TASK_RUNNING_STALE_MINUTES", "30"),
+)
 
 # Withdraw only invitations positively recorded as sent by OpenOutreach. The
 # lane is event-driven after the sender reaches its local daily connect cap,

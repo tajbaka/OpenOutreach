@@ -18,6 +18,7 @@ as. Two real leaks motivated this scoping:
   - status_summary → account-agnostic; any daemon can claim it.
 """
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -123,6 +124,44 @@ def test_sweep_connections_scoped_to_matching_operator():
 def test_sweep_connections_for_other_operator_is_never_claimed():
     _mk(Task.TaskType.SWEEP_CONNECTIONS, operator="Chuka", scheduled_offset_s=-5)
     assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
+
+
+@pytest.mark.django_db
+@patch("linkedin.models.CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES", 30)
+def test_due_connect_runs_before_non_overdue_maintenance_sweep():
+    connect = _mk(
+        Task.TaskType.CONNECT,
+        payload_extra={"campaign_id": 1},
+        scheduled_offset_s=-5,
+    )
+    _mk(
+        Task.TaskType.SWEEP_CONNECTIONS,
+        operator="Arian",
+        scheduled_offset_s=-60,
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+
+    assert claimed.pk == connect.pk
+
+
+@pytest.mark.django_db
+@patch("linkedin.models.CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES", 30)
+def test_overdue_bounded_sweep_receives_fairness_priority():
+    sweep = _mk(
+        Task.TaskType.SWEEP_CONNECTIONS,
+        operator="Arian",
+        scheduled_offset_s=-(31 * 60),
+    )
+    _mk(
+        Task.TaskType.CONNECT,
+        payload_extra={"campaign_id": 1},
+        scheduled_offset_s=-5,
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+
+    assert claimed.pk == sweep.pk
 
 
 @pytest.mark.django_db

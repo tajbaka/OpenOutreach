@@ -36,6 +36,7 @@ from linkedin.conf import (
     LISTENER_REST_DAYS,
     MANUAL_REPLY_POLL_SECONDS,
     REST_DAYS,
+    TASK_RUNNING_STALE_MINUTES,
 )
 from linkedin.diagnostics import failure_diagnostics
 from linkedin.ml.qualifier import BayesianQualifier, KitQualifier
@@ -269,26 +270,41 @@ def _sync_listener_supervisor(listener_supervisor) -> None:
 def heal_tasks(session):
     """Reconcile task queue with CRM state on daemon startup.
 
-    1. Reset stale 'running' tasks to 'pending' (crashed worker recovery)
+    1. Recover only this sender's stale running browser tasks
     2. Seed one 'connect' task per campaign if none pending
     3. Create 'check_pending' tasks for PENDING profiles without tasks
     4. Create 'follow_up' tasks for CONNECTED profiles without tasks
     """
     from crm.models import Deal
+    from django.db.models import Q
     from linkedin.db.urls import url_to_public_id
     from linkedin.enums import ProfileState
     from linkedin.models import Campaign
+    from linkedin.operators import resolve_operator
 
-    # 1. Recover stale running tasks. Enrichment tasks are excluded — the
-    # EnrichmentWorker (spawned after heal_tasks) reclaims its own stale
-    # RUNNING tasks at start(); resetting them here would race the worker.
+    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+    owned_campaign_ids = list(
+        session.campaigns.values_list("pk", flat=True),
+    )
+    stale_before = timezone.now() - timedelta(minutes=TASK_RUNNING_STALE_MINUTES)
+
+    # 1. Recover only stale browser tasks owned by this sender. The previous
+    # global reset let an Arian restart flip a healthy Chuka sweep back to
+    # pending. Enrichment and Gmail workers retain their own recovery paths.
     stale_count = (
-        Task.objects.filter(status=Task.Status.RUNNING)
-        .exclude(task_type__in=[Task.TaskType.ENRICH_PHONE, Task.TaskType.ENRICH_EMAIL])
-        .update(status=Task.Status.PENDING)
+        Task.objects.filter(
+            status=Task.Status.RUNNING,
+        )
+        .filter(Q(started_at__lt=stale_before) | Q(started_at__isnull=True))
+        .owned_linkedin_by(our_operator, owned_campaign_ids)
+        .update(status=Task.Status.PENDING, started_at=None)
     )
     if stale_count:
-        logger.info("Recovered %d stale running tasks", stale_count)
+        logger.info(
+            "Recovered %d stale running browser task(s) for %s",
+            stale_count,
+            our_operator,
+        )
 
     if not ENABLE_FREEMIUM_CAMPAIGN:
         disabled_campaign_ids = list(
@@ -345,9 +361,6 @@ def heal_tasks(session):
 
     # 4. Sweep tasks (acceptance detection — independent of follow-up DMs).
     if ENABLE_SWEEP_CONNECTIONS:
-        from linkedin.operators import resolve_operator
-
-        our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
         retired_legacy_sweeps = Task.objects.filter(
             task_type=Task.TaskType.SWEEP_CONNECTIONS,
             status=Task.Status.PENDING,
@@ -359,9 +372,9 @@ def heal_tasks(session):
                 retired_legacy_sweeps,
             )
 
-        # Bring forward this account's sweep_connections task so it runs first
-        # on startup. Sweeps are account-scoped because the Connections page is
-        # tied to the logged-in LinkedIn account.
+        # Make this account's sweep eligible on startup. Queue fairness lets
+        # due delivery tasks run first unless maintenance has exceeded its
+        # maximum queue delay; the sweep itself is runtime-bounded.
         _bring_task_forward(
             Task.TaskType.SWEEP_CONNECTIONS,
             {"operator": our_operator},
@@ -372,7 +385,8 @@ def heal_tasks(session):
         cancelled_sweep = Task.objects.filter(
             task_type=Task.TaskType.SWEEP_CONNECTIONS,
             status=Task.Status.PENDING,
-        ).update(status=Task.Status.COMPLETED)
+            payload__operator=our_operator,
+        ).update(status=Task.Status.COMPLETED, completed_at=timezone.now())
         if cancelled_sweep:
             logger.info(
                 "ENABLE_SWEEP_CONNECTIONS=false — cancelled %d pending sweep tasks",
@@ -382,9 +396,6 @@ def heal_tasks(session):
     # 5. Event-driven stale-invitation cleanup. A startup may resume after the
     # sender already hit today's local cap, so enqueue once here as well as
     # from the connect lane. Never seed it for any other rate-limit reason.
-    from linkedin.operators import resolve_operator
-
-    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
     if ENABLE_STALE_INVITE_WITHDRAWAL:
         maybe_enqueue_withdraw_invites(
             session.linkedin_profile,

@@ -51,6 +51,10 @@ def _task(fake_session):
     )
 
 
+def _complete_reconciliation():
+    return Mock(complete=True)
+
+
 @pytest.fixture
 def cap_reached(fake_session):
     check = Mock(return_value=True)
@@ -70,7 +74,7 @@ def test_confirmed_withdrawal_stamps_terminal_audit(
     cap_reached,
 ):
     deal = _stale_deal(fake_session)
-    mock_reconcile.return_value = (1, 0, 0)
+    mock_reconcile.return_value = _complete_reconciliation()
     mock_withdraw.return_value = WithdrawalResult.WITHDRAWN
 
     handle_withdraw_invites(_task(fake_session), fake_session, {})
@@ -90,7 +94,10 @@ def test_confirmed_withdrawal_stamps_terminal_audit(
 @pytest.mark.django_db
 @patch("linkedin.tasks.withdraw_invites.ENABLE_STALE_INVITE_WITHDRAWAL", True)
 @patch("linkedin.tasks.withdraw_invites.STALE_INVITE_WITHDRAWAL_DAILY_LIMIT", 5)
-@patch("linkedin.tasks.sweep_connections.reconcile_pending_connections", return_value=(6, 0, 0))
+@patch(
+    "linkedin.tasks.sweep_connections.reconcile_pending_connections",
+    return_value=_complete_reconciliation(),
+)
 @patch(
     "linkedin.tasks.withdraw_invites.withdraw_pending_invitation",
     return_value=WithdrawalResult.WITHDRAWN,
@@ -126,7 +133,9 @@ def test_reconciles_acceptances_before_first_profile_action(
 ):
     _stale_deal(fake_session)
     events = []
-    mock_reconcile.side_effect = lambda session: events.append("reconcile") or (1, 0, 0)
+    mock_reconcile.side_effect = (
+        lambda session: events.append("reconcile") or _complete_reconciliation()
+    )
     mock_withdraw.side_effect = (
         lambda session, profile: events.append("withdraw") or WithdrawalResult.WITHDRAWN
     )
@@ -134,6 +143,27 @@ def test_reconciles_acceptances_before_first_profile_action(
     handle_withdraw_invites(_task(fake_session), fake_session, {})
 
     assert events == ["reconcile", "withdraw"]
+
+
+@pytest.mark.django_db
+@patch("linkedin.tasks.withdraw_invites.ENABLE_STALE_INVITE_WITHDRAWAL", True)
+@patch("linkedin.tasks.sweep_connections.reconcile_pending_connections")
+@patch("linkedin.tasks.withdraw_invites.withdraw_pending_invitation")
+def test_incomplete_reconciliation_blocks_withdrawal(
+    mock_withdraw,
+    mock_reconcile,
+    fake_session,
+    cap_reached,
+):
+    _stale_deal(fake_session)
+    mock_reconcile.return_value = Mock(
+        complete=False,
+        scrape=Mock(stop_reason="max_seconds"),
+    )
+
+    handle_withdraw_invites(_task(fake_session), fake_session, {})
+
+    mock_withdraw.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -148,7 +178,7 @@ def test_ignores_pending_rows_without_project_send_ledger_or_wrong_sender(
 ):
     _stale_deal(fake_session, "legacy", ledger=False)
     _stale_deal(fake_session, "other", sender="Another Operator")
-    mock_reconcile.return_value = (2, 0, 0)
+    mock_reconcile.return_value = _complete_reconciliation()
 
     handle_withdraw_invites(_task(fake_session), fake_session, {})
 
@@ -167,7 +197,7 @@ def test_last_second_acceptance_uses_shared_acceptance_path(
     cap_reached,
 ):
     deal = _stale_deal(fake_session)
-    mock_reconcile.return_value = (1, 0, 0)
+    mock_reconcile.return_value = _complete_reconciliation()
     mock_withdraw.return_value = WithdrawalResult.CONNECTED
 
     with patch("linkedin.tasks.sweep_connections.process_accepted_deal") as mock_accept:
@@ -204,7 +234,7 @@ def test_no_verified_daily_cap_means_no_reconciliation_or_ui(
 @patch("linkedin.tasks.withdraw_invites.ENABLE_STALE_INVITE_WITHDRAWAL", True)
 @patch(
     "linkedin.tasks.sweep_connections.reconcile_pending_connections",
-    return_value=(1, 0, 0),
+    return_value=_complete_reconciliation(),
 )
 @patch(
     "linkedin.tasks.withdraw_invites.withdraw_pending_invitation",
