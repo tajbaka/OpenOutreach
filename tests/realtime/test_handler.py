@@ -121,6 +121,43 @@ def test_outbound_echo_persisted_but_not_notified(db):
     mock_notify.assert_not_called()
 
 
+def test_middle_initial_self_addressed_echo_is_not_notified(db):
+    lead = Lead.objects.create(
+        first_name="Douglas M.",
+        last_name="Natal, MBA",
+        linkedin_url="https://www.linkedin.com/in/douglasdougnatal/",
+    )
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        external_id="seed-douglas",
+        direction=Message.Direction.OUTBOUND,
+        sender="Arian",
+        body="seed",
+        sent_at=__import__("django.utils.timezone", fromlist=["now"]).now(),
+        thread_external_id=CONV,
+    )
+    echo = ParsedRealtimeMessage(
+        entity_urn="urn:li:msg:douglas-echo",
+        conversation_urn=CONV,
+        sender_name="Douglas M. Natal, MBA",
+        sender_member_urn="urn:li:fsd_profile:DOUGLAS",
+        text=(
+            "Hey Douglas, we built FedrampGPT, an AI copilot for FedRAMP auth "
+            "+ 20x continuous monitoring alignment. Interested?"
+        ),
+        timestamp="2026-07-29 12:33",
+    )
+
+    with patch("linkedin.realtime.handler.parse_realtime_event", return_value=echo), \
+         patch("linkedin.realtime.handler.notify_message_received") as mock_notify:
+        handle_realtime_event({"data": "x"}, operator="Arian")
+
+    msg = Message.objects.get(external_id="urn:li:msg:douglas-echo")
+    assert msg.direction == Message.Direction.OUTBOUND
+    mock_notify.assert_not_called()
+
+
 def test_operator_named_self_profile_echo_is_outbound_not_notified(db):
     """Self-profile Leads can have the same display name as the operator.
     Realtime outbound echoes from that operator must not be treated as inbound

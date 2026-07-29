@@ -26,6 +26,17 @@ def _without_honorific_prefix(value: str) -> str:
     return " ".join(parts)
 
 
+def _lead_given_name(lead) -> str:
+    """Return the lead's normalized greeting name.
+
+    Imported ``first_name`` values can include middle initials or additional
+    given names (for example, ``"Douglas M."``). Outbound copy addresses those
+    leads by the first token, so echo detection must use that same token.
+    """
+    parts = _without_honorific_prefix(lead.first_name or "").split()
+    return parts[0] if parts else ""
+
+
 def _looks_like_lead_sender(sender: str, lead) -> bool:
     sender_name = _without_honorific_prefix(sender)
     if not sender_name:
@@ -47,7 +58,7 @@ def _looks_like_connect_note_echo(text: str, lead) -> bool:
     populated, so keep this fallback intentionally narrow.
     """
     normalized = _normalized_name(text)
-    first = _normalized_name(lead.first_name or "")
+    first = _lead_given_name(lead)
     if not normalized or not first:
         return False
     if not (
@@ -88,7 +99,7 @@ def _looks_like_self_addressed_outbound_echo(text: str, lead) -> bool:
     certainly our outbound copy mirrored under the wrong participant, not a
     real inbound reply from Ryan.
     """
-    first = _normalized_name(lead.first_name or "")
+    first = _lead_given_name(lead)
     if not first:
         return False
     normalized = _normalized_name(text)

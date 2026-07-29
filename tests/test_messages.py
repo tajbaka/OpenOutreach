@@ -333,6 +333,28 @@ def test_persist_thread_treats_self_addressed_lead_echo_as_outbound(db):
     assert msg.direction == Message.Direction.OUTBOUND
 
 
+def test_persist_thread_treats_middle_initial_self_addressed_echo_as_outbound(db):
+    lead = Lead.objects.create(
+        first_name="Douglas M.",
+        last_name="Natal, MBA",
+        linkedin_url="https://www.linkedin.com/in/douglasdougnatal/",
+    )
+    parsed = [{
+        "entity_urn": "urn:li:msg:douglas-self-addressed-echo",
+        "sender": "Douglas M. Natal, MBA",
+        "text": (
+            "Hey Douglas, we built FedrampGPT, an AI copilot for FedRAMP auth "
+            "+ 20x continuous monitoring alignment. Interested?"
+        ),
+        "timestamp": "2026-07-29 12:33",
+    }]
+
+    persist_thread(lead=lead, parsed=parsed)
+
+    msg = lead.messages.get()
+    assert msg.direction == Message.Direction.OUTBOUND
+
+
 def test_persist_thread_treats_known_operator_sender_as_outbound(db):
     lead = Lead.objects.create(
         first_name="Arian",
