@@ -18,6 +18,7 @@ from linkedin.actions.connect import (
     _pending_invite_visible_before_missing_alert,
     _pending_invite_surface_visible,
     _profile_public_identifier,
+    _resolve_dropdown_clickable,
     _targets_current_profile,
 )
 from linkedin.enums import ProfileState
@@ -91,6 +92,30 @@ class _Candidate:
     def evaluate(self, script):
         assert script == "el => el.click()"
         self.js_clicked = True
+
+
+class _RoleButtonCandidate(_Candidate):
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def element_handle(self, timeout):
+        handle = Mock()
+        handle.evaluate.return_value = True
+        return handle
+
+    def locator(self, selector):
+        if selector == 'xpath=ancestor::*[@role="button"][1]':
+            return self
+        return _Locator(count=0)
+
+    def get_attribute(self, name):
+        if name == "role":
+            return "button"
+        return super().get_attribute(name)
 
 
 class _ClickBlockedCandidate(_Candidate):
@@ -327,6 +352,22 @@ def test_more_button_click_falls_back_to_js_when_overlay_intercepts():
     assert more.js_clicked is True
 
 
+def test_dropdown_connect_accepts_div_role_button():
+    candidate = _RoleButtonCandidate(
+        aria_label="Invite Jake Martens to connect",
+        text="Connect",
+    )
+
+    clickable = _resolve_dropdown_clickable(
+        Mock(),
+        candidate,
+        public_identifier="jake-martens",
+        full_name="Jake Martens",
+    )
+
+    assert clickable is candidate
+
+
 def test_pending_invite_surface_matches_current_lead_name():
     session = _session_with_pending_invite_surface()
 
@@ -354,6 +395,30 @@ def test_connect_via_more_returns_pending_before_missing_button_issue_when_more_
 
     assert status == ProfileState.PENDING
     record_issue.assert_not_called()
+
+
+@patch("linkedin.actions.connect._pending_invite_visible_before_missing_alert", return_value=False)
+@patch("linkedin.actions.connect._record_connect_issue")
+@patch("linkedin.actions.connect.find_top_card")
+def test_connect_via_more_logs_known_target_not_query_string(
+    find_top_card,
+    record_issue,
+    _pending_guard,
+):
+    session = Mock()
+    session.page.url = "https://www.linkedin.com/in/jake-martens/?skipRedirect=true"
+    find_top_card.return_value = _NoMoreTopCard()
+
+    status = _connect_via_more(session, "jake-martens", "Jake Martens")
+
+    assert status is False
+    record_issue.assert_called_once_with(
+        session,
+        "jake-martens",
+        "connect_button_missing",
+        "No More button available for Connect fallback",
+        browser_url=session.page.url,
+    )
 
 
 @patch("linkedin.actions.connect._wait_for_invite_surface", return_value=True)

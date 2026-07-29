@@ -490,22 +490,21 @@ def _open_more_menu(session, more, *, attempts: int = 3) -> bool:
 
 def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, full_name: str):
     """Given a candidate element found by text/aria-label, walk up the DOM to
-    find the nearest <a> or <button> ancestor that belongs to a dropdown menu
-    (not a sidebar card).  Returns a Playwright locator or None."""
+    find the nearest <a>, <button>, or role="button" ancestor that belongs to
+    a dropdown menu (not a sidebar card). Returns a Playwright locator or None."""
     try:
-        # Evaluate in the browser: walk parentElement until we hit <a>, <button>,
-        # or the document body.  Return the element only if it (or an ancestor)
-        # has role="menu" / role="listbox" / is inside an overflow-triggered
-        # dropdown — i.e. NOT a standalone card action.
+        # Evaluate in the browser: walk parentElement until we hit a native or
+        # ARIA button, or the document body. Return the element only if it (or
+        # an ancestor) belongs to a dropdown rather than a standalone card.
         handle = candidate.element_handle(timeout=1000)
         if handle is None:
             return None
         result = handle.evaluate("""el => {
-            // Walk up to nearest <a> or <button>
+            // Walk up to nearest native or ARIA clickable
             let node = el;
             while (node && node !== document.body) {
                 const tag = node.tagName?.toLowerCase();
-                if (tag === 'a' || tag === 'button') break;
+                if (tag === 'a' || tag === 'button' || node.getAttribute?.('role') === 'button') break;
                 node = node.parentElement;
             }
             if (!node || node === document.body) return null;
@@ -532,9 +531,12 @@ def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, f
         }""")
         if result is None:
             return None
-        # Re-locate the clickable via the same candidate, walking to ancestor
-        # Use xpath to go up to nearest a or button
-        for ancestor_sel in ('xpath=ancestor::a[1]', 'xpath=ancestor::button[1]'):
+        # Re-locate the clickable via the same candidate, walking to ancestor.
+        for ancestor_sel in (
+            'xpath=ancestor::a[1]',
+            'xpath=ancestor::button[1]',
+            'xpath=ancestor::*[@role="button"][1]',
+        ):
             try:
                 ancestor = candidate.locator(ancestor_sel)
                 if (
@@ -549,9 +551,10 @@ def _resolve_dropdown_clickable(session, candidate, *, public_identifier: str, f
                     return ancestor.first
             except Exception:
                 continue
-        # candidate itself might be the <a>/<button>
+        # candidate itself might be the clickable
         tag = candidate.evaluate("el => el.tagName?.toLowerCase()")
-        if tag in ('a', 'button') and _targets_current_profile(
+        role = candidate.get_attribute("role")
+        if (tag in ('a', 'button') or role == 'button') and _targets_current_profile(
             candidate,
             public_identifier=public_identifier,
             full_name=full_name,
@@ -617,21 +620,21 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
         if _pending_invite_visible_before_missing_alert(session, full_name=full_name):
             logger.debug("Detected pending invite before missing-button alert")
             return ProfileState.PENDING
-        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
-            current_public_id,
+            public_identifier,
             ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
             "No More button available for Connect fallback",
+            browser_url=session.page.url,
         )
         return False
     if not _open_more_menu(session, more):
-        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
-            current_public_id,
+            public_identifier,
             ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
             "More menu did not open",
+            browser_url=session.page.url,
         )
         return False
 
@@ -688,12 +691,12 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
             return ProfileState.PENDING
         _dump_page_state(session, "more-no-connect-option")
         logger.debug("Connect option not found in More dropdown")
-        current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
         _record_connect_issue(
             session,
-            current_public_id,
+            public_identifier,
             ConnectIssueLog.IssueType.CONNECT_BUTTON_MISSING,
             "Connect option not found in More dropdown",
+            browser_url=session.page.url,
         )
         return False
 
@@ -710,12 +713,12 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
 
     _dump_page_state(session, "more-connect-no-surface")
     logger.warning("More → Connect clicked but no invite surface appeared")
-    current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
     _record_connect_issue(
         session,
-        current_public_id,
+        public_identifier,
         ConnectIssueLog.IssueType.MORE_CONNECT_NO_SURFACE,
         "More → Connect clicked but no invite surface appeared",
+        browser_url=session.page.url,
     )
     return False
 
