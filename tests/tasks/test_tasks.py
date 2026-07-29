@@ -188,6 +188,8 @@ class TestHandleConnect:
     @patch("linkedin.actions.connect.send_connection_request")
     @patch("linkedin.actions.status.get_connection_status")
     def test_sends_connection_and_records(self, mock_status, mock_send, mock_strategy, fake_session):
+        from crm.models import Deal
+
         _make_qualified(fake_session)
         mock_strategy.return_value = _mock_strategy(self._candidate())
         mock_status.return_value = ProfileState.QUALIFIED
@@ -199,6 +201,12 @@ class TestHandleConnect:
 
         _assert_deal_state(fake_session, "alice", ProfileState.PENDING)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.CONNECT).count() == 1
+        deal = Deal.objects.get(campaign=fake_session.campaign)
+        assert deal.invitation_sent_at is not None
+        assert deal.invitation_sender == resolve_operator(
+            fake_session.linkedin_profile.linkedin_username,
+        )
+        assert deal.invitation_withdrawn_at is None
 
     @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.connect.send_connection_request")
@@ -221,7 +229,56 @@ class TestHandleConnect:
 
         _assert_deal_state(fake_session, "alice", ProfileState.PENDING)
         assert ActionLog.objects.filter(action_type=ActionLog.ActionType.CONNECT).count() == 0
-        assert Deal.objects.get(campaign=fake_session.campaign).sent_note == "old note"
+        deal = Deal.objects.get(campaign=fake_session.campaign)
+        assert deal.sent_note == "old note"
+        assert deal.invitation_sent_at is None
+        assert deal.invitation_sender == ""
+
+    @patch("linkedin.tasks.connect.strategy_for")
+    @patch("linkedin.actions.connect.send_connection_request")
+    @patch("linkedin.actions.status.get_connection_status")
+    def test_same_sender_cannot_auto_reinvite_after_confirmed_withdrawal(
+        self,
+        mock_status,
+        mock_send,
+        mock_strategy,
+        fake_session,
+    ):
+        from crm.models import Deal
+        from linkedin.models import Campaign
+
+        _make_qualified(fake_session)
+        current = Deal.objects.get(campaign=fake_session.campaign)
+        prior_campaign = Campaign.objects.create(
+            name="Prior sender campaign",
+            user=fake_session.django_user,
+        )
+        Deal.objects.create(
+            lead=current.lead,
+            campaign=prior_campaign,
+            state=ProfileState.FAILED,
+            invitation_sender=resolve_operator(
+                fake_session.linkedin_profile.linkedin_username,
+            ),
+            invitation_sent_at=timezone.now() - timedelta(days=31),
+            invitation_withdrawn_at=timezone.now() - timedelta(days=1),
+        )
+        mock_strategy.return_value = _mock_strategy(self._candidate())
+
+        handle_connect(
+            _make_task(
+                Task.TaskType.CONNECT,
+                {"campaign_id": fake_session.campaign.pk},
+            ),
+            fake_session,
+            _build_context(fake_session),
+        )
+
+        current.refresh_from_db()
+        assert current.state == ProfileState.FAILED
+        assert "previously withdrew" in current.reason
+        mock_status.assert_not_called()
+        mock_send.assert_not_called()
 
     @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.connect.send_connection_request")

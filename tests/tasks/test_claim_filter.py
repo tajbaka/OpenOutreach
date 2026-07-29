@@ -14,6 +14,7 @@ as. Two real leaks motivated this scoping:
   - follow_up  → payload.operator must match;
   - connect    → payload.campaign_id must be one the daemon owns;
   - sweep_connections → payload.operator must match.
+  - withdraw_invites → payload.operator must match.
   - status_summary → account-agnostic; any daemon can claim it.
 """
 from datetime import timedelta
@@ -121,6 +122,34 @@ def test_sweep_connections_scoped_to_matching_operator():
 @pytest.mark.django_db
 def test_sweep_connections_for_other_operator_is_never_claimed():
     _mk(Task.TaskType.SWEEP_CONNECTIONS, operator="Chuka", scheduled_offset_s=-5)
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
+
+
+@pytest.mark.django_db
+def test_withdraw_invites_scoped_to_matching_operator():
+    mine = _mk(
+        Task.TaskType.WITHDRAW_INVITES,
+        operator="Arian",
+        scheduled_offset_s=-1,
+    )
+    _mk(
+        Task.TaskType.WITHDRAW_INVITES,
+        operator="Chuka",
+        scheduled_offset_s=-20,
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+    assert claimed is not None and claimed.pk == mine.pk
+    assert claimed.status == Task.Status.RUNNING
+
+
+@pytest.mark.django_db
+def test_withdraw_invites_for_other_operator_is_never_claimed():
+    _mk(
+        Task.TaskType.WITHDRAW_INVITES,
+        operator="Chuka",
+        scheduled_offset_s=-5,
+    )
     assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
 
 
@@ -271,6 +300,17 @@ def test_pending_followup_requires_non_empty_operator():
             status=Task.Status.PENDING,
             scheduled_at=dj_tz.now(),
             payload={"campaign_id": 1, "public_id": "alice"},
+        )
+
+
+@pytest.mark.django_db
+def test_pending_withdraw_invites_requires_non_empty_operator():
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=Task.TaskType.WITHDRAW_INVITES,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={},
         )
 
 

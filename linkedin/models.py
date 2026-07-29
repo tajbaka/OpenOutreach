@@ -33,6 +33,13 @@ _RATE_LIMIT_FIELDS = {
 }
 
 
+class RateLimitReason:
+    EXTERNAL = "external"
+    TOTAL_DAILY = "total_daily"
+    ACTION_DAILY = "action_daily"
+    ACTION_WEEKLY = "action_weekly"
+
+
 def active_local_date():
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     return timezone.localtime(timezone=tz).date()
@@ -178,30 +185,53 @@ class LinkedInProfile(models.Model):
 
     def can_execute(self, action_type: str) -> bool:
         """Check if the action is allowed under daily/weekly rate limits."""
+        return not self.rate_limit_reasons(action_type)
+
+    def rate_limit_reasons(self, action_type: str) -> set[str]:
+        """Return every reason an action is currently blocked.
+
+        Callers that schedule other LinkedIn mutations must distinguish a
+        normal local daily cap from the weekly/global caps and LinkedIn's own
+        restriction signal. A single boolean cannot safely make that choice.
+        """
         # Reset exhaustion flag on a new day
         exhausted_date = self._exhausted.get(action_type)
         if exhausted_date is not None and exhausted_date != active_local_date():
             del self._exhausted[action_type]
-        if action_type in self._exhausted:
-            return False
 
         daily_field, weekly_field = _RATE_LIMIT_FIELDS[action_type]
-
         self.refresh_from_db(fields=[daily_field] + ([weekly_field] if weekly_field else []))
 
+        reasons: set[str] = set()
+        if action_type in self._exhausted:
+            reasons.add(RateLimitReason.EXTERNAL)
+
         if MAX_TOTAL_DAILY_ACTIONS and self._total_daily_count() >= MAX_TOTAL_DAILY_ACTIONS:
-            return False
+            reasons.add(RateLimitReason.TOTAL_DAILY)
 
         daily_limit = _LIMIT_OVERRIDES.get(daily_field) or getattr(self, daily_field)
         if daily_limit is not None and self._daily_count(action_type) >= daily_limit:
-            return False
+            reasons.add(RateLimitReason.ACTION_DAILY)
 
         if weekly_field:
             weekly_limit = _LIMIT_OVERRIDES.get(weekly_field) or getattr(self, weekly_field)
             if weekly_limit is not None and self._weekly_count(action_type) >= weekly_limit:
-                return False
+                reasons.add(RateLimitReason.ACTION_WEEKLY)
 
-        return True
+        return reasons
+
+    def reached_local_daily_connect_cap_only(self) -> bool:
+        """True only for the safe stale-invitation cleanup trigger."""
+        return self.rate_limit_reasons(ActionLog.ActionType.CONNECT) == {
+            RateLimitReason.ACTION_DAILY,
+        }
+
+    def is_externally_exhausted(self, action_type: str) -> bool:
+        """Whether LinkedIn itself reported an action restriction today."""
+        exhausted_date = self._exhausted.get(action_type)
+        if exhausted_date is not None and exhausted_date != active_local_date():
+            del self._exhausted[action_type]
+        return action_type in self._exhausted
 
     def record_action(self, action_type: str, campaign: Campaign) -> None:
         """Persist a rate-limited action."""
@@ -261,6 +291,7 @@ class ActionLog(models.Model):
     class ActionType(models.TextChoices):
         CONNECT = "connect", "Connect"
         FOLLOW_UP = "follow_up", "Follow Up"
+        WITHDRAW_INVITE = "withdraw_invite", "Withdraw Invite"
 
     linkedin_profile = models.ForeignKey(
         LinkedInProfile,
@@ -596,7 +627,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     requests and 32 follow-up DMs for Chuka's campaign, from the wrong
     account.
 
-    - follow_up / manual_reply / sweep_connections: claimable when
+    - follow_up / manual_reply / sweep_connections / withdraw_invites: claimable when
       `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
@@ -609,9 +640,17 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     mine_followup = Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator)
     mine_manual = Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator)
     mine_sweep = Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator)
+    mine_withdraw = Q(task_type=Task.TaskType.WITHDRAW_INVITES) & Q(payload__operator=operator)
     mine_connect = Q(task_type=Task.TaskType.CONNECT) & in_owned
     account_agnostic = ~Q(task_type__in=Task.linked_account_scoped_task_types())
-    return mine_followup | mine_manual | mine_sweep | mine_connect | account_agnostic
+    return (
+        mine_followup
+        | mine_manual
+        | mine_sweep
+        | mine_withdraw
+        | mine_connect
+        | account_agnostic
+    )
 
 
 class TaskQuerySet(models.QuerySet):
@@ -730,6 +769,7 @@ class Task(models.Model):
         CHECK_PENDING = "check_pending"
         FOLLOW_UP = "follow_up"
         SWEEP_CONNECTIONS = "sweep_connections"
+        WITHDRAW_INVITES = "withdraw_invites"
         ENRICH_PHONE = "enrich_phone"
         ENRICH_EMAIL = "enrich_email"
         GMAIL_FOLLOW_UP = "gmail_follow_up"
@@ -760,6 +800,7 @@ class Task(models.Model):
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
             cls.TaskType.SWEEP_CONNECTIONS,
+            cls.TaskType.WITHDRAW_INVITES,
         ]
 
     @classmethod
@@ -819,6 +860,13 @@ class Task(models.Model):
         ):
             if not payload.get("operator"):
                 errors.append("sweep_connections tasks require non-empty payload.operator")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.WITHDRAW_INVITES
+            and not payload.get("operator")
+        ):
+            errors.append("withdraw_invites tasks require non-empty payload.operator")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

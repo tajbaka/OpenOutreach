@@ -4,7 +4,8 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from linkedin.models import ActionLog, active_day_start
+import linkedin.models as linkedin_models
+from linkedin.models import ActionLog, RateLimitReason, active_day_start
 
 
 @pytest.mark.django_db
@@ -177,3 +178,77 @@ class TestRecordAction:
         assert log.linkedin_profile == lp
         assert log.campaign == fake_session.campaign
         assert log.action_type == ActionLog.ActionType.CONNECT
+
+
+@pytest.mark.django_db
+class TestConnectLimitReasons:
+    @pytest.fixture(autouse=True)
+    def _use_db_limits(self, monkeypatch):
+        monkeypatch.setitem(
+            linkedin_models._LIMIT_OVERRIDES,
+            "connect_daily_limit",
+            None,
+        )
+        monkeypatch.setitem(
+            linkedin_models._LIMIT_OVERRIDES,
+            "connect_weekly_limit",
+            None,
+        )
+
+    def test_daily_cap_alone_is_cleanup_trigger(self, fake_session):
+        profile = fake_session.linkedin_profile
+        profile.connect_daily_limit = 2
+        profile.connect_weekly_limit = 100
+        profile.save(update_fields=["connect_daily_limit", "connect_weekly_limit"])
+        for _ in range(2):
+            profile.record_action(ActionLog.ActionType.CONNECT, fake_session.campaign)
+
+        assert profile.rate_limit_reasons(ActionLog.ActionType.CONNECT) == {
+            RateLimitReason.ACTION_DAILY,
+        }
+        assert profile.reached_local_daily_connect_cap_only()
+
+    def test_weekly_cap_disqualifies_cleanup_trigger(self, fake_session):
+        profile = fake_session.linkedin_profile
+        profile.connect_daily_limit = 2
+        profile.connect_weekly_limit = 2
+        profile.save(update_fields=["connect_daily_limit", "connect_weekly_limit"])
+        for _ in range(2):
+            profile.record_action(ActionLog.ActionType.CONNECT, fake_session.campaign)
+
+        assert profile.rate_limit_reasons(ActionLog.ActionType.CONNECT) == {
+            RateLimitReason.ACTION_DAILY,
+            RateLimitReason.ACTION_WEEKLY,
+        }
+        assert not profile.reached_local_daily_connect_cap_only()
+
+    def test_linkedin_reported_exhaustion_disqualifies_cleanup_trigger(self, fake_session):
+        profile = fake_session.linkedin_profile
+        profile.connect_daily_limit = 1
+        profile.connect_weekly_limit = 100
+        profile.save(update_fields=["connect_daily_limit", "connect_weekly_limit"])
+        profile.record_action(ActionLog.ActionType.CONNECT, fake_session.campaign)
+        profile.mark_exhausted(ActionLog.ActionType.CONNECT)
+
+        assert RateLimitReason.EXTERNAL in profile.rate_limit_reasons(
+            ActionLog.ActionType.CONNECT,
+        )
+        assert not profile.reached_local_daily_connect_cap_only()
+
+    def test_global_daily_cap_disqualifies_cleanup_trigger(
+        self,
+        fake_session,
+        monkeypatch,
+    ):
+        profile = fake_session.linkedin_profile
+        profile.connect_daily_limit = 1
+        profile.connect_weekly_limit = 100
+        profile.save(update_fields=["connect_daily_limit", "connect_weekly_limit"])
+        profile.record_action(ActionLog.ActionType.CONNECT, fake_session.campaign)
+        monkeypatch.setattr("linkedin.models.MAX_TOTAL_DAILY_ACTIONS", 1)
+
+        assert profile.rate_limit_reasons(ActionLog.ActionType.CONNECT) == {
+            RateLimitReason.ACTION_DAILY,
+            RateLimitReason.TOTAL_DAILY,
+        }
+        assert not profile.reached_local_daily_connect_cap_only()

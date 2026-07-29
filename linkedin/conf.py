@@ -89,6 +89,17 @@ REST_DAYS = tuple(
 # invitations in bulk (replaces per-profile check_pending visits).
 CONNECTION_SWEEP_INTERVAL_HOURS = float(os.getenv("CONNECTION_SWEEP_INTERVAL_HOURS", "2"))
 
+# Withdraw only invitations positively recorded as sent by OpenOutreach. The
+# lane is event-driven after the sender reaches its local daily connect cap,
+# not a periodic or after-hours job.
+ENABLE_STALE_INVITE_WITHDRAWAL = os.getenv(
+    "ENABLE_STALE_INVITE_WITHDRAWAL", "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+STALE_INVITE_AGE_DAYS = int(os.getenv("STALE_INVITE_AGE_DAYS", "30"))
+STALE_INVITE_WITHDRAWAL_DAILY_LIMIT = int(
+    os.getenv("STALE_INVITE_WITHDRAWAL_DAILY_LIMIT", "25"),
+)
+
 # ----------------------------------------------------------------------
 # Campaign config (timing + ML defaults — hardcoded, no YAML)
 # ----------------------------------------------------------------------
