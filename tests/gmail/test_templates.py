@@ -91,7 +91,7 @@ def test_render_for_icp_uses_white_label_champion_routing_copy():
     assert "validation evidence and keeping certification data current" in rendered.body
 
 
-def test_render_for_icp_uses_rev5_ready_program_path_copy():
+def test_render_for_icp_uses_rev5_ready_transition_copy():
     lead = SimpleNamespace(
         id=8,
         first_name="Ada",
@@ -107,9 +107,30 @@ def test_render_for_icp_uses_rev5_ready_program_path_copy():
         step_index=0,
     )
 
-    assert rendered.subject == "Is the sponsor still the blocker at Analytical Engines?"
-    assert "20x program path" in rendered.body
-    assert "without an agency sponsor" in rendered.body
+    assert rendered.subject == "Carrying ready work into 20x"
+    assert "status became legacy" in rendered.body
+    assert "what can be reused" in rendered.body
+
+
+def test_render_for_icp_uses_stage_specific_csp_copy():
+    lead = SimpleNamespace(
+        id=8,
+        first_name="Ada",
+        last_name="Lovelace",
+        company_name="Analytical Engines",
+    )
+
+    rendered = render_for_icp(
+        sender="Arian",
+        icp="20x Initial Implementation",
+        sequence_name="gmail_fallback",
+        lead=lead,
+        step_index=0,
+    )
+
+    assert rendered.subject == "20x implementation at Analytical Engines"
+    assert "20x initial implementation" in rendered.body
+    assert "validation evidence" in rendered.body
 
 
 def test_render_for_icp_uses_gmail_sender_display_name_override():

@@ -49,3 +49,28 @@ def test_parse_csv_leads_normalizes_white_label_icp_labels():
     )
 
     assert [row["icp"] for row in rows] == labels
+
+
+def test_parse_csv_leads_normalizes_stage_specific_csp_icp_labels():
+    labels = [
+        ("20x Initial Implementation", "20x Initial Implementation"),
+        ("legacy ready", "Rev5 Ready"),
+        ("Agency In Process", "Active FedRAMP Path"),
+        ("FedRAMP In Process", "Active FedRAMP Path"),
+        ("FedRAMP Certified or mature", "FedRAMP Mature"),
+        (
+            "Established federal portfolio, exact path verify",
+            "CSP Stage Verify",
+        ),
+    ]
+    rows = parse_csv_leads(
+        "Profile URL,First Name,ICP\n"
+        + "".join(
+            f'https://www.linkedin.com/in/stage-{idx}/,Lead,"{label}"\n'
+            for idx, (label, _expected) in enumerate(labels)
+        )
+    )
+
+    assert [row["icp"] for row in rows] == [
+        expected for _label, expected in labels
+    ]

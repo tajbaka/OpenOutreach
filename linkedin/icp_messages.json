@@ -22,6 +22,94 @@
         "demo.gif"
       ]
     },
+    "20x Initial Implementation": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} enter 20x initial implementation. I'm curious where the work is getting awkward so far: defining the measures or keeping validation evidence current. Good to connect?",
+        "Hi {first_name}, noticed {company_name}'s 20x initial implementation listing. I'm comparing notes with teams building the operating model behind it. Curious what has been hardest to make repeatable. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nOne thing I'm trying to understand is whether listed teams already have their 20x evidence workflow set, or are still figuring out how to keep it current.\n\nHow settled is that at {company_name}?",
+            "Thanks for connecting, {first_name}.\n\nSince {company_name} is in 20x initial implementation, I'm curious what the team is learning first.\n\nIs maintaining validation evidence already a repeatable process there?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: I'm with Boundera, where we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that workflow is still taking shape at {company_name}, would comparing notes be useful?",
+            "I've been digging into how teams keep measures and supporting evidence current after the first implementation push.\n\nWould it help to compare what Boundera is seeing with the process at {company_name}?"
+          ]
+        }
+      ]
+    },
+    "Active FedRAMP Path": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} is already on an active FedRAMP path. I'm curious whether 20x is being evaluated alongside it or kept separate for now. Good to connect?",
+        "Hi {first_name}, noticed the active FedRAMP work at {company_name}. I'm comparing notes with teams deciding what 20x changes, if anything, while the current path continues. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm trying to understand how teams on an active path are handling 20x without disrupting work already underway.\n\nHas it changed the evidence model at {company_name} yet?",
+            "Thanks for connecting, {first_name}.\n\nI saw the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the work yet?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: I'm with Boundera, where we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?",
+            "I've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?"
+          ]
+        }
+      ]
+    },
+    "FedRAMP Mature": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw the established federal cloud work at {company_name}. I'm with Boundera, where we focus on keeping certification data current as products change. Good to connect?",
+        "Hi {first_name}, noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nFor an established program, I'm trying to understand where the recurring work still gets heavy.\n\nIs keeping certification data current the bigger issue at {company_name}?",
+            "Thanks for connecting, {first_name}.\n\nMature programs already have a stack and process. I'm curious about what remains manual as products change.\n\nDoes evidence maintenance still create friction at {company_name}?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "At Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?",
+            "I've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?"
+          ]
+        }
+      ]
+    },
+    "CSP Stage Verify": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally. Is that close to your team?",
+        "Hi {first_name}, noticed your public-sector cloud work at {company_name}. I'm comparing notes with people close to FedRAMP 20x. Are you the right person for that conversation?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI don't want to guess at {company_name}'s current marketplace path.\n\nWho is closest to 20x internally?",
+            "Thanks for connecting, {first_name}.\n\nI'm trying to learn whether 20x sits with the security team or federal delivery at {company_name}.\n\nIs that within your remit?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: I'm with Boundera, where we focus on the operating work behind 20x.\n\nIf someone else owns that at {company_name}, would you mind pointing me in the right direction?",
+            "I'm comparing notes with the people responsible for keeping 20x certification data current.\n\nWould you be open to pointing me toward the right owner at {company_name}?"
+          ]
+        }
+      ]
+    },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
         "Hi {first_name}, saw your assessment work at {company_name}. Curious how assessors are reading the 20x rules since the consolidated rules were published recently. Good to connect?"
@@ -84,20 +172,22 @@
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw {company_name} is listed as ready on the FedRAMP marketplace. Since the 20x program path does not need an agency sponsor, I'm curious whether that changes the plan there. Good to connect?",
-        "Hi {first_name}, noticed {company_name} is still listed as ready. I'm comparing notes with teams weighing the 20x program path against waiting on a sponsor. Open to connecting?"
+        "Hi {first_name}, saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how your team plans to carry that work into class A or another 20x path. Good to connect?",
+        "Hi {first_name}, noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams deciding how much of that work can carry forward. Open to connecting?"
       ],
       "linkedin_connect_followup": [
         {
-          "delay_hours": 3,
+          "delay_hours": 0,
           "variants": [
-            "Appreciate the connect, {first_name}.\n\nI saw {company_name} is still listed as ready. The 20x program path does not require an agency sponsor.\n\nIs sponsor timing the main thing holding the program up?"
+            "Appreciate the connect, {first_name}.\n\nI saw {company_name} reached ready status before the transition. I'm trying to understand how teams plan to carry that work into a new certification path.\n\nHas the team decided what can be reused?",
+            "Thanks for connecting, {first_name}.\n\nOne thing I'm trying to understand is how much of the work behind ready status carries into 20x.\n\nDoes {company_name} already have a transition plan?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "The reason I asked: we built a 20x gap assessment for teams coming from Rev5. It maps the likely path and surfaces where measures and validation evidence still need work.\n\nWant me to send it over?"
+            "At Boundera, we work on translating existing evidence into measures and current validation evidence.\n\nIf that transition is live at {company_name}, would comparing notes help?",
+            "I've been comparing how ready teams are approaching the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?"
           ]
         }
       ]
@@ -111,7 +201,7 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Appreciate the connect, {first_name}.\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?"
+            "Appreciate the connect, {first_name}.\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?"
           ]
         },
         {
@@ -157,7 +247,7 @@
         {
           "delay_hours": 96,
           "variants": [
-            "One more thought, {first_name}.\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
+            "One more thought, {first_name}.\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
           ]
         }
       ]
@@ -244,6 +334,94 @@
         "demo.gif"
       ]
     },
+    "20x Initial Implementation": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} enter 20x initial implementation. I'm curious where the work is getting awkward so far: defining the measures or keeping validation evidence current. Good to connect?",
+        "Hi {first_name}, noticed {company_name}'s 20x initial implementation listing. I'm comparing notes with teams building the operating model behind it. Curious what has been hardest to make repeatable. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nOne thing I'm trying to understand is whether listed teams already have their 20x evidence workflow set, or are still figuring out how to keep it current.\n\nHow settled is that at {company_name}?",
+            "Thanks for connecting, {first_name}.\n\nSince {company_name} is in 20x initial implementation, I'm curious what the team is learning first.\n\nIs maintaining validation evidence already a repeatable process there?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: I'm with Boundera, where we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that workflow is still taking shape at {company_name}, would comparing notes be useful?",
+            "I've been digging into how teams keep measures and supporting evidence current after the first implementation push.\n\nWould it help to compare what Boundera is seeing with the process at {company_name}?"
+          ]
+        }
+      ]
+    },
+    "Active FedRAMP Path": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw {company_name} is already on an active FedRAMP path. I'm curious whether 20x is being evaluated alongside it or kept separate for now. Good to connect?",
+        "Hi {first_name}, noticed the active FedRAMP work at {company_name}. I'm comparing notes with teams deciding what 20x changes, if anything, while the current path continues. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm trying to understand how teams on an active path are handling 20x without disrupting work already underway.\n\nHas it changed the evidence model at {company_name} yet?",
+            "Thanks for connecting, {first_name}.\n\nI saw the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the work yet?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: I'm with Boundera, where we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?",
+            "I've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?"
+          ]
+        }
+      ]
+    },
+    "FedRAMP Mature": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw the established federal cloud work at {company_name}. I'm with Boundera, where we focus on keeping certification data current as products change. Good to connect?",
+        "Hi {first_name}, noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nFor an established program, I'm trying to understand where the recurring work still gets heavy.\n\nIs keeping certification data current the bigger issue at {company_name}?",
+            "Thanks for connecting, {first_name}.\n\nMature programs already have a stack and process. I'm curious about what remains manual as products change.\n\nDoes evidence maintenance still create friction at {company_name}?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "At Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?",
+            "I've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?"
+          ]
+        }
+      ]
+    },
+    "CSP Stage Verify": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally. Is that close to your team?",
+        "Hi {first_name}, noticed your public-sector cloud work at {company_name}. I'm comparing notes with people close to FedRAMP 20x. Are you the right person for that conversation?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI don't want to guess at {company_name}'s current marketplace path.\n\nWho is closest to 20x internally?",
+            "Thanks for connecting, {first_name}.\n\nI'm trying to learn whether 20x sits with the security team or federal delivery at {company_name}.\n\nIs that within your remit?"
+          ]
+        },
+        {
+          "delay_hours": 72,
+          "variants": [
+            "The reason I asked: I'm with Boundera, where we focus on the operating work behind 20x.\n\nIf someone else owns that at {company_name}, would you mind pointing me in the right direction?",
+            "I'm comparing notes with the people responsible for keeping 20x certification data current.\n\nWould you be open to pointing me toward the right owner at {company_name}?"
+          ]
+        }
+      ]
+    },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
         "Hi {first_name}, saw your assessment work at {company_name}. Curious how assessors are reading the 20x rules since the consolidated rules were published recently. Good to connect?"
@@ -306,20 +484,22 @@
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw {company_name} on the FedRAMP marketplace ready list. Curious whether the sponsorless 20x program path is getting a serious look there. Good to connect?",
-        "Hi {first_name}, noticed {company_name} is listed as ready. I'm talking with teams figuring out whether to stay put or move onto the 20x program path. Open to connecting?"
+        "Hi {first_name}, saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how your team plans to carry that work into class A or another 20x path. Good to connect?",
+        "Hi {first_name}, noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams deciding how much of that work can carry forward. Open to connecting?"
       ],
       "linkedin_connect_followup": [
         {
-          "delay_hours": 3,
+          "delay_hours": 0,
           "variants": [
-            "Thanks for connecting, {first_name}.\n\nI noticed {company_name} is still listed as ready. Since the 20x program path can move without an agency sponsor, I'm curious what is keeping the current effort at ready status.\n\nIs the sponsor still the blocker?"
+            "Appreciate the connect, {first_name}.\n\nI saw {company_name} reached ready status before the transition. I'm trying to understand how teams plan to carry that work into a new certification path.\n\nHas the team decided what can be reused?",
+            "Thanks for connecting, {first_name}.\n\nOne thing I'm trying to understand is how much of the work behind ready status carries into 20x.\n\nDoes {company_name} already have a transition plan?"
           ]
         },
         {
           "delay_hours": 72,
           "variants": [
-            "One thing that may help: Boundera's 20x gap assessment starts from a team's current Rev5 position, then shows the likely path and where measures or validation evidence still need work.\n\nWould it be useful if I sent that over?"
+            "At Boundera, we work on translating existing evidence into measures and current validation evidence.\n\nIf that transition is live at {company_name}, would comparing notes help?",
+            "I've been comparing how ready teams are approaching the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?"
           ]
         }
       ]
@@ -333,7 +513,7 @@
         {
           "delay_hours": 0,
           "variants": [
-            "Appreciate the connect, {first_name}.\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?"
+            "Appreciate the connect, {first_name}.\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?"
           ]
         },
         {
@@ -379,7 +559,7 @@
         {
           "delay_hours": 96,
           "variants": [
-            "One more thought, {first_name}.\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
+            "One more thought, {first_name}.\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
           ]
         }
       ]

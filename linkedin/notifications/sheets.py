@@ -727,7 +727,11 @@ LEAD_ICP_BUCKETS = (
     "3PAOs/Assessors",
     "Advisors",
     "Channel",
+    "20x Initial Implementation",
     "Rev5 Ready",
+    "Active FedRAMP Path",
+    "FedRAMP Mature",
+    "CSP Stage Verify",
     "White Label Product/Executive",
     "White Label Partnerships",
     "White Label Delivery",
@@ -748,6 +752,25 @@ CSV_ICP_TO_LEAD_ICP = {
     "rev5 ready":       "Rev5 Ready",
     "fedramp ready":    "Rev5 Ready",
     "ready":            "Rev5 Ready",
+    "legacy ready":     "Rev5 Ready",
+    "20x initial implementation": "20x Initial Implementation",
+    "initial implementation":     "20x Initial Implementation",
+    "active fedramp path":         "Active FedRAMP Path",
+    "agency in process":           "Active FedRAMP Path",
+    "fedramp in process":          "Active FedRAMP Path",
+    "fedramp mature":              "FedRAMP Mature",
+    "fedramp certified":           "FedRAMP Mature",
+    "fedramp certified or mature": "FedRAMP Mature",
+    "certified mature":            "FedRAMP Mature",
+    "csp stage verify": (
+        "CSP Stage Verify"
+    ),
+    "stage verify": (
+        "CSP Stage Verify"
+    ),
+    "established federal portfolio, exact path verify": (
+        "CSP Stage Verify"
+    ),
     "white label product/executive": "White Label Product/Executive",
     "white label partnerships":      "White Label Partnerships",
     "white label delivery":          "White Label Delivery",

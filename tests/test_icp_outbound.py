@@ -90,7 +90,7 @@ def test_white_label_copy_avoids_capitalized_terms_and_internal_strategy_questio
             assert not any(phrase in copy.lower() for phrase in forbidden_lower)
 
 
-def test_rev5_ready_copy_is_a_short_20x_program_path_experiment():
+def test_rev5_ready_copy_is_a_short_legacy_transition_experiment():
     for sender in ("Arian", "Chuka"):
         messages = icp_outbound.load_icp_messages(sender)["Rev5 Ready"]
         assert len(messages["linkedin_connect_note"]) == 2
@@ -98,13 +98,53 @@ def test_rev5_ready_copy_is_a_short_20x_program_path_experiment():
             assert 21 <= len(message.split()) <= 40
             assert len(message) < 300
             assert message.count("?") == 1
-            assert "20x program path" in message
+            assert "ready" in message.lower()
             assert "http" not in message.lower()
 
         copy = json.dumps(messages)
-        assert "agency sponsor" in copy
+        assert "legacy" in copy
         assert "validation evidence" in copy
         assert not any(mark in copy for mark in ("—", "–", "--"))
+
+
+def test_stage_specific_csp_copy_is_short_and_available_to_both_senders():
+    stage_icps = {
+        "20x Initial Implementation": "initial implementation",
+        "Rev5 Ready": "ready",
+        "Active FedRAMP Path": "active FedRAMP",
+        "FedRAMP Mature": "certification data",
+        "CSP Stage Verify": "right person",
+    }
+    for sender in ("Arian", "Chuka"):
+        messages = icp_outbound.load_icp_messages(sender)
+        gmail_messages = icp_outbound.load_gmail_messages(sender)
+        for icp, expected_phrase in stage_icps.items():
+            variants = messages[icp]["linkedin_connect_note"]
+            assert len(variants) == 2
+            for message in variants:
+                assert 21 <= len(message.split()) <= 40
+                assert len(message) < 300
+                assert message.count("?") == 1
+                assert "http" not in message.lower()
+                assert not any(mark in message for mark in ("—", "–", "--"))
+            combined = json.dumps(messages[icp])
+            assert expected_phrase.lower() in combined.lower()
+            assert len(gmail_messages[icp]) == 2
+
+
+def test_participating_sender_copy_uses_established_boundera_language():
+    for sender in ("Arian", "Chuka"):
+        combined = json.dumps(
+            {
+                "linkedin": icp_outbound.load_icp_messages(sender),
+                "gmail": icp_outbound.load_gmail_messages(sender),
+            }
+        ).lower()
+
+        assert "building boundera" not in combined
+        assert "boundera is being built" not in combined
+        assert "i'm with boundera" in combined
+        assert "at boundera" in combined
 
 
 def test_load_icp_messages_unknown_sender_raises():

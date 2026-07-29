@@ -1,7 +1,7 @@
 {
   "Arian": {
     "White Label Product/Executive": [
-      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
       {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
     ],
     "White Label Partnerships": [
@@ -10,29 +10,129 @@
     ],
     "White Label Delivery": [
       {"delay_hours": 0.33, "subject_variants": ["Where does 20x delivery get awkward?"], "body_variants": ["Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
+      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
     ],
     "White Label Champions": [
       {"delay_hours": 0.33, "subject_variants": ["Who is closest to 20x at {company_name}?"], "body_variants": ["Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"]},
       {"delay_hours": 192, "subject_variants": ["20x delivery owner"], "body_variants": ["Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"]}
     ],
-    "Rev5 Ready": [
+    "20x Initial Implementation": [
       {
         "delay_hours": 0.33,
         "subject_variants": [
-          "Is the sponsor still the blocker at {company_name}?"
+          "20x implementation at {company_name}",
+          "Keeping 20x evidence current"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} is listed as ready on the FedRAMP marketplace. The 20x program path can move directly through FedRAMP without an agency sponsor, so I was curious whether that changes the plan there.\n\nIs sponsor timing still the main blocker?\n\nBest,\n{my_name}"
+          "Hi {first_name},\n\nI saw {company_name} in 20x initial implementation. I'm with Boundera, where we focus on keeping certification data current as implementation changes.\n\nIs maintaining the validation evidence already handled, or is that workflow still taking shape?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed {company_name}'s initial implementation listing and was curious how the operating model is coming together behind it.\n\nHas the team found a repeatable way to keep measures and validation evidence current?\n\nBest,\n{my_name}"
         ]
       },
       {
         "delay_hours": 192,
         "subject_variants": [
-          "20x path from ready status"
+          "The operating work behind 20x",
+          "20x validation evidence"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nThe reason I reached out: we built a 20x gap assessment for teams coming from Rev5. It maps the likely path and surfaces where measures and validation evidence still need work.\n\nWant me to send it over?\n\nBest,\n{my_name}"
+          "Hi {first_name},\n\nAt Boundera, we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that process is still taking shape at {company_name}, would comparing notes be useful?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been comparing how initial implementation teams turn their first evidence pass into something repeatable.\n\nWould it be useful to compare what we're seeing with the process at {company_name}?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Active FedRAMP Path": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "20x alongside the current path",
+          "Active FedRAMP work at {company_name}"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw {company_name} is already on an active FedRAMP path. I'm trying to understand how teams evaluate 20x without disrupting work already underway.\n\nHas 20x changed the evidence model there yet?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the current effort yet?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "Keeping evidence current through change",
+          "20x and an active certification effort"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "FedRAMP Mature": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Maintaining certification data at {company_name}",
+          "The maintenance side of FedRAMP"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw the established federal cloud work at {company_name}. I'm trying to understand where recurring FedRAMP work stays heavy after a program is established.\n\nIs keeping certification data current still a meaningful burden?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change.\n\nDoes evidence maintenance still create friction there?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "Keeping validation evidence current",
+          "New products and existing evidence"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "CSP Stage Verify": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Who owns 20x at {company_name}?",
+          "FedRAMP 20x owner"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally.\n\nIs that close to your team?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed your public-sector cloud work at {company_name}. I don't want to guess at the company's current marketplace path.\n\nAre you the right person for a 20x conversation?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "The operating work behind 20x",
+          "Right owner for 20x"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI'm with Boundera, where we focus on the operating work behind 20x and speak with the people responsible for keeping certification data current.\n\nWould you point me toward the right owner at {company_name}?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI may have the ownership wrong at {company_name}.\n\nWho is closest to the 20x work internally?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Rev5 Ready": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Carrying ready work into 20x",
+          "The path after ready status"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how teams plan to carry that work into class A or another 20x path.\n\nHas the team decided what can be reused?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams trying to preserve the work already completed.\n\nDoes {company_name} have a transition plan yet?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "Reusing existing FedRAMP work",
+          "Moving forward from ready"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we work on translating existing evidence into measures and current validation evidence for 20x.\n\nIf that transition is live at {company_name}, would comparing notes help?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been comparing how ready teams approach the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?\n\nBest,\n{my_name}"
         ]
       }
     ],
@@ -507,7 +607,7 @@
   },
   "Chuka": {
     "White Label Product/Executive": [
-      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around helping vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
+      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
       {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
     ],
     "White Label Partnerships": [
@@ -516,29 +616,129 @@
     ],
     "White Label Delivery": [
       {"delay_hours": 0.33, "subject_variants": ["Where does 20x delivery get awkward?"], "body_variants": ["Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nI'm building Boundera around a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
+      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
     ],
     "White Label Champions": [
       {"delay_hours": 0.33, "subject_variants": ["Who is closest to 20x at {company_name}?"], "body_variants": ["Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"]},
       {"delay_hours": 192, "subject_variants": ["20x delivery owner"], "body_variants": ["Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"]}
     ],
-    "Rev5 Ready": [
+    "20x Initial Implementation": [
       {
         "delay_hours": 0.33,
         "subject_variants": [
-          "Does 20x change the plan at {company_name}?"
+          "20x implementation at {company_name}",
+          "Keeping 20x evidence current"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nI noticed {company_name} is still listed as ready. Since the 20x program path can move without an agency sponsor, I was curious what is keeping the current effort at ready status.\n\nIs the sponsor still the blocker?\n\nBest,\n{my_name}"
+          "Hi {first_name},\n\nI saw {company_name} in 20x initial implementation. I'm with Boundera, where we focus on keeping certification data current as implementation changes.\n\nIs maintaining the validation evidence already handled, or is that workflow still taking shape?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed {company_name}'s initial implementation listing and was curious how the operating model is coming together behind it.\n\nHas the team found a repeatable way to keep measures and validation evidence current?\n\nBest,\n{my_name}"
         ]
       },
       {
         "delay_hours": 192,
         "subject_variants": [
-          "A 20x gap assessment from Rev5"
+          "The operating work behind 20x",
+          "20x validation evidence"
         ],
         "body_variants": [
-          "Hi {first_name},\n\nOne thing that may help: Boundera's 20x gap assessment starts from a team's current Rev5 position, then shows the likely path and where measures or validation evidence still need work.\n\nWould it be useful if I sent that over?\n\nBest,\n{my_name}"
+          "Hi {first_name},\n\nAt Boundera, we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that process is still taking shape at {company_name}, would comparing notes be useful?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been comparing how initial implementation teams turn their first evidence pass into something repeatable.\n\nWould it be useful to compare what we're seeing with the process at {company_name}?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Active FedRAMP Path": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "20x alongside the current path",
+          "Active FedRAMP work at {company_name}"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw {company_name} is already on an active FedRAMP path. I'm trying to understand how teams evaluate 20x without disrupting work already underway.\n\nHas 20x changed the evidence model there yet?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the current effort yet?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "Keeping evidence current through change",
+          "20x and an active certification effort"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "FedRAMP Mature": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Maintaining certification data at {company_name}",
+          "The maintenance side of FedRAMP"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw the established federal cloud work at {company_name}. I'm trying to understand where recurring FedRAMP work stays heavy after a program is established.\n\nIs keeping certification data current still a meaningful burden?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change.\n\nDoes evidence maintenance still create friction there?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "Keeping validation evidence current",
+          "New products and existing evidence"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "CSP Stage Verify": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Who owns 20x at {company_name}?",
+          "FedRAMP 20x owner"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally.\n\nIs that close to your team?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed your public-sector cloud work at {company_name}. I don't want to guess at the company's current marketplace path.\n\nAre you the right person for a 20x conversation?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "The operating work behind 20x",
+          "Right owner for 20x"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI'm with Boundera, where we focus on the operating work behind 20x and speak with the people responsible for keeping certification data current.\n\nWould you point me toward the right owner at {company_name}?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI may have the ownership wrong at {company_name}.\n\nWho is closest to the 20x work internally?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Rev5 Ready": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "Carrying ready work into 20x",
+          "The path after ready status"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how teams plan to carry that work into class A or another 20x path.\n\nHas the team decided what can be reused?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams trying to preserve the work already completed.\n\nDoes {company_name} have a transition plan yet?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "Reusing existing FedRAMP work",
+          "Moving forward from ready"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we work on translating existing evidence into measures and current validation evidence for 20x.\n\nIf that transition is live at {company_name}, would comparing notes help?\n\nBest,\n{my_name}",
+          "Hi {first_name},\n\nI've been comparing how ready teams approach the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?\n\nBest,\n{my_name}"
         ]
       }
     ],
