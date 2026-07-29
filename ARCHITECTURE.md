@@ -489,7 +489,9 @@ Self-hosted Postgres testing is separate from the app container: `compose/selfho
 
 White-label outreach uses four canonical `Lead.icp` values across CSV normalization, LinkedIn templates, Gmail templates, and the ICP Messages tabs: `White Label Product/Executive`, `White Label Partnerships`, `White Label Delivery`, and `White Label Champions`. Sender copy is populated for Arian and Chuka only, champion rows use an introduction/routing ask, and each LinkedIn connection-note bucket carries two short variants for within-sender message testing.
 
-A1 FedRAMP Ready outreach uses the canonical `Lead.icp` value `Rev5 Ready`. CSV aliases normalize into that value, while Arian and Chuka route LinkedIn and post-accept Gmail copy around the sponsorless 20x Program path and Boundera's Rev5-aware 20x gap assessment.
+A1 FedRAMP Ready outreach uses the canonical `Lead.icp` value `Rev5 Ready`. CSV aliases normalize into that value, while Arian and Chuka route LinkedIn and post-accept Gmail copy around carrying Ready work forward after the July 28, 2026 transition to legacy status.
+
+Stage-aware direct-buyer outreach uses four additional composite `Lead.icp` values without a schema migration: `20x Initial Implementation`, `Active FedRAMP Path`, `FedRAMP Mature`, and `CSP Stage Verify`. Together with `Rev5 Ready`, these route current Arian/Chuka LinkedIn and Gmail copy through the existing one-key template path. CSV normalization collapses Agency/FedRAMP In Process into `Active FedRAMP Path`, certified or mature programs into `FedRAMP Mature`, and unverified federal portfolios into `CSP Stage Verify`; the last bucket asks for the owner or exact stage rather than asserting one.
 
 Core: `playwright`, `playwright-stealth`, `Django`, `django-crm-admin`, `pandas`, `langchain`/`langchain-openai`, `jinja2`, `pydantic`, `jsonpath-ng`, `tendo`, `termcolor`, `tenacity`, `requests`
 ML: `scikit-learn`, `numpy`, `fastembed`, `joblib`
