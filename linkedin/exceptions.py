@@ -24,6 +24,18 @@ class InvitationWithdrawalError(Exception):
     pass
 
 
+class InvitationWithdrawalConflictError(InvitationWithdrawalError):
+    """A withdrawal run conflicts with another process or a live daemon."""
+
+    pass
+
+
+class InvitationWithdrawalIdentityError(InvitationWithdrawalError):
+    """The authenticated LinkedIn identity is not the requested sender."""
+
+    pass
+
+
 class SheetsError(Exception):
     """Google Sheets API call failed (network error, auth error, malformed response)."""
     pass

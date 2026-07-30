@@ -279,14 +279,18 @@ class TestHandleConnect:
         )
         mock_strategy.return_value = _mock_strategy(self._candidate())
 
-        handle_connect(
-            _make_task(
-                Task.TaskType.CONNECT,
-                {"campaign_id": fake_session.campaign.pk},
-            ),
-            fake_session,
-            _build_context(fake_session),
-        )
+        with patch(
+            "linkedin.suppression.lead_suppression_match",
+            return_value=None,
+        ):
+            handle_connect(
+                _make_task(
+                    Task.TaskType.CONNECT,
+                    {"campaign_id": fake_session.campaign.pk},
+                ),
+                fake_session,
+                _build_context(fake_session),
+            )
 
         current.refresh_from_db()
         assert current.state == ProfileState.FAILED

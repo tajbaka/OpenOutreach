@@ -1,25 +1,36 @@
-"""Exact-profile UI actions for project-sent LinkedIn invitations."""
+"""Human-paced withdrawal actions on LinkedIn's Sent Invitations page."""
 from __future__ import annotations
 
 import logging
+import random
+import re
 import time
+from dataclasses import dataclass
 from enum import Enum
+from typing import Mapping, Sequence
+from urllib.parse import unquote, urlparse
 
-from linkedin.actions.search import _matches_profile_redirect
-from linkedin.actions.status import get_connection_status
-from linkedin.browser.nav import find_top_card
 from linkedin.db.urls import url_to_public_id
-from linkedin.enums import ProfileState
 from linkedin.exceptions import InvitationWithdrawalError
 
 logger = logging.getLogger(__name__)
 
-PENDING_WITHDRAW_SELECTOR = (
-    'button[aria-label*="Pending" i][aria-label*="withdraw invitation" i]:visible, '
-    'a[aria-label*="Pending" i][aria-label*="withdraw invitation" i]:visible, '
-    '[role="button"][aria-label*="Pending" i][aria-label*="withdraw invitation" i]:visible'
+SENT_INVITATIONS_URL = (
+    "https://www.linkedin.com/mynetwork/invitation-manager/sent/"
+)
+SENT_INVITATIONS_PATH = "/mynetwork/invitation-manager/sent/"
+SENT_INVITATION_CARD_SELECTOR = (
+    'div[role="listitem"]:has('
+    'a[aria-label*="Withdraw invitation sent to" i])'
+)
+SENT_PROFILE_LINK_SELECTOR = 'a[href*="/in/"]'
+SENT_WITHDRAW_SELECTOR = (
+    'a[aria-label*="Withdraw invitation sent to" i]:visible, '
+    'button[aria-label*="Withdraw invitation sent to" i]:visible, '
+    '[role="button"][aria-label*="Withdraw invitation sent to" i]:visible'
 )
 VISIBLE_DIALOG_SELECTOR = (
+    'dialog[open]:visible, '
     'div[role="dialog"]:visible, '
     'section[role="dialog"]:visible, '
     'div.artdeco-modal:visible'
@@ -27,14 +38,58 @@ VISIBLE_DIALOG_SELECTOR = (
 WITHDRAW_CONFIRM_SELECTOR = (
     'button[aria-label="Withdraw invitation" i]:visible, '
     'button[aria-label="Withdraw" i]:visible, '
-    'button:has-text("Withdraw"):visible'
+    '[role="button"][aria-label="Withdraw invitation" i]:visible, '
+    '[role="button"][aria-label="Withdraw" i]:visible, '
+    'button:has-text("Withdraw"):visible, '
+    '[role="button"]:has-text("Withdraw"):visible'
 )
+CANCEL_DIALOG_SELECTOR = (
+    'button[aria-label="Cancel" i]:visible, '
+    '[role="button"][aria-label="Cancel" i]:visible, '
+    'button:has-text("Cancel"):visible, '
+    '[role="button"]:has-text("Cancel"):visible'
+)
+SCROLL_CONTAINER_SELECTOR = "main"
+SCROLL_MIN_PIXELS = 450
+SCROLL_MAX_PIXELS = 800
+SCROLL_MIN_PAUSE_MS = 650
+SCROLL_MAX_PAUSE_MS = 1200
+SCROLL_MAX_ROUNDS = 260
+SCROLL_MAX_SECONDS = 20 * 60
+SCROLL_END_STAGNANT_ROUNDS = 5
 
 
 class WithdrawalResult(Enum):
     WITHDRAWN = "withdrawn"
-    CONNECTED = "connected"
     NOT_PENDING = "not_pending"
+
+
+@dataclass(frozen=True)
+class SentInvitationTarget:
+    public_identifier: str
+    expected_name: str
+
+
+@dataclass(frozen=True)
+class SentInvitationMatch:
+    public_identifier: str
+    displayed_name: str
+    sent_label: str
+
+
+@dataclass(frozen=True)
+class SentInvitationScan:
+    matches: tuple[SentInvitationMatch, ...]
+    cards_seen: int
+    scroll_rounds: int
+    reached_end: bool
+
+    @property
+    def by_public_identifier(self) -> dict[str, SentInvitationMatch]:
+        return {
+            match.public_identifier.casefold(): match
+            for match in self.matches
+        }
 
 
 def _first_visible(locator):
@@ -56,7 +111,7 @@ def _first_visible_until(page, selector: str, *, timeout_seconds: float = 4):
 
 
 def _withdraw_confirmation(dialog):
-    """Return an unambiguous Withdraw button within the visible dialog."""
+    """Return an unambiguous Withdraw control inside the visible dialog."""
     candidates = dialog.locator(WITHDRAW_CONFIRM_SELECTOR)
     for index in range(candidates.count()):
         candidate = candidates.nth(index)
@@ -69,62 +124,305 @@ def _withdraw_confirmation(dialog):
     return None
 
 
-def withdraw_pending_invitation(session, profile: dict) -> WithdrawalResult:
-    """Withdraw the pending invite from one exact LinkedIn profile page.
+def _dismiss_dialog(page, dialog) -> None:
+    cancel = _first_visible(dialog.locator(CANCEL_DIALOG_SELECTOR))
+    if cancel is not None:
+        cancel.click()
+        return
+    page.keyboard.press("Escape")
 
-    The action trusts neither a list row nor a stale CRM state. It navigates to
-    the target profile, reconciles a last-second acceptance first, requires
-    LinkedIn's explicit Pending/withdraw surface, confirms in the scoped modal,
-    and verifies that the profile is no longer pending after the click.
-    """
-    expected_public_id = (profile.get("public_identifier") or "").strip()
-    if not expected_public_id:
-        raise InvitationWithdrawalError("Profile has no public_identifier")
 
-    status = get_connection_status(session, profile)
-    if status == ProfileState.CONNECTED:
-        return WithdrawalResult.CONNECTED
-    if status != ProfileState.PENDING:
+def _name_tokens(value: str) -> list[str]:
+    return re.findall(r"[^\W_]+", (value or "").casefold(), flags=re.UNICODE)
+
+
+def names_match(expected: str, displayed: str) -> bool:
+    """Require the stored lead's first two name tokens on the exact URL card."""
+    expected_tokens = _name_tokens(expected)
+    displayed_tokens = _name_tokens(displayed)
+    if not expected_tokens or not displayed_tokens:
+        return False
+    required = expected_tokens[:2]
+    return all(token in displayed_tokens for token in required)
+
+
+def _displayed_name(withdraw_control) -> str:
+    aria = (withdraw_control.get_attribute("aria-label") or "").strip()
+    prefix = "withdraw invitation sent to "
+    if aria.casefold().startswith(prefix):
+        return aria[len(prefix):].strip()
+    return ""
+
+
+def _sent_label(card) -> str:
+    for line in (card.inner_text() or "").splitlines():
+        normalized = " ".join(line.split())
+        if normalized.casefold().startswith("sent "):
+            return normalized
+    return ""
+
+
+def _card_public_identifier(card) -> str:
+    links = card.locator(SENT_PROFILE_LINK_SELECTOR)
+    for index in range(links.count()):
+        href = (links.nth(index).get_attribute("href") or "").strip()
+        public_identifier = url_to_public_id(href)
+        if public_identifier:
+            return public_identifier
+    return ""
+
+
+def _card_match(card) -> SentInvitationMatch | None:
+    public_identifier = _card_public_identifier(card)
+    if not public_identifier:
+        return None
+    withdraw_control = _first_visible(card.locator(SENT_WITHDRAW_SELECTOR))
+    if withdraw_control is None:
+        return None
+    return SentInvitationMatch(
+        public_identifier=public_identifier,
+        displayed_name=_displayed_name(withdraw_control),
+        sent_label=_sent_label(card),
+    )
+
+
+def _loaded_profile_links(page):
+    links = page.locator(SENT_PROFILE_LINK_SELECTOR)
+    hrefs = links.evaluate_all(
+        "elements => elements.map(element => element.href || '')"
+    )
+    return links, hrefs
+
+
+def _find_sent_card(page, public_identifier: str):
+    expected = public_identifier.casefold()
+    links, hrefs = _loaded_profile_links(page)
+    for index, href in enumerate(hrefs):
+        if (url_to_public_id(href) or "").casefold() != expected:
+            continue
+        card = links.nth(index).locator(
+            'xpath=ancestor::*[@role="listitem"][1]'
+        )
+        if card.count() > 0:
+            return card.first
+    return None
+
+
+def _reported_invitation_total(page) -> int | None:
+    text = page.locator("body").inner_text()
+    match = re.search(r"\bPeople\s*\(([\d,]+)\)", text)
+    if match is None:
+        return None
+    return int(match.group(1).replace(",", ""))
+
+
+def _scroll_state(container) -> tuple[int, int, int]:
+    values = container.evaluate(
+        "el => [el.scrollTop, el.scrollHeight, el.clientHeight]"
+    )
+    return int(values[0]), int(values[1]), int(values[2])
+
+
+def _collect_target_matches(
+    page,
+    *,
+    targets: Mapping[str, SentInvitationTarget],
+    matches: dict[str, SentInvitationMatch],
+) -> int:
+    links, hrefs = _loaded_profile_links(page)
+    loaded_targets: dict[str, object] = {}
+    for index, href in enumerate(hrefs):
+        key = (url_to_public_id(href) or "").casefold()
+        if not key or key not in targets or key in matches:
+            continue
+        card = links.nth(index).locator(
+            'xpath=ancestor::*[@role="listitem"][1]'
+        )
+        if card.count() > 0:
+            loaded_targets[key] = card.first
+
+    for key, card in loaded_targets.items():
+        match = _card_match(card)
+        if match is None:
+            continue
+        target = targets[key]
+        if not names_match(target.expected_name, match.displayed_name):
+            raise InvitationWithdrawalError(
+                "Refusing Sent-card match for "
+                f"{target.public_identifier}: DB name {target.expected_name!r} "
+                f"does not match LinkedIn name {match.displayed_name!r}"
+            )
+        matches[key] = match
+        logger.info(
+            "Matched pending invitation %s: %s (%s)",
+            target.public_identifier,
+            match.displayed_name,
+            match.sent_label or "date label unavailable",
+        )
+    return page.locator(SENT_INVITATION_CARD_SELECTOR).count()
+
+
+def scan_sent_invitations(
+    session,
+    targets: Sequence[SentInvitationTarget],
+) -> SentInvitationScan:
+    """Human-scroll the Sent page until every target is found or the list ends."""
+    session.ensure_browser()
+    page = session.page
+    page.goto(SENT_INVITATIONS_URL)
+    page.wait_for_load_state("domcontentloaded")
+    session.wait()
+
+    path = unquote(urlparse(page.url).path)
+    if not path.startswith(SENT_INVITATIONS_PATH):
+        raise InvitationWithdrawalError(
+            f"Sent Invitations navigation failed: got {page.url}"
+        )
+
+    targets_by_id = {
+        target.public_identifier.casefold(): target
+        for target in targets
+    }
+    if len(targets_by_id) != len(targets):
+        raise InvitationWithdrawalError(
+            "The selected batch contains duplicate LinkedIn public identifiers"
+        )
+
+    scroll_container = page.locator(SCROLL_CONTAINER_SELECTOR).first
+    if scroll_container.count() == 0 or not scroll_container.is_visible():
+        raise InvitationWithdrawalError(
+            "LinkedIn Sent Invitations page has no visible scroll container"
+        )
+    scroll_container.hover()
+
+    expected_total = _reported_invitation_total(page)
+    matches: dict[str, SentInvitationMatch] = {}
+    started = time.monotonic()
+    scroll_rounds = 0
+    stagnant_at_end = 0
+    previous_card_count = -1
+    previous_scroll_height = -1
+    reached_end = False
+    cards_seen = 0
+
+    while True:
+        cards_seen = _collect_target_matches(
+            page,
+            targets=targets_by_id,
+            matches=matches,
+        )
+        if len(matches) == len(targets_by_id):
+            break
+
+        scroll_top, scroll_height, client_height = _scroll_state(
+            scroll_container
+        )
+        at_end = scroll_top + client_height >= scroll_height - 20
+        if expected_total is not None and cards_seen >= expected_total:
+            reached_end = True
+            break
+        if (
+            at_end
+            and cards_seen == previous_card_count
+            and scroll_height == previous_scroll_height
+        ):
+            stagnant_at_end += 1
+        else:
+            stagnant_at_end = 0
+        if stagnant_at_end >= SCROLL_END_STAGNANT_ROUNDS:
+            reached_end = True
+            break
+        if scroll_rounds >= SCROLL_MAX_ROUNDS:
+            raise InvitationWithdrawalError(
+                "Sent Invitations scan exceeded its maximum scroll rounds "
+                "before reaching the selected date"
+            )
+        if time.monotonic() - started >= SCROLL_MAX_SECONDS:
+            raise InvitationWithdrawalError(
+                "Sent Invitations scan exceeded its time limit before "
+                "reaching the selected date"
+            )
+
+        previous_card_count = cards_seen
+        previous_scroll_height = scroll_height
+        page.mouse.wheel(
+            0,
+            random.randint(SCROLL_MIN_PIXELS, SCROLL_MAX_PIXELS),
+        )
+        page.wait_for_timeout(
+            random.randint(SCROLL_MIN_PAUSE_MS, SCROLL_MAX_PAUSE_MS),
+        )
+        scroll_rounds += 1
+        if scroll_rounds % 5 == 0:
+            logger.info(
+                "Sent Invitations scroll: rounds=%d cards=%d matches=%d/%d",
+                scroll_rounds,
+                cards_seen,
+                len(matches),
+                len(targets_by_id),
+            )
+
+    return SentInvitationScan(
+        matches=tuple(
+            matches[key]
+            for key in targets_by_id
+            if key in matches
+        ),
+        cards_seen=cards_seen,
+        scroll_rounds=scroll_rounds,
+        reached_end=reached_end,
+    )
+
+
+def withdraw_sent_invitation(
+    session,
+    target: SentInvitationTarget,
+) -> WithdrawalResult:
+    """Withdraw one exact URL/name-matched card and verify it disappears."""
+    page = session.page
+    card = _find_sent_card(page, target.public_identifier)
+    if card is None:
         return WithdrawalResult.NOT_PENDING
-
-    current_url = session.page.url
-    if not _matches_profile_redirect(current_url, expected_public_id):
-        current_public_id = url_to_public_id(current_url) or "unknown"
+    match = _card_match(card)
+    if match is None:
         raise InvitationWithdrawalError(
-            f"Refusing withdrawal: expected {expected_public_id}, visible profile is "
-            f"{current_public_id}"
+            f"{target.public_identifier} card has no explicit Withdraw control"
+        )
+    if not names_match(target.expected_name, match.displayed_name):
+        raise InvitationWithdrawalError(
+            f"Refusing withdrawal for {target.public_identifier}: "
+            f"DB name {target.expected_name!r} does not match "
+            f"LinkedIn name {match.displayed_name!r}"
         )
 
-    top_card = find_top_card(session)
-    pending = _first_visible(top_card.locator(PENDING_WITHDRAW_SELECTOR))
-    if pending is None:
-        raise InvitationWithdrawalError(
-            f"{expected_public_id} is pending but has no explicit withdrawal surface"
-        )
+    withdraw_control = _first_visible(card.locator(SENT_WITHDRAW_SELECTOR))
+    if withdraw_control is None:
+        return WithdrawalResult.NOT_PENDING
+    withdraw_control.click()
 
-    pending.click()
-
-    dialog = _first_visible_until(session.page, VISIBLE_DIALOG_SELECTOR)
+    dialog = _first_visible_until(page, VISIBLE_DIALOG_SELECTOR)
     if dialog is None:
         raise InvitationWithdrawalError(
-            f"{expected_public_id} did not show a withdrawal confirmation dialog"
+            f"{target.public_identifier} did not show a withdrawal dialog"
         )
     confirmation = _withdraw_confirmation(dialog)
     if confirmation is None:
+        _dismiss_dialog(page, dialog)
         raise InvitationWithdrawalError(
-            f"{expected_public_id} withdrawal dialog had no unambiguous Withdraw button"
+            f"{target.public_identifier} dialog had no unambiguous Withdraw control"
         )
-
     confirmation.click()
-    session.page.wait_for_timeout(1200)
 
-    final_status = get_connection_status(session, profile)
-    if final_status == ProfileState.CONNECTED:
-        return WithdrawalResult.CONNECTED
-    if final_status == ProfileState.PENDING:
-        raise InvitationWithdrawalError(
-            f"{expected_public_id} still appears pending after withdrawal confirmation"
-        )
-
-    logger.info("Confirmed invitation withdrawal on exact profile %s", expected_public_id)
-    return WithdrawalResult.WITHDRAWN
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(250)
+        if _find_sent_card(page, target.public_identifier) is None:
+            logger.info(
+                "Confirmed Sent-card withdrawal for %s (%s)",
+                target.public_identifier,
+                match.displayed_name,
+            )
+            return WithdrawalResult.WITHDRAWN
+    raise InvitationWithdrawalError(
+        f"{target.public_identifier} Sent card remained after confirmation"
+    )

@@ -1,15 +1,20 @@
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from linkedin.actions.invitations import (
-    PENDING_WITHDRAW_SELECTOR,
+    CANCEL_DIALOG_SELECTOR,
+    SENT_INVITATIONS_URL,
+    SENT_WITHDRAW_SELECTOR,
     VISIBLE_DIALOG_SELECTOR,
     WITHDRAW_CONFIRM_SELECTOR,
+    SentInvitationMatch,
+    SentInvitationTarget,
     WithdrawalResult,
-    withdraw_pending_invitation,
+    names_match,
+    scan_sent_invitations,
+    withdraw_sent_invitation,
 )
-from linkedin.enums import ProfileState
 from linkedin.exceptions import InvitationWithdrawalError
 
 
@@ -45,83 +50,96 @@ class _Element:
         self.clicked = True
 
     def locator(self, selector):
-        assert selector == WITHDRAW_CONFIRM_SELECTOR
-        return _Collection(self.child) if self.child else _Collection()
+        if selector == WITHDRAW_CONFIRM_SELECTOR:
+            return _Collection(self.child) if self.child else _Collection()
+        if selector == CANCEL_DIALOG_SELECTOR:
+            return _Collection()
+        raise AssertionError(selector)
 
 
-def _session(*, current_url="https://www.linkedin.com/in/alice/"):
+def _session():
     confirm = _Element(text="Withdraw")
     dialog = _Element(child=confirm)
-    pending = _Element(aria="Pending, click to withdraw invitation sent to Alice")
-    top_card = Mock()
-    top_card.locator.return_value = _Collection(pending)
+    withdraw = _Element(aria="Withdraw invitation sent to Alice Smith")
+    card = Mock()
+    card.locator.return_value = _Collection(withdraw)
     page = Mock()
-    page.url = current_url
     page.locator.side_effect = (
         lambda selector: _Collection(dialog)
         if selector == VISIBLE_DIALOG_SELECTOR
         else _Collection()
     )
     session = Mock(page=page)
-    return session, top_card, pending, confirm
+    return session, card, withdraw, confirm
 
 
-@patch("linkedin.actions.invitations.find_top_card")
-@patch("linkedin.actions.invitations.get_connection_status")
-def test_withdraws_from_exact_profile_and_verifies_final_state(mock_status, mock_top):
-    session, top_card, pending, confirm = _session()
-    mock_top.return_value = top_card
-    mock_status.side_effect = [ProfileState.PENDING, ProfileState.QUALIFIED]
-
-    result = withdraw_pending_invitation(
-        session,
-        {"public_identifier": "alice", "url": session.page.url},
+def _target():
+    return SentInvitationTarget(
+        public_identifier="alice",
+        expected_name="Alice Smith",
     )
+
+
+def _match(*, displayed_name="Alice Smith"):
+    return SentInvitationMatch(
+        public_identifier="alice",
+        displayed_name=displayed_name,
+        sent_label="Sent 8 weeks ago",
+    )
+
+
+def test_names_match_uses_first_two_stored_name_tokens():
+    assert names_match("James Tabron, CISSP", "James Tabron, CISSP")
+    assert names_match("Matt D.", "Matt D.")
+    assert not names_match("Alice Smith", "Alice Jones")
+
+
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_withdraws_exact_sent_card_and_verifies_disappearance(find_card, card_match):
+    session, card, withdraw, confirm = _session()
+    find_card.side_effect = [card, None]
+    card_match.return_value = _match()
+
+    result = withdraw_sent_invitation(session, _target())
 
     assert result == WithdrawalResult.WITHDRAWN
-    assert pending.clicked
+    assert withdraw.clicked
     assert confirm.clicked
-    top_card.locator.assert_called_once_with(PENDING_WITHDRAW_SELECTOR)
+    card.locator.assert_called_once_with(SENT_WITHDRAW_SELECTOR)
 
 
-@patch("linkedin.actions.invitations.find_top_card")
-@patch("linkedin.actions.invitations.get_connection_status")
-def test_refuses_visible_different_profile(mock_status, mock_top):
-    session, _, _, _ = _session(
-        current_url="https://www.linkedin.com/in/not-alice/",
-    )
-    mock_status.return_value = ProfileState.PENDING
+@patch("linkedin.actions.invitations._find_sent_card", return_value=None)
+def test_missing_sent_card_is_not_recorded_as_withdrawal(_find_card):
+    session, _, withdraw, confirm = _session()
 
-    with pytest.raises(InvitationWithdrawalError, match="visible profile"):
-        withdraw_pending_invitation(
-            session,
-            {"public_identifier": "alice", "url": "https://www.linkedin.com/in/alice/"},
-        )
+    result = withdraw_sent_invitation(session, _target())
 
-    mock_top.assert_not_called()
+    assert result == WithdrawalResult.NOT_PENDING
+    assert not withdraw.clicked
+    assert not confirm.clicked
 
 
-@patch("linkedin.actions.invitations.find_top_card")
-@patch("linkedin.actions.invitations.get_connection_status")
-def test_requires_explicit_pending_withdraw_surface(mock_status, mock_top):
-    session, top_card, _, _ = _session()
-    top_card.locator.return_value = _Collection()
-    mock_top.return_value = top_card
-    mock_status.return_value = ProfileState.PENDING
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_refuses_name_mismatch_on_exact_profile_card(find_card, card_match):
+    session, card, withdraw, confirm = _session()
+    find_card.return_value = card
+    card_match.return_value = _match(displayed_name="Someone Else")
 
-    with pytest.raises(InvitationWithdrawalError, match="no explicit withdrawal surface"):
-        withdraw_pending_invitation(
-            session,
-            {"public_identifier": "alice", "url": session.page.url},
-        )
+    with pytest.raises(InvitationWithdrawalError, match="does not match"):
+        withdraw_sent_invitation(session, _target())
+
+    assert not withdraw.clicked
+    assert not confirm.clicked
 
 
-@patch("linkedin.actions.invitations.find_top_card")
-@patch("linkedin.actions.invitations.get_connection_status")
-def test_requires_unambiguous_confirmation_button(mock_status, mock_top):
-    session, top_card, _, _ = _session()
-    mock_top.return_value = top_card
-    mock_status.return_value = ProfileState.PENDING
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_requires_unambiguous_confirmation_control(find_card, card_match):
+    session, card, withdraw, _ = _session()
+    find_card.return_value = card
+    card_match.return_value = _match()
     dialog = _Element(child=_Element(text="Withdraw all"))
     session.page.locator.side_effect = (
         lambda selector: _Collection(dialog)
@@ -130,36 +148,64 @@ def test_requires_unambiguous_confirmation_button(mock_status, mock_top):
     )
 
     with pytest.raises(InvitationWithdrawalError, match="unambiguous Withdraw"):
-        withdraw_pending_invitation(
-            session,
-            {"public_identifier": "alice", "url": session.page.url},
-        )
+        withdraw_sent_invitation(session, _target())
+
+    assert withdraw.clicked
+    session.page.keyboard.press.assert_called_once_with("Escape")
 
 
-@patch("linkedin.actions.invitations.get_connection_status")
-def test_last_second_acceptance_wins(mock_status):
-    session, _, pending, confirm = _session()
-    mock_status.return_value = ProfileState.CONNECTED
+@patch("linkedin.actions.invitations._scroll_state")
+@patch("linkedin.actions.invitations._reported_invitation_total", return_value=100)
+@patch("linkedin.actions.invitations._collect_target_matches")
+def test_scan_uses_wheel_scroll_until_exact_target_is_found(
+    collect_matches,
+    _reported_total,
+    scroll_state,
+):
+    target = _target()
 
-    result = withdraw_pending_invitation(
-        session,
-        {"public_identifier": "alice", "url": session.page.url},
-    )
+    def collect(_page, *, targets, matches):
+        if collect.calls:
+            matches["alice"] = _match()
+            return 20
+        collect.calls += 1
+        return 10
 
-    assert result == WithdrawalResult.CONNECTED
-    assert not pending.clicked
-    assert not confirm.clicked
+    collect.calls = 0
+    collect_matches.side_effect = collect
+    scroll_state.return_value = (0, 1000, 500)
+    main = MagicMock()
+    main.count.return_value = 1
+    main.is_visible.return_value = True
+    page = MagicMock()
+    page.url = SENT_INVITATIONS_URL
+    page.locator.return_value.first = main
+    session = MagicMock(page=page)
+
+    scan = scan_sent_invitations(session, [target])
+
+    assert scan.matches == (_match(),)
+    assert scan.scroll_rounds == 1
+    page.mouse.wheel.assert_called_once()
+    main.hover.assert_called_once()
 
 
-@patch("linkedin.actions.invitations.find_top_card")
-@patch("linkedin.actions.invitations.get_connection_status")
-def test_pending_after_confirmation_is_not_recorded_as_success(mock_status, mock_top):
-    session, top_card, _, _ = _session()
-    mock_top.return_value = top_card
-    mock_status.side_effect = [ProfileState.PENDING, ProfileState.PENDING]
+@patch("linkedin.actions.invitations._reported_invitation_total", return_value=10)
+@patch("linkedin.actions.invitations._collect_target_matches", return_value=10)
+def test_scan_reaches_end_without_treating_absent_target_as_pending(
+    _collect_matches,
+    _reported_total,
+):
+    main = MagicMock()
+    main.count.return_value = 1
+    main.is_visible.return_value = True
+    page = MagicMock()
+    page.url = SENT_INVITATIONS_URL
+    page.locator.return_value.first = main
+    session = MagicMock(page=page)
 
-    with pytest.raises(InvitationWithdrawalError, match="still appears pending"):
-        withdraw_pending_invitation(
-            session,
-            {"public_identifier": "alice", "url": session.page.url},
-        )
+    scan = scan_sent_invitations(session, [_target()])
+
+    assert scan.matches == ()
+    assert scan.reached_end
+    page.mouse.wheel.assert_not_called()

@@ -221,12 +221,6 @@ class LinkedInProfile(models.Model):
 
         return reasons
 
-    def reached_local_daily_connect_cap_only(self) -> bool:
-        """True only for the safe stale-invitation cleanup trigger."""
-        return self.rate_limit_reasons(ActionLog.ActionType.CONNECT) == {
-            RateLimitReason.ACTION_DAILY,
-        }
-
     def is_externally_exhausted(self, action_type: str) -> bool:
         """Whether LinkedIn itself reported an action restriction today."""
         exhausted_date = self._exhausted.get(action_type)
@@ -628,7 +622,6 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
         (Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
-        | (Q(task_type=Task.TaskType.WITHDRAW_INVITES) & Q(payload__operator=operator))
         | (
             Q(task_type=Task.TaskType.CONNECT)
             & Q(payload__campaign_id__in=owned)
@@ -645,7 +638,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     requests and 32 follow-up DMs for Chuka's campaign, from the wrong
     account.
 
-    - follow_up / manual_reply / sweep_connections / withdraw_invites: claimable when
+    - follow_up / manual_reply / sweep_connections: claimable when
       `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
@@ -813,7 +806,6 @@ class Task(models.Model):
         CHECK_PENDING = "check_pending"
         FOLLOW_UP = "follow_up"
         SWEEP_CONNECTIONS = "sweep_connections"
-        WITHDRAW_INVITES = "withdraw_invites"
         ENRICH_PHONE = "enrich_phone"
         ENRICH_EMAIL = "enrich_email"
         GMAIL_FOLLOW_UP = "gmail_follow_up"
@@ -844,7 +836,6 @@ class Task(models.Model):
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
             cls.TaskType.SWEEP_CONNECTIONS,
-            cls.TaskType.WITHDRAW_INVITES,
         ]
 
     @classmethod
@@ -904,13 +895,6 @@ class Task(models.Model):
         ):
             if not payload.get("operator"):
                 errors.append("sweep_connections tasks require non-empty payload.operator")
-
-        if (
-            self.status in {self.Status.PENDING, self.Status.RUNNING}
-            and self.task_type == self.TaskType.WITHDRAW_INVITES
-            and not payload.get("operator")
-        ):
-            errors.append("withdraw_invites tasks require non-empty payload.operator")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

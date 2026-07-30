@@ -323,14 +323,6 @@ def handle_connect(task, session, qualifiers):
     strategy = strategy_for(campaign, qualifiers)
     operator = resolve_operator(session.linkedin_profile.linkedin_username)
 
-    def _maybe_queue_stale_invite_cleanup() -> None:
-        from linkedin.tasks.withdraw_invites import maybe_enqueue_withdraw_invites
-
-        maybe_enqueue_withdraw_invites(
-            session.linkedin_profile,
-            operator=operator,
-        )
-
     def _reschedule():
         elapsed = (timezone.now() - task.started_at).total_seconds() if task.started_at else 0
         enqueue_connect(
@@ -343,7 +335,6 @@ def handle_connect(task, session, qualifiers):
 
     # --- Rate limit check ---
     if not session.linkedin_profile.can_execute(ActionLog.ActionType.CONNECT):
-        _maybe_queue_stale_invite_cleanup()
         enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
         return
 
@@ -482,7 +473,6 @@ def handle_connect(task, session, qualifiers):
                 enqueue_sweep_connections(
                     operator=operator,
                 )
-                _maybe_queue_stale_invite_cleanup()
             elif new_state == ProfileState.CONNECTED:
                 deal = Deal.objects.filter(
                     lead__linkedin_url=public_id_to_url(public_id),
