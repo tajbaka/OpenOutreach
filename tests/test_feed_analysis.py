@@ -148,10 +148,17 @@ def test_feed_post_group_key_groups_soc2_class_a_original_and_repost():
             "Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?"
         ),
     )
+    unavailable = _post(
+        content_hash="soc2-no-url",
+        author_name="URL-less repost",
+        post_url="",
+        post_text="Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?",
+    )
 
     assert feed_post_group_key(original) == "trigger:fedramp-class-a-soc2"
     assert feed_post_group_key(repost) == feed_post_group_key(original)
     assert group_feed_posts_for_alert([original]) == [[repost, original]]
+    assert unavailable not in group_feed_posts_for_alert([original])[0]
 
 
 @pytest.mark.django_db
@@ -225,6 +232,7 @@ def test_analyze_linkedin_feed_exports_all_unanalyzed_posts_by_default(tmp_path)
     analyzed = _post(content_hash="already-analyzed", analyzed_at=timezone.now())
     first = _post(content_hash="unanalyzed-1")
     second = _post(content_hash="unanalyzed-2")
+    unavailable = _post(content_hash="unanalyzed-no-url", post_url="")
     out = tmp_path / "queue.json"
 
     call_command("analyze_linkedin_feed", output=str(out))
@@ -233,6 +241,40 @@ def test_analyze_linkedin_feed_exports_all_unanalyzed_posts_by_default(tmp_path)
     exported_ids = {row["id"] for row in payload["posts"]}
     assert exported_ids == {first.id, second.id}
     assert analyzed.id not in exported_ids
+    assert unavailable.id not in exported_ids
+
+
+@pytest.mark.django_db
+@patch("linkedin.notifications.slack._post_to_slack")
+def test_analyze_linkedin_feed_does_not_alert_for_legacy_post_without_url(
+    mock_post,
+    monkeypatch,
+    tmp_path,
+):
+    from linkedin.notifications import slack
+
+    post = _post(content_hash="apply-no-url", post_url="")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({
+        "decisions": [{
+            "post_id": post.id,
+            "is_relevant": True,
+            "should_alert": True,
+            "intent": "high",
+            "audience": "advisor_partner",
+            "topics": ["FedRAMP"],
+            "relevance_reason": "FedRAMP advisory opportunity.",
+            "suggested_action": "Reach out.",
+        }],
+    }))
+    monkeypatch.setattr(slack, "SLACK_HIGH_SIGNAL_URL", "https://hooks.slack.test/high-signal")
+
+    call_command("analyze_linkedin_feed", apply_json=str(decisions))
+
+    post.refresh_from_db()
+    assert post.analyzed_at is not None
+    assert post.slack_notified_at is None
+    mock_post.assert_not_called()
 
 
 @pytest.mark.django_db

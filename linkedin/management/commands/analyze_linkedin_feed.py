@@ -62,7 +62,12 @@ class Command(BaseCommand):
         if limit is not None and limit <= 0:
             raise CommandError("--limit must be positive.")
 
-        qs = LinkedInFeedPost.objects.prefetch_related("observations").order_by("-last_seen_at")
+        qs = (
+            LinkedInFeedPost.objects
+            .prefetch_related("observations")
+            .filter(post_url__gt="")
+            .order_by("-last_seen_at")
+        )
         if not opts["reanalyze"]:
             qs = qs.filter(analyzed_at__isnull=True)
         if opts.get("since_days") is not None:

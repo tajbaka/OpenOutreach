@@ -176,7 +176,8 @@ def mark_feed_posts_slack_notified(posts: Iterable[LinkedInFeedPost]) -> None:
 
 def should_notify_feed_post(post: LinkedInFeedPost) -> bool:
     return (
-        post.slack_notified_at is None
+        bool(post.post_url)
+        and post.slack_notified_at is None
         and post.intent in ALERT_INTENTS
         and post.audience in ALERT_AUDIENCES
         and bool(post.relevance_reason)
@@ -211,7 +212,7 @@ def group_feed_posts_for_alert(
     recent = (
         LinkedInFeedPost.objects
         .prefetch_related("observations")
-        .filter(last_seen_at__gte=cutoff)
+        .filter(last_seen_at__gte=cutoff, post_url__gt="")
         .order_by("-last_seen_at")
     )
     by_key: dict[str, list[LinkedInFeedPost]] = {key: [] for key in wanted_keys}
