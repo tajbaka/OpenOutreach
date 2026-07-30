@@ -52,7 +52,7 @@ class WithdrawalPlan:
     operator: str
     since: datetime | None
     cutoff: datetime
-    limit: int
+    limit: int | None
     pending_total: int
     proven_total: int
     eligible_total: int
@@ -168,7 +168,7 @@ def build_withdrawal_plan(
     operator: str,
     since: datetime | None = None,
     cutoff: datetime,
-    limit: int,
+    limit: int | None,
 ) -> WithdrawalPlan:
     """Build an oldest-first, positively attributed, account-wide batch."""
     from crm.models import Deal
@@ -181,7 +181,7 @@ def build_withdrawal_plan(
         raise ValueError("since must be timezone-aware")
     if since is not None and since >= cutoff:
         raise ValueError("since must be earlier than cutoff")
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         raise ValueError("limit must be greater than zero")
 
     pending = list(
@@ -281,7 +281,7 @@ def build_withdrawal_plan(
         eligible.append(candidates[0])
 
     eligible.sort(key=lambda candidate: (candidate.sent_at, candidate.deal_id))
-    selected = tuple(eligible[:limit])
+    selected = tuple(eligible if limit is None else eligible[:limit])
     return WithdrawalPlan(
         operator=operator,
         since=since,

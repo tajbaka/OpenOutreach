@@ -344,6 +344,40 @@ def test_default_command_is_db_only_dry_run(fake_session, monkeypatch):
     ).exists()
     assert "[dry-run]" in output.getvalue()
     assert "Exact planned batch" in output.getvalue()
+    assert "planned batch: 1/all eligible" in output.getvalue()
+
+
+@pytest.mark.django_db
+def test_plan_without_limit_selects_every_eligible_candidate(fake_session):
+    operator = resolve_operator(
+        fake_session.linkedin_profile.linkedin_username,
+    )
+    old = timezone.now() - timedelta(days=90)
+    first = _pending_deal(
+        fake_session,
+        "unlimited-first",
+        sent_at=old,
+        sender=operator,
+    )
+    second = _pending_deal(
+        fake_session,
+        "unlimited-second",
+        sent_at=old + timedelta(minutes=1),
+        sender=operator,
+    )
+
+    plan = build_withdrawal_plan(
+        linkedin_profile=fake_session.linkedin_profile,
+        operator=operator,
+        cutoff=_cutoff_for_date(date.today() + timedelta(days=1)),
+        limit=None,
+    )
+
+    assert plan.limit is None
+    assert [candidate.deal_id for candidate in plan.candidates] == [
+        first.pk,
+        second.pk,
+    ]
 
 
 @pytest.mark.django_db

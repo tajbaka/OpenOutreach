@@ -144,8 +144,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--limit",
             type=int,
-            default=25,
-            help="Maximum oldest-first invitations in this batch (default: 25).",
+            help=(
+                "Optional maximum oldest-first invitations. Omit to process "
+                "every eligible invitation in the date window."
+            ),
         )
         parser.add_argument(
             "--apply",
@@ -155,7 +157,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         limit = options["limit"]
-        if limit <= 0:
+        if limit is not None and limit <= 0:
             raise CommandError("--limit must be greater than zero")
 
         account = options["account"]
@@ -280,7 +282,8 @@ class Command(BaseCommand):
             f"Pending scanned: {plan.pending_total}; "
             f"positively attributed: {plan.proven_total}; "
             f"eligible before limit: {plan.eligible_total}; "
-            f"planned batch: {len(plan.candidates)}/{plan.limit}"
+            f"planned batch: {len(plan.candidates)}/"
+            f"{plan.limit if plan.limit is not None else 'all eligible'}"
         )
         if plan.exclusions:
             rendered = ", ".join(
