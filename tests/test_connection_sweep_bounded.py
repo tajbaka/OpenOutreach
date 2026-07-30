@@ -19,6 +19,9 @@ from linkedin.operators import resolve_operator
 from linkedin.tasks.sweep_connections import (
     SweepReconciliationResult,
     _incremental_cutoff,
+    _load_pending_candidates,
+    _matched_deal_queryset,
+    _pending_candidate_queryset,
     _record_sweep_run,
     handle_sweep_connections,
     reconcile_pending_connections,
@@ -197,6 +200,88 @@ def test_empty_connections_surface_is_incomplete_not_a_watermark():
 
     assert result.stop_reason == "empty"
     assert not result.complete
+
+
+@pytest.mark.django_db
+def test_pending_candidate_query_excludes_large_related_fields(fake_session):
+    _make_pending(fake_session)
+
+    sql = str(_pending_candidate_queryset(fake_session).query)
+
+    assert '"linkedin_campaign"."model_blob"' not in sql
+    assert '"linkedin_campaign"."product_docs"' not in sql
+    assert '"linkedin_campaign"."campaign_objective"' not in sql
+    assert '"crm_lead"."embedding"' not in sql
+    assert '"crm_lead"."description"' not in sql
+
+
+@pytest.mark.django_db
+def test_pending_candidate_loader_keeps_only_reconciliation_ledger(fake_session):
+    from crm.models import Deal
+
+    _make_pending(fake_session)
+    deal = Deal.objects.get(campaign=fake_session.campaign)
+
+    candidates = _load_pending_candidates(fake_session)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.deal_id == deal.pk
+    assert candidate.campaign_id == fake_session.campaign.pk
+    assert candidate.linkedin_url == "https://www.linkedin.com/in/alice/"
+    assert candidate.invitation_sent_at == deal.invitation_sent_at
+    assert candidate.update_date == deal.update_date
+    assert candidate.public_id == "alice"
+
+
+@pytest.mark.django_db
+def test_matched_deal_query_defers_large_related_fields(fake_session):
+    from crm.models import Deal
+
+    _make_pending(fake_session)
+    deal = Deal.objects.get(campaign=fake_session.campaign)
+
+    sql = str(_matched_deal_queryset([deal.pk]).query)
+
+    assert '"linkedin_campaign"."model_blob"' not in sql
+    assert '"linkedin_campaign"."product_docs"' not in sql
+    assert '"linkedin_campaign"."campaign_objective"' not in sql
+    assert '"linkedin_campaign"."seed_public_ids"' not in sql
+    assert '"crm_lead"."embedding"' not in sql
+
+
+@pytest.mark.django_db
+def test_reconciliation_hydrates_only_linkedin_matches(fake_session):
+    from crm.models import Deal
+
+    _make_pending(fake_session, "alice")
+    _make_pending(fake_session, "bob")
+    alice = Deal.objects.get(
+        campaign=fake_session.campaign,
+        lead__public_identifier="alice",
+    )
+
+    with (
+        patch(
+            "linkedin.tasks.sweep_connections.scrape_connections_with_stats",
+            return_value=_scrape([_entry("alice", date(2026, 7, 29))]),
+        ),
+        patch("linkedin.tasks.sweep_connections._recycle_database_connection"),
+        patch(
+            "linkedin.tasks.sweep_connections._matched_deal_queryset",
+            wraps=_matched_deal_queryset,
+        ) as hydrate,
+        patch(
+            "linkedin.tasks.sweep_connections.process_accepted_deal",
+        ) as accept,
+    ):
+        result = reconcile_pending_connections(fake_session)
+
+    hydrate.assert_called_once_with([alice.pk])
+    accept.assert_called_once()
+    assert accept.call_args.args[1].pk == alice.pk
+    assert result.pending_count == 2
+    assert result.matched_count == 1
 
 
 @pytest.mark.django_db

@@ -38,6 +38,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class PendingConnectionCandidate:
+    deal_id: int
+    campaign_id: int
+    linkedin_url: str
+    invitation_sent_at: datetime | None
+    update_date: datetime
+
+    @property
+    def public_id(self) -> str | None:
+        return url_to_public_id(self.linkedin_url) if self.linkedin_url else None
+
+
+@dataclass(frozen=True)
 class SweepReconciliationResult:
     pending_count: int
     matched_count: int
@@ -51,7 +64,6 @@ class SweepReconciliationResult:
 
 def process_accepted_deal(session, deal, *, entry=None) -> None:
     """Apply the shared post-accept path for one freshly accepted Deal."""
-    from crm.models import Deal
     from linkedin.tasks.connect import enqueue_follow_up, recommended_action_delay
 
     public_id = url_to_public_id(deal.lead.linkedin_url) if deal.lead.linkedin_url else None
@@ -60,7 +72,7 @@ def process_accepted_deal(session, deal, *, entry=None) -> None:
 
     session.campaign = deal.campaign
     set_profile_state(session, public_id, ProfileState.CONNECTED.value)
-    deal = Deal.objects.select_related("lead", "campaign").get(pk=deal.pk)
+    deal = _matched_deal_queryset([deal.pk]).get(pk=deal.pk)
 
     full_name = (
         f"{deal.lead.first_name or ''} {deal.lead.last_name or ''}".strip()
@@ -198,12 +210,75 @@ def _incremental_cutoff(operator: str) -> date:
     return (anchor - timedelta(hours=CONNECTION_SWEEP_OVERLAP_HOURS)).date()
 
 
-def _legacy_cutoff(pending_deals) -> date:
+def _legacy_cutoff(pending_candidates) -> date:
     oldest_pending = min(
-        deal.invitation_sent_at or deal.update_date
-        for deal in pending_deals
+        candidate.invitation_sent_at or candidate.update_date
+        for candidate in pending_candidates
     )
     return oldest_pending.date()
+
+
+def _pending_candidate_queryset(session):
+    """Return the narrow Pending ledger needed before browser reconciliation.
+
+    Do not use ``select_related`` here. Campaign carries multi-megabyte model
+    blobs and Lead carries embeddings; repeating them once per Pending Deal
+    previously produced multi-gigabyte result sets before a sweep ever reached
+    LinkedIn.
+    """
+    from crm.models import Deal
+
+    return (
+        Deal.objects.filter(
+            state=ProfileState.PENDING,
+            campaign__in=session.campaigns,
+        )
+        .order_by("id")
+        .values_list(
+            "id",
+            "campaign_id",
+            "lead__linkedin_url",
+            "invitation_sent_at",
+            "update_date",
+        )
+    )
+
+
+def _load_pending_candidates(session) -> list[PendingConnectionCandidate]:
+    return [
+        PendingConnectionCandidate(
+            deal_id=deal_id,
+            campaign_id=campaign_id,
+            linkedin_url=linkedin_url or "",
+            invitation_sent_at=invitation_sent_at,
+            update_date=update_date,
+        )
+        for (
+            deal_id,
+            campaign_id,
+            linkedin_url,
+            invitation_sent_at,
+            update_date,
+        ) in _pending_candidate_queryset(session)
+    ]
+
+
+def _matched_deal_queryset(deal_ids: list[int]):
+    """Hydrate only accepted matches and omit large fields unused by sweeps."""
+    from crm.models import Deal
+
+    return (
+        Deal.objects.filter(pk__in=deal_ids)
+        .select_related("lead", "campaign")
+        .defer(
+            "lead__embedding",
+            "campaign__product_docs",
+            "campaign__campaign_objective",
+            "campaign__seed_public_ids",
+            "campaign__model_blob",
+        )
+        .order_by("id")
+    )
 
 
 def _empty_scrape_result() -> ConnectionScrapeResult:
@@ -225,21 +300,13 @@ def _recycle_database_connection() -> None:
 
 def reconcile_pending_connections(session) -> SweepReconciliationResult:
     """Reconcile accepted invitations across this sender's campaigns."""
-    from crm.models import Deal
     from linkedin.operators import resolve_operator
 
     operator = resolve_operator(session.linkedin_profile.linkedin_username)
     started = time.monotonic()
 
-    pending_deals = list(
-        Deal.objects.filter(
-            state=ProfileState.PENDING,
-            campaign__in=session.campaigns,
-        )
-        .select_related("lead", "campaign")
-        .order_by("id")
-    )
-    if not pending_deals:
+    pending_candidates = _load_pending_candidates(session)
+    if not pending_candidates:
         return SweepReconciliationResult(
             pending_count=0,
             matched_count=0,
@@ -250,7 +317,7 @@ def reconcile_pending_connections(session) -> SweepReconciliationResult:
     cutoff = (
         _incremental_cutoff(operator)
         if ENABLE_INCREMENTAL_CONNECTION_SWEEP
-        else _legacy_cutoff(pending_deals)
+        else _legacy_cutoff(pending_candidates)
     )
     scrape = scrape_connections_with_stats(
         session,
@@ -265,15 +332,22 @@ def reconcile_pending_connections(session) -> SweepReconciliationResult:
     _recycle_database_connection()
     accepted_by_pid = {entry.public_id: entry for entry in scrape.entries}
 
-    accepted_deals = []
-    for deal in pending_deals:
-        public_id = url_to_public_id(deal.lead.linkedin_url) if deal.lead.linkedin_url else None
+    accepted_candidates = []
+    for candidate in pending_candidates:
+        public_id = candidate.public_id
         entry = accepted_by_pid.get(public_id) if public_id else None
         if entry is not None:
-            accepted_deals.append((deal, entry))
+            accepted_candidates.append((candidate, entry))
+
+    matched_deals = {
+        deal.pk: deal
+        for deal in _matched_deal_queryset(
+            [candidate.deal_id for candidate, _entry in accepted_candidates],
+        )
+    }
 
     matched = 0
-    for index, (deal, entry) in enumerate(accepted_deals):
+    for index, (candidate, entry) in enumerate(accepted_candidates):
         # A single acceptance may overrun the budget while LinkedIn Messaging
         # loads, but never start another one after the total sweep budget is
         # exhausted. Remaining matches are rediscovered on the short retry.
@@ -284,6 +358,7 @@ def reconcile_pending_connections(session) -> SweepReconciliationResult:
                 stop_reason="max_seconds_processing",
             )
             break
+        deal = matched_deals[candidate.deal_id]
         process_accepted_deal(session, deal, entry=entry)
         matched += 1
     else:
@@ -293,7 +368,7 @@ def reconcile_pending_connections(session) -> SweepReconciliationResult:
         )
 
     return SweepReconciliationResult(
-        pending_count=len(pending_deals),
+        pending_count=len(pending_candidates),
         matched_count=matched,
         cutoff_date=cutoff,
         scrape=scrape,

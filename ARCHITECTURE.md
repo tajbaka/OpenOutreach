@@ -89,6 +89,7 @@ Three apps in `INSTALLED_APPS`:
 - **`tasks/connect.py`** — `handle_connect`, `ConnectStrategy`, `enqueue_connect`/`enqueue_follow_up`. Connect-note rendering uses `icp_outbound.safe_company_name()` so `"Unknown Company"` never leaks into outbound notes.
 - **`actions/invitations.py`** — Exact-profile Pending/withdraw UI action with scoped confirmation and post-click state verification.
 - **`tasks/sweep_connections.py`** — `handle_sweep_connections`, `enqueue_sweep_connections`, shared `reconcile_pending_connections` and `process_accepted_deal`. Replaces legacy `check_pending`.
+  Its pre-browser Pending ledger is deliberately a narrow values projection; it does not hydrate Campaign or Lead objects. Only LinkedIn-matched Deal IDs are hydrated afterward, with `Campaign.model_blob`, campaign documents/seeds, and `Lead.embedding` deferred. This prevents inactive campaigns with large trained models from multiplying those blobs across every Pending row and blocking the sender daemon before Playwright starts.
 - **`tasks/withdraw_invites.py`** — Sender-scoped stale-invitation eligibility, local-daily-cap trigger, per-day ceiling, acceptance-first execution, and atomic withdrawal audit persistence.
 - **`tasks/follow_up.py`** — `handle_follow_up`, rigid ICP LinkedIn DM send routed through frozen `payload.icp` or legacy `resolve_icp`, sequence payload shim, rate limiting.
 - **`tasks/manual_reply.py`** — `handle_manual_reply`, Slack-composed LinkedIn reply sends from the daemon's logged-in browser account.
