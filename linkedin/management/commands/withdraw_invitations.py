@@ -145,8 +145,8 @@ class Command(BaseCommand):
             "--limit",
             type=int,
             help=(
-                "Optional maximum newest-before-cutoff invitations. Omit to process "
-                "every eligible invitation in the date window."
+                "Optional maximum confirmed withdrawals. Omit to withdraw every "
+                "live matching invitation in the date window."
             ),
         )
         parser.add_argument(
@@ -237,6 +237,7 @@ class Command(BaseCommand):
                         candidates=plan.candidates,
                         linkedin_profile=linkedin_profile,
                         operator=operator,
+                        withdrawal_limit=limit,
                     )
         except (AuthenticationError, InvitationWithdrawalError) as error:
             raise CommandError(str(error)) from error
@@ -281,9 +282,10 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Pending scanned: {plan.pending_total}; "
             f"positively attributed: {plan.proven_total}; "
-            f"eligible before limit: {plan.eligible_total}; "
-            f"planned batch: {len(plan.candidates)}/"
-            f"{plan.limit if plan.limit is not None else 'all eligible'}"
+            f"eligible candidate pool: {plan.eligible_total}; "
+            f"planned scan pool: {len(plan.candidates)}/all eligible; "
+            f"withdrawal target: "
+            f"{plan.limit if plan.limit is not None else 'all live matches'}"
         )
         if plan.exclusions:
             rendered = ", ".join(

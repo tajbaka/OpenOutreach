@@ -194,7 +194,7 @@ def test_legacy_plan_uses_two_bounded_queries(fake_session, django_assert_num_qu
 
 
 @pytest.mark.django_db
-def test_plan_uses_exclusive_cutoff_and_newest_before_cutoff_limit(fake_session):
+def test_plan_uses_exclusive_cutoff_and_newest_before_cutoff_order(fake_session):
     operator = resolve_operator(
         fake_session.linkedin_profile.linkedin_username,
     )
@@ -225,7 +225,11 @@ def test_plan_uses_exclusive_cutoff_and_newest_before_cutoff_limit(fake_session)
 
     plan = _plan(fake_session, before=before, limit=1)
 
-    assert [candidate.deal_id for candidate in plan.candidates] == [middle.pk]
+    assert [candidate.deal_id for candidate in plan.candidates] == [
+        middle.pk,
+        oldest.pk,
+    ]
+    assert plan.limit == 1
     assert plan.eligible_total == 2
     assert plan.exclusion_counts["not_before_cutoff"] == 1
     assert newest.pk != oldest.pk
@@ -344,7 +348,8 @@ def test_default_command_is_db_only_dry_run(fake_session, monkeypatch):
     ).exists()
     assert "[dry-run]" in output.getvalue()
     assert "Exact planned batch (newest before cutoff first)" in output.getvalue()
-    assert "planned batch: 1/all eligible" in output.getvalue()
+    assert "planned scan pool: 1/all eligible" in output.getvalue()
+    assert "withdrawal target: all live matches" in output.getvalue()
 
 
 @pytest.mark.django_db
@@ -483,6 +488,8 @@ def test_apply_verifies_identity_and_runs_exact_planned_batch(fake_session, monk
             "primary",
             "--before",
             (date.today() + timedelta(days=1)).isoformat(),
+            "--limit",
+            "1",
             "--apply",
             stdout=output,
         )
@@ -490,6 +497,7 @@ def test_apply_verifies_identity_and_runs_exact_planned_batch(fake_session, monk
     candidates = apply_batch.call_args.kwargs["candidates"]
     assert [candidate.deal_id for candidate in candidates] == [deal.pk]
     assert apply_batch.call_args.kwargs["operator"] == operator
+    assert apply_batch.call_args.kwargs["withdrawal_limit"] == 1
     assert "Batch complete" in output.getvalue()
 
 
@@ -600,7 +608,7 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
     events = []
 
     def scan(_session, targets, *, approximate_max_age_days=None):
-        assert 80 <= approximate_max_age_days <= 85
+        assert 90 <= approximate_max_age_days <= 95
         events.append(
             "scan:" + ",".join(target.public_identifier for target in targets)
         )
@@ -652,6 +660,96 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
     assert ActionLog.objects.filter(
         action_type=ActionLog.ActionType.WITHDRAW_INVITE,
     ).count() == 2
+
+
+@pytest.mark.django_db
+def test_withdrawal_limit_caps_confirmed_successes_not_scan_pool(fake_session):
+    operator = resolve_operator(
+        fake_session.linkedin_profile.linkedin_username,
+    )
+    first = _pending_deal(
+        fake_session,
+        "first-limit",
+        sent_at=timezone.now() - timedelta(days=95),
+        sender=operator,
+    )
+    second = _pending_deal(
+        fake_session,
+        "second-limit",
+        sent_at=timezone.now() - timedelta(days=90),
+        sender=operator,
+    )
+    third = _pending_deal(
+        fake_session,
+        "third-limit",
+        sent_at=timezone.now() - timedelta(days=85),
+        sender=operator,
+    )
+    plan = _plan(fake_session, before=date.today() + timedelta(days=1), limit=1)
+    events = []
+
+    def scan(_session, targets, *, approximate_max_age_days=None):
+        assert {target.public_identifier for target in targets} == {
+            "first-limit",
+            "second-limit",
+            "third-limit",
+        }
+        assert 95 <= approximate_max_age_days <= 100
+        events.append(
+            "scan:" + ",".join(target.public_identifier for target in targets)
+        )
+        return SentInvitationScan(
+            matches=tuple(
+                SentInvitationMatch(
+                    public_identifier=target.public_identifier,
+                    displayed_name=target.expected_name,
+                    sent_label="Sent 3 months ago",
+                )
+                for target in targets
+            ),
+            cards_seen=100,
+            scroll_rounds=10,
+            reached_end=False,
+        )
+
+    def withdraw(_session, target):
+        events.append(f"withdraw:{target.public_identifier}")
+        return WithdrawalResult.WITHDRAWN
+
+    with (
+        patch(
+            "linkedin.invitation_withdrawal.scan_sent_invitations",
+            side_effect=scan,
+        ),
+        patch(
+            "linkedin.invitation_withdrawal.withdraw_sent_invitation",
+            side_effect=withdraw,
+        ),
+    ):
+        result = apply_withdrawal_batch(
+            session=fake_session,
+            candidates=plan.candidates,
+            linkedin_profile=fake_session.linkedin_profile,
+            operator=operator,
+            withdrawal_limit=1,
+        )
+
+    assert [candidate.deal_id for candidate in plan.candidates] == [
+        third.pk,
+        second.pk,
+        first.pk,
+    ]
+    assert result.withdrawn == 1
+    assert events == [
+        "scan:third-limit,second-limit,first-limit",
+        "withdraw:third-limit",
+    ]
+    third.refresh_from_db()
+    second.refresh_from_db()
+    first.refresh_from_db()
+    assert third.invitation_withdrawn_at is not None
+    assert second.invitation_withdrawn_at is None
+    assert first.invitation_withdrawn_at is None
 
 
 @pytest.mark.django_db

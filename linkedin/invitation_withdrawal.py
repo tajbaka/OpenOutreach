@@ -171,7 +171,7 @@ def build_withdrawal_plan(
     cutoff: datetime,
     limit: int | None,
 ) -> WithdrawalPlan:
-    """Build a newest-reachable, positively attributed, account-wide batch."""
+    """Build a newest-first, positively attributed, account-wide candidate pool."""
     from crm.models import Deal
 
     if not operator:
@@ -285,7 +285,6 @@ def build_withdrawal_plan(
         key=lambda candidate: (candidate.sent_at, candidate.deal_id),
         reverse=True,
     )
-    selected = tuple(eligible if limit is None else eligible[:limit])
     return WithdrawalPlan(
         operator=operator,
         since=since,
@@ -294,7 +293,7 @@ def build_withdrawal_plan(
         pending_total=len(pending),
         proven_total=proven_total,
         eligible_total=len(eligible),
-        candidates=selected,
+        candidates=tuple(eligible),
         exclusions=tuple(sorted(exclusions.items())),
     )
 
@@ -438,8 +437,8 @@ def _approximate_timeline_depth_days(
     if not candidates:
         return None
     now = timezone.now()
-    newest_selected = max(candidate.sent_at for candidate in candidates)
-    age_days = (now - newest_selected).total_seconds() / 86400
+    oldest_selected = min(candidate.sent_at for candidate in candidates)
+    age_days = (now - oldest_selected).total_seconds() / 86400
     return max(0, math.ceil(age_days) + 2)
 
 
@@ -449,8 +448,12 @@ def apply_withdrawal_batch(
     candidates: Sequence[WithdrawalCandidate],
     linkedin_profile,
     operator: str,
+    withdrawal_limit: int | None = None,
 ) -> WithdrawalBatchResult:
     """Scan the Sent page once, then withdraw only exact URL/name matches."""
+    if withdrawal_limit is not None and withdrawal_limit <= 0:
+        raise ValueError("withdrawal_limit must be greater than zero")
+
     pending_candidates: list[WithdrawalCandidate] = []
     not_pending = 0
     skipped = 0
@@ -491,6 +494,8 @@ def apply_withdrawal_batch(
 
     withdrawn = 0
     for candidate in pending_candidates:
+        if withdrawal_limit is not None and withdrawn >= withdrawal_limit:
+            break
         key = candidate.public_identifier.casefold()
         if key not in matched:
             logger.warning(
