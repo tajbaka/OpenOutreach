@@ -113,7 +113,7 @@ def _cutoff_for_date(before: date) -> datetime:
 
 class Command(BaseCommand):
     help = (
-        "Dry-run or explicitly withdraw an oldest-first batch of "
+        "Dry-run or explicitly withdraw a newest-reachable batch of "
         "OpenOutreach-sent LinkedIn invitations."
     )
 
@@ -145,7 +145,7 @@ class Command(BaseCommand):
             "--limit",
             type=int,
             help=(
-                "Optional maximum oldest-first invitations. Omit to process "
+                "Optional maximum newest-before-cutoff invitations. Omit to process "
                 "every eligible invitation in the date window."
             ),
         )
@@ -291,18 +291,18 @@ class Command(BaseCommand):
             )
             self.stdout.write(f"Exclusions: {rendered}")
         if plan.candidates:
-            oldest = timezone.localtime(
+            newest = timezone.localtime(
                 plan.candidates[0].sent_at,
                 timezone=local_zone,
             )
-            newest = timezone.localtime(
+            oldest = timezone.localtime(
                 plan.candidates[-1].sent_at,
                 timezone=local_zone,
             )
             self.stdout.write(
                 f"Selected date range: {oldest.isoformat()} -> {newest.isoformat()}"
             )
-        self.stdout.write("Exact planned batch (oldest first):")
+            self.stdout.write("Exact planned batch (newest before cutoff first):")
         for index, candidate in enumerate(plan.candidates, 1):
             local_sent = timezone.localtime(
                 candidate.sent_at,

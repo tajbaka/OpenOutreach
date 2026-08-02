@@ -11,6 +11,7 @@ from linkedin.actions.invitations import (
     SentInvitationMatch,
     SentInvitationTarget,
     WithdrawalResult,
+    _sent_label_age_days,
     names_match,
     scan_sent_invitations,
     withdraw_sent_invitation,
@@ -92,6 +93,13 @@ def test_names_match_uses_first_two_stored_name_tokens():
     assert names_match("James Tabron, CISSP", "James Tabron, CISSP")
     assert names_match("Matt D.", "Matt D.")
     assert not names_match("Alice Smith", "Alice Jones")
+
+
+def test_sent_label_age_days_parses_linkedin_relative_labels():
+    assert _sent_label_age_days("Sent 9 hours ago") == 0
+    assert _sent_label_age_days("Sent 2 days ago") == 2
+    assert _sent_label_age_days("Sent 8 weeks ago") == 56
+    assert _sent_label_age_days("Sent 2 months ago") == 60
 
 
 @patch("linkedin.actions.invitations._card_match")
@@ -208,4 +216,34 @@ def test_scan_reaches_end_without_treating_absent_target_as_pending(
 
     assert scan.matches == ()
     assert scan.reached_end
+    page.mouse.wheel.assert_not_called()
+
+
+@patch("linkedin.actions.invitations._oldest_visible_sent_age_days", return_value=62)
+@patch("linkedin.actions.invitations._scroll_state", return_value=(0, 1000, 500))
+@patch("linkedin.actions.invitations._reported_invitation_total", return_value=1000)
+@patch("linkedin.actions.invitations._collect_target_matches", return_value=120)
+def test_scan_stops_at_approximate_timeline_depth(
+    _collect_matches,
+    _reported_total,
+    _scroll_state,
+    _oldest_age,
+):
+    main = MagicMock()
+    main.count.return_value = 1
+    main.is_visible.return_value = True
+    page = MagicMock()
+    page.url = SENT_INVITATIONS_URL
+    page.locator.return_value.first = main
+    session = MagicMock(page=page)
+
+    scan = scan_sent_invitations(
+        session,
+        [_target()],
+        approximate_max_age_days=60,
+    )
+
+    assert scan.matches == ()
+    assert scan.reached_timeline_depth
+    assert scan.oldest_visible_days == 62
     page.mouse.wheel.assert_not_called()

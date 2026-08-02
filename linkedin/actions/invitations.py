@@ -54,7 +54,6 @@ SCROLL_MIN_PIXELS = 450
 SCROLL_MAX_PIXELS = 800
 SCROLL_MIN_PAUSE_MS = 650
 SCROLL_MAX_PAUSE_MS = 1200
-SCROLL_MAX_ROUNDS = 260
 SCROLL_MAX_SECONDS = 20 * 60
 SCROLL_END_STAGNANT_ROUNDS = 5
 
@@ -83,6 +82,8 @@ class SentInvitationScan:
     cards_seen: int
     scroll_rounds: int
     reached_end: bool
+    reached_timeline_depth: bool = False
+    oldest_visible_days: int | None = None
 
     @property
     def by_public_identifier(self) -> dict[str, SentInvitationMatch]:
@@ -160,6 +161,54 @@ def _sent_label(card) -> str:
         if normalized.casefold().startswith("sent "):
             return normalized
     return ""
+
+
+def _sent_label_age_days(label: str) -> int | None:
+    """Approximate LinkedIn's visible "Sent N units ago" labels in days."""
+    normalized = " ".join((label or "").casefold().split())
+    match = re.search(
+        r"\bsent\s+(\d+|an?|one)\s+"
+        r"(minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)"
+        r"\s+ago\b",
+        normalized,
+    )
+    if match is None:
+        return None
+    raw_amount, unit = match.groups()
+    amount = 1 if raw_amount in {"a", "an", "one"} else int(raw_amount)
+    if unit.startswith("minute") or unit.startswith("hour"):
+        return 0
+    if unit.startswith("day"):
+        return amount
+    if unit.startswith("week"):
+        return amount * 7
+    if unit.startswith("month"):
+        return amount * 30
+    if unit.startswith("year"):
+        return amount * 365
+    return None
+
+
+def _oldest_visible_sent_age_days(page) -> int | None:
+    labels = page.locator(SENT_INVITATION_CARD_SELECTOR).evaluate_all(
+        """
+        elements => elements.map(element => {
+            for (const line of (element.innerText || '').split('\\n')) {
+                const normalized = line.trim().replace(/\\s+/g, ' ');
+                if (normalized.toLowerCase().startsWith('sent ')) {
+                    return normalized;
+                }
+            }
+            return '';
+        })
+        """
+    )
+    if not isinstance(labels, list):
+        return None
+    ages = [
+        age for label in labels if (age := _sent_label_age_days(label)) is not None
+    ]
+    return max(ages) if ages else None
 
 
 def _card_public_identifier(card) -> str:
@@ -265,6 +314,8 @@ def _collect_target_matches(
 def scan_sent_invitations(
     session,
     targets: Sequence[SentInvitationTarget],
+    *,
+    approximate_max_age_days: int | None = None,
 ) -> SentInvitationScan:
     """Human-scroll the Sent page until every target is found or the list ends."""
     session.ensure_browser()
@@ -303,7 +354,9 @@ def scan_sent_invitations(
     previous_card_count = -1
     previous_scroll_height = -1
     reached_end = False
+    reached_timeline_depth = False
     cards_seen = 0
+    oldest_visible_days = None
 
     while True:
         cards_seen = _collect_target_matches(
@@ -311,6 +364,7 @@ def scan_sent_invitations(
             targets=targets_by_id,
             matches=matches,
         )
+        oldest_visible_days = _oldest_visible_sent_age_days(page)
         if len(matches) == len(targets_by_id):
             break
 
@@ -318,6 +372,22 @@ def scan_sent_invitations(
             scroll_container
         )
         at_end = scroll_top + client_height >= scroll_height - 20
+        if (
+            approximate_max_age_days is not None
+            and oldest_visible_days is not None
+            and oldest_visible_days >= approximate_max_age_days
+        ):
+            reached_timeline_depth = True
+            logger.info(
+                "Sent Invitations scan reached approximate timeline depth: "
+                "oldest_visible=%sd target=%sd cards=%d matches=%d/%d",
+                oldest_visible_days,
+                approximate_max_age_days,
+                cards_seen,
+                len(matches),
+                len(targets_by_id),
+            )
+            break
         if expected_total is not None and cards_seen >= expected_total:
             reached_end = True
             break
@@ -332,11 +402,6 @@ def scan_sent_invitations(
         if stagnant_at_end >= SCROLL_END_STAGNANT_ROUNDS:
             reached_end = True
             break
-        if scroll_rounds >= SCROLL_MAX_ROUNDS:
-            raise InvitationWithdrawalError(
-                "Sent Invitations scan exceeded its maximum scroll rounds "
-                "before reaching the selected date"
-            )
         if time.monotonic() - started >= SCROLL_MAX_SECONDS:
             raise InvitationWithdrawalError(
                 "Sent Invitations scan exceeded its time limit before "
@@ -355,11 +420,17 @@ def scan_sent_invitations(
         scroll_rounds += 1
         if scroll_rounds % 5 == 0:
             logger.info(
-                "Sent Invitations scroll: rounds=%d cards=%d matches=%d/%d",
+                "Sent Invitations scroll: rounds=%d cards=%d matches=%d/%d "
+                "oldest_visible=%s",
                 scroll_rounds,
                 cards_seen,
                 len(matches),
                 len(targets_by_id),
+                (
+                    f"{oldest_visible_days}d"
+                    if oldest_visible_days is not None
+                    else "unknown"
+                ),
             )
 
     return SentInvitationScan(
@@ -371,6 +442,8 @@ def scan_sent_invitations(
         cards_seen=cards_seen,
         scroll_rounds=scroll_rounds,
         reached_end=reached_end,
+        reached_timeline_depth=reached_timeline_depth,
+        oldest_visible_days=oldest_visible_days,
     )
 
 

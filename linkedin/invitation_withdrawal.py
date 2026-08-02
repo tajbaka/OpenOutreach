@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 from collections import Counter, defaultdict
 from contextlib import contextmanager
@@ -170,7 +171,7 @@ def build_withdrawal_plan(
     cutoff: datetime,
     limit: int | None,
 ) -> WithdrawalPlan:
-    """Build an oldest-first, positively attributed, account-wide batch."""
+    """Build a newest-reachable, positively attributed, account-wide batch."""
     from crm.models import Deal
 
     if not operator:
@@ -280,7 +281,10 @@ def build_withdrawal_plan(
             continue
         eligible.append(candidates[0])
 
-    eligible.sort(key=lambda candidate: (candidate.sent_at, candidate.deal_id))
+    eligible.sort(
+        key=lambda candidate: (candidate.sent_at, candidate.deal_id),
+        reverse=True,
+    )
     selected = tuple(eligible if limit is None else eligible[:limit])
     return WithdrawalPlan(
         operator=operator,
@@ -428,6 +432,17 @@ def _recycle_database_connection() -> None:
     connections["default"].ensure_connection()
 
 
+def _approximate_timeline_depth_days(
+    candidates: Sequence[WithdrawalCandidate],
+) -> int | None:
+    if not candidates:
+        return None
+    now = timezone.now()
+    newest_selected = max(candidate.sent_at for candidate in candidates)
+    age_days = (now - newest_selected).total_seconds() / 86400
+    return max(0, math.ceil(age_days) + 2)
+
+
 def apply_withdrawal_batch(
     *,
     session,
@@ -456,15 +471,21 @@ def apply_withdrawal_batch(
             )
             for candidate in pending_candidates
         ],
+        approximate_max_age_days=_approximate_timeline_depth_days(
+            pending_candidates,
+        ),
     )
     matched = scan.by_public_identifier
     logger.info(
-        "Sent Invitations scan completed: cards=%d rounds=%d matches=%d/%d end=%s",
+        "Sent Invitations scan completed: cards=%d rounds=%d matches=%d/%d "
+        "end=%s timeline_depth=%s oldest_visible_days=%s",
         scan.cards_seen,
         scan.scroll_rounds,
         len(matched),
         len(pending_candidates),
         scan.reached_end,
+        scan.reached_timeline_depth,
+        scan.oldest_visible_days,
     )
     _recycle_database_connection()
 

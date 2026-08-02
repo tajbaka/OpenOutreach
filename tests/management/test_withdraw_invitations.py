@@ -194,7 +194,7 @@ def test_legacy_plan_uses_two_bounded_queries(fake_session, django_assert_num_qu
 
 
 @pytest.mark.django_db
-def test_plan_uses_exclusive_cutoff_and_oldest_first_limit(fake_session):
+def test_plan_uses_exclusive_cutoff_and_newest_before_cutoff_limit(fake_session):
     operator = resolve_operator(
         fake_session.linkedin_profile.linkedin_username,
     )
@@ -225,10 +225,10 @@ def test_plan_uses_exclusive_cutoff_and_oldest_first_limit(fake_session):
 
     plan = _plan(fake_session, before=before, limit=1)
 
-    assert [candidate.deal_id for candidate in plan.candidates] == [oldest.pk]
+    assert [candidate.deal_id for candidate in plan.candidates] == [middle.pk]
     assert plan.eligible_total == 2
     assert plan.exclusion_counts["not_before_cutoff"] == 1
-    assert newest.pk != middle.pk
+    assert newest.pk != oldest.pk
 
 
 @pytest.mark.django_db
@@ -343,7 +343,7 @@ def test_default_command_is_db_only_dry_run(fake_session, monkeypatch):
         action_type=ActionLog.ActionType.WITHDRAW_INVITE,
     ).exists()
     assert "[dry-run]" in output.getvalue()
-    assert "Exact planned batch" in output.getvalue()
+    assert "Exact planned batch (newest before cutoff first)" in output.getvalue()
     assert "planned batch: 1/all eligible" in output.getvalue()
 
 
@@ -375,8 +375,8 @@ def test_plan_without_limit_selects_every_eligible_candidate(fake_session):
 
     assert plan.limit is None
     assert [candidate.deal_id for candidate in plan.candidates] == [
-        first.pk,
         second.pk,
+        first.pk,
     ]
 
 
@@ -599,7 +599,8 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
     plan = _plan(fake_session, before=date.today() + timedelta(days=1))
     events = []
 
-    def scan(_session, targets):
+    def scan(_session, targets, *, approximate_max_age_days=None):
+        assert 80 <= approximate_max_age_days <= 85
         events.append(
             "scan:" + ",".join(target.public_identifier for target in targets)
         )
@@ -639,13 +640,13 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
         )
 
     assert [candidate.deal_id for candidate in plan.candidates] == [
-        first.pk,
         second.pk,
+        first.pk,
     ]
     assert events == [
-        "scan:first,second",
-        "withdraw:first",
+        "scan:second,first",
         "withdraw:second",
+        "withdraw:first",
     ]
     assert result.withdrawn == 2
     assert ActionLog.objects.filter(
