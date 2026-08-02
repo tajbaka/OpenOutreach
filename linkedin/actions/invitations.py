@@ -311,6 +311,41 @@ def _collect_target_matches(
     return page.locator(SENT_INVITATION_CARD_SELECTOR).count()
 
 
+def _collect_age_matches(
+    page,
+    *,
+    matches: dict[str, SentInvitationMatch],
+    min_age_days: int,
+    max_age_days: int | None = None,
+    match_limit: int | None = None,
+) -> int:
+    cards = page.locator(SENT_INVITATION_CARD_SELECTOR)
+    for index in range(cards.count()):
+        match = _card_match(cards.nth(index))
+        if match is None:
+            continue
+        key = match.public_identifier.casefold()
+        if key in matches:
+            continue
+        age_days = _sent_label_age_days(match.sent_label)
+        if age_days is None:
+            continue
+        if age_days < min_age_days:
+            continue
+        if max_age_days is not None and age_days > max_age_days:
+            continue
+        matches[key] = match
+        logger.info(
+            "Matched date-eligible invitation %s: %s (%s)",
+            match.public_identifier,
+            match.displayed_name or "name unavailable",
+            match.sent_label or "date label unavailable",
+        )
+        if match_limit is not None and len(matches) >= match_limit:
+            break
+    return cards.count()
+
+
 def scan_sent_invitations(
     session,
     targets: Sequence[SentInvitationTarget],
@@ -447,6 +482,137 @@ def scan_sent_invitations(
     )
 
 
+def scan_sent_invitations_by_age(
+    session,
+    *,
+    min_age_days: int,
+    max_age_days: int | None = None,
+    match_limit: int | None = None,
+) -> SentInvitationScan:
+    """Human-scroll the Sent page and collect visible cards by sent-age label."""
+    if min_age_days < 0:
+        raise ValueError("min_age_days must be non-negative")
+    if max_age_days is not None and max_age_days < min_age_days:
+        raise ValueError("max_age_days must be greater than or equal to min_age_days")
+    if match_limit is not None and match_limit <= 0:
+        raise ValueError("match_limit must be greater than zero")
+
+    session.ensure_browser()
+    page = session.page
+    page.goto(SENT_INVITATIONS_URL)
+    page.wait_for_load_state("domcontentloaded")
+    session.wait()
+
+    path = unquote(urlparse(page.url).path)
+    if not path.startswith(SENT_INVITATIONS_PATH):
+        raise InvitationWithdrawalError(
+            f"Sent Invitations navigation failed: got {page.url}"
+        )
+
+    scroll_container = page.locator(SCROLL_CONTAINER_SELECTOR).first
+    if scroll_container.count() == 0 or not scroll_container.is_visible():
+        raise InvitationWithdrawalError(
+            "LinkedIn Sent Invitations page has no visible scroll container"
+        )
+    scroll_container.hover()
+
+    expected_total = _reported_invitation_total(page)
+    matches: dict[str, SentInvitationMatch] = {}
+    started = time.monotonic()
+    scroll_rounds = 0
+    stagnant_at_end = 0
+    previous_card_count = -1
+    previous_scroll_height = -1
+    reached_end = False
+    reached_timeline_depth = False
+    cards_seen = 0
+    oldest_visible_days = None
+
+    while True:
+        cards_seen = _collect_age_matches(
+            page,
+            matches=matches,
+            min_age_days=min_age_days,
+            max_age_days=max_age_days,
+            match_limit=match_limit,
+        )
+        oldest_visible_days = _oldest_visible_sent_age_days(page)
+        if match_limit is not None and len(matches) >= match_limit:
+            break
+
+        scroll_top, scroll_height, client_height = _scroll_state(
+            scroll_container
+        )
+        at_end = scroll_top + client_height >= scroll_height - 20
+        if (
+            max_age_days is not None
+            and oldest_visible_days is not None
+            and oldest_visible_days > max_age_days
+        ):
+            reached_timeline_depth = True
+            logger.info(
+                "Sent Invitations scan reached approximate since boundary: "
+                "oldest_visible=%sd max_target=%sd cards=%d matches=%d",
+                oldest_visible_days,
+                max_age_days,
+                cards_seen,
+                len(matches),
+            )
+            break
+        if expected_total is not None and cards_seen >= expected_total:
+            reached_end = True
+            break
+        if (
+            at_end
+            and cards_seen == previous_card_count
+            and scroll_height == previous_scroll_height
+        ):
+            stagnant_at_end += 1
+        else:
+            stagnant_at_end = 0
+        if stagnant_at_end >= SCROLL_END_STAGNANT_ROUNDS:
+            reached_end = True
+            break
+        if time.monotonic() - started >= SCROLL_MAX_SECONDS:
+            raise InvitationWithdrawalError(
+                "Sent Invitations scan exceeded its time limit before "
+                "finishing the date-based cleanup"
+            )
+
+        previous_card_count = cards_seen
+        previous_scroll_height = scroll_height
+        page.mouse.wheel(
+            0,
+            random.randint(SCROLL_MIN_PIXELS, SCROLL_MAX_PIXELS),
+        )
+        page.wait_for_timeout(
+            random.randint(SCROLL_MIN_PAUSE_MS, SCROLL_MAX_PAUSE_MS),
+        )
+        scroll_rounds += 1
+        if scroll_rounds % 5 == 0:
+            logger.info(
+                "Sent Invitations scroll: rounds=%d cards=%d date_matches=%d "
+                "oldest_visible=%s",
+                scroll_rounds,
+                cards_seen,
+                len(matches),
+                (
+                    f"{oldest_visible_days}d"
+                    if oldest_visible_days is not None
+                    else "unknown"
+                ),
+            )
+
+    return SentInvitationScan(
+        matches=tuple(matches.values()),
+        cards_seen=cards_seen,
+        scroll_rounds=scroll_rounds,
+        reached_end=reached_end,
+        reached_timeline_depth=reached_timeline_depth,
+        oldest_visible_days=oldest_visible_days,
+    )
+
+
 def withdraw_sent_invitation(
     session,
     target: SentInvitationTarget,
@@ -498,4 +664,52 @@ def withdraw_sent_invitation(
             return WithdrawalResult.WITHDRAWN
     raise InvitationWithdrawalError(
         f"{target.public_identifier} Sent card remained after confirmation"
+    )
+
+
+def withdraw_sent_invitation_by_public_identifier(
+    session,
+    public_identifier: str,
+) -> WithdrawalResult:
+    """Withdraw one Sent card by URL only and verify it disappears."""
+    page = session.page
+    card = _find_sent_card(page, public_identifier)
+    if card is None:
+        return WithdrawalResult.NOT_PENDING
+    match = _card_match(card)
+    if match is None:
+        raise InvitationWithdrawalError(
+            f"{public_identifier} card has no explicit Withdraw control"
+        )
+
+    withdraw_control = _first_visible(card.locator(SENT_WITHDRAW_SELECTOR))
+    if withdraw_control is None:
+        return WithdrawalResult.NOT_PENDING
+    withdraw_control.click()
+
+    dialog = _first_visible_until(page, VISIBLE_DIALOG_SELECTOR)
+    if dialog is None:
+        raise InvitationWithdrawalError(
+            f"{public_identifier} did not show a withdrawal dialog"
+        )
+    confirmation = _withdraw_confirmation(dialog)
+    if confirmation is None:
+        _dismiss_dialog(page, dialog)
+        raise InvitationWithdrawalError(
+            f"{public_identifier} dialog had no unambiguous Withdraw control"
+        )
+    confirmation.click()
+
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        page.wait_for_timeout(250)
+        if _find_sent_card(page, public_identifier) is None:
+            logger.info(
+                "Confirmed date-based Sent-card withdrawal for %s (%s)",
+                public_identifier,
+                match.displayed_name or "name unavailable",
+            )
+            return WithdrawalResult.WITHDRAWN
+    raise InvitationWithdrawalError(
+        f"{public_identifier} Sent card remained after confirmation"
     )

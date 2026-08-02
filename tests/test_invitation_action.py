@@ -14,7 +14,9 @@ from linkedin.actions.invitations import (
     _sent_label_age_days,
     names_match,
     scan_sent_invitations,
+    scan_sent_invitations_by_age,
     withdraw_sent_invitation,
+    withdraw_sent_invitation_by_public_identifier,
 )
 from linkedin.exceptions import InvitationWithdrawalError
 
@@ -100,6 +102,23 @@ def test_sent_label_age_days_parses_linkedin_relative_labels():
     assert _sent_label_age_days("Sent 2 days ago") == 2
     assert _sent_label_age_days("Sent 8 weeks ago") == 56
     assert _sent_label_age_days("Sent 2 months ago") == 60
+
+
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_withdraws_sent_card_by_public_identifier_without_name_check(
+    find_card,
+    card_match,
+):
+    session, card, withdraw, confirm = _session()
+    find_card.side_effect = [card, None]
+    card_match.return_value = _match(displayed_name="Someone Else")
+
+    result = withdraw_sent_invitation_by_public_identifier(session, "alice")
+
+    assert result == WithdrawalResult.WITHDRAWN
+    assert withdraw.clicked
+    assert confirm.clicked
 
 
 @patch("linkedin.actions.invitations._card_match")
@@ -246,4 +265,41 @@ def test_scan_stops_at_approximate_timeline_depth(
     assert scan.matches == ()
     assert scan.reached_timeline_depth
     assert scan.oldest_visible_days == 62
+    page.mouse.wheel.assert_not_called()
+
+
+@patch("linkedin.actions.invitations._oldest_visible_sent_age_days", return_value=62)
+@patch("linkedin.actions.invitations._scroll_state", return_value=(0, 1000, 500))
+@patch("linkedin.actions.invitations._reported_invitation_total", return_value=1000)
+@patch("linkedin.actions.invitations._collect_age_matches")
+def test_age_scan_stops_after_withdrawal_limit_matches(
+    collect_matches,
+    _reported_total,
+    _scroll_state,
+    _oldest_age,
+):
+    def collect(_page, *, matches, min_age_days, max_age_days=None, match_limit=None):
+        assert min_age_days == 58
+        assert max_age_days is None
+        assert match_limit == 1
+        matches["alice"] = _match()
+        return 25
+
+    collect_matches.side_effect = collect
+    main = MagicMock()
+    main.count.return_value = 1
+    main.is_visible.return_value = True
+    page = MagicMock()
+    page.url = SENT_INVITATIONS_URL
+    page.locator.return_value.first = main
+    session = MagicMock(page=page)
+
+    scan = scan_sent_invitations_by_age(
+        session,
+        min_age_days=58,
+        match_limit=1,
+    )
+
+    assert scan.matches == (_match(),)
+    assert scan.scroll_rounds == 0
     page.mouse.wheel.assert_not_called()

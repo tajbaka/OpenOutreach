@@ -312,6 +312,54 @@ class ActionLog(models.Model):
         return f"{self.action_type} by {self.linkedin_profile} at {self.created_at}"
 
 
+class InvitationWithdrawalRecord(models.Model):
+    class Source(models.TextChoices):
+        DATE_BASED = "date_based", "Date Based"
+        CRM_MATCHED = "crm_matched", "CRM Matched"
+        BACKFILL = "backfill", "Backfill"
+
+    linkedin_profile = models.ForeignKey(
+        LinkedInProfile,
+        on_delete=models.CASCADE,
+        related_name="invitation_withdrawal_records",
+    )
+    deal = models.ForeignKey(
+        "crm.Deal",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="invitation_withdrawal_records",
+    )
+    public_identifier = models.CharField(max_length=200, db_index=True)
+    linkedin_url = models.URLField(max_length=500, blank=True, default="")
+    displayed_name = models.CharField(max_length=220, blank=True, default="")
+    sent_label = models.CharField(max_length=80, blank=True, default="")
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.DATE_BASED,
+        db_index=True,
+    )
+    withdrawn_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(
+                fields=["linkedin_profile", "withdrawn_at"],
+                name="linkedin_iwr_profile_time_idx",
+            ),
+            models.Index(
+                fields=["deal", "withdrawn_at"],
+                name="linkedin_iwr_deal_time_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.public_identifier} withdrawn at {self.withdrawn_at}"
+
+
 class ConnectIssueLog(models.Model):
     class IssueType(models.TextChoices):
         CONNECT_BUTTON_MISSING = "connect_button_missing", "Connect Button Missing"

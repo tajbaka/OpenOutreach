@@ -16,10 +16,10 @@ from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
 from linkedin.actions.invitations import (
-    SentInvitationTarget,
+    SentInvitationMatch,
     WithdrawalResult,
-    scan_sent_invitations,
-    withdraw_sent_invitation,
+    scan_sent_invitations_by_age,
+    withdraw_sent_invitation_by_public_identifier,
 )
 from linkedin.enums import ProfileState
 from linkedin.exceptions import (
@@ -32,6 +32,7 @@ from linkedin.operators import resolve_operator
 logger = logging.getLogger(__name__)
 
 LEGACY_EVIDENCE_WINDOW_SECONDS = 10
+DATE_LABEL_TOLERANCE_DAYS = 5
 _DB_DEAD_ERRORS = (OperationalError, InterfaceError)
 
 
@@ -329,6 +330,7 @@ def _persist_confirmed_withdrawal(
     linkedin_profile,
     operator: str,
     withdrawn_at: datetime,
+    match: SentInvitationMatch | None = None,
 ) -> bool:
     """Atomically persist one confirmed withdrawal and its audit row."""
     from crm.models import ClosingReason, Deal
@@ -386,7 +388,81 @@ def _persist_confirmed_withdrawal(
             campaign_id=deal.campaign_id,
             action_type=ActionLog.ActionType.WITHDRAW_INVITE,
         )
+        _create_withdrawal_record(
+            linkedin_profile=linkedin_profile,
+            deal=deal,
+            candidate=candidate,
+            public_identifier=candidate.public_identifier,
+            displayed_name=match.displayed_name if match is not None else candidate.lead_name,
+            sent_label=match.sent_label if match is not None else "",
+            withdrawn_at=withdrawn_at,
+            source="crm_matched",
+        )
         return True
+
+
+def _create_withdrawal_record(
+    *,
+    linkedin_profile,
+    deal=None,
+    candidate: WithdrawalCandidate | None = None,
+    public_identifier: str,
+    displayed_name: str = "",
+    sent_label: str = "",
+    withdrawn_at: datetime,
+    source: str,
+) -> None:
+    from linkedin.models import InvitationWithdrawalRecord
+
+    profile_url = ""
+    if candidate is not None:
+        profile_url = candidate.profile_url
+    elif public_identifier:
+        profile_url = f"https://www.linkedin.com/in/{public_identifier}/"
+
+    InvitationWithdrawalRecord.objects.create(
+        linkedin_profile=linkedin_profile,
+        deal=deal,
+        public_identifier=public_identifier,
+        linkedin_url=profile_url,
+        displayed_name=displayed_name,
+        sent_label=sent_label,
+        source=source,
+        withdrawn_at=withdrawn_at,
+    )
+
+
+def _record_unmapped_withdrawal(
+    *,
+    linkedin_profile,
+    match: SentInvitationMatch,
+    withdrawn_at: datetime,
+) -> None:
+    try:
+        _create_withdrawal_record(
+            linkedin_profile=linkedin_profile,
+            public_identifier=match.public_identifier,
+            displayed_name=match.displayed_name,
+            sent_label=match.sent_label,
+            withdrawn_at=withdrawn_at,
+            source="date_based",
+        )
+    except _DB_DEAD_ERRORS as error:
+        logger.warning(
+            "Withdrawal ledger write hit a dead connection for %s after "
+            "LinkedIn confirmed the click; recycling and retrying once: %s",
+            match.public_identifier,
+            error,
+        )
+        connections.close_all()
+        _create_withdrawal_record(
+            linkedin_profile=linkedin_profile,
+            public_identifier=match.public_identifier,
+            displayed_name=match.displayed_name,
+            sent_label=match.sent_label,
+            withdrawn_at=withdrawn_at,
+            source="date_based",
+        )
 
 
 def record_confirmed_withdrawal(
@@ -394,6 +470,7 @@ def record_confirmed_withdrawal(
     candidate: WithdrawalCandidate,
     linkedin_profile,
     operator: str,
+    match: SentInvitationMatch | None = None,
 ) -> bool:
     """Retry the irreversible-click ledger write once on a dead DB socket."""
     withdrawn_at = timezone.now()
@@ -403,6 +480,7 @@ def record_confirmed_withdrawal(
             linkedin_profile=linkedin_profile,
             operator=operator,
             withdrawn_at=withdrawn_at,
+            match=match,
         )
     except _DB_DEAD_ERRORS as error:
         logger.warning(
@@ -417,6 +495,7 @@ def record_confirmed_withdrawal(
             linkedin_profile=linkedin_profile,
             operator=operator,
             withdrawn_at=withdrawn_at,
+            match=match,
         )
 
 
@@ -442,50 +521,66 @@ def _approximate_timeline_depth_days(
     return max(0, math.ceil(age_days) + 2)
 
 
+def _date_label_age_window(
+    *,
+    since: datetime | None,
+    cutoff: datetime,
+) -> tuple[int, int | None]:
+    now = timezone.now()
+    min_age_days = math.floor((now - cutoff).total_seconds() / 86400)
+    min_age_days = max(0, min_age_days - DATE_LABEL_TOLERANCE_DAYS)
+    if since is None:
+        return min_age_days, None
+
+    max_age_days = math.ceil((now - since).total_seconds() / 86400)
+    max_age_days = max(min_age_days, max_age_days + DATE_LABEL_TOLERANCE_DAYS)
+    return min_age_days, max_age_days
+
+
 def apply_withdrawal_batch(
     *,
     session,
     candidates: Sequence[WithdrawalCandidate],
     linkedin_profile,
     operator: str,
+    since: datetime | None = None,
+    cutoff: datetime,
     withdrawal_limit: int | None = None,
 ) -> WithdrawalBatchResult:
-    """Scan the Sent page once, then withdraw only exact URL/name matches."""
+    """Withdraw visible Sent cards by date, updating CRM when a card maps back."""
     if withdrawal_limit is not None and withdrawal_limit <= 0:
         raise ValueError("withdrawal_limit must be greater than zero")
+    if timezone.is_naive(cutoff):
+        raise ValueError("cutoff must be timezone-aware")
+    if since is not None and timezone.is_naive(since):
+        raise ValueError("since must be timezone-aware")
 
-    pending_candidates: list[WithdrawalCandidate] = []
+    candidates_by_id = {
+        candidate.public_identifier.casefold(): candidate
+        for candidate in candidates
+    }
+    min_age_days, max_age_days = _date_label_age_window(
+        since=since,
+        cutoff=cutoff,
+    )
     not_pending = 0
     skipped = 0
 
-    for candidate in candidates:
-        deal = _fresh_deal(candidate)
-        if deal.state != ProfileState.PENDING or deal.invitation_withdrawn_at is not None:
-            not_pending += 1
-            continue
-        pending_candidates.append(candidate)
-
-    scan = scan_sent_invitations(
+    scan = scan_sent_invitations_by_age(
         session,
-        [
-            SentInvitationTarget(
-                public_identifier=candidate.public_identifier,
-                expected_name=candidate.lead_name,
-            )
-            for candidate in pending_candidates
-        ],
-        approximate_max_age_days=_approximate_timeline_depth_days(
-            pending_candidates,
-        ),
+        min_age_days=min_age_days,
+        max_age_days=max_age_days,
+        match_limit=withdrawal_limit,
     )
-    matched = scan.by_public_identifier
     logger.info(
-        "Sent Invitations scan completed: cards=%d rounds=%d matches=%d/%d "
-        "end=%s timeline_depth=%s oldest_visible_days=%s",
+        "Date-based Sent Invitations scan completed: cards=%d rounds=%d "
+        "date_matches=%d min_age_days=%d max_age_days=%s end=%s "
+        "timeline_depth=%s oldest_visible_days=%s",
         scan.cards_seen,
         scan.scroll_rounds,
-        len(matched),
-        len(pending_candidates),
+        len(scan.matches),
+        min_age_days,
+        max_age_days,
         scan.reached_end,
         scan.reached_timeline_depth,
         scan.oldest_visible_days,
@@ -493,35 +588,18 @@ def apply_withdrawal_batch(
     _recycle_database_connection()
 
     withdrawn = 0
-    for candidate in pending_candidates:
+    for match in scan.matches:
         if withdrawal_limit is not None and withdrawn >= withdrawal_limit:
             break
-        key = candidate.public_identifier.casefold()
-        if key not in matched:
-            logger.warning(
-                "Deal %s (%s) is absent from LinkedIn's Sent Invitations "
-                "page; leaving CRM unchanged",
-                candidate.deal_id,
-                candidate.public_identifier,
-            )
-            not_pending += 1
-            continue
-        deal = _fresh_deal(candidate)
-        if deal.state != ProfileState.PENDING or deal.invitation_withdrawn_at is not None:
-            not_pending += 1
-            continue
         try:
-            result = withdraw_sent_invitation(
+            result = withdraw_sent_invitation_by_public_identifier(
                 session,
-                SentInvitationTarget(
-                    public_identifier=candidate.public_identifier,
-                    expected_name=candidate.lead_name,
-                ),
+                match.public_identifier,
             )
         except InvitationWithdrawalError as error:
             logger.warning(
-                "Skipping unsafe withdrawal for Deal %s: %s",
-                candidate.deal_id,
+                "Skipping unsafe date-based withdrawal for %s: %s",
+                match.public_identifier,
                 error,
             )
             skipped += 1
@@ -529,23 +607,51 @@ def apply_withdrawal_batch(
 
         if result == WithdrawalResult.NOT_PENDING:
             logger.warning(
-                "Deal %s disappeared from Sent Invitations before withdrawal; "
-                "leaving CRM unchanged",
-                candidate.deal_id,
+                "%s disappeared from Sent Invitations before withdrawal",
+                match.public_identifier,
             )
             not_pending += 1
             continue
-        if record_confirmed_withdrawal(
+        withdrawn_at = timezone.now()
+        withdrawn += 1
+
+        candidate = candidates_by_id.get(match.public_identifier.casefold())
+        if candidate is None:
+            _record_unmapped_withdrawal(
+                linkedin_profile=linkedin_profile,
+                match=match,
+                withdrawn_at=withdrawn_at,
+            )
+            logger.info(
+                "Date-based withdrawal for %s had no eligible CRM candidate; "
+                "LinkedIn withdrawal was still confirmed",
+                match.public_identifier,
+            )
+            continue
+        deal = _fresh_deal(candidate)
+        if deal.state != ProfileState.PENDING or deal.invitation_withdrawn_at is not None:
+            logger.info(
+                "Date-based withdrawal for %s maps to Deal %s, but CRM is "
+                "already non-pending; preserving CRM state",
+                match.public_identifier,
+                candidate.deal_id,
+            )
+            continue
+        if not record_confirmed_withdrawal(
             candidate=candidate,
             linkedin_profile=linkedin_profile,
             operator=operator,
+            match=match,
         ):
-            withdrawn += 1
-        else:
-            not_pending += 1
+            logger.info(
+                "Date-based withdrawal for %s maps to Deal %s, but CRM write "
+                "was idempotently skipped",
+                match.public_identifier,
+                candidate.deal_id,
+            )
 
     return WithdrawalBatchResult(
-        planned=len(candidates),
+        planned=len(scan.matches),
         accepted=0,
         withdrawn=withdrawn,
         not_pending=not_pending,

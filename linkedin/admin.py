@@ -9,6 +9,7 @@ from linkedin.models import (
     ConnectIssueLog,
     FedRAMPMarketplaceSignal,
     FedRAMPMarketplaceSourceState,
+    InvitationWithdrawalRecord,
     LinkedInFeedCollectionJob,
     LinkedInFeedObservation,
     LinkedInFeedPost,
@@ -94,6 +95,24 @@ class ActionLogAdmin(admin.ModelAdmin):
     raw_id_fields = ("linkedin_profile", "campaign")
     date_hierarchy = "created_at"
     readonly_fields = ("linkedin_profile", "campaign", "action_type", "created_at")
+
+
+@admin.register(InvitationWithdrawalRecord)
+class InvitationWithdrawalRecordAdmin(admin.ModelAdmin):
+    list_display = (
+        "public_identifier", "displayed_name", "sent_label", "source",
+        "linkedin_profile", "deal", "withdrawn_at",
+    )
+    list_filter = ("source", "linkedin_profile", "withdrawn_at")
+    search_fields = (
+        "public_identifier", "linkedin_url", "displayed_name", "sent_label",
+    )
+    raw_id_fields = ("linkedin_profile", "deal")
+    readonly_fields = (
+        "linkedin_profile", "deal", "public_identifier", "linkedin_url",
+        "displayed_name", "sent_label", "source", "withdrawn_at", "created_at",
+    )
+    date_hierarchy = "withdrawn_at"
 
 
 @admin.register(ConnectIssueLog)

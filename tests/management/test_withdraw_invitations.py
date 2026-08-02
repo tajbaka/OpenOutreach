@@ -29,6 +29,7 @@ from linkedin.invitation_withdrawal import (
 )
 from linkedin.management.commands.withdraw_invitations import _cutoff_for_date
 from linkedin.models import ActionLog, DaemonHeartbeat
+from linkedin.models import InvitationWithdrawalRecord
 from linkedin.operators import resolve_operator
 
 
@@ -497,6 +498,10 @@ def test_apply_verifies_identity_and_runs_exact_planned_batch(fake_session, monk
     candidates = apply_batch.call_args.kwargs["candidates"]
     assert [candidate.deal_id for candidate in candidates] == [deal.pk]
     assert apply_batch.call_args.kwargs["operator"] == operator
+    assert apply_batch.call_args.kwargs["since"] is None
+    assert apply_batch.call_args.kwargs["cutoff"] == _cutoff_for_date(
+        date.today() + timedelta(days=1)
+    )
     assert apply_batch.call_args.kwargs["withdrawal_limit"] == 1
     assert "Batch complete" in output.getvalue()
 
@@ -607,36 +612,40 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
     plan = _plan(fake_session, before=date.today() + timedelta(days=1))
     events = []
 
-    def scan(_session, targets, *, approximate_max_age_days=None):
-        assert 90 <= approximate_max_age_days <= 95
-        events.append(
-            "scan:" + ",".join(target.public_identifier for target in targets)
-        )
+    def scan(_session, *, min_age_days, max_age_days=None, match_limit=None):
+        assert min_age_days == 0
+        assert max_age_days is None
+        assert match_limit is None
+        events.append("scan:date-window")
         return SentInvitationScan(
-            matches=tuple(
+            matches=(
                 SentInvitationMatch(
-                    public_identifier=target.public_identifier,
-                    displayed_name=target.expected_name,
+                    public_identifier="second",
+                    displayed_name="Second",
                     sent_label="Sent 8 weeks ago",
-                )
-                for target in targets
+                ),
+                SentInvitationMatch(
+                    public_identifier="first",
+                    displayed_name="First",
+                    sent_label="Sent 8 weeks ago",
+                ),
             ),
             cards_seen=100,
             scroll_rounds=10,
             reached_end=False,
         )
 
-    def withdraw(_session, target):
-        events.append(f"withdraw:{target.public_identifier}")
+    def withdraw(_session, public_identifier):
+        events.append(f"withdraw:{public_identifier}")
         return WithdrawalResult.WITHDRAWN
 
     with (
         patch(
-            "linkedin.invitation_withdrawal.scan_sent_invitations",
+            "linkedin.invitation_withdrawal.scan_sent_invitations_by_age",
             side_effect=scan,
         ),
         patch(
-            "linkedin.invitation_withdrawal.withdraw_sent_invitation",
+            "linkedin.invitation_withdrawal.withdraw_sent_invitation_by_public_identifier",
             side_effect=withdraw,
         ),
     ):
@@ -645,6 +654,7 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
             candidates=plan.candidates,
             linkedin_profile=fake_session.linkedin_profile,
             operator=operator,
+            cutoff=_cutoff_for_date(date.today() + timedelta(days=1)),
         )
 
     assert [candidate.deal_id for candidate in plan.candidates] == [
@@ -652,7 +662,7 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
         first.pk,
     ]
     assert events == [
-        "scan:second,first",
+        "scan:date-window",
         "withdraw:second",
         "withdraw:first",
     ]
@@ -660,6 +670,7 @@ def test_batch_scans_every_candidate_before_first_withdrawal(fake_session):
     assert ActionLog.objects.filter(
         action_type=ActionLog.ActionType.WITHDRAW_INVITE,
     ).count() == 2
+    assert InvitationWithdrawalRecord.objects.count() == 2
 
 
 @pytest.mark.django_db
@@ -688,41 +699,35 @@ def test_withdrawal_limit_caps_confirmed_successes_not_scan_pool(fake_session):
     plan = _plan(fake_session, before=date.today() + timedelta(days=1), limit=1)
     events = []
 
-    def scan(_session, targets, *, approximate_max_age_days=None):
-        assert {target.public_identifier for target in targets} == {
-            "first-limit",
-            "second-limit",
-            "third-limit",
-        }
-        assert 95 <= approximate_max_age_days <= 100
-        events.append(
-            "scan:" + ",".join(target.public_identifier for target in targets)
-        )
+    def scan(_session, *, min_age_days, max_age_days=None, match_limit=None):
+        assert min_age_days == 0
+        assert max_age_days is None
+        assert match_limit == 1
+        events.append("scan:date-window")
         return SentInvitationScan(
-            matches=tuple(
+            matches=(
                 SentInvitationMatch(
-                    public_identifier=target.public_identifier,
-                    displayed_name=target.expected_name,
+                    public_identifier="third-limit",
+                    displayed_name="Third Limit",
                     sent_label="Sent 3 months ago",
-                )
-                for target in targets
+                ),
             ),
             cards_seen=100,
             scroll_rounds=10,
             reached_end=False,
         )
 
-    def withdraw(_session, target):
-        events.append(f"withdraw:{target.public_identifier}")
+    def withdraw(_session, public_identifier):
+        events.append(f"withdraw:{public_identifier}")
         return WithdrawalResult.WITHDRAWN
 
     with (
         patch(
-            "linkedin.invitation_withdrawal.scan_sent_invitations",
+            "linkedin.invitation_withdrawal.scan_sent_invitations_by_age",
             side_effect=scan,
         ),
         patch(
-            "linkedin.invitation_withdrawal.withdraw_sent_invitation",
+            "linkedin.invitation_withdrawal.withdraw_sent_invitation_by_public_identifier",
             side_effect=withdraw,
         ),
     ):
@@ -731,6 +736,7 @@ def test_withdrawal_limit_caps_confirmed_successes_not_scan_pool(fake_session):
             candidates=plan.candidates,
             linkedin_profile=fake_session.linkedin_profile,
             operator=operator,
+            cutoff=_cutoff_for_date(date.today() + timedelta(days=1)),
             withdrawal_limit=1,
         )
 
@@ -741,7 +747,7 @@ def test_withdrawal_limit_caps_confirmed_successes_not_scan_pool(fake_session):
     ]
     assert result.withdrawn == 1
     assert events == [
-        "scan:third-limit,second-limit,first-limit",
+        "scan:date-window",
         "withdraw:third-limit",
     ]
     third.refresh_from_db()
@@ -753,7 +759,7 @@ def test_withdrawal_limit_caps_confirmed_successes_not_scan_pool(fake_session):
 
 
 @pytest.mark.django_db
-def test_candidate_absent_from_complete_sent_scan_is_left_unchanged(fake_session):
+def test_unmatched_date_card_is_withdrawn_and_recorded_without_crm(fake_session):
     operator = resolve_operator(
         fake_session.linkedin_profile.linkedin_username,
     )
@@ -770,16 +776,23 @@ def test_candidate_absent_from_complete_sent_scan_is_left_unchanged(fake_session
 
     with (
         patch(
-            "linkedin.invitation_withdrawal.scan_sent_invitations",
+            "linkedin.invitation_withdrawal.scan_sent_invitations_by_age",
             return_value=SentInvitationScan(
-                matches=(),
+                matches=(
+                    SentInvitationMatch(
+                        public_identifier="linkedin-only",
+                        displayed_name="LinkedIn Only",
+                        sent_label="Sent 3 months ago",
+                    ),
+                ),
                 cards_seen=653,
                 scroll_rounds=100,
                 reached_end=True,
             ),
         ),
         patch(
-            "linkedin.invitation_withdrawal.withdraw_sent_invitation",
+            "linkedin.invitation_withdrawal.withdraw_sent_invitation_by_public_identifier",
+            return_value=WithdrawalResult.WITHDRAWN,
         ) as withdraw,
     ):
         result = apply_withdrawal_batch(
@@ -787,16 +800,21 @@ def test_candidate_absent_from_complete_sent_scan_is_left_unchanged(fake_session
             candidates=[candidate],
             linkedin_profile=fake_session.linkedin_profile,
             operator=operator,
+            cutoff=_cutoff_for_date(date.today() + timedelta(days=1)),
         )
 
-    withdraw.assert_not_called()
+    withdraw.assert_called_once_with(fake_session, "linkedin-only")
     deal.refresh_from_db()
     assert deal.state == ProfileState.PENDING
     assert deal.invitation_withdrawn_at is None
-    assert result.not_pending == 1
+    assert result.withdrawn == 1
+    assert result.not_pending == 0
     assert not ActionLog.objects.filter(
         action_type=ActionLog.ActionType.WITHDRAW_INVITE,
     ).exists()
+    record = InvitationWithdrawalRecord.objects.get()
+    assert record.public_identifier == "linkedin-only"
+    assert record.deal is None
 
 
 @pytest.mark.django_db
@@ -816,7 +834,7 @@ def test_not_pending_is_not_falsely_recorded(fake_session):
     ).candidates[0]
 
     with patch(
-        "linkedin.invitation_withdrawal.scan_sent_invitations",
+        "linkedin.invitation_withdrawal.scan_sent_invitations_by_age",
         return_value=SentInvitationScan(
             matches=(
                 SentInvitationMatch(
@@ -830,7 +848,7 @@ def test_not_pending_is_not_falsely_recorded(fake_session):
             reached_end=False,
         ),
     ), patch(
-        "linkedin.invitation_withdrawal.withdraw_sent_invitation",
+        "linkedin.invitation_withdrawal.withdraw_sent_invitation_by_public_identifier",
         return_value=WithdrawalResult.NOT_PENDING,
     ):
         result = apply_withdrawal_batch(
@@ -838,6 +856,7 @@ def test_not_pending_is_not_falsely_recorded(fake_session):
             candidates=[candidate],
             linkedin_profile=fake_session.linkedin_profile,
             operator=operator,
+            cutoff=_cutoff_for_date(date.today() + timedelta(days=1)),
         )
 
     deal.refresh_from_db()

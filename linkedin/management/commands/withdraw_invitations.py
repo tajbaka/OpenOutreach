@@ -113,8 +113,8 @@ def _cutoff_for_date(before: date) -> datetime:
 
 class Command(BaseCommand):
     help = (
-        "Dry-run or explicitly withdraw a newest-reachable batch of "
-        "OpenOutreach-sent LinkedIn invitations."
+        "Dry-run CRM attribution or explicitly withdraw LinkedIn invitations "
+        "by visible sent-date."
     )
 
     def add_arguments(self, parser):
@@ -146,7 +146,8 @@ class Command(BaseCommand):
             type=int,
             help=(
                 "Optional maximum confirmed withdrawals. Omit to withdraw every "
-                "live matching invitation in the date window."
+                "visible date-eligible invitation LinkedIn exposes before the "
+                "time cap."
             ),
         )
         parser.add_argument(
@@ -237,6 +238,8 @@ class Command(BaseCommand):
                         candidates=plan.candidates,
                         linkedin_profile=linkedin_profile,
                         operator=operator,
+                        since=since,
+                        cutoff=cutoff,
                         withdrawal_limit=limit,
                     )
         except (AuthenticationError, InvitationWithdrawalError) as error:
