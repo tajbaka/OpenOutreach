@@ -71,6 +71,53 @@ ENABLE_FREEMIUM_CAMPAIGN = os.getenv("ENABLE_FREEMIUM_CAMPAIGN", "false").strip(
 ENABLE_PACING_CATCH_UP = os.getenv("ENABLE_PACING_CATCH_UP", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
+
+# ----------------------------------------------------------------------
+# Standalone LinkedIn profile discovery
+# ----------------------------------------------------------------------
+# Separate from the legacy ENABLE_AUTO_DISCOVERY qualification toggle.
+# This lane only collects profiles into LinkedInDiscoveryLead and never
+# creates crm.Lead, crm.Deal, or outbound tasks.
+ENABLE_PROFILE_DISCOVERY = os.getenv(
+    "ENABLE_PROFILE_DISCOVERY", "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+DISCOVERY_TIMEZONE = os.getenv("DISCOVERY_TIMEZONE", "America/Toronto")
+DISCOVERY_WEEKDAY_START_HOUR = int(
+    os.getenv("DISCOVERY_WEEKDAY_START_HOUR", "18"),
+)
+DISCOVERY_WEEKDAY_END_HOUR = int(
+    os.getenv("DISCOVERY_WEEKDAY_END_HOUR", "21"),
+)
+DISCOVERY_RUN_ON_REST_DAYS = os.getenv(
+    "DISCOVERY_RUN_ON_REST_DAYS", "true",
+).strip().lower() in {"1", "true", "yes", "on"}
+DISCOVERY_REST_DAY_START_HOUR = int(
+    os.getenv("DISCOVERY_REST_DAY_START_HOUR", "11"),
+)
+DISCOVERY_REST_DAY_END_HOUR = int(
+    os.getenv("DISCOVERY_REST_DAY_END_HOUR", "16"),
+)
+DISCOVERY_MAX_CARDS_PER_RUN = int(
+    os.getenv("DISCOVERY_MAX_CARDS_PER_RUN", "200"),
+)
+DISCOVERY_MAX_PAGES_PER_RUN = int(
+    os.getenv("DISCOVERY_MAX_PAGES_PER_RUN", "10"),
+)
+DISCOVERY_MAX_PROFILE_VISITS_PER_RUN = int(
+    os.getenv("DISCOVERY_MAX_PROFILE_VISITS_PER_RUN", "40"),
+)
+DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES = int(
+    os.getenv("DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES", "75"),
+)
+DISCOVERY_MAX_RUN_MINUTES = int(
+    os.getenv("DISCOVERY_MAX_RUN_MINUTES", "120"),
+)
+DISCOVERY_PROFILE_DELAY_MIN_SECONDS = int(
+    os.getenv("DISCOVERY_PROFILE_DELAY_MIN_SECONDS", "20"),
+)
+DISCOVERY_PROFILE_DELAY_MAX_SECONDS = int(
+    os.getenv("DISCOVERY_PROFILE_DELAY_MAX_SECONDS", "45"),
+)
 # ----------------------------------------------------------------------
 # Active-hours schedule (daemon pauses outside this window)
 # Set to False to run 24/7.

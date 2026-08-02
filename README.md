@@ -108,11 +108,13 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 | **`connect`** | Sends invite + initial note; persists outbound to `crm.Message`. Gated by daily/weekly limits per profile. |
 | **`sweep_connections`** | Visits the connections page every 6h (configurable), bulk-detects accepts, transitions PENDING → CONNECTED, captures first reply, posts Slack. Replaces the legacy per-profile `check_pending`. |
 | **`follow_up`** | Runs the multi-turn LLM agent on connected leads. Gated by `ENABLE_FOLLOW_UP` — when off, queued tasks are cancelled at startup. |
+| **`discovery`** | After outbound hours or during the rest-day window, scans bounded People-search pages, lightly matches cards to sender-enabled ICPs, opens plausible profiles, and saves them to `LinkedInDiscoveryLead`. Never creates CRM or outbound state. |
 | **`check_pending`** | Legacy task type, retained for migration compatibility. New deployments should use `sweep_connections`. |
 
 **Storage:**
 - **Postgres** (Neon recommended) when `DATABASE_URL` is set; SQLite fallback for offline dev. Daemon and dev box must share the same `DATABASE_URL` to avoid split-brain.
 - **`crm.Message`** is the canonical DM history store (FK to Lead, source enum {linkedin, gmail, calendar}, direction {inbound, outbound}, idempotent on `(source, external_id)`).
+- **`LinkedInDiscoveryLead`** is the separate discovery collection table. Each globally deduplicated profile stores its structured profile JSON, first storing sender/account, and potential ICP.
 - Per-campaign GP models live in `Campaign.model_blob` (binary BLOB, not files).
 
 **Sheets sync** (`linkedin/notifications/sheets.py`):
@@ -167,6 +169,10 @@ pytest -k test_name                # single test
 # Resync crm.Message from LinkedIn DM threads (run on cron)
 .venv/bin/python manage.py backfill_messages [--campaign 1] [--limit 50] [--dry-run]
 
+# Inspect sender discovery configuration/capacity or enqueue its next bounded run
+.venv/bin/python manage.py start_discovery --dry-run
+.venv/bin/python manage.py start_discovery [--handle arian]
+
 # Bulk-import existing connections from CSV via a separate "backfill" account
 .venv/bin/python manage.py import_connections \
   --csv leads/linkedin-batch4-messages.csv \
@@ -189,6 +195,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 | `ENABLE_FOLLOW_UP` | `true` | Auto-DM after accept (set `false` if you want to write follow-ups by hand) |
 | `ENABLE_ACTIVE_HOURS` | `false` | Restrict daemon to a daily window |
 | `ENABLE_AUTO_DISCOVERY` | `false` | Autonomous lead-search via the ML pipeline |
+| `ENABLE_PROFILE_DISCOVERY` | `false` | Separate bounded profile collection after outbound hours/rest days |
 | `CONNECTION_SWEEP_INTERVAL_HOURS` | `2` | How often the sweep task fires |
 | `AI_MODEL` | `gpt-4o` | Used for both qualification and synthesis (cheap models work fine for synthesis) |
 | `DATABASE_URL` | (unset → SQLite) | Postgres connection string |
@@ -218,6 +225,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── conf.py                         # .env loading + defaults
 │   ├── daemon.py                       # Task queue worker loop
 │   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
+│   ├── discovery/                      # ICP config, windows, search cards, screening, persistence
 │   ├── django_settings.py              # Django settings (Postgres or SQLite)
 │   ├── management/commands/            # backfill_messages, sync_sheets, import_connections, ...
 │   ├── ml/                             # Bayesian qualifier (GPR), embeddings
@@ -226,7 +234,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── onboarding.py                   # First-run interactive setup
 │   ├── pipeline/                       # Candidate sourcing + qualification
 │   ├── setup/                          # GDPR, self-profile, freemium campaign
-│   └── tasks/                          # connect, sweep_connections, follow_up
+│   └── tasks/                          # connect, sweep, follow_up, discovery
 ├── crm/                                # Django app: Lead, Deal, Message
 ├── chat/                               # Django app: ChatMessage
 ├── manage.py                           # Entry point (no args = daemon, else Django CLI)

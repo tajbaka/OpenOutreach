@@ -3,9 +3,6 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from django.db.models import Q
-
-
 _LEGAL_SUFFIXES = {
     "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
     "co", "company", "plc", "gmbh", "sa", "sas", "bv", "ag",
@@ -78,39 +75,11 @@ def lead_suppression_match(lead):
     """Return the matching active OutreachSuppression for a Lead, or None."""
     from linkedin.models import OutreachSuppression
 
-    normalized_company = normalize_company_name(getattr(lead, "company_name", ""))
-    domain = normalize_domain(getattr(lead, "email", ""))
-    full_name = " ".join(
-        part for part in (
-            getattr(lead, "first_name", ""),
-            getattr(lead, "last_name", ""),
-        )
-        if part
-    )
-    normalized_person = normalize_person_name(full_name)
-    email = (getattr(lead, "email", "") or "").strip().lower()
-    linkedin_url = (getattr(lead, "linkedin_url", "") or "").strip()
-    public_identifier = (getattr(lead, "public_identifier", "") or "").strip()
-
-    query = Q()
-    if normalized_company:
-        query |= Q(kind=OutreachSuppression.Kind.COMPANY, normalized_value=normalized_company)
-        query |= Q(kind=OutreachSuppression.Kind.COMPANY, normalized_aliases__contains=[normalized_company])
-    if domain:
-        query |= Q(kind=OutreachSuppression.Kind.COMPANY, domain=domain)
-    if normalized_person:
-        query |= Q(kind=OutreachSuppression.Kind.LEAD, normalized_value=normalized_person)
-        query |= Q(kind=OutreachSuppression.Kind.LEAD, normalized_aliases__contains=[normalized_person])
-    if email:
-        query |= Q(kind=OutreachSuppression.Kind.LEAD, email=email)
-    if linkedin_url:
-        query |= Q(kind=OutreachSuppression.Kind.LEAD, linkedin_url=linkedin_url)
-    if public_identifier:
-        query |= Q(kind=OutreachSuppression.Kind.LEAD, public_identifier=public_identifier)
-
-    if not query:
-        return None
-    for suppression in OutreachSuppression.objects.filter(active=True).filter(query):
+    # Keep matching behavior identical across Postgres production and SQLite
+    # tests. JSONField ``contains`` is not supported by SQLite, and suppression
+    # lists are intentionally small enough to evaluate with the canonical
+    # Python matcher.
+    for suppression in OutreachSuppression.objects.filter(active=True):
         if suppression_matches_lead(suppression, lead):
             return suppression
     return None

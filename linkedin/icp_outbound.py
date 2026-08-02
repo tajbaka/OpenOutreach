@@ -53,7 +53,7 @@ from math import isfinite
 from pathlib import Path
 
 from linkedin.conf import ROOT_DIR
-from linkedin.exceptions import SheetsError
+from linkedin.exceptions import DiscoveryConfigurationError, SheetsError
 from linkedin.name_utils import greeting_first_name
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP, LEAD_ICP_BUCKETS
 from linkedin.operators import resolve_operator
@@ -175,6 +175,15 @@ class FilledMessage:
 class TemplateStep:
     delay_hours: float
     variants: list[str]
+
+
+@dataclass(frozen=True)
+class DiscoveryTarget:
+    """One sender/ICP block that explicitly opts into profile discovery."""
+
+    icp: str
+    profile: str
+    search_queries: tuple[str, ...]
 
 
 def is_unknown_company_name(company_name: str | None) -> bool:
@@ -300,6 +309,95 @@ def load_icp_messages(sender: str) -> dict[str, dict[str, object]]:
             f"{_MESSAGES_PATH.name} (known senders: {sorted(by_sender)})"
         )
     return by_sender[sender]
+
+
+def load_discovery_targets(sender: str) -> tuple[DiscoveryTarget, ...]:
+    """Return strictly validated discovery-enabled ICPs for one sender.
+
+    Discovery metadata lives alongside that sender's existing outbound
+    channels in ``icp_messages.json``. A missing ``discovery`` block means
+    disabled. Disabled blocks may omit a profile and queries; enabled blocks
+    must provide both a non-empty profile and at least one explicit search
+    query so the browser never invents an unbounded search.
+    """
+    messages = load_icp_messages(sender)
+    targets: list[DiscoveryTarget] = []
+    allowed_keys = {"enabled", "profile", "search_queries"}
+
+    for icp, channels in messages.items():
+        if not isinstance(channels, dict):
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: ICP block must be an object",
+            )
+        discovery = channels.get("discovery")
+        if discovery is None:
+            continue
+        if not isinstance(discovery, dict):
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: discovery must be an object",
+            )
+        unknown = set(discovery) - allowed_keys
+        if unknown:
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: unknown discovery keys {sorted(unknown)}",
+            )
+
+        enabled = discovery.get("enabled", False)
+        if not isinstance(enabled, bool):
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: discovery.enabled must be a boolean",
+            )
+
+        profile = discovery.get("profile", "")
+        if not isinstance(profile, str):
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: discovery.profile must be a string",
+            )
+        profile = profile.strip()
+
+        raw_queries = discovery.get("search_queries", [])
+        if not isinstance(raw_queries, list) or any(
+            not isinstance(query, str) or not query.strip()
+            for query in raw_queries
+        ):
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: discovery.search_queries must contain "
+                "only non-empty strings",
+            )
+        queries = tuple(dict.fromkeys(query.strip() for query in raw_queries))
+
+        if not enabled:
+            continue
+        if not profile:
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: enabled discovery requires a non-empty profile",
+            )
+        if not queries:
+            raise DiscoveryConfigurationError(
+                f"{sender}/{icp}: enabled discovery requires search_queries",
+            )
+        targets.append(
+            DiscoveryTarget(
+                icp=icp,
+                profile=profile,
+                search_queries=queries,
+            ),
+        )
+
+    return tuple(targets)
+
+
+def discovery_search_queries(
+    targets: tuple[DiscoveryTarget, ...],
+) -> tuple[str, ...]:
+    """Flatten sender targets into a stable, de-duplicated query sequence."""
+    return tuple(
+        dict.fromkeys(
+            query
+            for target in targets
+            for query in target.search_queries
+        ),
+    )
 
 
 def load_gmail_messages(sender: str) -> dict[str, list[dict[str, object]]]:

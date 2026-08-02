@@ -66,26 +66,33 @@ GPR (sklearn, ConstantKernel * RBF) inside Pipeline(StandardScaler, GPR) with BA
 
 Three apps in `INSTALLED_APPS`:
 
-- **`linkedin`** — Main app: Campaign (owned by one User), LinkedInProfile, SearchKeyword, ActionLog, Task models, and LinkedIn feed collection job/post/observation models. All automation logic.
+- **`linkedin`** — Main app: Campaign (owned by one User), LinkedInProfile, SearchKeyword, ActionLog, Task, LinkedInDiscoveryLead, and LinkedIn feed collection job/post/observation models. All automation logic.
 - **`crm`** — Lead (with embedding) and Deal models (in `crm/models/lead.py` and `crm/models/deal.py`). Also defines `ClosingReason` enum.
 - **`chat`** — `ChatMessage` model (GenericForeignKey to any object, content, owner, answer_to threading, topic).
 
 ## CRM Data Model
 
 - **Campaign** (`linkedin/models.py`) — `name` (unique), `user` (FK to User), `product_docs`, `campaign_objective`, `booking_link`, `is_freemium`, `action_fraction`, `seed_public_ids` (JSONField).
-- **LinkedInProfile** (`linkedin/models.py`) — 1:1 with User. Credentials, rate limits (`connect_daily_limit`, `connect_weekly_limit`, `follow_up_daily_limit`). Methods: `can_execute`/`rate_limit_reasons`/`record_action`/`mark_exhausted`. In-memory `_exhausted` dict records LinkedIn-reported daily exhaustion separately from DB-enforced daily/weekly/global caps.
+- **LinkedInProfile** (`linkedin/models.py`) — 1:1 with User. Credentials, outbound rate limits (`connect_daily_limit`, `connect_weekly_limit`, `follow_up_daily_limit`), and `discovery_daily_limit` (new discovery rows per sender/local day; zero disables that sender). Methods: `can_execute`/`rate_limit_reasons`/`record_action`/`mark_exhausted`. In-memory `_exhausted` dict records LinkedIn-reported daily exhaustion separately from DB-enforced daily/weekly/global caps.
 - **SearchKeyword** (`linkedin/models.py`) — FK to Campaign. `keyword`, `used`, `used_at`. Unique on `(campaign, keyword)`.
 - **ActionLog** (`linkedin/models.py`) — FK to LinkedInProfile + Campaign. `action_type` (connect/follow_up/withdraw_invite), `created_at`. Composite index on `(linkedin_profile, action_type, created_at)`.
 - **Lead** (`crm/models/lead.py`) — Per LinkedIn URL (`linkedin_url` = unique). `public_identifier` (derived from URL). `first_name`, `last_name`, `company_name`. `description` = parsed profile JSON. `embedding` = 384-dim float32 BinaryField (nullable). `disqualified` = permanent exclusion. `embedding_array` property for numpy access. `get_labeled_arrays(campaign)` classmethod returns (X, y) for GP warm start. Labels: non-FAILED state → 1, FAILED+DISQUALIFIED → 0, other FAILED → skipped.
 - **Deal** (`crm/models/deal.py`) — Per campaign (campaign-scoped via FK). `state` = CharField (ProfileState choices). `closing_reason` = CharField (ClosingReason choices: COMPLETED/FAILED/DISQUALIFIED). `reason` = qualification/failure reason. `invitation_sent_at`, `invitation_sender`, and `invitation_withdrawn_at` form the positive project-send/withdrawal ledger; PENDING state alone is never evidence that OpenOutreach sent the invitation. `connect_attempts` = retry count. `backoff_hours` = check_pending backoff. `creation_date`, `update_date`.
-- **Task** (`linkedin/models.py`) — `task_type` (`Task.TaskType` choices; `Task.save()` skips task-type choice validation so deploy-skew rows can still be marked failed), `status` (pending/running/completed/failed), `scheduled_at`, `payload` (JSONField), `error`, `started_at`, `completed_at`. Composite index on `(status, scheduled_at)`. Pending/running `sweep_connections` rows require `payload.operator` so each sender account runs only its own LinkedIn-account work. Migration `0022` fails any pending/running legacy `withdraw_invites` rows before removing that task choice.
+- **Task** (`linkedin/models.py`) — `task_type` (`Task.TaskType` choices; `Task.save()` skips task-type choice validation so deploy-skew rows can still be marked failed), `status` (pending/running/completed/failed), `scheduled_at`, `payload` (JSONField), `error`, `started_at`, `completed_at`. Composite index on `(status, scheduled_at)`. Pending/running `sweep_connections` and `discovery` rows require `payload.operator`; discovery payloads also carry a bounded query/page cursor and counters. Migration `0022` fails pending/running legacy `withdraw_invites` rows before removing that task choice; migration `0023` adds discovery.
+- **LinkedInDiscoveryLead** (`linkedin/models.py`) — separate non-CRM collection table, globally unique by canonical public identifier and profile URL. Stores parsed Voyager profile data plus the first storing operator/account, one potential ICP, and collection timestamps. Rows never become outbound-eligible through this model.
 - **LinkedInFeedCollectionJob / LinkedInFeedPost / LinkedInFeedObservation** (`linkedin/models.py`) — feed collector ledger. Jobs are one per sender/day and carry retry/completion state. Posts are canonical activity/text records. Observations record which sender account saw each post and how often.
 - **FedRAMPMarketplaceSourceState / FedRAMPMarketplaceSignal** (`linkedin/models.py`) — durable official-marketplace baseline and review ledger. Source states retain changelog IDs and compact product snapshots. Signals use a unique canonical transition key and retain Codex decisions plus `slack_notified_at`, making collection and notification idempotent across machines that share the database.
 - **ChatMessage** (`chat/models.py`) — GenericForeignKey to any object. `content`, `owner`, `answer_to` (self FK), `topic` (self FK), `recipients`, `to` (M2M to User).
 
 ## Key Modules
 
-- **`daemon.py`** — Worker loop with active-hours guard (`ENABLE_ACTIVE_HOURS` flag, `seconds_until_active()`), `_build_qualifiers()`, `heal_tasks()`, freemium import, `_FreemiumRotator`.
+- **`daemon.py`** — Worker loop with outbound/discovery window guard (`ENABLE_ACTIVE_HOURS`, `seconds_until_active()`), `_build_qualifiers()`, `heal_tasks()`, freemium import, `_FreemiumRotator`. Outside outbound hours it restricts claims to pacing catch-up first, otherwise sender-scoped discovery inside its own window, while manual replies/status summaries retain priority.
+- **`discovery/config.py`** — strict discovery setting validation, local-day boundaries, weekday/rest-day windows, and next-window scheduling.
+- **`discovery/sources/people_search.py`** — source-specific People-search card extraction; it never falls back to harvesting every `/in/` link on the page.
+- **`discovery/screening.py`** — low-temperature structured batch screen against only the current sender's explicitly enabled ICP descriptions.
+- **`discovery/collector.py`** — deterministic CRM/discovery/suppression skips, atomic per-sender daily-cap enforcement, Voyager profile persistence, bounded task cursor/counters, next-window rollover, and startup task reconciliation.
+- **`tasks/discovery.py`** — daemon handler entrypoint for one bounded discovery unit.
+- **`management/commands/start_discovery.py`** — dry-run configuration/capacity inspection and explicit next-window task enqueue.
 - **`feed_collection.py`** — Daily LinkedIn home-feed collector helpers: sender/day job scheduling, CDP page collection, DOM extraction, canonical post upsert, and per-sender observation dedupe.
 - **`marketplace_listener.py`** — Fetches and schema-validates the official FedRAMP changelog and full snapshot, detects new legacy Ready and Program-path Initial Implementation transitions, deduplicates the two source paths, and persists source baselines and target signals transactionally.
 - **`marketplace_analysis.py`** — Serializes unreviewed marketplace signals with CRM matches for Codex, validates Codex decisions, gates high-signal alerts, groups offerings by provider, and records Slack notification completion.
@@ -114,7 +121,7 @@ Three apps in `INSTALLED_APPS`:
 - **`browser/session.py`** — `AccountSession`: handle, linkedin_profile, page, context, browser, playwright. `campaigns` property (via Campaign.user FK). `ensure_browser()` launches/recovers browser. Cookie expiry check via `_maybe_refresh_cookies()`.
 - **`browser/registry.py`** — `AccountSessionRegistry`, `get_or_create_session()`.
 - **`browser/login.py`** — `start_browser_session()` — browser launch + LinkedIn login.
-- **`browser/nav.py`** — Navigation, auto-discovery, `goto_page()`.
+- **`browser/nav.py`** — Navigation helpers and `goto_page()`; profile discovery does not globally harvest profile links.
 - **`db/leads.py`** — Lead CRUD, `lead_to_profile_dict()`, `get_leads_for_qualification()`, `disqualify_lead()`.
 - **`db/deals.py`** — Deal/state ops, `set_profile_state()`, `increment_connect_attempts()`, `create_freemium_deal()`.
 - **`db/enrichment.py`** — Lazy enrichment/embedding (`ensure_profile_embedded()`).
@@ -475,6 +482,7 @@ The same post may appear in several sender feeds, so analysis should happen at t
 
 - **`.env`** (project root) — `DATABASE_URL` (required for non-test runtimes), `LLM_API_KEY` (required), `AI_MODEL` (required), `LLM_API_BASE` (optional). For Docker, pass via `docker run -e`.
 - **`conf.py` schedule** — `ACTIVE_START_HOUR` (9), `ACTIVE_END_HOUR` (17), `ACTIVE_TIMEZONE` ("America/Toronto"), `REST_DAYS` ((5, 6) = Sat+Sun). Daemon sleeps outside this window.
+- **`conf.py` profile discovery** — `ENABLE_PROFILE_DISCOVERY` (default `false`), `DISCOVERY_TIMEZONE`, separate weekday/rest-day windows, and hard card/page/profile-visit/consecutive-no-match/run-time caps. `ENABLE_ACTIVE_HOURS` must remain enabled, discovery and outbound timezones must match, and the weekday discovery start must be at or after `ACTIVE_END_HOUR`.
 - **`conf.py` realtime** — `ENABLE_REALTIME_LISTENER` (default `false`), `LISTENER_CDP_PORT` (default 9222, localhost-only), `LISTENER_CATCHUP_GAP_MINUTES` (30), `LISTENER_PUMP_SLICE_SECONDS` (30), `LISTENER_ACTIVE_START_HOUR` (0), `LISTENER_ACTIVE_END_HOUR` (24), `LISTENER_REST_DAYS` (empty).
 - **`conf.py` feed collection** — `ENABLE_LINKEDIN_FEED_COLLECTOR` (default `false`), `LINKEDIN_FEED_COLLECTION_HOUR` (17), `LINKEDIN_FEED_COLLECTION_MINUTE` (0), `LINKEDIN_FEED_COLLECTION_TIMEZONE` ("America/Toronto"), `LINKEDIN_FEED_COLLECTION_RETRY_MINUTES` (60), `LINKEDIN_FEED_COLLECTION_CUTOFF_OVERLAP_MINUTES` (1), `LINKEDIN_FEED_COLLECTION_MAX_POSTS` (200), `LINKEDIN_FEED_COLLECTION_STOP_AFTER_SEEN` (15), `LINKEDIN_FEED_COLLECTION_SCROLL_PAUSE_SECONDS` (2).
 - **`conf.py` node monitoring** — `ENABLE_NODE_MONITOR` (default `true`), `MONITOR_INTERVAL_SECONDS` (300), `PEER_STALE_MINUTES` (15), `DEGRADED_REALERT_HOURS` (6), `TASK_FAILURE_STREAK_THRESHOLD` (5), `EXPECTED_OUTBOUND_SENDERS` (empty → infer), `SENDER_ACTIVITY_GRACE_MINUTES` (60), `SENDER_ACTIVITY_STALE_MINUTES` (90).

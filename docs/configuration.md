@@ -43,6 +43,7 @@ Django Admin or created during interactive onboarding.
 | `connect_daily_limit` | integer | Max connection requests per day. | `20` |
 | `connect_weekly_limit` | integer | Max connection requests per week. | `100` |
 | `follow_up_daily_limit` | integer | Max follow-up messages per day. | `30` |
+| `discovery_daily_limit` | integer | Max newly saved discovery profiles per discovery-local day; `0` disables discovery for this sender. | `25` |
 | `legal_accepted` | boolean | Whether the user accepted the legal notice. | `false` |
 
 Rate limiting is enforced by `LinkedInProfile` methods (`can_execute()`, `record_action()`,
@@ -59,6 +60,82 @@ Australia, Japan, South Korea, New Zealand).
 - **Unknown/empty location**: defaults to GDPR-protected (errs on the side of caution).
 
 This check runs once per account (a database sentinel record prevents re-runs).
+
+## Standalone Profile Discovery
+
+Profile discovery is a separate, disabled-by-default daemon lane. It runs only
+after normal outbound hours or in the configured rest-day window. One bounded
+task scans a LinkedIn People-search page, compares visible cards with the
+logged-in sender's enabled ICP descriptions, opens plausible profiles, and
+saves structured profile data to `LinkedInDiscoveryLead`.
+
+It does not create `crm.Lead`, `crm.Deal`, connection requests, messages, or
+other outbound state.
+
+### Sender/ICP configuration
+
+Discovery metadata lives inside each sender's existing
+`linkedin/icp_messages.json` ICP block:
+
+```json
+{
+  "Arian": {
+    "CSPs": {
+      "discovery": {
+        "enabled": true,
+        "profile": "Security, compliance, and public-sector leaders at cloud software providers with possible FedRAMP relevance.",
+        "search_queries": [
+          "FedRAMP SaaS founder",
+          "public sector cloud CISO"
+        ]
+      },
+      "linkedin_connect_note": ["..."],
+      "linkedin_connect_followup": ["..."]
+    }
+  }
+}
+```
+
+A missing block or `"enabled": false` disables that sender/ICP combination.
+Enabled blocks require a non-empty `profile` and at least one explicit
+`search_queries` value. The ICP Messages Sheet pull preserves this JSON-only
+metadata. `LLM_API_KEY` and `AI_MODEL` must also be configured before the
+feature can be enabled; startup validation fails before browser activity when
+either is missing.
+
+### Discovery environment settings
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `ENABLE_PROFILE_DISCOVERY` | `false` | Global feature gate. `ENABLE_ACTIVE_HOURS` must also remain enabled. |
+| `DISCOVERY_TIMEZONE` | `America/Toronto` | Timezone for windows and per-sender daily counts; must match `ACTIVE_TIMEZONE`. |
+| `DISCOVERY_WEEKDAY_START_HOUR` / `DISCOVERY_WEEKDAY_END_HOUR` | `18` / `21` | Weekday window; start must be at or after `ACTIVE_END_HOUR`. |
+| `DISCOVERY_RUN_ON_REST_DAYS` | `true` | Permit the separate rest-day window. |
+| `DISCOVERY_REST_DAY_START_HOUR` / `DISCOVERY_REST_DAY_END_HOUR` | `11` / `16` | Rest-day discovery window. |
+| `DISCOVERY_MAX_CARDS_PER_RUN` | `200` | Maximum result cards scanned in one sender run. |
+| `DISCOVERY_MAX_PAGES_PER_RUN` | `10` | Maximum search pages scanned in one sender run. |
+| `DISCOVERY_MAX_PROFILE_VISITS_PER_RUN` | `40` | Maximum profiles opened in one sender run. |
+| `DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES` | `75` | Sparse-result stop condition. |
+| `DISCOVERY_MAX_RUN_MINUTES` | `120` | Wall-clock run cap. |
+| `DISCOVERY_PROFILE_DELAY_MIN_SECONDS` / `DISCOVERY_PROFILE_DELAY_MAX_SECONDS` | `20` / `45` | Randomized delay between bounded task units. |
+
+The `LinkedInProfile.discovery_daily_limit` database field is authoritative
+for saved volume. Duplicates do not consume it. Once reached, the next
+discovery task is scheduled for the next eligible local day. The independent
+card/page/profile/no-match/time caps still stop runs that save nothing.
+
+Inspect configuration without writing queue state:
+
+```bash
+.venv/bin/python manage.py start_discovery --dry-run
+```
+
+Enqueue the next eligible task for all active profiles or one Django handle:
+
+```bash
+.venv/bin/python manage.py start_discovery
+.venv/bin/python manage.py start_discovery --handle arian
+```
 
 ## Hardcoded Defaults (`conf.py:CAMPAIGN_CONFIG`)
 

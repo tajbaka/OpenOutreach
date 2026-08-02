@@ -52,3 +52,27 @@ class MarketplaceListenerError(Exception):
     """FedRAMP marketplace source fetch or schema validation failed."""
 
     pass
+
+
+class DiscoveryConfigurationError(Exception):
+    """Discovery configuration is missing or malformed."""
+
+    pass
+
+
+class DiscoverySurfaceError(Exception):
+    """A supported LinkedIn discovery surface could not be read safely."""
+
+    pass
+
+
+class DiscoveryScreeningError(Exception):
+    """The discovery ICP screen returned an invalid structured result."""
+
+    pass
+
+
+class LinkedInDiscoveryLimitError(Exception):
+    """LinkedIn displayed a search/commercial-use restriction."""
+
+    pass

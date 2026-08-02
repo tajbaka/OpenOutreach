@@ -29,6 +29,7 @@ from linkedin.conf import (
     ENABLE_SWEEP_CONNECTIONS,
     ENABLE_ACTIVE_HOURS,
     ENABLE_PACING_CATCH_UP,
+    ENABLE_PROFILE_DISCOVERY,
     ENRICHMENT_WAIT_POLL_SECONDS,
     LISTENER_ACTIVE_END_HOUR,
     LISTENER_ACTIVE_START_HOUR,
@@ -49,6 +50,7 @@ from linkedin.tasks.connect import (
     _is_behind_normal_window_pace,
 )
 from linkedin.tasks.follow_up import handle_follow_up
+from linkedin.tasks.discovery import handle_discovery
 from linkedin.tasks.manual_reply import handle_manual_reply
 from linkedin.tasks.status_summary import enqueue_status_summary, handle_status_summary
 from linkedin.tasks.sweep_connections import handle_sweep_connections
@@ -61,6 +63,7 @@ _HANDLERS = {
     Task.TaskType.MANUAL_REPLY: handle_manual_reply,
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
     Task.TaskType.STATUS_SUMMARY: handle_status_summary,
+    Task.TaskType.DISCOVERY: handle_discovery,
 }
 
 _LOW_POOL_ALERTED: set[int] = set()
@@ -174,7 +177,7 @@ def _build_qualifiers(campaigns, cfg, kit_model=None):
 
 
 def seconds_until_active(profile=None) -> float:
-    """Return seconds to wait before the next active window, or 0 if active now."""
+    """Return seconds to the next outbound or discovery window."""
     if not ENABLE_ACTIVE_HOURS:
         return 0.0
     tz = ZoneInfo(ACTIVE_TIMEZONE)
@@ -182,11 +185,20 @@ def seconds_until_active(profile=None) -> float:
     is_workday = now.weekday() not in REST_DAYS
     is_normal_active = ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR
     is_catch_up_active = bool(_catch_up_task_types(profile, now=now))
+    from linkedin.discovery.config import (
+        discovery_window_open,
+        next_discovery_window_start,
+    )
+    is_discovery_active = discovery_window_open(now)
 
-    if is_workday and (is_normal_active or is_catch_up_active):
+    if (is_workday and (is_normal_active or is_catch_up_active)) or is_discovery_active:
         return 0.0
 
-    return _seconds_until_next_active_start(now)
+    waits = [_seconds_until_next_active_start(now)]
+    discovery_start = next_discovery_window_start(now)
+    if discovery_start is not None:
+        waits.append(max((discovery_start - now).total_seconds(), 0))
+    return min(waits)
 
 
 def _seconds_until_next_active_start(now=None) -> float:
@@ -228,14 +240,20 @@ def _catch_up_task_types(profile=None, *, now=None) -> set[str]:
 
 
 def _claimable_task_types_now(profile=None):
-    """Return None for normal all-task mode, or a restricted catch-up set."""
+    """Return None for outbound mode, or the restricted off-hours lanes."""
     if not ENABLE_ACTIVE_HOURS:
         return None
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
     if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
         return None
-    return _catch_up_task_types(profile, now=now)
+    catch_up = _catch_up_task_types(profile, now=now)
+    if catch_up:
+        return catch_up
+    from linkedin.discovery.config import discovery_window_open
+    if discovery_window_open(now):
+        return {Task.TaskType.DISCOVERY}
+    return set()
 
 
 def listener_should_run_now(*, now=None) -> bool:
@@ -275,7 +293,6 @@ def heal_tasks(session):
     from linkedin.enums import ProfileState
     from linkedin.models import Campaign
     from linkedin.operators import resolve_operator
-
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
     owned_campaign_ids = list(
         session.campaigns.values_list("pk", flat=True),
@@ -391,7 +408,14 @@ def heal_tasks(session):
     # may claim it, then it self-reschedules for the next hour.
     enqueue_status_summary(delay_seconds=0, since=timezone.now() - timedelta(hours=1))
 
-    # 6. Follow-up tasks (post-accept DMs — gated separately).
+    # 6. Standalone profile discovery. Reconcile one future/current task for
+    # this sender. It is claimed only in the separate discovery windows.
+    from linkedin.discovery.collector import reconcile_discovery_tasks
+
+    if reconcile_discovery_tasks(session.linkedin_profile, our_operator):
+        logger.info("Profile discovery task ready for %s", our_operator)
+
+    # 7. Follow-up tasks (post-accept DMs — gated separately).
     if not ENABLE_FOLLOW_UP:
         cancelled_fu = Task.objects.filter(
             task_type=Task.TaskType.FOLLOW_UP,
@@ -412,9 +436,6 @@ def heal_tasks(session):
     # work this daemon's account can actually do.
     from linkedin.db.messages import lead_outbound_operators
     from linkedin.icp_outbound import resolve_icp
-    from linkedin.operators import resolve_operator
-    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
-
     for campaign in _active_campaigns(session):
         session.campaign = campaign
         connected_deals = Deal.objects.filter(
@@ -636,7 +657,15 @@ def run_daemon(session):
     heal_tasks(session)
 
     campaigns = list(_active_campaigns(session))
-    if not campaigns:
+    from linkedin.discovery.collector import discovery_enabled_for_sender
+    from linkedin.operators import resolve_operator
+
+    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
+    discovery_enabled = discovery_enabled_for_sender(
+        session.linkedin_profile,
+        our_operator,
+    )
+    if not campaigns and not discovery_enabled:
         logger.error("No active campaigns found — cannot start daemon")
         return
 
@@ -647,8 +676,6 @@ def run_daemon(session):
     # The canonical handle lookup also handles the case where
     # LINKEDIN_USERNAME and the LinkedInProfile row use different surface
     # forms ("ariantajbakh@gmail.com" vs "Arian Taj" etc.).
-    from linkedin.operators import resolve_operator
-    our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
     our_campaign_ids = [c.pk for c in campaigns]
 
     logger.info(
@@ -828,6 +855,7 @@ def run_daemon(session):
             Task.TaskType.SWEEP_CONNECTIONS,
             Task.TaskType.MANUAL_REPLY,
             Task.TaskType.STATUS_SUMMARY,
+            Task.TaskType.DISCOVERY,
         }:
             session.campaign = session.campaigns.first()
         else:
@@ -880,6 +908,20 @@ def run_daemon(session):
                 cid = task.payload.get("campaign_id")
                 if cid:
                     enqueue_connect(cid, delay_seconds=60)
+            elif task.task_type == Task.TaskType.DISCOVERY and ENABLE_PROFILE_DISCOVERY:
+                from linkedin.discovery.collector import enqueue_discovery
+                from linkedin.discovery.config import next_discovery_window_start
+
+                retry_at = next_discovery_window_start(
+                    timezone.now(),
+                    after_current_day=True,
+                )
+                if retry_at is not None:
+                    enqueue_discovery(
+                        session.linkedin_profile,
+                        our_operator,
+                        scheduled_at=retry_at,
+                    )
             continue
 
         task.mark_completed()

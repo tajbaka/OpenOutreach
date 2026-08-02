@@ -173,6 +173,7 @@ class LinkedInProfile(models.Model):
     connect_daily_limit = models.PositiveIntegerField(default=20)
     connect_weekly_limit = models.PositiveIntegerField(default=100)
     follow_up_daily_limit = models.PositiveIntegerField(default=30)
+    discovery_daily_limit = models.PositiveIntegerField(default=25)
     legal_accepted = models.BooleanField(default=False)
     newsletter_processed = models.BooleanField(default=False)
     # Cookies: stored on disk at `data/cookies-<safe_username>.json`
@@ -613,6 +614,44 @@ class FedRAMPMarketplaceSignal(models.Model):
         return f"{self.get_signal_type_display()}: {self.provider_name} / {self.offering_name}"
 
 
+class LinkedInDiscoveryLead(models.Model):
+    """A profile collected by the standalone LinkedIn discovery lane."""
+
+    public_identifier = models.CharField(max_length=200, unique=True)
+    linkedin_url = models.URLField(max_length=500, unique=True)
+    member_urn = models.CharField(max_length=255, blank=True, default="", db_index=True)
+    first_name = models.CharField(max_length=100, blank=True, default="")
+    last_name = models.CharField(max_length=100, blank=True, default="")
+    full_name = models.CharField(max_length=220, blank=True, default="")
+    headline = models.TextField(blank=True, default="")
+    company_name = models.CharField(max_length=300, blank=True, default="")
+    location = models.CharField(max_length=300, blank=True, default="")
+    profile_data = models.JSONField(default=dict)
+    stored_by_operator = models.CharField(max_length=80, db_index=True)
+    stored_by_account_username = models.CharField(max_length=200, db_index=True)
+    potential_icp = models.CharField(max_length=100, db_index=True)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_profiled_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(
+                fields=["stored_by_operator", "created_at"],
+                name="ldiscovery_sender_day_idx",
+            ),
+            models.Index(
+                fields=["potential_icp", "created_at"],
+                name="ldiscovery_icp_day_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return self.full_name or self.public_identifier
+
+
 def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     """Q filter for browser tasks exclusively owned by one LinkedIn sender."""
     from django.db.models import Q
@@ -622,6 +661,7 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
         (Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.DISCOVERY) & Q(payload__operator=operator))
         | (
             Q(task_type=Task.TaskType.CONNECT)
             & Q(payload__campaign_id__in=owned)
@@ -638,7 +678,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     requests and 32 follow-up DMs for Chuka's campaign, from the wrong
     account.
 
-    - follow_up / manual_reply / sweep_connections: claimable when
+    - follow_up / manual_reply / sweep_connections / discovery: claimable when
       `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
@@ -699,7 +739,7 @@ class TaskQuerySet(models.QuerySet):
         daemon is logged in as; `campaign_ids` are the pks of the
         campaigns that account owns. When `operator` is supplied:
 
-          - follow_up/manual_reply Tasks are filtered to those whose
+          - follow_up/manual_reply/discovery Tasks are filtered to those whose
             `payload.operator` matches;
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
@@ -811,6 +851,7 @@ class Task(models.Model):
         GMAIL_FOLLOW_UP = "gmail_follow_up"
         MANUAL_REPLY = "manual_reply"
         STATUS_SUMMARY = "status_summary"
+        DISCOVERY = "discovery"
 
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -836,6 +877,7 @@ class Task(models.Model):
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
             cls.TaskType.SWEEP_CONNECTIONS,
+            cls.TaskType.DISCOVERY,
         ]
 
     @classmethod
@@ -895,6 +937,17 @@ class Task(models.Model):
         ):
             if not payload.get("operator"):
                 errors.append("sweep_connections tasks require non-empty payload.operator")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.DISCOVERY
+        ):
+            if not payload.get("operator"):
+                errors.append("discovery tasks require non-empty payload.operator")
+            if payload.get("query_index") is None:
+                errors.append("discovery tasks require payload.query_index")
+            if payload.get("page") is None:
+                errors.append("discovery tasks require payload.page")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

@@ -12,6 +12,7 @@ from linkedin.models import (
     LinkedInFeedCollectionJob,
     LinkedInFeedObservation,
     LinkedInFeedPost,
+    LinkedInDiscoveryLead,
     LinkedInProfile,
     OutreachSuppression,
     SearchKeyword,
@@ -44,9 +45,39 @@ class OutreachSuppressionAdmin(admin.ModelAdmin):
 
 @admin.register(LinkedInProfile)
 class LinkedInProfileAdmin(admin.ModelAdmin):
-    list_display = ("user", "linkedin_username", "active", "legal_accepted")
+    list_display = (
+        "user", "linkedin_username", "active", "discovery_daily_limit",
+        "legal_accepted",
+    )
     list_filter = ("active",)
     raw_id_fields = ("user",)
+
+
+@admin.register(LinkedInDiscoveryLead)
+class LinkedInDiscoveryLeadAdmin(admin.ModelAdmin):
+    list_display = (
+        "full_name", "company_name", "headline", "stored_by_operator",
+        "potential_icp", "linkedin_url", "created_at",
+    )
+    list_filter = ("stored_by_operator", "potential_icp", "created_at")
+    search_fields = (
+        "full_name", "first_name", "last_name", "company_name", "headline",
+        "public_identifier", "linkedin_url",
+    )
+    readonly_fields = (
+        "public_identifier", "linkedin_url", "member_urn", "first_name",
+        "last_name", "full_name", "headline", "company_name", "location",
+        "profile_data", "stored_by_operator", "stored_by_account_username",
+        "potential_icp", "last_seen_at", "last_profiled_at", "created_at",
+        "updated_at",
+    )
+    date_hierarchy = "created_at"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(SearchKeyword)
