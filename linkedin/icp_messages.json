@@ -747,6 +747,14 @@
   },
   "Athena": {
     "CSPs": {
+      "discovery": {
+        "enabled": true,
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
+        "search_queries": [
+          "FedRAMP SaaS founder",
+          "public sector cloud security leader"
+        ]
+      },
       "linkedin_connect_note": [
         "Hi {first_name}, saw {company_name} in public-sector cloud. FedRAMP's June 2026 rules made 20x evidence/measures more concrete. Curious how your team is reading it. Good to connect?"
       ],
