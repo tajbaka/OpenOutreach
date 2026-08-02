@@ -93,6 +93,7 @@ Three apps in `INSTALLED_APPS`:
 - **`discovery/collector.py`** — deterministic CRM/discovery/suppression skips, atomic per-sender daily-cap enforcement, Voyager profile persistence, bounded task cursor/counters, next-window rollover, and startup task reconciliation.
 - **`tasks/discovery.py`** — daemon handler entrypoint for one bounded discovery unit.
 - **`management/commands/start_discovery.py`** — dry-run configuration/capacity inspection and explicit next-window task enqueue.
+- **`management/commands/run_discovery_once.py`** — controlled live runner that keeps one selected browser profile open for up to `--max-tasks` sender-scoped discovery Tasks (default one), including their short continuation delays, and exits without claiming any other queue lane.
 - **`feed_collection.py`** — Daily LinkedIn home-feed collector helpers: sender/day job scheduling, CDP page collection, DOM extraction, canonical post upsert, and per-sender observation dedupe.
 - **`marketplace_listener.py`** — Fetches and schema-validates the official FedRAMP changelog and full snapshot, detects new legacy Ready and Program-path Initial Implementation transitions, deduplicates the two source paths, and persists source baselines and target signals transactionally.
 - **`marketplace_analysis.py`** — Serializes unreviewed marketplace signals with CRM matches for Codex, validates Codex decisions, gates high-signal alerts, groups offerings by provider, and records Slack notification completion.

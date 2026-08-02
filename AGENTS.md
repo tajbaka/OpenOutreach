@@ -119,6 +119,10 @@ pytest -k test_name                # single test
 # no-match/time caps. Saves only LinkedInDiscoveryLead rows.
 .venv/bin/python manage.py start_discovery --dry-run
 .venv/bin/python manage.py start_discovery [--handle arian]
+# Controlled live verification: keeps one sender browser open for a bounded
+# discovery batch (default one Task), then exits.
+# It never claims connect/follow-up/sweep/status/manual-reply Tasks.
+.venv/bin/python manage.py run_discovery_once --handle arian --max-tasks 3
 
 # Export Sales Navigator searches/lists for local lead review. Outputs stay
 # compatible with add_seeds but include review metadata columns:

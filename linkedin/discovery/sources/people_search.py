@@ -1,6 +1,7 @@
 """Bounded extraction from LinkedIn People-search result cards."""
 from __future__ import annotations
 
+import json
 import logging
 
 from linkedin.actions.search import search_people
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 # These selectors are deliberately rooted in People-search result containers.
 # Do not fall back to harvesting every /in/ anchor on the page.
 PEOPLE_RESULT_CARD_SELECTORS = (
+    'main [data-testid="lazy-column"] [role="list"] [role="listitem"]',
     "main li.reusable-search__result-container",
     "main div.entity-result",
     "main [data-chameleon-result-urn]",
@@ -52,6 +54,20 @@ def _first_text(container, selectors: tuple[str, ...]) -> str:
     return ""
 
 
+def _profile_link_text(links) -> str:
+    """Use the first non-empty profile-link label as a hashed-UI name fallback."""
+    if not hasattr(links, "all"):
+        return ""
+    for link in links.all():
+        try:
+            value = link.inner_text(timeout=2000).strip()
+        except Exception:
+            continue
+        if value:
+            return value
+    return ""
+
+
 def _page_text(page) -> str:
     try:
         return page.locator("body").inner_text(timeout=3000)
@@ -76,6 +92,49 @@ def _assert_search_surface_available(session) -> str:
             "LinkedIn displayed a search/commercial-use limit",
         )
     return text
+
+
+def _profile_link_diagnostics(page) -> list[dict]:
+    """Return a small ancestor summary when LinkedIn changes card markup."""
+    links = page.locator('main a[href*="/in/"]')
+    if not hasattr(links, "evaluate_all"):
+        return []
+    try:
+        return links.evaluate_all(
+            """
+            nodes => nodes.slice(0, 3).map(link => {
+              const ancestors = [];
+              let node = link;
+              for (let depth = 0; node && depth < 14; depth += 1) {
+                const profileHrefs = Array.from(
+                  node.querySelectorAll?.('a[href*="/in/"]') || [],
+                ).map(anchor => anchor.getAttribute("href") || "");
+                ancestors.push({
+                  tag: node.tagName,
+                  class: node.className || "",
+                  id: node.id || "",
+                  role: node.getAttribute("role") || "",
+                  ariaLabel: node.getAttribute("aria-label") || "",
+                  viewName: node.getAttribute("data-view-name") || "",
+                  testId: node.getAttribute("data-testid") || "",
+                  componentType:
+                    node.getAttribute("data-component-type") || "",
+                  chameleonUrn:
+                    node.getAttribute("data-chameleon-result-urn") || "",
+                  uniqueProfileHrefs: new Set(profileHrefs).size,
+                });
+                node = node.parentElement;
+              }
+              return {
+                href: link.getAttribute("href") || "",
+                ancestors,
+              };
+            })
+            """,
+        )
+    except Exception:
+        logger.debug("Could not collect People-search selector diagnostics", exc_info=True)
+        return []
 
 
 def collect_people_search_cards(
@@ -107,7 +166,7 @@ def collect_people_search_cards(
             continue
         seen.add(public_identifier)
 
-        name = _first_text(container, _NAME_SELECTORS)
+        name = _first_text(container, _NAME_SELECTORS) or _profile_link_text(links)
         headline = _first_text(container, _HEADLINE_SELECTORS)
         company_name = _first_text(container, _COMPANY_SELECTORS)
         try:
@@ -133,9 +192,10 @@ def collect_people_search_cards(
         return []
 
     if session.page.locator('main a[href*="/in/"]').count() > 0:
+        diagnostics = _profile_link_diagnostics(session.page)
         raise DiscoverySurfaceError(
             "People-search profile links were present, but no supported result "
-            "card selector matched",
+            f"card selector matched; samples={json.dumps(diagnostics)}",
         )
 
     logger.info(

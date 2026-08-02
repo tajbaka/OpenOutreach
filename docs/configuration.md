@@ -137,6 +137,13 @@ Enqueue the next eligible task for all active profiles or one Django handle:
 .venv/bin/python manage.py start_discovery --handle arian
 ```
 
+For a controlled live check that cannot claim any other daemon lane, keep one
+sender browser open for a bounded discovery batch and then exit:
+
+```bash
+.venv/bin/python manage.py run_discovery_once --handle arian --max-tasks 3
+```
+
 ## Hardcoded Defaults (`conf.py:CAMPAIGN_CONFIG`)
 
 Timing and ML defaults are hardcoded in `linkedin/conf.py`. These are not user-configurable.

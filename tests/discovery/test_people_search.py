@@ -2,7 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from linkedin.discovery.sources.people_search import collect_people_search_cards
+from linkedin.discovery.sources.people_search import (
+    PEOPLE_RESULT_CARD_SELECTOR,
+    collect_people_search_cards,
+)
 from linkedin.exceptions import DiscoverySurfaceError
 
 
@@ -65,7 +68,7 @@ class _Page:
         self.generic_links = generic_links
 
     def locator(self, selector):
-        if selector.startswith("main li.reusable-search"):
+        if selector == PEOPLE_RESULT_CARD_SELECTOR:
             return _ContainerList(self.cards)
         if selector == "body":
             return _TextLocator(self.body)

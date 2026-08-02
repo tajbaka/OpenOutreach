@@ -172,6 +172,7 @@ pytest -k test_name                # single test
 # Inspect sender discovery configuration/capacity or enqueue its next bounded run
 .venv/bin/python manage.py start_discovery --dry-run
 .venv/bin/python manage.py start_discovery [--handle arian]
+.venv/bin/python manage.py run_discovery_once --handle arian --max-tasks 3
 
 # Bulk-import existing connections from CSV via a separate "backfill" account
 .venv/bin/python manage.py import_connections \
