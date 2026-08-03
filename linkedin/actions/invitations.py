@@ -190,25 +190,45 @@ def _sent_label_age_days(label: str) -> int | None:
 
 
 def _oldest_visible_sent_age_days(page) -> int | None:
-    labels = page.locator(SENT_INVITATION_CARD_SELECTOR).evaluate_all(
+    payloads = _sent_card_payloads(page)
+    if not isinstance(payloads, list):
+        return None
+    ages = [
+        age
+        for payload in payloads
+        if (age := _sent_label_age_days(str(payload.get("sentLabel", "")))) is not None
+    ]
+    return max(ages) if ages else None
+
+
+def _sent_card_payloads(page) -> list[dict[str, str]]:
+    return page.locator(SENT_INVITATION_CARD_SELECTOR).evaluate_all(
         """
         elements => elements.map(element => {
+            const profileLink = element.querySelector('a[href*="/in/"]');
+            const withdrawControl = element.querySelector(
+                'a[aria-label*="Withdraw invitation sent to" i], ' +
+                'button[aria-label*="Withdraw invitation sent to" i], ' +
+                '[role="button"][aria-label*="Withdraw invitation sent to" i]'
+            );
+            let sentLabel = '';
             for (const line of (element.innerText || '').split('\\n')) {
                 const normalized = line.trim().replace(/\\s+/g, ' ');
                 if (normalized.toLowerCase().startsWith('sent ')) {
-                    return normalized;
+                    sentLabel = normalized;
+                    break;
                 }
             }
-            return '';
+            return {
+                href: profileLink ? (profileLink.href || '') : '',
+                withdrawAria: withdrawControl
+                    ? (withdrawControl.getAttribute('aria-label') || '')
+                    : '',
+                sentLabel,
+            };
         })
         """
     )
-    if not isinstance(labels, list):
-        return None
-    ages = [
-        age for label in labels if (age := _sent_label_age_days(label)) is not None
-    ]
-    return max(ages) if ages else None
 
 
 def _card_public_identifier(card) -> str:
@@ -319,31 +339,44 @@ def _collect_age_matches(
     max_age_days: int | None = None,
     match_limit: int | None = None,
 ) -> int:
-    cards = page.locator(SENT_INVITATION_CARD_SELECTOR)
-    for index in range(cards.count()):
-        match = _card_match(cards.nth(index))
-        if match is None:
+    payloads = _sent_card_payloads(page)
+    for payload in payloads:
+        public_identifier = url_to_public_id(str(payload.get("href", "")))
+        if not public_identifier:
             continue
-        key = match.public_identifier.casefold()
+        withdraw_aria = str(payload.get("withdrawAria", "")).strip()
+        if not withdraw_aria:
+            continue
+        sent_label = str(payload.get("sentLabel", "")).strip()
+        displayed_name = ""
+        prefix = "withdraw invitation sent to "
+        if withdraw_aria.casefold().startswith(prefix):
+            displayed_name = withdraw_aria[len(prefix):].strip()
+
+        key = public_identifier.casefold()
         if key in matches:
             continue
-        age_days = _sent_label_age_days(match.sent_label)
+        age_days = _sent_label_age_days(sent_label)
         if age_days is None:
             continue
         if age_days < min_age_days:
             continue
         if max_age_days is not None and age_days > max_age_days:
             continue
-        matches[key] = match
+        matches[key] = SentInvitationMatch(
+            public_identifier=public_identifier,
+            displayed_name=displayed_name,
+            sent_label=sent_label,
+        )
         logger.info(
             "Matched date-eligible invitation %s: %s (%s)",
-            match.public_identifier,
-            match.displayed_name or "name unavailable",
-            match.sent_label or "date label unavailable",
+            public_identifier,
+            displayed_name or "name unavailable",
+            sent_label or "date label unavailable",
         )
         if match_limit is not None and len(matches) >= match_limit:
             break
-    return cards.count()
+    return len(payloads)
 
 
 def scan_sent_invitations(
