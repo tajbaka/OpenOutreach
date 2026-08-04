@@ -10,6 +10,8 @@ from enum import Enum
 from typing import Mapping, Sequence
 from urllib.parse import unquote, urlparse
 
+from playwright.sync_api import Error as PlaywrightError
+
 from linkedin.db.urls import url_to_public_id
 from linkedin.exceptions import InvitationWithdrawalError
 
@@ -131,6 +133,16 @@ def _dismiss_dialog(page, dialog) -> None:
         cancel.click()
         return
     page.keyboard.press("Escape")
+
+
+def _dismiss_visible_dialog(page) -> None:
+    """Clear a confirmation dialog left behind by the previous withdrawal."""
+    dialog = _first_visible(page.locator(VISIBLE_DIALOG_SELECTOR))
+    if dialog is None:
+        return
+    logger.warning("Dismissing a leftover dialog before the next withdrawal")
+    _dismiss_dialog(page, dialog)
+    page.wait_for_timeout(500)
 
 
 def _name_tokens(value: str) -> list[str]:
@@ -706,6 +718,7 @@ def withdraw_sent_invitation_by_public_identifier(
 ) -> WithdrawalResult:
     """Withdraw one Sent card by URL only and verify it disappears."""
     page = session.page
+    _dismiss_visible_dialog(page)
     card = _find_sent_card(page, public_identifier)
     if card is None:
         return WithdrawalResult.NOT_PENDING
@@ -718,7 +731,13 @@ def withdraw_sent_invitation_by_public_identifier(
     withdraw_control = _first_visible(card.locator(SENT_WITHDRAW_SELECTOR))
     if withdraw_control is None:
         return WithdrawalResult.NOT_PENDING
-    withdraw_control.click()
+    try:
+        withdraw_control.click()
+    except PlaywrightError as error:
+        _dismiss_visible_dialog(page)
+        raise InvitationWithdrawalError(
+            f"{public_identifier} Withdraw click failed: {error}"
+        ) from error
 
     dialog = _first_visible_until(page, VISIBLE_DIALOG_SELECTOR)
     if dialog is None:
@@ -731,7 +750,13 @@ def withdraw_sent_invitation_by_public_identifier(
         raise InvitationWithdrawalError(
             f"{public_identifier} dialog had no unambiguous Withdraw control"
         )
-    confirmation.click()
+    try:
+        confirmation.click()
+    except PlaywrightError as error:
+        _dismiss_visible_dialog(page)
+        raise InvitationWithdrawalError(
+            f"{public_identifier} confirmation click failed: {error}"
+        ) from error
 
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:

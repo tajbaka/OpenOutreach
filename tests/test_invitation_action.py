@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from linkedin.actions.invitations import (
     CANCEL_DIALOG_SELECTOR,
@@ -119,6 +120,45 @@ def test_withdraws_sent_card_by_public_identifier_without_name_check(
     assert result == WithdrawalResult.WITHDRAWN
     assert withdraw.clicked
     assert confirm.clicked
+
+
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_date_withdrawal_dismisses_leftover_dialog_before_click(
+    find_card,
+    card_match,
+):
+    session, card, withdraw, confirm = _session()
+    stale_cancel = _Element(text="Cancel")
+    stale_dialog = _Element()
+    stale_dialog.locator = Mock(return_value=_Collection(stale_cancel))
+    active_dialog = _Element(child=confirm)
+    session.page.locator.side_effect = [
+        _Collection(stale_dialog),
+        _Collection(active_dialog),
+    ]
+    find_card.side_effect = [card, None]
+    card_match.return_value = _match()
+
+    result = withdraw_sent_invitation_by_public_identifier(session, "alice")
+
+    assert result == WithdrawalResult.WITHDRAWN
+    assert stale_cancel.clicked
+    assert withdraw.clicked
+    assert confirm.clicked
+
+
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_date_withdrawal_wraps_browser_click_timeout(find_card, card_match):
+    session, card, withdraw, _ = _session()
+    session.page.locator.side_effect = lambda _selector: _Collection()
+    withdraw.click = Mock(side_effect=PlaywrightTimeoutError("blocked"))
+    find_card.return_value = card
+    card_match.return_value = _match()
+
+    with pytest.raises(InvitationWithdrawalError, match="Withdraw click failed"):
+        withdraw_sent_invitation_by_public_identifier(session, "alice")
 
 
 @patch("linkedin.actions.invitations._card_match")
