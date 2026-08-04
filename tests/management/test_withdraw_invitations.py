@@ -872,6 +872,62 @@ def test_unmatched_date_card_is_withdrawn_and_recorded_without_crm(fake_session)
 
 
 @pytest.mark.django_db
+def test_live_date_card_reconciles_unique_operator_owned_legacy_deal(fake_session):
+    operator = resolve_operator(
+        fake_session.linkedin_profile.linkedin_username,
+    )
+    deal = _pending_deal(
+        fake_session,
+        "live-legacy-match",
+        sent_note="Legacy project note",
+    )
+
+    with (
+        patch(
+            "linkedin.invitation_withdrawal.scan_sent_invitations_by_age",
+            return_value=SentInvitationScan(
+                matches=(
+                    SentInvitationMatch(
+                        public_identifier="live-legacy-match",
+                        displayed_name="Live Legacy Match",
+                        sent_label="Sent 3 months ago",
+                    ),
+                ),
+                cards_seen=653,
+                scroll_rounds=100,
+                reached_end=True,
+            ),
+        ),
+        patch(
+            "linkedin.invitation_withdrawal.withdraw_sent_invitation_by_public_identifier",
+            return_value=WithdrawalResult.WITHDRAWN,
+        ),
+    ):
+        result = apply_withdrawal_batch(
+            session=fake_session,
+            candidates=(),
+            linkedin_profile=fake_session.linkedin_profile,
+            operator=operator,
+            cutoff=_cutoff_for_date(date.today() + timedelta(days=1)),
+        )
+
+    deal.refresh_from_db()
+    record = InvitationWithdrawalRecord.objects.get()
+    assert result.withdrawn == 1
+    assert deal.state == ProfileState.FAILED
+    assert deal.invitation_sender == operator
+    assert deal.invitation_sent_at is None
+    assert deal.invitation_withdrawn_at == record.withdrawn_at
+    assert record.deal_id == deal.pk
+    assert record.source == InvitationWithdrawalRecord.Source.CRM_MATCHED
+    assert ActionLog.objects.filter(
+        linkedin_profile=fake_session.linkedin_profile,
+        campaign=deal.campaign,
+        action_type=ActionLog.ActionType.WITHDRAW_INVITE,
+    ).count() == 1
+
+
+@pytest.mark.django_db
 def test_not_pending_is_not_falsely_recorded(fake_session):
     operator = resolve_operator(
         fake_session.linkedin_profile.linkedin_username,

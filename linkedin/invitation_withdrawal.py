@@ -465,6 +465,154 @@ def _record_unmapped_withdrawal(
         )
 
 
+def _persist_live_matched_withdrawal(
+    *,
+    linkedin_profile,
+    operator: str,
+    match: SentInvitationMatch,
+    withdrawn_at: datetime,
+    existing_record=None,
+) -> bool:
+    """Reconcile authenticated live evidence to one operator-owned Deal.
+
+    The Sent Invitations page proves which LinkedIn account sent the invite;
+    an exact public-identifier match plus campaign ownership is therefore
+    enough to repair legacy rows that predate the sender/timestamp ledger.
+    Other operators' Deals for the same Lead remain untouched.
+    """
+    from crm.models import ClosingReason, Deal
+
+    with transaction.atomic():
+        deals = list(
+            Deal.objects.select_for_update()
+            .filter(
+                campaign__user=linkedin_profile.user,
+                lead__public_identifier__iexact=match.public_identifier,
+                state=ProfileState.PENDING,
+                invitation_withdrawn_at__isnull=True,
+            )
+            .select_related("lead", "campaign")[:2]
+        )
+        if len(deals) != 1:
+            return False
+
+        deal = deals[0]
+        deal.state = ProfileState.FAILED
+        deal.closing_reason = ClosingReason.FAILED
+        deal.reason = (
+            f"Invitation visible in {operator}'s Sent Invitations as "
+            f"{match.sent_label!r} was withdrawn by the standalone "
+            "maintenance command"
+        )
+        deal.invitation_sender = operator
+        deal.invitation_withdrawn_at = withdrawn_at
+        deal.save(
+            update_fields=[
+                "state", "closing_reason", "reason", "invitation_sender",
+                "invitation_withdrawn_at", "update_date",
+            ],
+        )
+        ActionLog.objects.create(
+            linkedin_profile=linkedin_profile,
+            campaign_id=deal.campaign_id,
+            action_type=ActionLog.ActionType.WITHDRAW_INVITE,
+        )
+        if existing_record is None:
+            _create_withdrawal_record(
+                linkedin_profile=linkedin_profile,
+                deal=deal,
+                public_identifier=match.public_identifier,
+                displayed_name=match.displayed_name,
+                sent_label=match.sent_label,
+                withdrawn_at=withdrawn_at,
+                source="crm_matched",
+            )
+        else:
+            existing_record.deal = deal
+            existing_record.linkedin_url = deal.lead.linkedin_url
+            existing_record.source = "crm_matched"
+            existing_record.save(update_fields=["deal", "linkedin_url", "source"])
+        return True
+
+
+def record_live_or_unmapped_withdrawal(
+    *,
+    linkedin_profile,
+    operator: str,
+    match: SentInvitationMatch,
+    withdrawn_at: datetime,
+) -> None:
+    """Persist one live-confirmed click, linking a unique owned Deal when possible."""
+    try:
+        if _persist_live_matched_withdrawal(
+            linkedin_profile=linkedin_profile,
+            operator=operator,
+            match=match,
+            withdrawn_at=withdrawn_at,
+        ):
+            return
+        _record_unmapped_withdrawal(
+            linkedin_profile=linkedin_profile,
+            match=match,
+            withdrawn_at=withdrawn_at,
+        )
+    except _DB_DEAD_ERRORS as error:
+        logger.warning(
+            "Live withdrawal persistence hit a dead connection for %s; "
+            "recycling and retrying once: %s",
+            match.public_identifier,
+            error,
+        )
+        connections.close_all()
+        if _persist_live_matched_withdrawal(
+            linkedin_profile=linkedin_profile,
+            operator=operator,
+            match=match,
+            withdrawn_at=withdrawn_at,
+        ):
+            return
+        _record_unmapped_withdrawal(
+            linkedin_profile=linkedin_profile,
+            match=match,
+            withdrawn_at=withdrawn_at,
+        )
+
+
+def reconcile_unmapped_withdrawals(
+    *,
+    linkedin_profile,
+    operator: str,
+    since: datetime,
+) -> int:
+    """Link recent date-based audit rows to unique operator-owned Deals."""
+    from linkedin.models import InvitationWithdrawalRecord
+
+    reconciled = 0
+    records = list(
+        InvitationWithdrawalRecord.objects.filter(
+            linkedin_profile=linkedin_profile,
+            deal__isnull=True,
+            source=InvitationWithdrawalRecord.Source.DATE_BASED,
+            withdrawn_at__gte=since,
+        ).order_by("withdrawn_at", "id")
+    )
+    for record in records:
+        match = SentInvitationMatch(
+            public_identifier=record.public_identifier,
+            displayed_name=record.displayed_name,
+            sent_label=record.sent_label,
+        )
+        if _persist_live_matched_withdrawal(
+            linkedin_profile=linkedin_profile,
+            operator=operator,
+            match=match,
+            withdrawn_at=record.withdrawn_at,
+            existing_record=record,
+        ):
+            reconciled += 1
+    return reconciled
+
+
 def record_confirmed_withdrawal(
     *,
     candidate: WithdrawalCandidate,
@@ -620,8 +768,9 @@ def apply_withdrawal_batch(
 
         candidate = candidates_by_id.get(match.public_identifier.casefold())
         if candidate is None:
-            _record_unmapped_withdrawal(
+            record_live_or_unmapped_withdrawal(
                 linkedin_profile=linkedin_profile,
+                operator=operator,
                 match=match,
                 withdrawn_at=withdrawn_at,
             )
