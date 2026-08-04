@@ -509,6 +509,58 @@ def test_apply_verifies_identity_and_runs_exact_planned_batch(fake_session, monk
 
 
 @pytest.mark.django_db
+def test_apply_with_empty_crm_plan_still_runs_live_date_cleanup(fake_session, monkeypatch):
+    monkeypatch.setenv(
+        "LINKEDIN_USERNAME",
+        fake_session.linkedin_profile.linkedin_username,
+    )
+    monkeypatch.setenv("LINKEDIN_PASSWORD", "secret")
+    browser_session = Mock()
+
+    with (
+        patch(
+            "linkedin.management.commands.withdraw_invitations.sender_advisory_lock",
+            return_value=nullcontext(),
+        ),
+        patch(
+            "linkedin.management.commands.withdraw_invitations.assert_no_daemon_conflict",
+        ),
+        patch(
+            "linkedin.management.commands.withdraw_invitations.StandaloneLinkedInSession"
+        ) as session_class,
+        patch(
+            "linkedin.management.commands.withdraw_invitations._authenticated_display_name",
+            return_value=fake_session.linkedin_profile.linkedin_username,
+        ),
+        patch(
+            "linkedin.management.commands.withdraw_invitations.apply_withdrawal_batch",
+            return_value=WithdrawalBatchResult(
+                planned=2,
+                accepted=0,
+                withdrawn=2,
+                not_pending=0,
+                skipped=0,
+            ),
+        ) as apply_batch,
+    ):
+        session_class.return_value.__enter__.return_value = browser_session
+        call_command(
+            "withdraw_invitations",
+            "--account",
+            "primary",
+            "--before",
+            "2026-05-31",
+            "--apply",
+        )
+
+    assert apply_batch.call_args.kwargs["candidates"] == ()
+    assert apply_batch.call_args.kwargs["cutoff"] == _cutoff_for_date(
+        date(2026, 5, 31)
+    )
+    session_class.assert_called_once()
+
+
+@pytest.mark.django_db
 def test_fresh_daemon_heartbeat_blocks_apply(fake_session):
     operator = resolve_operator(
         fake_session.linkedin_profile.linkedin_username,

@@ -506,8 +506,11 @@ def _fresh_deal(candidate: WithdrawalCandidate):
 
 
 def _recycle_database_connection() -> None:
+    connection = connections["default"]
+    if connection.in_atomic_block:
+        return
     connections.close_all()
-    connections["default"].ensure_connection()
+    connection.ensure_connection()
 
 
 def _approximate_timeline_depth_days(

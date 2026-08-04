@@ -209,10 +209,6 @@ class Command(BaseCommand):
                     username=username,
                     detailed=options["verbosity"] >= 2,
                 )
-                if not plan.candidates:
-                    self.stdout.write("No invitations are eligible for this batch.")
-                    return
-
                 self.stdout.write(
                     self.style.WARNING(
                         "--apply enabled: starting a visible LinkedIn session"
