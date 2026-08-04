@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from linkedin.actions.invitations import (
@@ -12,6 +13,7 @@ from linkedin.actions.invitations import (
     SentInvitationMatch,
     SentInvitationTarget,
     WithdrawalResult,
+    _find_sent_card,
     _sent_label_age_days,
     names_match,
     scan_sent_invitations,
@@ -50,7 +52,7 @@ class _Element:
     def get_attribute(self, name):
         return self.aria if name == "aria-label" else None
 
-    def click(self):
+    def click(self, **_kwargs):
         self.clicked = True
 
     def locator(self, selector):
@@ -105,6 +107,25 @@ def test_sent_label_age_days_parses_linkedin_relative_labels():
     assert _sent_label_age_days("Sent 2 months ago") == 60
 
 
+@patch("linkedin.actions.invitations.time.sleep")
+@patch("linkedin.actions.invitations._loaded_profile_links")
+def test_find_sent_card_retries_navigation_race(loaded_links, sleep):
+    card = Mock()
+    card.count.return_value = 1
+    card.first = card
+    link = Mock()
+    link.locator.return_value = card
+    links = Mock()
+    links.nth.return_value = link
+    loaded_links.side_effect = [
+        PlaywrightError("Execution context was destroyed"),
+        (links, ["https://www.linkedin.com/in/alice/"]),
+    ]
+
+    assert _find_sent_card(Mock(), "alice") is card
+    sleep.assert_called_once_with(0.5)
+
+
 @patch("linkedin.actions.invitations._card_match")
 @patch("linkedin.actions.invitations._find_sent_card")
 def test_withdraws_sent_card_by_public_identifier_without_name_check(
@@ -146,6 +167,28 @@ def test_date_withdrawal_dismisses_leftover_dialog_before_click(
     assert stale_cancel.clicked
     assert withdraw.clicked
     assert confirm.clicked
+
+
+@patch("linkedin.actions.invitations._card_match")
+@patch("linkedin.actions.invitations._find_sent_card")
+def test_date_withdrawal_tolerates_detached_leftover_dialog(find_card, card_match):
+    session, card, withdraw, confirm = _session()
+    stale_cancel = _Element(text="Cancel")
+    stale_cancel.click = Mock(side_effect=PlaywrightTimeoutError("detached"))
+    stale_dialog = _Element()
+    stale_dialog.locator = Mock(return_value=_Collection(stale_cancel))
+    active_dialog = _Element(child=confirm)
+    session.page.locator.side_effect = [
+        _Collection(stale_dialog),
+        _Collection(active_dialog),
+    ]
+    find_card.side_effect = [card, None]
+    card_match.return_value = _match()
+
+    result = withdraw_sent_invitation_by_public_identifier(session, "alice")
+
+    assert result == WithdrawalResult.WITHDRAWN
+    session.page.keyboard.press.assert_called_once_with("Escape")
 
 
 @patch("linkedin.actions.invitations._card_match")
@@ -343,3 +386,32 @@ def test_age_scan_stops_after_withdrawal_limit_matches(
     assert scan.matches == (_match(),)
     assert scan.scroll_rounds == 0
     page.mouse.wheel.assert_not_called()
+
+
+@patch("linkedin.actions.invitations._oldest_visible_sent_age_days", return_value=30)
+@patch("linkedin.actions.invitations._scroll_state", return_value=(500, 1000, 500))
+@patch("linkedin.actions.invitations._reported_invitation_total", return_value=10)
+@patch("linkedin.actions.invitations._collect_age_matches", return_value=10)
+def test_age_scan_ignores_underreported_total_and_waits_for_stagnant_end(
+    _collect_matches,
+    _reported_total,
+    _scroll_state,
+    _oldest_age,
+):
+    main = MagicMock()
+    main.count.return_value = 1
+    main.is_visible.return_value = True
+    page = MagicMock()
+    page.url = SENT_INVITATIONS_URL
+    page.locator.return_value.first = main
+    session = MagicMock(page=page)
+
+    scan = scan_sent_invitations_by_age(
+        session,
+        min_age_days=60,
+    )
+
+    assert scan.matches == ()
+    assert scan.reached_end
+    assert scan.scroll_rounds == 5
+    assert page.mouse.wheel.call_count == 5

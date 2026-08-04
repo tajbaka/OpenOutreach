@@ -130,7 +130,12 @@ def _withdraw_confirmation(dialog):
 def _dismiss_dialog(page, dialog) -> None:
     cancel = _first_visible(dialog.locator(CANCEL_DIALOG_SELECTOR))
     if cancel is not None:
-        cancel.click()
+        try:
+            cancel.click(timeout=2_000)
+        except PlaywrightError:
+            # LinkedIn may remove the dialog between discovery and the click.
+            # Cleanup is best-effort; the next exact-card lookup is authoritative.
+            page.keyboard.press("Escape")
         return
     page.keyboard.press("Escape")
 
@@ -277,7 +282,18 @@ def _loaded_profile_links(page):
 
 def _find_sent_card(page, public_identifier: str):
     expected = public_identifier.casefold()
-    links, hrefs = _loaded_profile_links(page)
+    for attempt in range(3):
+        try:
+            links, hrefs = _loaded_profile_links(page)
+            break
+        except PlaywrightError as error:
+            if "Execution context was destroyed" not in str(error) or attempt == 2:
+                raise
+            logger.info(
+                "Sent Invitations page navigated while locating %s; retrying",
+                public_identifier,
+            )
+            time.sleep(0.5)
     for index, href in enumerate(hrefs):
         if (url_to_public_id(href) or "").casefold() != expected:
             continue
@@ -561,7 +577,6 @@ def scan_sent_invitations_by_age(
         )
     scroll_container.hover()
 
-    expected_total = _reported_invitation_total(page)
     matches: dict[str, SentInvitationMatch] = {}
     started = time.monotonic()
     scroll_rounds = 0
@@ -603,9 +618,6 @@ def scan_sent_invitations_by_age(
                 cards_seen,
                 len(matches),
             )
-            break
-        if expected_total is not None and cards_seen >= expected_total:
-            reached_end = True
             break
         if (
             at_end
