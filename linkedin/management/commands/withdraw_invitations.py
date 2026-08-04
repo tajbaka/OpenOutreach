@@ -222,6 +222,7 @@ class Command(BaseCommand):
                     env_username=username_env,
                     env_password=password_env,
                     label=f"withdraw invitations ({account})",
+                    use_persistent_profile=True,
                 ) as browser_session:
                     authenticated_name = _authenticated_display_name(browser_session)
                     authenticated_operator = resolve_operator(authenticated_name)

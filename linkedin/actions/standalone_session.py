@@ -36,6 +36,7 @@ from linkedin.browser.cookie_store import (
     clear_cookies,
     cookie_path_for,
     load_cookies,
+    profile_dir_for,
     save_cookies,
 )
 from linkedin.browser.login import (
@@ -45,6 +46,7 @@ from linkedin.browser.login import (
     LOGIN_PASSWORD_SELECTORS,
     LOGIN_SUBMIT_SELECTORS,
     _require_visible,
+    launch_browser,
 )
 from linkedin.browser.nav import human_type
 from linkedin.conf import (
@@ -85,10 +87,12 @@ class StandaloneLinkedInSession:
         env_username: str = ENV_USERNAME,
         env_password: str = ENV_PASSWORD,
         label: str = "Sales Nav",
+        use_persistent_profile: bool = False,
     ):
         self._env_username_name = env_username
         self._env_password_name = env_password
         self._label = label
+        self._use_persistent_profile = use_persistent_profile
 
         self.username = os.getenv(env_username, "").strip()
         self.password = os.getenv(env_password, "")
@@ -106,6 +110,21 @@ class StandaloneLinkedInSession:
         self.playwright = None
 
     def start(self) -> None:
+        if self._use_persistent_profile:
+            self._launch_persistent()
+            if not self._cookies_still_valid():
+                logger.warning(
+                    "%s: persistent session expired - re-authenticating",
+                    self._label,
+                )
+                self._login()
+            logger.info(
+                "%s: reused persistent profile for %s",
+                self._label,
+                self.username,
+            )
+            return
+
         storage_state = load_cookies(self._cookie_path)
         self._launch(storage_state)
 
@@ -186,6 +205,12 @@ class StandaloneLinkedInSession:
         self.context.set_default_timeout(BROWSER_DEFAULT_TIMEOUT_MS)
         Stealth().apply_stealth_sync(self.context)
         self.page = self.context.new_page()
+
+    def _launch_persistent(self) -> None:
+        profile_dir = profile_dir_for(self.username)
+        self.page, self.context, self.browser, self.playwright = launch_browser(
+            profile_dir,
+        )
 
     def _cookies_still_valid(self) -> bool:
         self.page.goto(LINKEDIN_FEED_URL)
