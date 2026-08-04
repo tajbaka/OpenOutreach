@@ -504,6 +504,8 @@ def test_apply_verifies_identity_and_runs_exact_planned_batch(fake_session, monk
     )
     assert apply_batch.call_args.kwargs["withdrawal_limit"] == 1
     assert "Batch complete" in output.getvalue()
+    assert "Exact planned batch omitted at normal apply verbosity" in output.getvalue()
+    assert "Exact planned batch (newest before cutoff first)" not in output.getvalue()
 
 
 @pytest.mark.django_db

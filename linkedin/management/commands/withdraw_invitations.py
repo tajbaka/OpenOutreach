@@ -182,7 +182,7 @@ class Command(BaseCommand):
                 cutoff=cutoff,
                 limit=limit,
             )
-            self._print_plan(plan, account=account, username=username)
+            self._print_plan(plan, account=account, username=username, detailed=True)
             self.stdout.write(
                 self.style.WARNING(
                     "[dry-run] no LinkedIn login, withdrawal, or database write occurred"
@@ -203,7 +203,12 @@ class Command(BaseCommand):
                     cutoff=cutoff,
                     limit=limit,
                 )
-                self._print_plan(plan, account=account, username=username)
+                self._print_plan(
+                    plan,
+                    account=account,
+                    username=username,
+                    detailed=options["verbosity"] >= 2,
+                )
                 if not plan.candidates:
                     self.stdout.write("No invitations are eligible for this batch.")
                     return
@@ -260,6 +265,7 @@ class Command(BaseCommand):
         *,
         account: str,
         username: str,
+        detailed: bool,
     ) -> None:
         local_zone = ZoneInfo(ACTIVE_TIMEZONE)
         local_cutoff = timezone.localtime(plan.cutoff, timezone=local_zone)
@@ -307,6 +313,12 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Selected date range: {oldest.isoformat()} -> {newest.isoformat()}"
             )
+            if not detailed:
+                self.stdout.write(
+                    "Exact planned batch omitted at normal apply verbosity; "
+                    "use -v 2 to print CRM candidate rows."
+                )
+                return
             self.stdout.write("Exact planned batch (newest before cutoff first):")
         for index, candidate in enumerate(plan.candidates, 1):
             local_sent = timezone.localtime(

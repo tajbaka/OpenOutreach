@@ -98,7 +98,9 @@ pytest -k test_name                # single test
 # ago" label falls in the selected date window, whether or not CRM has a matching
 # Deal. CRM matches are reconciled opportunistically. The withdrawal scan has a
 # two-hour time cap and no round cap; each scroll round extracts visible card
-# data in one browser-side pass rather than per-card Playwright calls.
+# data in one browser-side pass rather than per-card Playwright calls. Apply mode
+# omits the full CRM candidate row dump at default verbosity; pass -v 2 only when
+# that debug list is needed.
 # Stop the selected sender's daemon before --apply: a fresh daemon heartbeat,
 # persistent-Chromium lock marker, or concurrent same-sender command fails closed.
 .venv/bin/python manage.py withdraw_invitations \
