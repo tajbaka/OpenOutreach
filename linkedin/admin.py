@@ -10,6 +10,7 @@ from linkedin.models import (
     FedRAMPMarketplaceSignal,
     FedRAMPMarketplaceSourceState,
     InvitationWithdrawalRecord,
+    LinkedInFeedComment,
     LinkedInFeedCollectionJob,
     LinkedInFeedObservation,
     LinkedInFeedPost,
@@ -177,6 +178,33 @@ class LinkedInFeedObservationAdmin(admin.ModelAdmin):
         "first_seen_at", "last_seen_at", "seen_count",
     )
     date_hierarchy = "last_seen_at"
+
+
+@admin.register(LinkedInFeedComment)
+class LinkedInFeedCommentAdmin(admin.ModelAdmin):
+    list_display = (
+        "operator", "post", "status", "submit_attempted_at",
+        "commented_at", "created_at",
+    )
+    list_filter = ("status", "operator", "created_at")
+    search_fields = (
+        "operator", "account_username", "comment_text", "error",
+        "post__activity_urn", "post__author_name",
+    )
+    raw_id_fields = ("post", "task")
+    readonly_fields = (
+        "post", "task", "operator", "account_username", "comment_text",
+        "status", "slack_channel_id", "slack_message_ts",
+        "slack_response_url", "slack_user_id", "submit_attempted_at",
+        "commented_at", "error", "created_at", "updated_at",
+    )
+    date_hierarchy = "created_at"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(FedRAMPMarketplaceSourceState)

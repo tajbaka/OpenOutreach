@@ -292,6 +292,46 @@ def test_manual_reply_scopes_to_matching_operator_when_enabled():
 
 
 @pytest.mark.django_db
+def test_feed_comment_claims_only_for_matching_operator_and_beats_followup():
+    followup = _mk(
+        Task.TaskType.FOLLOW_UP,
+        operator="Arian",
+        scheduled_offset_s=-300,
+    )
+    chuka_comment = Task.objects.create(
+        task_type=Task.TaskType.FEED_COMMENT,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=120),
+        payload={"post_id": 91, "operator": "Chuka", "message": "Chuka comment"},
+    )
+    arian_comment = Task.objects.create(
+        task_type=Task.TaskType.FEED_COMMENT,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=10),
+        payload={"post_id": 91, "operator": "Arian", "message": "Arian comment"},
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+
+    assert claimed.pk == arian_comment.pk
+    assert claimed.status == Task.Status.RUNNING
+    assert claimed.started_at is not None
+    assert Task.objects.get(pk=chuka_comment.pk).status == Task.Status.PENDING
+    assert Task.objects.get(pk=followup.pk).status == Task.Status.PENDING
+
+
+@pytest.mark.django_db
+def test_pending_feed_comment_requires_post_operator_and_message():
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=Task.TaskType.FEED_COMMENT,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={"post_id": 91, "operator": "Arian", "message": "   "},
+        )
+
+
+@pytest.mark.django_db
 def test_next_enrichment_returns_none_when_not_due():
     Task.objects.create(
         task_type=Task.TaskType.ENRICH_PHONE,

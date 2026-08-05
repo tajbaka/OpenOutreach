@@ -572,6 +572,65 @@ class LinkedInFeedObservation(models.Model):
         return f"{self.operator} saw post {self.post_id} ({self.seen_count}x)"
 
 
+class LinkedInFeedComment(models.Model):
+    """Human-approved public comment attempt on a collected LinkedIn feed post."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        UNCERTAIN = "uncertain", "Uncertain"
+        SKIPPED = "skipped", "Skipped"
+
+    post = models.ForeignKey(
+        LinkedInFeedPost,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    task = models.ForeignKey(
+        "linkedin.Task",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="feed_comments",
+    )
+    operator = models.CharField(max_length=80, db_index=True)
+    account_username = models.CharField(max_length=200, blank=True, default="")
+    comment_text = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.QUEUED,
+        db_index=True,
+    )
+    slack_channel_id = models.CharField(max_length=80, blank=True, default="")
+    slack_message_ts = models.CharField(max_length=80, blank=True, default="")
+    slack_response_url = models.URLField(max_length=1000, blank=True, default="")
+    slack_user_id = models.CharField(max_length=80, blank=True, default="")
+    submit_attempted_at = models.DateTimeField(null=True, blank=True)
+    commented_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(
+                fields=["post", "operator", "created_at"],
+                name="lfeed_comment_post_op_idx",
+            ),
+            models.Index(
+                fields=["operator", "status", "created_at"],
+                name="lfeed_comment_op_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.operator} comment on post {self.post_id} [{self.status}]"
+
+
 class FedRAMPMarketplaceSourceState(models.Model):
     """Durable baseline/cursor for one official FedRAMP marketplace JSON source."""
 
@@ -708,6 +767,7 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     return (
         (Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.FEED_COMMENT) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.DISCOVERY) & Q(payload__operator=operator))
         | (
@@ -811,6 +871,7 @@ class TaskQuerySet(models.QuerySet):
         # gap. Sweeps themselves have a hard runtime budget.
         priority_queries = [
             qs.filter(task_type=Task.TaskType.MANUAL_REPLY),
+            qs.filter(task_type=Task.TaskType.FEED_COMMENT),
             qs.filter(
                 task_type=Task.TaskType.SWEEP_CONNECTIONS,
                 scheduled_at__lte=timezone.now() - timedelta(
@@ -827,6 +888,7 @@ class TaskQuerySet(models.QuerySet):
             qs.exclude(
                 task_type__in=[
                     Task.TaskType.MANUAL_REPLY,
+                    Task.TaskType.FEED_COMMENT,
                     Task.TaskType.STATUS_SUMMARY,
                     Task.TaskType.FOLLOW_UP,
                     Task.TaskType.CONNECT,
@@ -898,6 +960,7 @@ class Task(models.Model):
         ENRICH_EMAIL = "enrich_email"
         GMAIL_FOLLOW_UP = "gmail_follow_up"
         MANUAL_REPLY = "manual_reply"
+        FEED_COMMENT = "feed_comment"
         STATUS_SUMMARY = "status_summary"
         DISCOVERY = "discovery"
 
@@ -924,6 +987,7 @@ class Task(models.Model):
             cls.TaskType.FOLLOW_UP,
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
+            cls.TaskType.FEED_COMMENT,
             cls.TaskType.SWEEP_CONNECTIONS,
             cls.TaskType.DISCOVERY,
         ]
@@ -978,6 +1042,17 @@ class Task(models.Model):
                 errors.append("manual_reply tasks require non-empty payload.operator")
             if not (payload.get("message") or "").strip():
                 errors.append("manual_reply tasks require non-empty payload.message")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.FEED_COMMENT
+        ):
+            if not payload.get("post_id"):
+                errors.append("feed_comment tasks require payload.post_id")
+            if not payload.get("operator"):
+                errors.append("feed_comment tasks require non-empty payload.operator")
+            if not (payload.get("message") or "").strip():
+                errors.append("feed_comment tasks require non-empty payload.message")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

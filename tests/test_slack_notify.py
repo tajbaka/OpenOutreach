@@ -115,6 +115,44 @@ def test_notify_manual_reply_failed_falls_back_to_response_url(monkeypatch):
     assert "LinkedIn reply failed" in sent["text"]
 
 
+def test_notify_feed_comment_sent_updates_original_feed_alert(monkeypatch):
+    monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "xoxb-test")
+    payload = {
+        "slack_channel_id": "C123",
+        "slack_message_ts": "171234.567",
+        "slack_blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": "feed signal"}},
+            {"type": "actions", "elements": []},
+        ],
+    }
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        slack_mod.notify_feed_comment_sent(payload, post_label="Ada Lovelace")
+
+    req = mock_urlopen.call_args[0][0]
+    assert req.full_url == "https://slack.com/api/chat.update"
+    sent = json.loads(req.data.decode("utf-8"))
+    status = next(
+        block for block in sent["blocks"]
+        if block.get("block_id") == "feed_comment_status:sent"
+    )
+    assert "LinkedIn feed comment posted" in status["text"]["text"]
+
+
+def test_notify_feed_comment_uncertain_falls_back_to_response_url(monkeypatch):
+    monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "")
+    payload = {"slack_response_url": "https://hooks.slack.com/actions/T/B/R"}
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b"ok"
+        slack_mod.notify_feed_comment_uncertain(payload, "Could not verify comment")
+
+    req = mock_urlopen.call_args[0][0]
+    assert req.full_url == "https://hooks.slack.com/actions/T/B/R"
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["replace_original"] is False
+    assert "manual verification" in sent["text"]
+
+
 def test_notify_error_posts_block_kit_when_webhook_set(slack_url):
     """Exercises the POST body shape — header, traceback section, context block."""
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:

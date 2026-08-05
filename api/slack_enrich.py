@@ -1,10 +1,10 @@
-"""Slack interaction handler — enrichment picks and manual LinkedIn replies.
+"""Slack interaction handler for registered LinkedIn workflow actions.
 
 Deployed as a Vercel serverless Python function. Slack POSTs an interaction
 payload here when the operator picks a provider from the "📞 Get phone
 number" select menu or clicks "Reply on LinkedIn" on an inbound-reply
 notification. The function verifies the Slack request signature, then either
-INSERTs an enrich_phone/manual_reply Task into Neon or opens a Slack modal.
+INSERTs sender tasks into Neon or opens a Slack modal.
 The Task table is the entire contract between this function and the daemon;
 they never talk directly.
 
@@ -26,6 +26,8 @@ from urllib.parse import parse_qs
 
 import psycopg
 from psycopg.types.json import Jsonb
+
+from api import slack_feed_comment
 
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
@@ -82,6 +84,12 @@ _INTENT_BY_ACTION_ID = {
     _LEAD_CONTEXT_AI_ACTION_ID: _INTENT_LEAD_CONTEXT_AI,
     _LEAD_CONTEXT_DRAFT_ACTION_ID: _INTENT_LEAD_CONTEXT_DRAFT,
 }
+_INTENT_BY_ACTION_ID.update(slack_feed_comment.INTENT_BY_ACTION_ID)
+
+_VIEW_SUBMISSION_INTENTS = {
+    _REPLY_MODAL_CALLBACK_ID: _INTENT_REPLY_SUBMISSION,
+    **slack_feed_comment.VIEW_SUBMISSION_INTENTS,
+}
 
 _HANDLER_BY_INTENT = {
     _INTENT_REPLY_SUBMISSION: "_handle_reply_submission",
@@ -93,6 +101,7 @@ _HANDLER_BY_INTENT = {
     _INTENT_LEAD_CONTEXT_AI: "_handle_lead_context_ai",
     _INTENT_LEAD_CONTEXT_DRAFT: "_handle_lead_context_draft",
 }
+_HANDLER_BY_INTENT.update(slack_feed_comment.HANDLER_BY_INTENT)
 
 
 def verify_signature(
@@ -167,9 +176,11 @@ def interaction_intent(payload: dict) -> str:
     """
     if payload.get("type") == "view_submission":
         view = payload.get("view") or {}
-        if view.get("callback_id") == _REPLY_MODAL_CALLBACK_ID:
-            return _INTENT_REPLY_SUBMISSION
-        raise ValueError("unsupported view_submission")
+        callback_id = view.get("callback_id") or ""
+        try:
+            return _VIEW_SUBMISSION_INTENTS[callback_id]
+        except KeyError as exc:
+            raise ValueError("unsupported view_submission") from exc
 
     actions = payload.get("actions") or []
     if not actions:
@@ -1789,6 +1800,27 @@ class handler(BaseHTTPRequestHandler):
                 block_id_suffix=suffix,
             ),
             text=fallback,
+        )
+
+    def _handle_feed_comment_button(self, body: str) -> None:
+        self._dispatch_feed_comment(slack_feed_comment.handle_comment_button, body)
+
+    def _handle_feed_comment_draft(self, body: str) -> None:
+        self._dispatch_feed_comment(slack_feed_comment.handle_comment_draft, body)
+
+    def _handle_feed_comment_submission(self, body: str) -> None:
+        self._dispatch_feed_comment(slack_feed_comment.handle_comment_submission, body)
+
+    def _handle_feed_comment_cancel(self, body: str) -> None:
+        self._dispatch_feed_comment(slack_feed_comment.handle_comment_cancel, body)
+
+    def _dispatch_feed_comment(self, action_handler, body: str) -> None:
+        action_handler(
+            self,
+            body,
+            connect_factory=lambda: psycopg.connect(DATABASE_URL),
+            slack_api=_slack_api,
+            post_response_url=_post_response_url,
         )
 
     def _respond_text(self, code: int, text: str) -> None:

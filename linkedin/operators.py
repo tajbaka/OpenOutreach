@@ -25,6 +25,7 @@ _OPERATOR_ALIASES: dict[str, str] = {
     "chuky eddy jack": "Chuka",
     "chukyjack": "Chuka",
     "chukyjack@gmail.com": "Chuka",
+    "eddy": "Chuka",
     "eddy agu": "Chuka",
     "eddy@tryfedrampgpt.com": "Chuka",
     "eddy@boundera.io": "Chuka",

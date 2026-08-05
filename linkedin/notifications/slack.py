@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Ten surfaces:
+Eleven surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted *and* the lead replied during the sweep. Single Block Kit message
@@ -33,6 +33,9 @@ Ten surfaces:
 10. `notify_marketplace_signal_group` — posts Codex-reviewed new Rev5 Ready
     and 20x Initial Implementation transitions from the official FedRAMP JSON
     feeds.
+11. `notify_feed_comment_*` — updates a high-signal feed alert after a
+    human-approved public LinkedIn comment task is sent, skipped, uncertain,
+    or failed.
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
@@ -237,6 +240,112 @@ def notify_manual_reply_failed(payload: dict, error: str) -> None:
         payload,
         status_text=f":warning: *LinkedIn reply failed* — `{short}`",
         suffix="failed",
+        fallback=fallback,
+    )
+
+
+def _feed_comment_status_blocks(original_blocks: list, status_text: str, suffix: str) -> list:
+    status = {
+        "type": "section",
+        "block_id": f"feed_comment_status:{suffix}",
+        "text": {"type": "mrkdwn", "text": status_text},
+    }
+    out: list = []
+    inserted = False
+    for block in original_blocks or []:
+        if block.get("block_id", "").startswith("feed_comment_status:"):
+            continue
+        if block.get("type") == "actions" and not inserted:
+            out.append(status)
+            inserted = True
+        out.append(block)
+    if not inserted:
+        out.append(status)
+    return out
+
+
+def _update_feed_comment_status(
+    payload: dict,
+    *,
+    status_text: str,
+    suffix: str,
+    fallback: str,
+) -> None:
+    channel_id = payload.get("slack_channel_id") or ""
+    message_ts = payload.get("slack_message_ts") or ""
+    blocks = payload.get("slack_blocks") or []
+    if channel_id and message_ts and blocks:
+        updated = _slack_api(
+            "chat.update",
+            {
+                "channel": channel_id,
+                "ts": message_ts,
+                "text": fallback,
+                "blocks": _feed_comment_status_blocks(blocks, status_text, suffix),
+            },
+            f"feed comment {suffix}",
+        )
+        if updated:
+            return
+
+    _post_slack_response_url(
+        payload.get("slack_response_url", ""),
+        {
+            "response_type": "in_channel",
+            "replace_original": False,
+            "text": fallback,
+        },
+        f"feed comment {suffix}",
+    )
+
+
+def notify_feed_comment_sent(payload: dict, *, post_label: str = "") -> None:
+    """Tell Slack that a queued public LinkedIn feed comment was sent."""
+    target = f" on {post_label}" if post_label else ""
+    fallback = f":white_check_mark: LinkedIn feed comment posted{target}."
+    _update_feed_comment_status(
+        payload,
+        status_text=f":white_check_mark: *LinkedIn feed comment posted*{target}.",
+        suffix="sent",
+        fallback=fallback,
+    )
+
+
+def notify_feed_comment_failed(payload: dict, error: str) -> None:
+    """Tell Slack that a queued public LinkedIn feed comment failed before submit."""
+    short = (error or "Unknown error").splitlines()[0][:240]
+    fallback = f":warning: LinkedIn feed comment failed: `{short}`"
+    _update_feed_comment_status(
+        payload,
+        status_text=f":warning: *LinkedIn feed comment failed* — `{short}`",
+        suffix="failed",
+        fallback=fallback,
+    )
+
+
+def notify_feed_comment_uncertain(payload: dict, error: str) -> None:
+    """Tell Slack that LinkedIn may have accepted a public feed comment."""
+    short = (error or "Verify the post before retrying.").splitlines()[0][:240]
+    fallback = f":warning: LinkedIn feed comment needs manual verification: `{short}`"
+    _update_feed_comment_status(
+        payload,
+        status_text=(
+            ":warning: *LinkedIn feed comment may have posted* — "
+            f"`{short}` Verify the post before retrying."
+        ),
+        suffix="uncertain",
+        fallback=fallback,
+    )
+
+
+def notify_feed_comment_skipped(payload: dict, reason: str) -> None:
+    """Tell Slack that a duplicate public feed comment was skipped."""
+    short = (reason or "Duplicate comment skipped.").splitlines()[0][:240]
+    fallback = f":leftwards_arrow_with_hook: LinkedIn feed comment skipped: `{short}`"
+    _update_feed_comment_status(
+        payload,
+        status_text=f":leftwards_arrow_with_hook: *LinkedIn feed comment skipped* — `{short}`",
+        suffix="skipped",
         fallback=fallback,
     )
 
@@ -625,6 +734,7 @@ def notify_feed_intent_signal(*, post) -> bool:
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Suggested action:*\n{post.suggested_action or 'Review the post.'}"}},
         {"type": "context", "elements": context_elements},
         {"type": "section", "text": {"type": "mrkdwn", "text": post_md}},
+        _feed_comment_action_block(post),
     ])
     payload = {"text": f"High-intent LinkedIn feed post: {author}", "blocks": blocks}
     _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent ({author})")
@@ -666,6 +776,7 @@ def notify_feed_intent_signal_group(*, posts: list) -> bool:
             ],
         },
         {"type": "section", "text": {"type": "mrkdwn", "text": _feed_group_links_text(posts)}},
+        _feed_comment_action_block(primary),
     ]
     payload = {
         "text": f"Grouped LinkedIn feed signal: {author} + {len(posts) - 1} related",
@@ -673,6 +784,21 @@ def notify_feed_intent_signal_group(*, posts: list) -> bool:
     }
     _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent-group ({author})")
     return True
+
+
+def _feed_comment_action_block(post) -> dict:
+    """Render the public-comment entrypoint for one collected feed post."""
+    return {
+        "type": "actions",
+        "block_id": f"feed_comment_actions:{post.id}",
+        "elements": [{
+            "type": "button",
+            "action_id": "linkedin_feed_comment_button",
+            "text": {"type": "plain_text", "text": "Comment on LinkedIn"},
+            "style": "primary",
+            "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
+        }],
+    }
 
 
 def _pick_primary_feed_post(posts: list):

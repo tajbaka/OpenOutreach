@@ -266,6 +266,14 @@ def test_analyze_linkedin_feed_applies_codex_decision_and_posts_slack(
     assert post.intent == LinkedInFeedPost.Intent.HIGH
     assert post.slack_notified_at is not None
     mock_post.assert_called_once()
+    payload = mock_post.call_args.args[1]
+    comment_button = next(
+        element
+        for block in payload["blocks"]
+        for element in block.get("elements", [])
+        if element.get("action_id") == "linkedin_feed_comment_button"
+    )
+    assert json.loads(comment_button["value"]) == {"post_id": post.id}
 
 
 @pytest.mark.django_db
@@ -343,3 +351,10 @@ def test_analyze_linkedin_feed_groups_related_reposts_into_one_slack_alert(
     assert "Chuka" in rendered
     assert "urn:li:share:original" in rendered
     assert "urn:li:share:repost" in rendered
+    comment_button = next(
+        element
+        for block in payload["blocks"]
+        for element in block.get("elements", [])
+        if element.get("action_id") == "linkedin_feed_comment_button"
+    )
+    assert json.loads(comment_button["value"]) == {"post_id": original.id}
