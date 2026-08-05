@@ -145,6 +145,11 @@ pytest -k test_name                # single test
 .venv/bin/python manage.py collect_linkedin_feed
 .venv/bin/python manage.py collect_linkedin_feed --backfill-days 14 --max-posts 1000 --stop-after-seen 200
 
+# Controlled live feed-comment verification. Claims exactly one due
+# sender-scoped feed_comment Task, verifies the live LinkedIn identity, and
+# never claims connect/follow-up/sweep/discovery/status/manual-reply work.
+.venv/bin/python manage.py run_feed_comment_once --handle athenaaghdami
+
 # Export saved feed posts for Codex review, then apply Codex-produced decisions.
 # This command does not call an app LLM. Codex daily automation should read the
 # queue, classify posts itself, write a decisions JSON, then apply it.
@@ -214,7 +219,7 @@ CRM Leads, Deals, Messages, connection requests, or other outbound state.
 
 ## Architecture (quick reference)
 
-- **Feed comment Slack lane**: High-signal feed alerts expose `Comment on LinkedIn` through the existing `/api/slack_enrich` endpoint. Feed-specific parsing, modal UI, sender selection, public-comment AI drafting, raw-SQL enqueue/cancel, and queued status live in `api/slack_feed_comment.py`; the shared endpoint only registers and delegates those intents. Submit creates a sender-scoped `feed_comment` task and `LinkedInFeedComment` ledger. The matching main daemon runs the exact-post Playwright UI action outside normal active-hour gating, with no Voyager fallback. Chuka is displayed as Eddy in Slack but remains canonical in payloads. The ledger is stamped immediately before submit; retries after sent/uncertain or a recovered submit attempt fail closed. No new endpoint, Slack app, or env vars are required beyond the existing Vercel Slack/DB/LLM configuration.
+- **Feed comment Slack lane**: High-signal feed alerts expose `Comment on LinkedIn` through the existing `/api/slack_enrich` endpoint. Feed-specific parsing, modal UI, sender selection, public-comment AI drafting, raw-SQL enqueue/cancel, and queued status live in `api/slack_feed_comment.py`; the shared endpoint only registers and delegates those intents. Submit creates a sender-scoped `feed_comment` task and `LinkedInFeedComment` ledger. The matching main daemon runs the exact-post Playwright UI action outside normal active-hour gating, with no Voyager fallback. Chuka is displayed as Eddy in Slack but remains canonical in payloads. The ledger is stamped immediately before submit; retries after sent/uncertain or a recovered submit attempt fail closed. `run_feed_comment_once --handle <django-username>` is the bounded live-QA runner: it verifies the authenticated identity and claims exactly one matching feed-comment task without touching other daemon lanes. No new endpoint, Slack app, or env vars are required beyond the existing Vercel Slack/DB/LLM configuration.
 
 For detailed module docs, see `ARCHITECTURE.md`.
 
