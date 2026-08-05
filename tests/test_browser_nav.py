@@ -1,8 +1,8 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from linkedin.browser.nav import goto_page
+from linkedin.browser.nav import goto_page, human_type
 
 
 def test_goto_page_accepts_action_timeout_when_url_matches():
@@ -37,3 +37,22 @@ def test_goto_page_accepts_session_wait_timeout_when_url_matches():
     )
 
     session.wait.assert_called_once()
+
+
+def test_human_type_extends_timeout_for_long_single_line_text():
+    locator = Mock()
+    text = "x" * 250
+
+    with patch("linkedin.browser.nav.random.randint", return_value=250):
+        human_type(locator, text)
+
+    locator.type.assert_called_once_with(text, delay=250, timeout=77_500)
+
+
+def test_human_type_keeps_minimum_timeout_for_short_single_line_text():
+    locator = Mock()
+
+    with patch("linkedin.browser.nav.random.randint", return_value=80):
+        human_type(locator, "short")
+
+    locator.type.assert_called_once_with("short", delay=80, timeout=30_000)

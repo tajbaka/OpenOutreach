@@ -86,7 +86,9 @@ def human_type(locator, text: str, min_delay: int = HUMAN_TYPE_MIN_DELAY_MS, max
     if "\n" not in text:
         # Fast path: no line breaks → straight per-key type, preserving the
         # exact randomized cadence the bot-detection avoidance relies on.
-        locator.type(text, delay=random.randint(min_delay, max_delay))
+        delay = random.randint(min_delay, max_delay)
+        timeout_ms = max(30_000, len(text) * delay + 15_000)
+        locator.type(text, delay=delay, timeout=timeout_ms)
         return
 
     # Multi-line: focus the locator once, then alternate typing line text
