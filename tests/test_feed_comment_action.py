@@ -109,11 +109,58 @@ def test_comment_submit_wait_accepts_delayed_comment_label_variant():
         ),
         patch(
             "linkedin.actions.feed_comment._first_enabled_visible",
-            side_effect=[None, submit],
+            side_effect=[None, None, None, submit],
         ) as find_submit,
     ):
         result = _wait_for_comment_submit(page, editor, timeout_ms=250)
 
     assert result is submit
-    assert find_submit.call_count == 2
+    assert find_submit.call_count == 4
     page.wait_for_timeout.assert_called_once_with(250)
+
+
+def test_comment_submit_text_fallback_stays_near_editor():
+    from linkedin.actions.feed_comment import _wait_for_comment_submit
+
+    page = MagicMock()
+    editor = MagicMock()
+    scopes = [MagicMock() for _ in range(4)]
+
+    with (
+        patch(
+            "linkedin.actions.feed_comment._comment_submit_scopes",
+            return_value=scopes,
+        ),
+        patch(
+            "linkedin.actions.feed_comment._first_enabled_visible",
+            return_value=None,
+        ) as find_submit,
+    ):
+        result = _wait_for_comment_submit(page, editor, timeout_ms=0)
+
+    assert result is None
+    assert [call.args[0] for call in find_submit.call_args_list[4:]] == scopes[:3]
+
+
+def test_comment_verification_requires_rendered_comment_item():
+    from linkedin.actions.feed_comment import _comment_visible
+
+    page = MagicMock()
+    candidates = page.locator.return_value
+    candidates.count.return_value = 0
+
+    assert _comment_visible(page, "Useful point.", timeout_ms=0) is False
+    assert page.locator.call_args.args[0] != "body"
+
+
+def test_comment_verification_accepts_visible_comment_item():
+    from linkedin.actions.feed_comment import _comment_visible
+
+    page = MagicMock()
+    candidates = page.locator.return_value
+    candidate = candidates.nth.return_value
+    candidates.count.return_value = 1
+    candidate.is_visible.return_value = True
+    candidate.inner_text.return_value = "Arian 1m Useful point. Like Reply"
+
+    assert _comment_visible(page, "Useful point.", timeout_ms=0) is True

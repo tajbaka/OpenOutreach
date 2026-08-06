@@ -27,18 +27,32 @@ COMMENT_EDITOR_SELECTORS = [
 COMMENT_SUBMIT_SELECTORS = [
     'button.comments-comment-box__submit-button',
     'button[aria-label*="Post comment" i]',
-    'button[aria-label="Comment" i]',
     'button[type="submit"]',
+    '[role="button"][aria-label*="Post comment" i]',
+]
+
+COMMENT_SUBMIT_TEXT_FALLBACK_SELECTORS = [
+    'button[aria-label="Comment" i]',
     'button:has-text("Post")',
     'button:has-text("Comment")',
-    '[role="button"][aria-label*="Post comment" i]',
     '[role="button"][aria-label="Comment" i]',
     '[role="button"]:has-text("Post")',
     '[role="button"]:has-text("Comment")',
 ]
 
+COMMENT_ITEM_SELECTORS = [
+    ".comments-comment-item",
+    ".comments-comments-list__comment-item",
+    '[data-id^="urn:li:comment"]',
+    '[data-urn^="urn:li:comment"]',
+    "section.comment:has(.comment__text)",
+]
+
 _COMMENT_SUBMIT_WAIT_MS = 10_000
 _COMMENT_SUBMIT_POLL_MS = 250
+_COMMENT_SUBMIT_TEXT_SCOPE_LIMIT = 3
+_COMMENT_VERIFY_WAIT_MS = 15_000
+_COMMENT_VERIFY_POLL_MS = 250
 
 
 class FeedCommentSendError(RuntimeError):
@@ -145,8 +159,16 @@ def _wait_for_comment_submit(page, editor, timeout_ms: int = _COMMENT_SUBMIT_WAI
     """Wait for an enabled submit control inside the active comment composer."""
     elapsed_ms = 0
     while elapsed_ms <= timeout_ms:
-        for scope in _comment_submit_scopes(editor):
+        scopes = _comment_submit_scopes(editor)
+        for scope in scopes:
             submit = _first_enabled_visible(scope, COMMENT_SUBMIT_SELECTORS)
+            if submit is not None:
+                return submit
+        for scope in scopes[:_COMMENT_SUBMIT_TEXT_SCOPE_LIMIT]:
+            submit = _first_enabled_visible(
+                scope,
+                COMMENT_SUBMIT_TEXT_FALLBACK_SELECTORS,
+            )
             if submit is not None:
                 return submit
         if elapsed_ms == timeout_ms:
@@ -194,12 +216,43 @@ def _raise_if_login_wall(page) -> None:
         raise FeedCommentSendError(f"LinkedIn session is not authenticated: {current_url}")
 
 
-def _comment_visible(page, comment: str) -> bool:
+def _comment_visible(
+    page,
+    comment: str,
+    *,
+    timeout_ms: int = _COMMENT_VERIFY_WAIT_MS,
+) -> bool:
+    """Wait until the submitted text appears in a rendered comment item."""
     snippet = " ".join((comment or "").split())[:120]
     if not snippet:
         return False
+
+    elapsed_ms = 0
+    while elapsed_ms <= timeout_ms:
+        if _visible_comment_item_contains(page, snippet):
+            return True
+        if elapsed_ms == timeout_ms:
+            break
+        wait_ms = min(_COMMENT_VERIFY_POLL_MS, timeout_ms - elapsed_ms)
+        page.wait_for_timeout(wait_ms)
+        elapsed_ms += wait_ms
+    return False
+
+
+def _visible_comment_item_contains(page, snippet: str) -> bool:
+    candidates = page.locator(", ".join(COMMENT_ITEM_SELECTORS))
     try:
-        body_text = page.locator("body").inner_text(timeout=5000)
-    except (PlaywrightError, PlaywrightTimeoutError):
+        count = min(candidates.count(), 100)
+    except PlaywrightError:
         return False
-    return snippet in " ".join((body_text or "").split())
+    for index in range(count):
+        candidate = candidates.nth(index)
+        try:
+            if not candidate.is_visible():
+                continue
+            text = candidate.inner_text(timeout=1000)
+        except (PlaywrightError, PlaywrightTimeoutError):
+            continue
+        if snippet in " ".join((text or "").split()):
+            return True
+    return False
