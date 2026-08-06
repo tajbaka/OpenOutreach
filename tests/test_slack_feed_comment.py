@@ -114,6 +114,16 @@ def _submission_body(message="Useful point.", sender_key="1"):
     })})
 
 
+def _cancel_body(task_id=777):
+    return urlencode({"payload": json.dumps({
+        "type": "block_actions",
+        "actions": [{
+            "action_id": feed_comment.COMMENT_CANCEL_ACTION_ID,
+            "value": json.dumps({"task_id": task_id}),
+        }],
+    })})
+
+
 def test_parse_comment_button_extracts_source_message_context():
     out = feed_comment.parse_comment_button(_button_body())
 
@@ -200,7 +210,7 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
     cur = conn.cursor.return_value.__enter__.return_value
     cur.fetchone.side_effect = [None, (777,)]
 
-    task_id = feed_comment.enqueue_feed_comment_task(conn, {
+    result = feed_comment.enqueue_feed_comment_task(conn, {
         "post_id": 91,
         "operator": "Chuka",
         "account_username": "chuka@example.com",
@@ -210,7 +220,7 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
         "slack_user_id": "U123",
     })
 
-    assert task_id == 777
+    assert result == feed_comment.FeedCommentEnqueueResult(task_id=777, created=True)
     assert cur.execute.call_count == 4
     task_sql, task_params = cur.execute.call_args_list[2][0]
     ledger_sql = cur.execute.call_args_list[3][0][0]
@@ -226,25 +236,69 @@ def test_enqueue_feed_comment_dedups_pending_task_under_advisory_lock():
     cur = conn.cursor.return_value.__enter__.return_value
     cur.fetchone.return_value = (777,)
 
-    task_id = feed_comment.enqueue_feed_comment_task(conn, {
+    result = feed_comment.enqueue_feed_comment_task(conn, {
         "post_id": 91,
         "operator": "Arian",
         "message": "Useful point.",
     })
 
-    assert task_id == 777
+    assert result == feed_comment.FeedCommentEnqueueResult(task_id=777, created=False)
     assert cur.execute.call_count == 2
     assert "pg_advisory_xact_lock" in cur.execute.call_args_list[0][0][0]
     conn.commit.assert_called_once()
 
 
-def test_submission_queues_without_replacing_source_alert(monkeypatch):
+def test_save_feed_comment_status_message_updates_only_task_payload():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+
+    feed_comment.save_feed_comment_status_message(conn, 777, "171235.000")
+
+    sql, params = cur.execute.call_args.args
+    assert "payload = payload ||" in sql
+    assert params[0].obj == {"slack_status_message_ts": "171235.000"}
+    assert params[1] == 777
+    conn.commit.assert_called_once()
+
+
+def test_cancel_feed_comment_updates_ledger_before_deleting_pending_task():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = (777,)
+
+    assert feed_comment.cancel_feed_comment_task(conn, 777) is True
+
+    assert cur.execute.call_count == 3
+    assert "status = 'pending'" in cur.execute.call_args_list[0][0][0]
+    assert "UPDATE linkedin_linkedinfeedcomment" in cur.execute.call_args_list[1][0][0]
+    assert "DELETE FROM linkedin_task" in cur.execute.call_args_list[2][0][0]
+    conn.commit.assert_called_once()
+
+
+def test_render_thread_status_has_pending_only_cancel_action():
+    blocks = feed_comment.render_feed_comment_thread_status(
+        "queued",
+        cancel_task_id=777,
+    )
+
+    assert len(blocks) == 1
+    status = blocks[0]
+    assert status["accessory"]["action_id"] == feed_comment.COMMENT_CANCEL_ACTION_ID
+    assert json.loads(status["accessory"]["value"]) == {"task_id": 777}
+
+
+def test_submission_queues_thread_status_without_replacing_source_alert(monkeypatch):
     responder = MagicMock()
     conn = MagicMock()
+    conn.__enter__.return_value = conn
     connect_factory = MagicMock(return_value=conn)
-    enqueue = MagicMock(return_value=777)
+    enqueue = MagicMock(
+        return_value=feed_comment.FeedCommentEnqueueResult(task_id=777, created=True),
+    )
+    save_status = MagicMock()
     monkeypatch.setattr(feed_comment, "enqueue_feed_comment_task", enqueue)
-    slack_api = MagicMock()
+    monkeypatch.setattr(feed_comment, "save_feed_comment_status_message", save_status)
+    slack_api = MagicMock(return_value={"ok": True, "ts": "171235.000"})
     post_response_url = MagicMock()
 
     feed_comment.handle_comment_submission(
@@ -257,8 +311,60 @@ def test_submission_queues_without_replacing_source_alert(monkeypatch):
 
     enqueue.assert_called_once()
     responder._respond_json.assert_called_once_with({"response_action": "clear"})
-    slack_api.assert_not_called()
+    method, slack_payload = slack_api.call_args.args
+    assert method == "chat.postMessage"
+    assert slack_payload["channel"] == "C123"
+    assert slack_payload["thread_ts"] == "171234.567"
+    assert slack_payload["blocks"][0]["accessory"]["action_id"] == (
+        feed_comment.COMMENT_CANCEL_ACTION_ID
+    )
+    save_status.assert_called_once_with(conn, 777, "171235.000")
     post_response_url.assert_not_called()
+
+
+def test_duplicate_submission_does_not_post_another_thread_status(monkeypatch):
+    responder = MagicMock()
+    conn = MagicMock()
+    connect_factory = MagicMock(return_value=conn)
+    monkeypatch.setattr(
+        feed_comment,
+        "enqueue_feed_comment_task",
+        MagicMock(
+            return_value=feed_comment.FeedCommentEnqueueResult(
+                task_id=777,
+                created=False,
+            ),
+        ),
+    )
+    slack_api = MagicMock()
+
+    feed_comment.handle_comment_submission(
+        responder,
+        _submission_body(),
+        connect_factory=connect_factory,
+        slack_api=slack_api,
+    )
+
+    slack_api.assert_not_called()
+    responder._respond_json.assert_called_once_with({"response_action": "clear"})
+
+
+def test_cancel_replaces_only_the_thread_status(monkeypatch):
+    responder = MagicMock()
+    conn = MagicMock()
+    connect_factory = MagicMock(return_value=conn)
+    monkeypatch.setattr(feed_comment, "cancel_feed_comment_task", lambda *_args: True)
+
+    feed_comment.handle_comment_cancel(
+        responder,
+        _cancel_body(),
+        connect_factory=connect_factory,
+    )
+
+    blocks = responder._respond_blocks.call_args.args[0]
+    assert len(blocks) == 1
+    assert "cancelled" in blocks[0]["text"]["text"]
+    assert "accessory" not in blocks[0]
 
 
 def test_handle_draft_keeps_typed_text_while_loading_and_on_failure(monkeypatch):

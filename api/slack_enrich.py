@@ -1814,6 +1814,9 @@ class handler(BaseHTTPRequestHandler):
     def _handle_feed_comment_submission(self, body: str) -> None:
         self._dispatch_feed_comment(slack_feed_comment.handle_comment_submission, body)
 
+    def _handle_feed_comment_cancel(self, body: str) -> None:
+        self._dispatch_feed_comment(slack_feed_comment.handle_comment_cancel, body)
+
     def _dispatch_feed_comment(self, action_handler, body: str) -> None:
         action_handler(
             self,

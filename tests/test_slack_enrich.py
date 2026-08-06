@@ -250,6 +250,7 @@ def test_interaction_intent_routes_feed_comment_actions_through_registry():
         "linkedin_feed_comment_button": "feed_comment_button",
         "linkedin_feed_open_post_button": "feed_post_open",
         "linkedin_feed_comment_draft_button": "feed_comment_draft",
+        "linkedin_feed_comment_cancel_button": "feed_comment_cancel",
     }
     for action_id, expected in action_cases.items():
         assert slack_enrich.interaction_intent({

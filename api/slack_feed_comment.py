@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from urllib import request
 from urllib.parse import parse_qs
 
@@ -16,6 +17,7 @@ from psycopg.types.json import Jsonb
 COMMENT_ACTION_ID = "linkedin_feed_comment_button"
 OPEN_POST_ACTION_ID = "linkedin_feed_open_post_button"
 COMMENT_DRAFT_ACTION_ID = "linkedin_feed_comment_draft_button"
+COMMENT_CANCEL_ACTION_ID = "linkedin_feed_comment_cancel_button"
 COMMENT_MODAL_CALLBACK_ID = "linkedin_feed_comment_modal"
 COMMENT_BODY_ACTION_ID = "linkedin_feed_comment_body"
 COMMENT_SENDER_ACTION_ID = "linkedin_feed_comment_sender"
@@ -23,12 +25,14 @@ COMMENT_SENDER_ACTION_ID = "linkedin_feed_comment_sender"
 INTENT_COMMENT_BUTTON = "feed_comment_button"
 INTENT_OPEN_POST = "feed_post_open"
 INTENT_COMMENT_DRAFT = "feed_comment_draft"
+INTENT_COMMENT_CANCEL = "feed_comment_cancel"
 INTENT_COMMENT_SUBMISSION = "feed_comment_submission"
 
 INTENT_BY_ACTION_ID = {
     COMMENT_ACTION_ID: INTENT_COMMENT_BUTTON,
     OPEN_POST_ACTION_ID: INTENT_OPEN_POST,
     COMMENT_DRAFT_ACTION_ID: INTENT_COMMENT_DRAFT,
+    COMMENT_CANCEL_ACTION_ID: INTENT_COMMENT_CANCEL,
 }
 VIEW_SUBMISSION_INTENTS = {
     COMMENT_MODAL_CALLBACK_ID: INTENT_COMMENT_SUBMISSION,
@@ -37,6 +41,7 @@ HANDLER_BY_INTENT = {
     INTENT_COMMENT_BUTTON: "_handle_feed_comment_button",
     INTENT_OPEN_POST: "_handle_feed_post_open",
     INTENT_COMMENT_DRAFT: "_handle_feed_comment_draft",
+    INTENT_COMMENT_CANCEL: "_handle_feed_comment_cancel",
     INTENT_COMMENT_SUBMISSION: "_handle_feed_comment_submission",
 }
 
@@ -53,6 +58,12 @@ _MODAL_TEXT_LIMIT = 2800
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_API_BASE = (os.environ.get("LLM_API_BASE") or "https://api.openai.com/v1").rstrip("/")
 AI_MODEL = os.environ.get("AI_MODEL", "")
+
+
+@dataclass(frozen=True)
+class FeedCommentEnqueueResult:
+    task_id: int
+    created: bool
 
 
 def parse_comment_button(body: str) -> dict:
@@ -114,6 +125,14 @@ def parse_comment_modal_submission(body: str) -> dict:
         "slack_response_url": metadata.get("response_url") or "",
         "slack_user_id": user.get("id") or "",
     }
+
+
+def parse_comment_cancel_button(body: str) -> dict:
+    """Extract the pending task id from its threaded Slack status message."""
+    payload = _decode_body(body)
+    action = _first_action(payload, COMMENT_CANCEL_ACTION_ID)
+    value = json.loads(action.get("value") or "{}")
+    return {"task_id": int(value["task_id"])}
 
 
 def fetch_feed_comment_context(conn, post_id: int) -> dict:
@@ -335,7 +354,7 @@ def update_feed_comment_modal(
     slack_api("views.update", payload)
 
 
-def enqueue_feed_comment_task(conn, payload: dict) -> int:
+def enqueue_feed_comment_task(conn, payload: dict) -> FeedCommentEnqueueResult:
     """Create one sender task plus its queued ledger row, with atomic dedup."""
     post_id = int(payload["post_id"])
     operator = (payload.get("operator") or "").strip()
@@ -360,7 +379,7 @@ def enqueue_feed_comment_task(conn, payload: dict) -> int:
         row = cur.fetchone()
         if row is not None:
             conn.commit()
-            return int(row[0])
+            return FeedCommentEnqueueResult(task_id=int(row[0]), created=False)
 
         task_payload = {
             "post_id": post_id,
@@ -400,7 +419,74 @@ def enqueue_feed_comment_task(conn, payload: dict) -> int:
             ),
         )
     conn.commit()
-    return task_id
+    return FeedCommentEnqueueResult(task_id=task_id, created=True)
+
+
+def save_feed_comment_status_message(conn, task_id: int, message_ts: str) -> None:
+    """Attach the cancellable Slack thread-status message to the queued task."""
+    value = (message_ts or "").strip()
+    if not value:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE linkedin_task SET payload = payload || %s "
+            "WHERE id = %s AND task_type = 'feed_comment'",
+            (Jsonb({"slack_status_message_ts": value}), int(task_id)),
+        )
+    conn.commit()
+
+
+def cancel_feed_comment_task(conn, task_id: int) -> bool:
+    """Delete a feed-comment task and close its ledger only while pending."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM linkedin_task "
+            "WHERE id = %s AND task_type = 'feed_comment' AND status = 'pending' "
+            "FOR UPDATE",
+            (int(task_id),),
+        )
+        if cur.fetchone() is None:
+            conn.commit()
+            return False
+        cur.execute(
+            "UPDATE linkedin_linkedinfeedcomment "
+            "SET task_id = NULL, status = 'skipped', error = %s, updated_at = now() "
+            "WHERE task_id = %s",
+            ("Cancelled from Slack before the sender claimed the task.", int(task_id)),
+        )
+        cur.execute("DELETE FROM linkedin_task WHERE id = %s", (int(task_id),))
+    conn.commit()
+    return True
+
+
+def render_feed_comment_thread_status(
+    status_text: str,
+    *,
+    cancel_task_id: int | None = None,
+) -> list[dict]:
+    """Render a standalone thread status without touching the source alert."""
+    status: dict = {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": status_text},
+    }
+    if cancel_task_id is not None:
+        status["accessory"] = {
+            "type": "button",
+            "action_id": COMMENT_CANCEL_ACTION_ID,
+            "text": {"type": "plain_text", "text": "Cancel queued comment"},
+            "style": "danger",
+            "value": json.dumps({"task_id": int(cancel_task_id)}, separators=(",", ":")),
+            "confirm": {
+                "title": {"type": "plain_text", "text": "Cancel comment?"},
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "This removes the queued public comment if its sender has not started.",
+                },
+                "confirm": {"type": "plain_text", "text": "Cancel comment"},
+                "deny": {"type": "plain_text", "text": "Keep queued"},
+            },
+        }
+    return [status]
 
 
 def generate_ai_feed_comment(context: dict, *, current_comment: str = "") -> str:
@@ -538,6 +624,7 @@ def handle_comment_submission(
     body: str,
     *,
     connect_factory,
+    slack_api,
     **_kwargs,
 ) -> None:
     try:
@@ -551,12 +638,60 @@ def handle_comment_submission(
 
     try:
         with connect_factory() as conn:
-            enqueue_feed_comment_task(conn, payload)
+            enqueue_result = enqueue_feed_comment_task(conn, payload)
     except Exception:
         responder._respond_text(500, "database error")
         return
 
+    if enqueue_result.created:
+        try:
+            result = slack_api("chat.postMessage", {
+                "channel": payload["slack_channel_id"],
+                "thread_ts": payload["slack_message_ts"],
+                "text": "LinkedIn comment + Like queued",
+                "blocks": render_feed_comment_thread_status(
+                    ":hourglass_flowing_sand: *LinkedIn comment + Like queued* - "
+                    "the selected sender daemon will apply both shortly.",
+                    cancel_task_id=enqueue_result.task_id,
+                ),
+            })
+            status_message_ts = (result.get("ts") or "").strip()
+            if status_message_ts:
+                with connect_factory() as conn:
+                    save_feed_comment_status_message(
+                        conn,
+                        enqueue_result.task_id,
+                        status_message_ts,
+                    )
+        except Exception:
+            pass
+
     responder._respond_json({"response_action": "clear"})
+
+
+def handle_comment_cancel(responder, body: str, *, connect_factory, **_kwargs) -> None:
+    try:
+        data = parse_comment_cancel_button(body)
+    except (ValueError, KeyError, json.JSONDecodeError):
+        responder._respond_text(400, "malformed feed comment cancel action")
+        return
+    try:
+        with connect_factory() as conn:
+            cancelled = cancel_feed_comment_task(conn, data["task_id"])
+    except Exception:
+        responder._respond_text(500, "database error")
+        return
+
+    if cancelled:
+        status = ":no_entry: *LinkedIn feed comment cancelled* - it will not be posted."
+        fallback = "LinkedIn feed comment cancelled"
+    else:
+        status = ":warning: *Could not cancel LinkedIn feed comment* - it may have started posting."
+        fallback = "Could not cancel LinkedIn feed comment"
+    responder._respond_blocks(
+        render_feed_comment_thread_status(status),
+        text=fallback,
+    )
 
 
 def _feed_comment_view(

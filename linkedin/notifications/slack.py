@@ -256,6 +256,19 @@ def _update_feed_comment_status(
 ) -> None:
     channel_id = payload.get("slack_channel_id") or ""
     message_ts = payload.get("slack_message_ts") or ""
+    status_message_ts = payload.get("slack_status_message_ts") or ""
+    if channel_id and status_message_ts:
+        updated = _slack_api(
+            "chat.update",
+            {
+                "channel": channel_id,
+                "ts": status_message_ts,
+                "text": status_text,
+            },
+            f"feed comment {suffix}",
+        )
+        if updated:
+            return
     if channel_id and message_ts:
         posted = _slack_api(
             "chat.postMessage",
