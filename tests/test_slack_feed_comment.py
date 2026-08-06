@@ -349,6 +349,38 @@ def test_duplicate_submission_does_not_post_another_thread_status(monkeypatch):
     responder._respond_json.assert_called_once_with({"response_action": "clear"})
 
 
+def test_submission_logs_thread_status_post_failure(monkeypatch):
+    responder = MagicMock()
+    conn = MagicMock()
+    connect_factory = MagicMock(return_value=conn)
+    monkeypatch.setattr(
+        feed_comment,
+        "enqueue_feed_comment_task",
+        MagicMock(
+            return_value=feed_comment.FeedCommentEnqueueResult(
+                task_id=777,
+                created=True,
+            ),
+        ),
+    )
+    slack_api = MagicMock(side_effect=RuntimeError("Slack rejected message"))
+    log_exception = MagicMock()
+    monkeypatch.setattr(feed_comment.logger, "exception", log_exception)
+
+    feed_comment.handle_comment_submission(
+        responder,
+        _submission_body(),
+        connect_factory=connect_factory,
+        slack_api=slack_api,
+    )
+
+    log_exception.assert_called_once_with(
+        "Failed to post cancellable Slack feed-comment status for task %s",
+        777,
+    )
+    responder._respond_json.assert_called_once_with({"response_action": "clear"})
+
+
 def test_cancel_replaces_only_the_thread_status(monkeypatch):
     responder = MagicMock()
     conn = MagicMock()

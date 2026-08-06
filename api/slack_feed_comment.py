@@ -7,12 +7,15 @@ registers these intents and delegates to the handlers below.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from urllib import request
 from urllib.parse import parse_qs
 
 from psycopg.types.json import Jsonb
+
+logger = logging.getLogger(__name__)
 
 COMMENT_ACTION_ID = "linkedin_feed_comment_button"
 OPEN_POST_ACTION_ID = "linkedin_feed_open_post_button"
@@ -664,7 +667,10 @@ def handle_comment_submission(
                         status_message_ts,
                     )
         except Exception:
-            pass
+            logger.exception(
+                "Failed to post cancellable Slack feed-comment status for task %s",
+                enqueue_result.task_id,
+            )
 
     responder._respond_json({"response_action": "clear"})
 
