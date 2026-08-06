@@ -217,6 +217,52 @@ class TestCheckExpectedSenderActivity:
         assert "not treated as a stuck outbound lane" in kwargs["detail"]
         assert "outbound activity looks stuck" not in kwargs["title"]
 
+    def test_activity_alert_cooldown_survives_a_healthy_peer_view(
+        self, db, monkeypatch, patched_notify,
+    ):
+        profile, campaign = self._sender()
+        now = timezone.now()
+        DaemonHeartbeat.objects.create(sender="Chuka", last_alive=now)
+        Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            scheduled_at=now - timedelta(minutes=5),
+            payload={"campaign_id": campaign.pk},
+        )
+        ActionLog.objects.create(
+            linkedin_profile=profile,
+            campaign=campaign,
+            action_type=ActionLog.ActionType.CONNECT,
+        )
+        blocked = True
+
+        def fake_can_execute(self, action_type):
+            return not blocked or action_type != ActionLog.ActionType.CONNECT
+
+        monkeypatch.setattr(LinkedInProfile, "can_execute", fake_can_execute)
+        monkeypatch.setattr(nm.conf, "EXPECTED_OUTBOUND_SENDERS", ("Chuka",))
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_GRACE_MINUTES", 0)
+        monkeypatch.setattr(
+            nm, "_activity_check_window", lambda _now: now - timedelta(hours=3),
+        )
+
+        nm.check_expected_sender_activity("Arian")
+        first_alerted_at = DaemonHeartbeat.objects.get(
+            sender="Chuka",
+        ).activity_alerted_at
+
+        blocked = False
+        nm.check_expected_sender_activity("Chuka")
+        blocked = True
+        nm.check_expected_sender_activity("Arian")
+
+        assert patched_notify.call_count == 1
+        assert first_alerted_at is not None
+        assert (
+            DaemonHeartbeat.objects.get(sender="Chuka").activity_alerted_at
+            == first_alerted_at
+        )
+
     def test_explicit_expected_sender_without_profile_alerts(
         self, db, monkeypatch, patched_notify,
     ):

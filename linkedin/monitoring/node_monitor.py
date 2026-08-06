@@ -11,9 +11,11 @@ No third-party service: the "always-up watcher" is just the other daemons
 plus Neon. Coverage therefore needs >=2 daemons running — a lone daemon has
 no peer to watch it (an accepted limitation, see the brainstorm).
 
-`down_alerted_at` on the row is an atomic claim+cooldown marker: the peer
-that wins the UPDATE posts (so N peers don't all alert for one outage), and
-the row is re-claimable only after `DEGRADED_REALERT_HOURS`.
+`down_alerted_at` and `activity_alerted_at` are atomic claim+cooldown markers:
+the peer that wins the UPDATE posts (so N peers don't all alert), and each row
+is re-claimable only after `DEGRADED_REALERT_HOURS`. Activity cooldowns are not
+cleared by a healthy observation because peer daemons can have different
+runtime rate-limit overrides.
 """
 from __future__ import annotations
 
@@ -141,12 +143,6 @@ def _claim_activity_alert(sender: str, now) -> bool:
         )
         .update(activity_alerted_at=now)
     )
-
-
-def _clear_activity_alert(sender: str) -> None:
-    from linkedin.models import DaemonHeartbeat
-
-    DaemonHeartbeat.objects.filter(sender=sender).update(activity_alerted_at=None)
 
 
 def _connectable_count(campaign_ids: list[int]) -> int:
@@ -285,7 +281,6 @@ def check_expected_sender_activity(self_sender: str) -> None:
         task_summary = _outbound_task_summary(sender, campaign_ids, now)
         connectable = _connectable_count(campaign_ids)
         if not campaign_ids or (task_summary["pending"] == 0 and connectable == 0):
-            _clear_activity_alert(sender)
             continue
 
         actions = ActionLog.objects.filter(
@@ -326,7 +321,6 @@ def check_expected_sender_activity(self_sender: str) -> None:
         )
 
         if total_today > 0 and not due_is_stale:
-            _clear_activity_alert(sender)
             continue
 
         if not _claim_activity_alert(sender, now):

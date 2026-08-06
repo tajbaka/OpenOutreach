@@ -441,9 +441,12 @@ Before declaring a sender stuck, the checker calls
 blocked by the daily/weekly connect or follow-up limit, it alerts as "hit a
 rate limit" and does not classify the outbound lane as stuck.
 `DaemonHeartbeat.activity_alerted_at` is the atomic cooldown marker for this
-class of alert. This separates healthy cap exhaustion from "monitor thread is
-alive but the outbound lane is not making progress", which plain heartbeat
-liveness cannot see.
+class of alert. Healthy observations do not clear it: peer daemons can use
+different runtime rate-limit overrides, and clearing the shared marker from a
+different view would re-alert every monitor interval. The marker therefore
+suppresses every activity alert for the full `DEGRADED_REALERT_HOURS`. This
+separates healthy cap exhaustion from "monitor thread is alive but the outbound
+lane is not making progress", which plain heartbeat liveness cannot see.
 
 **Degraded detection — "alive but not working".** Runs inside the daemon,
 which is the only thing that can observe its own state (`degraded.py`):
