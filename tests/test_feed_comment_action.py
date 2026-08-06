@@ -119,12 +119,12 @@ def test_comment_submit_wait_accepts_delayed_comment_label_variant():
     page.wait_for_timeout.assert_called_once_with(250)
 
 
-def test_comment_submit_text_fallback_stays_near_editor():
+def test_comment_submit_text_fallback_covers_deep_composer_control():
     from linkedin.actions.feed_comment import _wait_for_comment_submit
 
     page = MagicMock()
     editor = MagicMock()
-    scopes = [MagicMock() for _ in range(4)]
+    scopes = [MagicMock() for _ in range(7)]
 
     with (
         patch(
@@ -139,7 +139,7 @@ def test_comment_submit_text_fallback_stays_near_editor():
         result = _wait_for_comment_submit(page, editor, timeout_ms=0)
 
     assert result is None
-    assert [call.args[0] for call in find_submit.call_args_list[4:]] == scopes[:3]
+    assert [call.args[0] for call in find_submit.call_args_list[7:]] == scopes[:6]
 
 
 def test_comment_verification_requires_rendered_comment_item():
