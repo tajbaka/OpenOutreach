@@ -650,6 +650,8 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
         post_url = _normalize_url(raw_url)
         if not is_specific_post_url(post_url):
             post_url = post_url_for_activity_urn(activity_urn)
+        if not is_specific_post_url(post_url):
+            continue
         records.append(
             FeedPostRecord(
                 activity_urn=activity_urn,
@@ -676,8 +678,23 @@ def upsert_feed_record(
     job: LinkedInFeedCollectionJob,
 ) -> tuple[bool, bool]:
     now = timezone.now()
+    post = None
+    if record.activity_urn:
+        post = LinkedInFeedPost.objects.filter(activity_urn=record.activity_urn).first()
+    if post is None:
+        post = LinkedInFeedPost.objects.filter(content_hash=record.content_hash).first()
+
+    effective_activity_urn = record.activity_urn or (post.activity_urn if post else "")
+    post_url = (
+        record.post_url
+        or (post.post_url if post else "")
+        or post_url_for_activity_urn(effective_activity_urn)
+    )
+    if not is_specific_post_url(post_url):
+        raise ValueError("Cannot persist a feed post without a specific LinkedIn post URL.")
+
     defaults = {
-        "post_url": record.post_url,
+        "post_url": post_url,
         "author_name": record.author_name,
         "author_headline": record.author_headline,
         "author_profile_url": record.author_profile_url,
@@ -689,12 +706,6 @@ def upsert_feed_record(
         },
         "last_seen_at": now,
     }
-    post = None
-    if record.activity_urn:
-        post = LinkedInFeedPost.objects.filter(activity_urn=record.activity_urn).first()
-    if post is None:
-        post = LinkedInFeedPost.objects.filter(content_hash=record.content_hash).first()
-
     if post is None:
         post = LinkedInFeedPost.objects.create(
             activity_urn=record.activity_urn,
@@ -705,9 +716,6 @@ def upsert_feed_record(
         created = True
     else:
         created = False
-        effective_activity_urn = record.activity_urn or post.activity_urn
-        if not defaults["post_url"]:
-            defaults["post_url"] = post.post_url or post_url_for_activity_urn(effective_activity_urn)
         if record.posted_at is None and post.posted_at is not None:
             defaults["posted_at"] = post.posted_at
         for field, value in defaults.items():

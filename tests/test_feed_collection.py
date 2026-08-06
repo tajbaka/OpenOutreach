@@ -362,9 +362,7 @@ def test_extract_posts_from_page_drops_non_specific_post_listing_without_activit
 
     records = extract_posts_from_page(FakePage())
 
-    assert len(records) == 1
-    assert records[0].activity_urn == ""
-    assert records[0].post_url == ""
+    assert records == []
 
 
 @pytest.mark.django_db
@@ -517,31 +515,50 @@ def test_collect_from_page_skips_posts_newer_than_window_end(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_upsert_feed_record_upgrades_hash_match_with_activity_urn():
+def test_upsert_feed_record_rejects_record_without_specific_post_url():
+    job = ensure_collection_jobs(
+        operator="Arian",
+        account_username="arian@example.com",
+        now=timezone.now(),
+    )
+
+    with pytest.raises(ValueError, match="specific LinkedIn post URL"):
+        upsert_feed_record(_record(activity_urn="", post_url=""), job=job)
+
+    assert LinkedInFeedPost.objects.count() == 0
+    assert LinkedInFeedObservation.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_upsert_feed_record_repairs_legacy_hash_match_when_url_becomes_available():
     job = ensure_collection_jobs(
         operator="Arian",
         account_username="arian@example.com",
         now=timezone.now(),
     )
     first = _record(activity_urn="", post_url="")
+    legacy_post = LinkedInFeedPost.objects.create(
+        content_hash=first.content_hash,
+        author_name=first.author_name,
+        post_text=first.post_text,
+        post_url="",
+    )
+    LinkedInFeedObservation.objects.create(
+        post=legacy_post,
+        job=job,
+        operator=job.operator,
+        account_username=job.account_username,
+    )
     later = _record(
         activity_urn="urn:li:activity:456",
         post_url="https://www.linkedin.com/feed/update/urn:li:activity:456/",
     )
-    # Keep the fallback identity stable between the two extracted shapes.
-    later_hash = content_hash_for(
-        activity_urn="",
-        post_url="",
-        author_name=later.author_name,
-        post_text=later.post_text,
-    )
-    assert first.content_hash == later_hash
 
-    assert upsert_feed_record(first, job=job) == (True, True)
     assert upsert_feed_record(later, job=job) == (False, False)
 
-    post = LinkedInFeedPost.objects.get()
-    assert post.activity_urn == "urn:li:activity:456"
+    legacy_post.refresh_from_db()
+    assert legacy_post.activity_urn == "urn:li:activity:456"
+    assert legacy_post.post_url == later.post_url
     assert LinkedInFeedObservation.objects.get().seen_count == 2
 
 

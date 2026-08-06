@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -62,7 +63,12 @@ class Command(BaseCommand):
         if limit is not None and limit <= 0:
             raise CommandError("--limit must be positive.")
 
-        qs = LinkedInFeedPost.objects.prefetch_related("observations").order_by("-last_seen_at")
+        qs = (
+            LinkedInFeedPost.objects
+            .prefetch_related("observations")
+            .filter(Q(post_url__gt="") | Q(activity_urn__gt=""))
+            .order_by("-last_seen_at")
+        )
         if not opts["reanalyze"]:
             qs = qs.filter(analyzed_at__isnull=True)
         if opts.get("since_days") is not None:

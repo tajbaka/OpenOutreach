@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit, urlunsplit
 
+from django.db.models import Q
 from django.utils import timezone
 
 from linkedin.models import LinkedInFeedPost
@@ -176,7 +177,8 @@ def mark_feed_posts_slack_notified(posts: Iterable[LinkedInFeedPost]) -> None:
 
 def should_notify_feed_post(post: LinkedInFeedPost) -> bool:
     return (
-        post.slack_notified_at is None
+        bool(post.post_url or post.activity_urn)
+        and post.slack_notified_at is None
         and post.intent in ALERT_INTENTS
         and post.audience in ALERT_AUDIENCES
         and bool(post.relevance_reason)
@@ -211,7 +213,10 @@ def group_feed_posts_for_alert(
     recent = (
         LinkedInFeedPost.objects
         .prefetch_related("observations")
-        .filter(last_seen_at__gte=cutoff)
+        .filter(
+            Q(post_url__gt="") | Q(activity_urn__gt=""),
+            last_seen_at__gte=cutoff,
+        )
         .order_by("-last_seen_at")
     )
     by_key: dict[str, list[LinkedInFeedPost]] = {key: [] for key in wanted_keys}

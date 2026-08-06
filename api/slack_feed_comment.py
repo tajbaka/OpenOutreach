@@ -14,6 +14,7 @@ from urllib.parse import parse_qs
 from psycopg.types.json import Jsonb
 
 COMMENT_ACTION_ID = "linkedin_feed_comment_button"
+OPEN_POST_ACTION_ID = "linkedin_feed_open_post_button"
 COMMENT_DRAFT_ACTION_ID = "linkedin_feed_comment_draft_button"
 COMMENT_CANCEL_ACTION_ID = "linkedin_feed_comment_cancel_button"
 COMMENT_MODAL_CALLBACK_ID = "linkedin_feed_comment_modal"
@@ -21,12 +22,14 @@ COMMENT_BODY_ACTION_ID = "linkedin_feed_comment_body"
 COMMENT_SENDER_ACTION_ID = "linkedin_feed_comment_sender"
 
 INTENT_COMMENT_BUTTON = "feed_comment_button"
+INTENT_OPEN_POST = "feed_post_open"
 INTENT_COMMENT_DRAFT = "feed_comment_draft"
 INTENT_COMMENT_CANCEL = "feed_comment_cancel"
 INTENT_COMMENT_SUBMISSION = "feed_comment_submission"
 
 INTENT_BY_ACTION_ID = {
     COMMENT_ACTION_ID: INTENT_COMMENT_BUTTON,
+    OPEN_POST_ACTION_ID: INTENT_OPEN_POST,
     COMMENT_DRAFT_ACTION_ID: INTENT_COMMENT_DRAFT,
     COMMENT_CANCEL_ACTION_ID: INTENT_COMMENT_CANCEL,
 }
@@ -35,10 +38,17 @@ VIEW_SUBMISSION_INTENTS = {
 }
 HANDLER_BY_INTENT = {
     INTENT_COMMENT_BUTTON: "_handle_feed_comment_button",
+    INTENT_OPEN_POST: "_handle_feed_post_open",
     INTENT_COMMENT_DRAFT: "_handle_feed_comment_draft",
     INTENT_COMMENT_CANCEL: "_handle_feed_comment_cancel",
     INTENT_COMMENT_SUBMISSION: "_handle_feed_comment_submission",
 }
+
+
+def handle_post_open(responder, _body: str, **_kwargs) -> None:
+    """Acknowledge Slack's interaction event for a URL-only button."""
+    responder._respond_text(200, "")
+
 
 _STATUS_PREFIX = "feed_comment_status"
 _LLM_TIMEOUT_SECONDS = 12
@@ -138,10 +148,14 @@ def fetch_feed_comment_context(conn, post_id: int) -> dict:
         row = cur.fetchone()
         if row is None:
             raise ValueError(f"feed post {post_id} not found")
+        activity_urn = row[1] or ""
         post = {
             "id": int(row[0]),
-            "activity_urn": row[1] or "",
-            "post_url": row[2] or "",
+            "activity_urn": activity_urn,
+            "post_url": row[2] or (
+                f"https://www.linkedin.com/feed/update/{activity_urn}/"
+                if activity_urn else ""
+            ),
             "author_name": row[3] or "",
             "author_headline": row[4] or "",
             "author_profile_url": row[5] or "",

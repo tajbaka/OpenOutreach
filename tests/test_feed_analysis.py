@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.management import call_command
@@ -148,10 +150,17 @@ def test_feed_post_group_key_groups_soc2_class_a_original_and_repost():
             "Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?"
         ),
     )
+    unavailable = _post(
+        content_hash="soc2-no-url",
+        author_name="URL-less repost",
+        post_url="",
+        post_text="Matt Bruggeman: Have a SOC 2 and always wanted FedRAMP?",
+    )
 
     assert feed_post_group_key(original) == "trigger:fedramp-class-a-soc2"
     assert feed_post_group_key(repost) == feed_post_group_key(original)
     assert group_feed_posts_for_alert([original]) == [[repost, original]]
+    assert unavailable not in group_feed_posts_for_alert([original])[0]
 
 
 @pytest.mark.django_db
@@ -225,6 +234,7 @@ def test_analyze_linkedin_feed_exports_all_unanalyzed_posts_by_default(tmp_path)
     analyzed = _post(content_hash="already-analyzed", analyzed_at=timezone.now())
     first = _post(content_hash="unanalyzed-1")
     second = _post(content_hash="unanalyzed-2")
+    unavailable = _post(content_hash="unanalyzed-no-url", post_url="")
     out = tmp_path / "queue.json"
 
     call_command("analyze_linkedin_feed", output=str(out))
@@ -233,6 +243,40 @@ def test_analyze_linkedin_feed_exports_all_unanalyzed_posts_by_default(tmp_path)
     exported_ids = {row["id"] for row in payload["posts"]}
     assert exported_ids == {first.id, second.id}
     assert analyzed.id not in exported_ids
+    assert unavailable.id not in exported_ids
+
+
+@pytest.mark.django_db
+@patch("linkedin.notifications.slack._post_to_slack")
+def test_analyze_linkedin_feed_does_not_alert_for_post_without_target(
+    mock_post,
+    monkeypatch,
+    tmp_path,
+):
+    from linkedin.notifications import slack
+
+    post = _post(content_hash="apply-no-url", post_url="", activity_urn="")
+    decisions = tmp_path / "decisions.json"
+    decisions.write_text(json.dumps({
+        "decisions": [{
+            "post_id": post.id,
+            "is_relevant": True,
+            "should_alert": True,
+            "intent": "high",
+            "audience": "advisor_partner",
+            "topics": ["FedRAMP"],
+            "relevance_reason": "FedRAMP advisory opportunity.",
+            "suggested_action": "Reach out.",
+        }],
+    }))
+    monkeypatch.setattr(slack, "SLACK_HIGH_SIGNAL_URL", "https://hooks.slack.test/high-signal")
+
+    call_command("analyze_linkedin_feed", apply_json=str(decisions))
+
+    post.refresh_from_db()
+    assert post.analyzed_at is not None
+    assert post.slack_notified_at is None
+    mock_post.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -244,7 +288,10 @@ def test_analyze_linkedin_feed_applies_codex_decision_and_posts_slack(
 ):
     from linkedin.notifications import slack
 
-    post = _post(content_hash="apply")
+    post = _post(
+        content_hash="apply",
+        posted_at=datetime(2026, 6, 1, 12, tzinfo=ZoneInfo("America/Toronto")),
+    )
     decisions = tmp_path / "decisions.json"
     decisions.write_text(json.dumps({
         "decisions": [{
@@ -267,12 +314,18 @@ def test_analyze_linkedin_feed_applies_codex_decision_and_posts_slack(
     assert post.slack_notified_at is not None
     mock_post.assert_called_once()
     payload = mock_post.call_args.args[1]
-    comment_button = next(
-        element
-        for block in payload["blocks"]
-        for element in block.get("elements", [])
-        if element.get("action_id") == "linkedin_feed_comment_button"
-    )
+    assert payload["blocks"][0]["elements"][0]["text"] == "*Monday, June 1, 2026*"
+    assert payload["blocks"][1]["type"] == "header"
+    assert payload["blocks"][1]["text"]["text"] == "Pete Strouse"
+    assert "High-intent LinkedIn feed post" not in json.dumps(payload)
+    actions = payload["blocks"][-1]
+    assert actions["type"] == "actions"
+    assert [element["action_id"] for element in actions["elements"]] == [
+        "linkedin_feed_open_post_button",
+        "linkedin_feed_comment_button",
+    ]
+    assert actions["elements"][0]["url"] == post.post_url
+    comment_button = actions["elements"][1]
     assert json.loads(comment_button["value"]) == {"post_id": post.id}
 
 
@@ -346,15 +399,17 @@ def test_analyze_linkedin_feed_groups_related_reposts_into_one_slack_alert(
     mock_post.assert_called_once()
     payload = mock_post.call_args.args[1]
     rendered = json.dumps(payload)
-    assert "Grouped LinkedIn feed signal" in rendered
+    assert "Grouped LinkedIn feed signal" not in rendered
+    assert payload["blocks"][0]["type"] == "context"
+    assert payload["blocks"][1]["type"] == "header"
     assert "Leili" in rendered
     assert "Chuka" in rendered
     assert "urn:li:share:original" in rendered
     assert "urn:li:share:repost" in rendered
-    comment_button = next(
-        element
-        for block in payload["blocks"]
-        for element in block.get("elements", [])
-        if element.get("action_id") == "linkedin_feed_comment_button"
-    )
+    actions = payload["blocks"][-1]
+    assert [element["action_id"] for element in actions["elements"]] == [
+        "linkedin_feed_open_post_button",
+        "linkedin_feed_comment_button",
+    ]
+    comment_button = actions["elements"][1]
     assert json.loads(comment_button["value"]) == {"post_id": original.id}

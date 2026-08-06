@@ -125,6 +125,14 @@ def test_parse_comment_button_extracts_source_message_context():
     assert out["blocks"]
 
 
+def test_handle_post_open_acknowledges_url_button_interaction():
+    responder = MagicMock()
+
+    feed_comment.handle_post_open(responder, "payload=ignored")
+
+    responder._respond_text.assert_called_once_with(200, "")
+
+
 def test_fetch_feed_comment_context_returns_observing_senders():
     conn = MagicMock()
     cur = conn.cursor.return_value.__enter__.return_value

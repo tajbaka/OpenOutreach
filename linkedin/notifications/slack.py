@@ -61,10 +61,13 @@ import traceback
 from contextlib import contextmanager
 from urllib import request
 from urllib.error import URLError
+from zoneinfo import ZoneInfo
 
 import certifi
+from django.utils import timezone as django_timezone
 
 from linkedin.conf import (
+    ACTIVE_TIMEZONE,
     SLACK_BOT_TOKEN,
     SLACK_HIGH_SIGNAL_URL,
     SLACK_REPLIES_WEBHOOK_URL,
@@ -691,14 +694,12 @@ def notify_phone_enriched(*, lead, result) -> None:
 
 def notify_feed_intent_signal(*, post) -> bool:
     """Post a high-intent LinkedIn feed signal to the high-signal channel."""
-    if not SLACK_HIGH_SIGNAL_URL:
+    target_url = _feed_post_url(post)
+    if not SLACK_HIGH_SIGNAL_URL or not target_url:
         return False
 
     author = post.author_name or "Unknown author"
-    author_md = f"<{post.author_profile_url}|{author}>" if post.author_profile_url else author
-    post_md = f"<{post.post_url}|Open post>" if post.post_url else "Post URL unavailable"
     topics = ", ".join(post.topics or []) or "uncategorized"
-    headline = (post.author_headline or "").strip()
     excerpt = (post.post_text or "").strip().replace("\n", " ")
     if len(excerpt) > 500:
         excerpt = excerpt[:497].rstrip() + "..."
@@ -715,36 +716,26 @@ def notify_feed_intent_signal(*, post) -> bool:
     if seen_by:
         context_elements.append({"type": "mrkdwn", "text": f"*Seen by:* {seen_by}"})
 
-    blocks: list[dict] = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f":rotating_light: *High-intent LinkedIn feed post*\n*{author_md}*",
-            },
-        },
-    ]
-    if headline:
-        blocks.append({"type": "context", "elements": [
-            {"type": "mrkdwn", "text": headline[:300]},
-        ]})
+    blocks = _feed_identity_blocks(post)
     blocks.extend([
         {"type": "section", "text": {"type": "mrkdwn", "text": f"> {excerpt or '(no text)'}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Why it matters:*\n{post.relevance_reason or 'No reason saved.'}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Suggested action:*\n{post.suggested_action or 'Review the post.'}"}},
         {"type": "context", "elements": context_elements},
-        {"type": "section", "text": {"type": "mrkdwn", "text": post_md}},
-        _feed_comment_action_block(post),
+        _feed_action_block(post, target_url),
     ])
-    payload = {"text": f"High-intent LinkedIn feed post: {author}", "blocks": blocks}
-    _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent ({author})")
-    return True
+    payload = {
+        "text": f"{_feed_post_date(post)} - LinkedIn post by {author}",
+        "blocks": blocks,
+    }
+    return _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent ({author})")
 
 
 def notify_feed_intent_signal_group(*, posts: list) -> bool:
     """Post one high-signal alert for a related set of feed posts/reposts."""
     if not SLACK_HIGH_SIGNAL_URL:
         return False
+    posts = [post for post in posts if _feed_post_url(post)]
     if not posts:
         return False
     if len(posts) == 1:
@@ -756,13 +747,9 @@ def notify_feed_intent_signal_group(*, posts: list) -> bool:
     reason = primary.relevance_reason or "Related high-signal LinkedIn feed activity."
     suggested = primary.suggested_action or "Review the original post and related sightings."
 
-    title = ":rotating_light: *Grouped LinkedIn feed signal*"
     summary = _feed_post_excerpt(primary, limit=420)
-    blocks: list[dict] = [
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"{title}\n*Primary:* {_feed_post_author_md(primary)}"},
-        },
+    blocks = _feed_identity_blocks(primary)
+    blocks.extend([
         {"type": "section", "text": {"type": "mrkdwn", "text": f"> {summary or '(no text)'}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Why it matters:*\n{reason}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Suggested action:*\n{suggested}"}},
@@ -776,43 +763,97 @@ def notify_feed_intent_signal_group(*, posts: list) -> bool:
             ],
         },
         {"type": "section", "text": {"type": "mrkdwn", "text": _feed_group_links_text(posts)}},
-        _feed_comment_action_block(primary),
-    ]
+        _feed_action_block(primary, _feed_post_url(primary)),
+    ])
     payload = {
-        "text": f"Grouped LinkedIn feed signal: {author} + {len(posts) - 1} related",
+        "text": f"{_feed_post_date(primary)} - LinkedIn post by {author} + {len(posts) - 1} related",
         "blocks": blocks,
     }
-    _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"feed-intent-group ({author})")
-    return True
+    return _post_to_slack(
+        SLACK_HIGH_SIGNAL_URL,
+        payload,
+        f"feed-intent-group ({author})",
+    )
 
 
-def _feed_comment_action_block(post) -> dict:
-    """Render the public-comment entrypoint for one collected feed post."""
+def _feed_action_block(post, target_url: str) -> dict:
+    """Render the post link and public-comment entrypoint in one action row."""
     return {
         "type": "actions",
         "block_id": f"feed_comment_actions:{post.id}",
-        "elements": [{
-            "type": "button",
-            "action_id": "linkedin_feed_comment_button",
-            "text": {"type": "plain_text", "text": "Comment on LinkedIn"},
-            "style": "primary",
-            "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
-        }],
+        "elements": [
+            {
+                "type": "button",
+                "action_id": "linkedin_feed_open_post_button",
+                "text": {"type": "plain_text", "text": "Open post"},
+                "url": target_url,
+                "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
+            },
+            {
+                "type": "button",
+                "action_id": "linkedin_feed_comment_button",
+                "text": {"type": "plain_text", "text": "Comment on LinkedIn"},
+                "style": "primary",
+                "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
+            },
+        ],
     }
+
+
+def _feed_identity_blocks(post) -> list[dict]:
+    author = (post.author_name or "Unknown author").strip()
+    details: list[str] = []
+    headline = (post.author_headline or "").strip()
+    if headline:
+        details.append(headline[:300])
+    if post.author_profile_url:
+        details.append(f"<{post.author_profile_url}|View LinkedIn profile>")
+
+    blocks: list[dict] = [
+        {
+            "type": "context",
+            "block_id": f"feed_post_date:{post.id}",
+            "elements": [{"type": "mrkdwn", "text": f"*{_feed_post_date(post)}*"}],
+        },
+        {
+            "type": "header",
+            "block_id": f"feed_post_author:{post.id}",
+            "text": {"type": "plain_text", "text": author[:150]},
+        },
+    ]
+    if details:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": " | ".join(details)}],
+        })
+    return blocks
+
+
+def _feed_post_date(post) -> str:
+    timestamp = post.posted_at or post.first_seen_at or post.last_seen_at
+    if timestamp is None:
+        return "Date unavailable"
+    if django_timezone.is_naive(timestamp):
+        timestamp = django_timezone.make_aware(timestamp, ZoneInfo(ACTIVE_TIMEZONE))
+    local = timestamp.astimezone(ZoneInfo(ACTIVE_TIMEZONE))
+    return f"{local:%A, %B} {local.day}, {local:%Y}"
+
+
+def _feed_post_url(post) -> str:
+    if post.post_url:
+        return post.post_url
+    if post.activity_urn:
+        return f"https://www.linkedin.com/feed/update/{post.activity_urn}/"
+    return ""
 
 
 def _pick_primary_feed_post(posts: list):
     def score(post) -> tuple[int, int, object]:
         intent_rank = {"urgent": 4, "high": 3, "medium": 2, "low": 1}.get(post.intent or "", 0)
-        has_url = 1 if post.post_url else 0
+        has_url = 1 if _feed_post_url(post) else 0
         return (intent_rank, has_url, post.last_seen_at)
 
     return sorted(posts, key=score, reverse=True)[0]
-
-
-def _feed_post_author_md(post) -> str:
-    author = post.author_name or "Unknown author"
-    return f"<{post.author_profile_url}|{author}>" if post.author_profile_url else author
 
 
 def _feed_post_excerpt(post, *, limit: int) -> str:
@@ -833,7 +874,7 @@ def _feed_group_links_text(posts: list) -> str:
                 if obs.operator or obs.account_username
             }),
         )
-        link = f"<{post.post_url}|Open post>" if post.post_url else "Post URL unavailable"
+        link = f"<{_feed_post_url(post)}|Open post>"
         snippet = _feed_post_excerpt(post, limit=120)
         label = post.author_name or f"Post {post.id}"
         seen = f" - seen by {seen_by}" if seen_by else ""

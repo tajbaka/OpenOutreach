@@ -248,6 +248,7 @@ def test_interaction_intent_routes_known_actions():
 def test_interaction_intent_routes_feed_comment_actions_through_registry():
     action_cases = {
         "linkedin_feed_comment_button": "feed_comment_button",
+        "linkedin_feed_open_post_button": "feed_post_open",
         "linkedin_feed_comment_draft_button": "feed_comment_draft",
         "linkedin_feed_comment_cancel_button": "feed_comment_cancel",
     }
@@ -256,7 +257,7 @@ def test_interaction_intent_routes_feed_comment_actions_through_registry():
             "type": "block_actions",
             "actions": [{"action_id": action_id}],
         }) == expected
-        assert slack_enrich._HANDLER_BY_INTENT[expected].startswith("_handle_feed_comment_")
+        assert slack_enrich._HANDLER_BY_INTENT[expected].startswith("_handle_feed_")
 
     assert slack_enrich.interaction_intent({
         "type": "view_submission",

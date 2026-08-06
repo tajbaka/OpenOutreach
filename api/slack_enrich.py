@@ -1805,6 +1805,9 @@ class handler(BaseHTTPRequestHandler):
     def _handle_feed_comment_button(self, body: str) -> None:
         self._dispatch_feed_comment(slack_feed_comment.handle_comment_button, body)
 
+    def _handle_feed_post_open(self, body: str) -> None:
+        self._dispatch_feed_comment(slack_feed_comment.handle_post_open, body)
+
     def _handle_feed_comment_draft(self, body: str) -> None:
         self._dispatch_feed_comment(slack_feed_comment.handle_comment_draft, body)
 
