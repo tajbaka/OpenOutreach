@@ -38,7 +38,12 @@ def _task(post, *, operator="testuser@example.com", message="Useful point."):
             "message": message,
             "slack_channel_id": "C123",
             "slack_message_ts": "171234.567",
-            "slack_status_message_ts": "171235.000",
+            "slack_blocks": [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "source alert"},
+                },
+            ],
         },
     )
 
@@ -75,7 +80,7 @@ def test_handle_feed_comment_posts_and_marks_durable_ledger(
         activity_urn=post.activity_urn,
     )
     notify_sent.assert_called_once()
-    assert notify_sent.call_args.args[0]["slack_status_message_ts"] == "171235.000"
+    assert notify_sent.call_args.args[0]["slack_blocks"] == task.payload["slack_blocks"]
     assert notify_sent.call_args.kwargs == {
         "post_label": "Ada Lovelace",
         "like_result": "already_liked",

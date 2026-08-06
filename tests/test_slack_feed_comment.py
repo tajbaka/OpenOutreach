@@ -1,9 +1,43 @@
 """Focused tests for the isolated Slack feed-comment workflow."""
 import json
 from unittest.mock import MagicMock
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
+
+import pytest
 
 from api import slack_feed_comment as feed_comment
+
+
+def _source_blocks():
+    return [
+        {
+            "type": "section",
+            "block_id": "feed_post_date",
+            "text": {"type": "mrkdwn", "text": "*Thursday August 6 2026*"},
+        },
+        {
+            "type": "section",
+            "block_id": "feed_post_author",
+            "text": {"type": "mrkdwn", "text": "*Ada Lovelace*"},
+        },
+        {
+            "type": "section",
+            "block_id": "feed_post_body",
+            "text": {"type": "mrkdwn", "text": "Evidence quality matters."},
+        },
+        {
+            "type": "actions",
+            "block_id": "feed_post_actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": feed_comment.COMMENT_ACTION_ID,
+                    "text": {"type": "plain_text", "text": "Comment on LinkedIn"},
+                    "value": json.dumps({"post_id": 91}),
+                },
+            ],
+        },
+    ]
 
 
 def _context():
@@ -45,6 +79,7 @@ def _metadata():
         "channel_id": "C123",
         "message_ts": "171234.567",
         "response_url": "https://hooks.slack.com/actions/T/B/R",
+        "source_blocks": feed_comment._encode_source_blocks(_source_blocks()),
         "senders": _context()["senders"],
         "default_sender_key": "0",
     }
@@ -58,7 +93,7 @@ def _button_body():
         "channel": {"id": "C123"},
         "message": {
             "ts": "171234.567",
-            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "signal"}}],
+            "blocks": _source_blocks(),
         },
         "actions": [{
             "action_id": feed_comment.COMMENT_ACTION_ID,
@@ -115,8 +150,15 @@ def _submission_body(message="Useful point.", sender_key="1"):
 
 
 def _cancel_body(task_id=777):
+    blocks = feed_comment.render_feed_comment_status_blocks(
+        _source_blocks(),
+        "queued",
+        suffix="queued",
+        cancel_task_id=task_id,
+    )
     return urlencode({"payload": json.dumps({
         "type": "block_actions",
+        "message": {"ts": "171234.567", "blocks": blocks},
         "actions": [{
             "action_id": feed_comment.COMMENT_CANCEL_ACTION_ID,
             "value": json.dumps({"task_id": task_id}),
@@ -131,7 +173,16 @@ def test_parse_comment_button_extracts_source_message_context():
     assert out["trigger_id"] == "trigger-123"
     assert out["channel_id"] == "C123"
     assert out["message_ts"] == "171234.567"
-    assert "blocks" not in out
+    assert out["blocks"] == _source_blocks()
+
+
+def test_parse_comment_button_fails_closed_without_source_blocks():
+    payload = json.loads(parse_qs(_button_body())["payload"][0])
+    payload["message"]["blocks"] = []
+
+    with pytest.raises(ValueError, match="source blocks"):
+        body = urlencode({"payload": json.dumps(payload)})
+        feed_comment.parse_comment_button(body)
 
 
 def test_handle_post_open_acknowledges_url_button_interaction():
@@ -203,6 +254,7 @@ def test_parse_submission_maps_eddy_display_choice_to_chuka_operator():
     assert out["account_username"] == "chuka@example.com"
     assert out["message"] == "Useful point."
     assert out["slack_user_id"] == "U123"
+    assert out["slack_blocks"] == _source_blocks()
 
 
 def test_enqueue_feed_comment_creates_task_and_ledger():
@@ -218,6 +270,7 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
         "slack_channel_id": "C123",
         "slack_message_ts": "171234.567",
         "slack_user_id": "U123",
+        "slack_blocks": _source_blocks(),
     })
 
     assert result == feed_comment.FeedCommentEnqueueResult(task_id=777, created=True)
@@ -228,7 +281,7 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
     assert "interval '1 second'" in task_sql
     assert task_params[0] == 60
     assert task_params[1].obj["operator"] == "Chuka"
-    assert "slack_blocks" not in task_params[1].obj
+    assert task_params[1].obj["slack_blocks"] == _source_blocks()
     assert "INSERT INTO linkedin_linkedinfeedcomment" in ledger_sql
     conn.commit.assert_called_once()
 
@@ -250,19 +303,6 @@ def test_enqueue_feed_comment_dedups_pending_task_under_advisory_lock():
     conn.commit.assert_called_once()
 
 
-def test_save_feed_comment_status_message_updates_only_task_payload():
-    conn = MagicMock()
-    cur = conn.cursor.return_value.__enter__.return_value
-
-    feed_comment.save_feed_comment_status_message(conn, 777, "171235.000")
-
-    sql, params = cur.execute.call_args.args
-    assert "payload = payload ||" in sql
-    assert params[0].obj == {"slack_status_message_ts": "171235.000"}
-    assert params[1] == 777
-    conn.commit.assert_called_once()
-
-
 def test_cancel_feed_comment_updates_ledger_before_deleting_pending_task():
     conn = MagicMock()
     cur = conn.cursor.return_value.__enter__.return_value
@@ -277,19 +317,31 @@ def test_cancel_feed_comment_updates_ledger_before_deleting_pending_task():
     conn.commit.assert_called_once()
 
 
-def test_render_thread_status_has_pending_only_cancel_action():
-    blocks = feed_comment.render_feed_comment_thread_status(
+def test_render_status_preserves_source_and_replaces_previous_status():
+    queued = feed_comment.render_feed_comment_status_blocks(
+        _source_blocks(),
         "queued",
+        suffix="queued",
         cancel_task_id=777,
     )
+    blocks = feed_comment.render_feed_comment_status_blocks(
+        queued,
+        "posted",
+        suffix="sent",
+    )
 
-    assert len(blocks) == 1
-    status = blocks[0]
-    assert status["accessory"]["action_id"] == feed_comment.COMMENT_CANCEL_ACTION_ID
-    assert json.loads(status["accessory"]["value"]) == {"task_id": 777}
+    assert queued[:3] == _source_blocks()[:3]
+    assert queued[-1] == _source_blocks()[-1]
+    assert queued[-2]["accessory"]["action_id"] == feed_comment.COMMENT_CANCEL_ACTION_ID
+    assert json.loads(queued[-2]["accessory"]["value"]) == {"task_id": 777}
+    assert blocks[:3] == _source_blocks()[:3]
+    assert blocks[-1] == _source_blocks()[-1]
+    assert blocks[-2]["block_id"] == "feed_comment_status:sent"
+    assert "accessory" not in blocks[-2]
+    assert len([b for b in blocks if b.get("block_id", "").startswith("feed_comment_status:")]) == 1
 
 
-def test_submission_queues_thread_status_without_replacing_source_alert(monkeypatch):
+def test_submission_updates_source_alert_with_inline_cancel_status(monkeypatch):
     responder = MagicMock()
     conn = MagicMock()
     conn.__enter__.return_value = conn
@@ -297,10 +349,8 @@ def test_submission_queues_thread_status_without_replacing_source_alert(monkeypa
     enqueue = MagicMock(
         return_value=feed_comment.FeedCommentEnqueueResult(task_id=777, created=True),
     )
-    save_status = MagicMock()
     monkeypatch.setattr(feed_comment, "enqueue_feed_comment_task", enqueue)
-    monkeypatch.setattr(feed_comment, "save_feed_comment_status_message", save_status)
-    slack_api = MagicMock(return_value={"ok": True, "ts": "171235.000"})
+    slack_api = MagicMock()
     post_response_url = MagicMock()
 
     feed_comment.handle_comment_submission(
@@ -313,18 +363,18 @@ def test_submission_queues_thread_status_without_replacing_source_alert(monkeypa
 
     enqueue.assert_called_once()
     responder._respond_json.assert_called_once_with({"response_action": "clear"})
-    method, slack_payload = slack_api.call_args.args
-    assert method == "chat.postMessage"
-    assert slack_payload["channel"] == "C123"
-    assert slack_payload["thread_ts"] == "171234.567"
-    assert slack_payload["blocks"][0]["accessory"]["action_id"] == (
+    response_url, slack_payload = post_response_url.call_args.args
+    assert response_url == "https://hooks.slack.com/actions/T/B/R"
+    assert slack_payload["replace_original"] is True
+    assert slack_payload["blocks"][:3] == _source_blocks()[:3]
+    assert slack_payload["blocks"][-1] == _source_blocks()[-1]
+    assert slack_payload["blocks"][-2]["accessory"]["action_id"] == (
         feed_comment.COMMENT_CANCEL_ACTION_ID
     )
-    save_status.assert_called_once_with(conn, 777, "171235.000")
-    post_response_url.assert_not_called()
+    slack_api.assert_not_called()
 
 
-def test_duplicate_submission_does_not_post_another_thread_status(monkeypatch):
+def test_duplicate_submission_does_not_update_source_status(monkeypatch):
     responder = MagicMock()
     conn = MagicMock()
     connect_factory = MagicMock(return_value=conn)
@@ -339,19 +389,22 @@ def test_duplicate_submission_does_not_post_another_thread_status(monkeypatch):
         ),
     )
     slack_api = MagicMock()
+    post_response_url = MagicMock()
 
     feed_comment.handle_comment_submission(
         responder,
         _submission_body(),
         connect_factory=connect_factory,
         slack_api=slack_api,
+        post_response_url=post_response_url,
     )
 
     slack_api.assert_not_called()
+    post_response_url.assert_not_called()
     responder._respond_json.assert_called_once_with({"response_action": "clear"})
 
 
-def test_submission_logs_thread_status_post_failure(monkeypatch):
+def test_submission_falls_back_to_chat_update_when_response_url_fails(monkeypatch):
     responder = MagicMock()
     conn = MagicMock()
     connect_factory = MagicMock(return_value=conn)
@@ -365,25 +418,26 @@ def test_submission_logs_thread_status_post_failure(monkeypatch):
             ),
         ),
     )
-    slack_api = MagicMock(side_effect=RuntimeError("Slack rejected message"))
-    log_exception = MagicMock()
-    monkeypatch.setattr(feed_comment.logger, "exception", log_exception)
+    slack_api = MagicMock(return_value={"ok": True})
+    post_response_url = MagicMock(side_effect=RuntimeError("expired response URL"))
 
     feed_comment.handle_comment_submission(
         responder,
         _submission_body(),
         connect_factory=connect_factory,
         slack_api=slack_api,
+        post_response_url=post_response_url,
     )
 
-    log_exception.assert_called_once_with(
-        "Failed to post cancellable Slack feed-comment status for task %s",
-        777,
-    )
+    method, slack_payload = slack_api.call_args.args
+    assert method == "chat.update"
+    assert slack_payload["channel"] == "C123"
+    assert slack_payload["ts"] == "171234.567"
+    assert slack_payload["blocks"][-2]["block_id"] == "feed_comment_status:queued"
     responder._respond_json.assert_called_once_with({"response_action": "clear"})
 
 
-def test_cancel_replaces_only_the_thread_status(monkeypatch):
+def test_cancel_replaces_only_inline_source_status(monkeypatch):
     responder = MagicMock()
     conn = MagicMock()
     connect_factory = MagicMock(return_value=conn)
@@ -396,9 +450,10 @@ def test_cancel_replaces_only_the_thread_status(monkeypatch):
     )
 
     blocks = responder._respond_blocks.call_args.args[0]
-    assert len(blocks) == 1
-    assert "cancelled" in blocks[0]["text"]["text"]
-    assert "accessory" not in blocks[0]
+    assert blocks[:3] == _source_blocks()[:3]
+    assert blocks[-1] == _source_blocks()[-1]
+    assert "cancelled" in blocks[-2]["text"]["text"]
+    assert "accessory" not in blocks[-2]
 
 
 def test_handle_draft_keeps_typed_text_while_loading_and_on_failure(monkeypatch):

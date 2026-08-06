@@ -6,21 +6,28 @@ registers these intents and delegates to the handlers below.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
+import zlib
 from dataclasses import dataclass
 from urllib import request
 from urllib.parse import parse_qs
 
 from psycopg.types.json import Jsonb
 
+from linkedin.feed_slack_status import (
+    COMMENT_CANCEL_ACTION_ID,
+    render_feed_comment_status_blocks,
+)
+
 logger = logging.getLogger(__name__)
 
 COMMENT_ACTION_ID = "linkedin_feed_comment_button"
 OPEN_POST_ACTION_ID = "linkedin_feed_open_post_button"
 COMMENT_DRAFT_ACTION_ID = "linkedin_feed_comment_draft_button"
-COMMENT_CANCEL_ACTION_ID = "linkedin_feed_comment_cancel_button"
 COMMENT_MODAL_CALLBACK_ID = "linkedin_feed_comment_modal"
 COMMENT_BODY_ACTION_ID = "linkedin_feed_comment_body"
 COMMENT_SENDER_ACTION_ID = "linkedin_feed_comment_sender"
@@ -32,7 +39,6 @@ INTENT_COMMENT_CANCEL = "feed_comment_cancel"
 INTENT_COMMENT_SUBMISSION = "feed_comment_submission"
 
 _QUEUE_GRACE_SECONDS = 60
-
 INTENT_BY_ACTION_ID = {
     COMMENT_ACTION_ID: INTENT_COMMENT_BUTTON,
     OPEN_POST_ACTION_ID: INTENT_OPEN_POST,
@@ -78,12 +84,16 @@ def parse_comment_button(body: str) -> dict:
     value = json.loads(action.get("value") or "{}")
     message = payload.get("message") or {}
     channel = payload.get("channel") or {}
+    blocks = message.get("blocks") or []
+    if not blocks or not all(isinstance(block, dict) for block in blocks):
+        raise ValueError("feed comment source blocks are missing")
     return {
         "post_id": int(value["post_id"]),
         "trigger_id": payload.get("trigger_id") or "",
         "response_url": payload.get("response_url") or "",
         "channel_id": channel.get("id") or "",
         "message_ts": message.get("ts") or "",
+        "blocks": blocks,
     }
 
 
@@ -129,15 +139,20 @@ def parse_comment_modal_submission(body: str) -> dict:
         "slack_message_ts": metadata.get("message_ts") or "",
         "slack_response_url": metadata.get("response_url") or "",
         "slack_user_id": user.get("id") or "",
+        "slack_blocks": _decode_source_blocks(metadata.get("source_blocks") or ""),
     }
 
 
 def parse_comment_cancel_button(body: str) -> dict:
-    """Extract the pending task id from its threaded Slack status message."""
+    """Extract the pending task id and current source-message blocks."""
     payload = _decode_body(body)
     action = _first_action(payload, COMMENT_CANCEL_ACTION_ID)
     value = json.loads(action.get("value") or "{}")
-    return {"task_id": int(value["task_id"])}
+    message = payload.get("message") or {}
+    return {
+        "task_id": int(value["task_id"]),
+        "blocks": message.get("blocks") or [],
+    }
 
 
 def fetch_feed_comment_context(conn, post_id: int) -> dict:
@@ -395,6 +410,7 @@ def enqueue_feed_comment_task(conn, payload: dict) -> FeedCommentEnqueueResult:
             "slack_message_ts": payload.get("slack_message_ts", ""),
             "slack_response_url": payload.get("slack_response_url", ""),
             "slack_user_id": payload.get("slack_user_id", ""),
+            "slack_blocks": payload.get("slack_blocks") or [],
         }
         cur.execute(
             "INSERT INTO linkedin_task "
@@ -428,20 +444,6 @@ def enqueue_feed_comment_task(conn, payload: dict) -> FeedCommentEnqueueResult:
     return FeedCommentEnqueueResult(task_id=task_id, created=True)
 
 
-def save_feed_comment_status_message(conn, task_id: int, message_ts: str) -> None:
-    """Attach the cancellable Slack thread-status message to the queued task."""
-    value = (message_ts or "").strip()
-    if not value:
-        return
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE linkedin_task SET payload = payload || %s "
-            "WHERE id = %s AND task_type = 'feed_comment'",
-            (Jsonb({"slack_status_message_ts": value}), int(task_id)),
-        )
-    conn.commit()
-
-
 def cancel_feed_comment_task(conn, task_id: int) -> bool:
     """Delete a feed-comment task and close its ledger only while pending."""
     with conn.cursor() as cur:
@@ -463,36 +465,6 @@ def cancel_feed_comment_task(conn, task_id: int) -> bool:
         cur.execute("DELETE FROM linkedin_task WHERE id = %s", (int(task_id),))
     conn.commit()
     return True
-
-
-def render_feed_comment_thread_status(
-    status_text: str,
-    *,
-    cancel_task_id: int | None = None,
-) -> list[dict]:
-    """Render a standalone thread status without touching the source alert."""
-    status: dict = {
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": status_text},
-    }
-    if cancel_task_id is not None:
-        status["accessory"] = {
-            "type": "button",
-            "action_id": COMMENT_CANCEL_ACTION_ID,
-            "text": {"type": "plain_text", "text": "Cancel queued comment"},
-            "style": "danger",
-            "value": json.dumps({"task_id": int(cancel_task_id)}, separators=(",", ":")),
-            "confirm": {
-                "title": {"type": "plain_text", "text": "Cancel comment?"},
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "This removes the queued public comment if its sender has not started.",
-                },
-                "confirm": {"type": "plain_text", "text": "Cancel comment"},
-                "deny": {"type": "plain_text", "text": "Keep queued"},
-            },
-        }
-    return [status]
 
 
 def generate_ai_feed_comment(context: dict, *, current_comment: str = "") -> str:
@@ -631,6 +603,7 @@ def handle_comment_submission(
     *,
     connect_factory,
     slack_api,
+    post_response_url,
     **_kwargs,
 ) -> None:
     try:
@@ -650,30 +623,20 @@ def handle_comment_submission(
         return
 
     if enqueue_result.created:
-        try:
-            result = slack_api("chat.postMessage", {
-                "channel": payload["slack_channel_id"],
-                "thread_ts": payload["slack_message_ts"],
-                "text": "LinkedIn comment + Like queued",
-                "blocks": render_feed_comment_thread_status(
-                    ":hourglass_flowing_sand: *LinkedIn comment + Like queued* - "
-                    "the selected sender daemon will apply both shortly.",
-                    cancel_task_id=enqueue_result.task_id,
-                ),
-            })
-            status_message_ts = (result.get("ts") or "").strip()
-            if status_message_ts:
-                with connect_factory() as conn:
-                    save_feed_comment_status_message(
-                        conn,
-                        enqueue_result.task_id,
-                        status_message_ts,
-                    )
-        except Exception:
-            logger.exception(
-                "Failed to post cancellable Slack feed-comment status for task %s",
-                enqueue_result.task_id,
-            )
+        queued_blocks = render_feed_comment_status_blocks(
+            payload["slack_blocks"],
+            ":hourglass_flowing_sand: *LinkedIn comment + Like queued* - "
+            "the selected sender daemon will apply both shortly.",
+            suffix="queued",
+            cancel_task_id=enqueue_result.task_id,
+        )
+        _best_effort_source_update(
+            payload=payload,
+            blocks=queued_blocks,
+            text="LinkedIn comment + Like queued",
+            slack_api=slack_api,
+            post_response_url=post_response_url,
+        )
 
     responder._respond_json({"response_action": "clear"})
 
@@ -698,7 +661,11 @@ def handle_comment_cancel(responder, body: str, *, connect_factory, **_kwargs) -
         status = ":warning: *Could not cancel LinkedIn feed comment* - it may have started posting."
         fallback = "Could not cancel LinkedIn feed comment"
     responder._respond_blocks(
-        render_feed_comment_thread_status(status),
+        render_feed_comment_status_blocks(
+            data["blocks"],
+            status,
+            suffix="cancelled" if cancelled else "cancel_failed",
+        ),
         text=fallback,
     )
 
@@ -737,6 +704,7 @@ def _comment_metadata(data: dict, context: dict) -> dict:
         "channel_id": data.get("channel_id") or "",
         "message_ts": data.get("message_ts") or "",
         "response_url": data.get("response_url") or "",
+        "source_blocks": _encode_source_blocks(data.get("blocks") or []),
         "senders": senders,
         "default_sender_key": senders[0]["key"],
     }
@@ -752,6 +720,65 @@ def _compact_metadata(metadata: dict) -> str:
     if len(encoded) > _METADATA_LIMIT:
         raise ValueError("feed comment modal metadata exceeds Slack limit")
     return encoded
+
+
+def _best_effort_source_update(
+    *,
+    payload: dict,
+    blocks: list,
+    text: str,
+    slack_api,
+    post_response_url,
+) -> None:
+    response_url = payload.get("slack_response_url") or ""
+    if response_url:
+        try:
+            post_response_url(response_url, {
+                "replace_original": True,
+                "text": text,
+                "blocks": blocks,
+            })
+            return
+        except Exception:
+            logger.exception("Failed to update feed alert through Slack response_url")
+
+    channel_id = payload.get("slack_channel_id") or ""
+    message_ts = payload.get("slack_message_ts") or ""
+    if channel_id and message_ts:
+        try:
+            slack_api("chat.update", {
+                "channel": channel_id,
+                "ts": message_ts,
+                "text": text,
+                "blocks": blocks,
+            })
+            return
+        except Exception:
+            logger.exception("Failed to update feed alert through Slack chat.update")
+
+    logger.warning("No Slack source-message update path succeeded for feed comment")
+
+
+def _encode_source_blocks(blocks: list) -> str:
+    raw = json.dumps(blocks or [], separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(zlib.compress(raw, level=9)).decode("ascii")
+
+
+def _decode_source_blocks(value: str) -> list[dict]:
+    if not value:
+        raise ValueError("feed comment source blocks are missing")
+    try:
+        raw = zlib.decompress(base64.urlsafe_b64decode(value)).decode("utf-8")
+        decoded = json.loads(raw)
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, zlib.error) as exc:
+        raise ValueError("feed comment source blocks are malformed") from exc
+    if (
+        not isinstance(decoded, list)
+        or not decoded
+        or not all(isinstance(block, dict) for block in decoded)
+    ):
+        raise ValueError("feed comment source blocks are malformed")
+    return decoded
 
 
 def _decode_body(body: str) -> dict:

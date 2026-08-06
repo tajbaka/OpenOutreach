@@ -33,9 +33,9 @@ Eleven surfaces:
 10. `notify_marketplace_signal_group` — posts Codex-reviewed new Rev5 Ready
     and 20x Initial Implementation transitions from the official FedRAMP JSON
     feeds.
-11. `notify_feed_comment_*` — replies in the high-signal feed alert's Slack
-    thread after a human-approved public LinkedIn comment task is sent,
-    skipped, uncertain, or failed.
+11. `notify_feed_comment_*` — edits the original high-signal feed alert after
+    a human-approved public LinkedIn comment task is sent, skipped, uncertain,
+    or failed.
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
@@ -73,6 +73,7 @@ from linkedin.conf import (
     SLACK_REPLIES_WEBHOOK_URL,
     SLACK_WEBHOOK_URL,
 )
+from linkedin.feed_slack_status import render_feed_comment_status_blocks
 from linkedin.icp_outbound import is_unknown_company_name
 
 logger = logging.getLogger(__name__)
@@ -130,10 +131,10 @@ def _post_to_slack(webhook_url: str, payload: dict, label: str) -> bool:
         return False
 
 
-def _post_slack_response_url(response_url: str, payload: dict, label: str) -> None:
+def _post_slack_response_url(response_url: str, payload: dict, label: str) -> bool:
     """POST to a Slack interaction response_url. Best-effort only."""
     if not response_url:
-        return
+        return False
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
         response_url,
@@ -144,8 +145,10 @@ def _post_slack_response_url(response_url: str, payload: dict, label: str) -> No
     try:
         with _urlopen(req, timeout=10) as resp:
             resp.read()
+        return True
     except (URLError, TimeoutError, OSError) as e:
         logger.warning("Slack response_url failed for %s: %s", label, e)
+        return False
 
 
 def _slack_api(method: str, payload: dict, label: str) -> bool:
@@ -256,41 +259,41 @@ def _update_feed_comment_status(
 ) -> None:
     channel_id = payload.get("slack_channel_id") or ""
     message_ts = payload.get("slack_message_ts") or ""
-    status_message_ts = payload.get("slack_status_message_ts") or ""
-    if channel_id and status_message_ts:
+    source_blocks = payload.get("slack_blocks") or []
+    if not source_blocks:
+        logger.warning("Slack source blocks missing for feed comment %s", suffix)
+        return
+
+    updated_blocks = render_feed_comment_status_blocks(
+        source_blocks,
+        status_text,
+        suffix=suffix,
+    )
+    if _post_slack_response_url(
+        payload.get("slack_response_url", ""),
+        {
+            "replace_original": True,
+            "text": fallback,
+            "blocks": updated_blocks,
+        },
+        f"feed comment {suffix}",
+    ):
+        return
+
+    if channel_id and message_ts:
         updated = _slack_api(
             "chat.update",
             {
                 "channel": channel_id,
-                "ts": status_message_ts,
-                "text": status_text,
+                "ts": message_ts,
+                "text": fallback,
+                "blocks": updated_blocks,
             },
             f"feed comment {suffix}",
         )
         if updated:
             return
-    if channel_id and message_ts:
-        posted = _slack_api(
-            "chat.postMessage",
-            {
-                "channel": channel_id,
-                "thread_ts": message_ts,
-                "text": status_text,
-            },
-            f"feed comment {suffix}",
-        )
-        if posted:
-            return
-
-    _post_slack_response_url(
-        payload.get("slack_response_url", ""),
-        {
-            "response_type": "in_channel",
-            "replace_original": False,
-            "text": fallback,
-        },
-        f"feed comment {suffix}",
-    )
+    logger.warning("Could not update source Slack alert for feed comment %s", suffix)
 
 
 def notify_feed_comment_sent(

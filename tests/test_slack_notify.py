@@ -115,15 +115,30 @@ def test_notify_manual_reply_failed_falls_back_to_response_url(monkeypatch):
     assert "LinkedIn reply failed" in sent["text"]
 
 
-def test_notify_feed_comment_sent_updates_queued_thread_status(monkeypatch):
-    monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "xoxb-test")
+def _feed_source_blocks():
+    return [
+        {
+            "type": "section",
+            "block_id": "feed_post_body",
+            "text": {"type": "mrkdwn", "text": "Evidence quality matters."},
+        },
+        {
+            "type": "actions",
+            "block_id": "feed_post_actions",
+            "elements": [],
+        },
+    ]
+
+
+def test_notify_feed_comment_sent_updates_original_alert_via_response_url():
     payload = {
         "slack_channel_id": "C123",
         "slack_message_ts": "171234.567",
-        "slack_status_message_ts": "171235.000",
+        "slack_response_url": "https://hooks.slack.com/actions/T/B/R",
+        "slack_blocks": _feed_source_blocks(),
     }
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
-        mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b"ok"
         slack_mod.notify_feed_comment_sent(
             payload,
             post_label="Ada Lovelace",
@@ -131,36 +146,44 @@ def test_notify_feed_comment_sent_updates_queued_thread_status(monkeypatch):
         )
 
     req = mock_urlopen.call_args[0][0]
-    assert req.full_url == "https://slack.com/api/chat.update"
+    assert req.full_url == "https://hooks.slack.com/actions/T/B/R"
     sent = json.loads(req.data.decode("utf-8"))
-    assert sent["channel"] == "C123"
-    assert sent["ts"] == "171235.000"
-    assert "blocks" not in sent
+    assert sent["replace_original"] is True
+    assert sent["blocks"][0] == _feed_source_blocks()[0]
+    assert sent["blocks"][-1] == _feed_source_blocks()[-1]
+    assert sent["blocks"][-2]["block_id"] == "feed_comment_status:sent"
     assert "LinkedIn feed comment posted" in sent["text"]
-    assert "Post liked" in sent["text"]
+    assert "Post liked" in sent["blocks"][-2]["text"]["text"]
 
 
-def test_notify_feed_comment_sent_posts_thread_status_when_queue_status_missing(
-    monkeypatch,
-):
-    monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "xoxb-test")
+def test_notify_feed_comment_sent_falls_back_to_original_chat_update():
     payload = {
         "slack_channel_id": "C123",
         "slack_message_ts": "171234.567",
+        "slack_blocks": _feed_source_blocks(),
     }
-    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
-        mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
+    with (
+        patch(
+            "linkedin.notifications.slack._post_slack_response_url",
+            return_value=False,
+        ),
+        patch("linkedin.notifications.slack._slack_api", return_value=True) as slack_api,
+    ):
         slack_mod.notify_feed_comment_sent(payload, post_label="Ada Lovelace")
 
-    req = mock_urlopen.call_args[0][0]
-    assert req.full_url == "https://slack.com/api/chat.postMessage"
-    sent = json.loads(req.data.decode("utf-8"))
-    assert sent["thread_ts"] == "171234.567"
+    method, sent, _label = slack_api.call_args.args
+    assert method == "chat.update"
+    assert sent["channel"] == "C123"
+    assert sent["ts"] == "171234.567"
+    assert sent["blocks"][-2]["block_id"] == "feed_comment_status:sent"
 
 
 def test_notify_feed_comment_uncertain_falls_back_to_response_url(monkeypatch):
     monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "")
-    payload = {"slack_response_url": "https://hooks.slack.com/actions/T/B/R"}
+    payload = {
+        "slack_response_url": "https://hooks.slack.com/actions/T/B/R",
+        "slack_blocks": _feed_source_blocks(),
+    }
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
         mock_urlopen.return_value.__enter__.return_value.read.return_value = b"ok"
         slack_mod.notify_feed_comment_uncertain(payload, "Could not verify comment")
@@ -168,8 +191,9 @@ def test_notify_feed_comment_uncertain_falls_back_to_response_url(monkeypatch):
     req = mock_urlopen.call_args[0][0]
     assert req.full_url == "https://hooks.slack.com/actions/T/B/R"
     sent = json.loads(req.data.decode("utf-8"))
-    assert sent["replace_original"] is False
+    assert sent["replace_original"] is True
     assert "manual verification" in sent["text"]
+    assert sent["blocks"][-2]["block_id"] == "feed_comment_status:uncertain"
 
 
 def test_notify_error_posts_block_kit_when_webhook_set(slack_url):
