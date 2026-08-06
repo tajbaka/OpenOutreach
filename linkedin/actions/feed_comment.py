@@ -43,6 +43,7 @@ COMMENT_SUBMIT_TEXT_FALLBACK_SELECTORS = [
 COMMENT_ITEM_SELECTORS = [
     ".comments-comment-item",
     ".comments-comments-list__comment-item",
+    '[componentkey^="replaceableComment_urn:li:comment"]',
     '[data-id^="urn:li:comment"]',
     '[data-urn^="urn:li:comment"]',
     "section.comment:has(.comment__text)",

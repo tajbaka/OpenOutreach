@@ -154,7 +154,7 @@ def test_comment_verification_requires_rendered_comment_item():
 
 
 def test_comment_verification_accepts_visible_comment_item():
-    from linkedin.actions.feed_comment import _comment_visible
+    from linkedin.actions.feed_comment import COMMENT_ITEM_SELECTORS, _comment_visible
 
     page = MagicMock()
     candidates = page.locator.return_value
@@ -164,3 +164,4 @@ def test_comment_verification_accepts_visible_comment_item():
     candidate.inner_text.return_value = "Arian 1m Useful point. Like Reply"
 
     assert _comment_visible(page, "Useful point.", timeout_ms=0) is True
+    assert any("replaceableComment_urn:li:comment" in item for item in COMMENT_ITEM_SELECTORS)

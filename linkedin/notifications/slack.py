@@ -302,13 +302,27 @@ def _update_feed_comment_status(
     )
 
 
-def notify_feed_comment_sent(payload: dict, *, post_label: str = "") -> None:
+def notify_feed_comment_sent(
+    payload: dict,
+    *,
+    post_label: str = "",
+    like_result: str = "",
+) -> None:
     """Tell Slack that a queued public LinkedIn feed comment was sent."""
     target = f" on {post_label}" if post_label else ""
-    fallback = f":white_check_mark: LinkedIn feed comment posted{target}."
+    like_note = {
+        "liked": " Post liked.",
+        "already_liked": " Post was already liked.",
+        "preserved_reaction": " Existing post reaction preserved.",
+        "failed": " Automatic Like failed.",
+        "uncertain": " Automatic Like needs manual verification.",
+    }.get(like_result, "")
+    fallback = f":white_check_mark: LinkedIn feed comment posted{target}.{like_note}"
     _update_feed_comment_status(
         payload,
-        status_text=f":white_check_mark: *LinkedIn feed comment posted*{target}.",
+        status_text=(
+            f":white_check_mark: *LinkedIn feed comment posted*{target}.{like_note}"
+        ),
         suffix="sent",
         fallback=fallback,
     )

@@ -5,8 +5,16 @@ import pytest
 from django.utils import timezone
 
 from linkedin.actions.feed_comment import FeedCommentSendError, FeedCommentUncertainError
+from linkedin.actions.feed_like import FeedLikeResult, FeedLikeSendError
 from linkedin.models import LinkedInFeedComment, LinkedInFeedPost, Task
 from linkedin.tasks.feed_comment import handle_feed_comment
+
+
+@pytest.fixture(autouse=True)
+def feed_like():
+    with patch("linkedin.actions.feed_like.ensure_feed_post_liked") as ensure_like:
+        ensure_like.return_value = FeedLikeResult.ALREADY_LIKED
+        yield ensure_like
 
 
 def _post(suffix="default"):
@@ -42,6 +50,7 @@ def test_handle_feed_comment_posts_and_marks_durable_ledger(
     send_comment,
     notify_sent,
     fake_session,
+    feed_like,
 ):
     post = _post("success")
     task = _task(post)
@@ -60,7 +69,16 @@ def test_handle_feed_comment_posts_and_marks_durable_ledger(
     assert ledger.status == LinkedInFeedComment.Status.SENT
     assert ledger.submit_attempted_at is not None
     assert ledger.commented_at is not None
+    feed_like.assert_called_once_with(
+        fake_session,
+        post_url=post.post_url,
+        activity_urn=post.activity_urn,
+    )
     notify_sent.assert_called_once()
+    assert notify_sent.call_args.kwargs == {
+        "post_label": "Ada Lovelace",
+        "like_result": "already_liked",
+    }
 
 
 @pytest.mark.django_db
@@ -204,3 +222,32 @@ def test_handle_feed_comment_pre_submit_failure_is_retryable_failed_state(
     assert ledger.status == LinkedInFeedComment.Status.FAILED
     assert ledger.submit_attempted_at is None
     notify_failed.assert_called_once()
+
+
+@pytest.mark.django_db
+@patch("linkedin.tasks.feed_comment.notify_feed_comment_sent")
+@patch("linkedin.actions.feed_comment.comment_on_feed_post")
+def test_handle_feed_comment_posts_when_auto_like_fails(
+    send_comment,
+    notify_sent,
+    fake_session,
+    feed_like,
+):
+    post = _post("like-failure")
+    task = _task(post)
+    feed_like.side_effect = FeedLikeSendError("Reaction button missing")
+
+    def send_side_effect(*_args, **kwargs):
+        kwargs["on_submit_attempt"]()
+
+    send_comment.side_effect = send_side_effect
+
+    handle_feed_comment(task, fake_session, qualifiers={})
+
+    ledger = LinkedInFeedComment.objects.get(task=task)
+    assert ledger.status == LinkedInFeedComment.Status.SENT
+    notify_sent.assert_called_once()
+    assert notify_sent.call_args.kwargs == {
+        "post_label": "Ada Lovelace",
+        "like_result": "failed",
+    }

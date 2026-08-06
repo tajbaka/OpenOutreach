@@ -35,6 +35,7 @@ def handle_feed_comment(task, session, qualifiers):
     message = (payload.get("message") or "").strip()
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
     notification_payload = _notification_payload(payload)
+    like_result = ""
 
     try:
         if operator != our_operator:
@@ -68,6 +69,13 @@ def handle_feed_comment(task, session, qualifiers):
             _apply_duplicate_result(comment, duplicate_result, notification_payload)
             return
 
+        like_result = _ensure_post_liked(
+            session,
+            post=post,
+            operator=our_operator,
+            task_id=task.pk,
+        )
+
         try:
             comment_on_feed_post(
                 session,
@@ -98,6 +106,7 @@ def handle_feed_comment(task, session, qualifiers):
         notify_feed_comment_sent(
             notification_payload,
             post_label=post.author_name or f"post {post.pk}",
+            like_result=like_result,
         )
         logger.info(
             "feed_comment sent for post=%s operator=%s task=%s",
@@ -110,6 +119,40 @@ def handle_feed_comment(task, session, qualifiers):
             _mark_failed(comment, str(exc))
         notify_feed_comment_failed(notification_payload, str(exc))
         raise
+
+
+def _ensure_post_liked(session, *, post, operator: str, task_id: int) -> str:
+    """Best-effort Like lane; a reaction failure never blocks the approved comment."""
+    from linkedin.actions.feed_like import (
+        FeedLikeSendError,
+        FeedLikeUncertainError,
+        ensure_feed_post_liked,
+    )
+
+    try:
+        return ensure_feed_post_liked(
+            session,
+            post_url=post.post_url,
+            activity_urn=post.activity_urn,
+        ).value
+    except FeedLikeUncertainError as exc:
+        logger.warning(
+            "feed Like uncertain for post=%s operator=%s task=%s: %s",
+            post.pk,
+            operator,
+            task_id,
+            exc,
+        )
+        return "uncertain"
+    except FeedLikeSendError as exc:
+        logger.warning(
+            "feed Like failed for post=%s operator=%s task=%s: %s",
+            post.pk,
+            operator,
+            task_id,
+            exc,
+        )
+        return "failed"
 
 
 def _prepare_ledger(

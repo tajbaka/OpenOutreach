@@ -648,14 +648,14 @@ def handle_comment_submission(
 
     queued_blocks = render_feed_comment_status_blocks(
         payload.get("blocks") or [],
-        ":hourglass_flowing_sand: *LinkedIn feed comment queued* - the selected sender daemon will post it shortly. You can cancel before it starts.",
+        ":hourglass_flowing_sand: *LinkedIn comment + Like queued* - the selected sender daemon will apply both shortly. You can cancel before it starts.",
         block_id_suffix="queued",
         cancel_task_id=task_id,
     )
     _best_effort_source_update(
         payload=payload,
         blocks=queued_blocks,
-        text="LinkedIn feed comment queued",
+        text="LinkedIn comment + Like queued",
         slack_api=slack_api,
         post_response_url=post_response_url,
     )
@@ -707,7 +707,7 @@ def _feed_comment_view(
         "callback_id": COMMENT_MODAL_CALLBACK_ID,
         "private_metadata": _compact_metadata(metadata),
         "title": {"type": "plain_text", "text": "LinkedIn comment"},
-        "submit": {"type": "plain_text", "text": "Queue comment"},
+        "submit": {"type": "plain_text", "text": "Queue comment + Like"},
         "close": {"type": "plain_text", "text": "Cancel"},
         "blocks": render_feed_comment_modal_blocks(
             context,

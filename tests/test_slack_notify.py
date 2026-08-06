@@ -127,7 +127,11 @@ def test_notify_feed_comment_sent_updates_original_feed_alert(monkeypatch):
     }
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
         mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
-        slack_mod.notify_feed_comment_sent(payload, post_label="Ada Lovelace")
+        slack_mod.notify_feed_comment_sent(
+            payload,
+            post_label="Ada Lovelace",
+            like_result="liked",
+        )
 
     req = mock_urlopen.call_args[0][0]
     assert req.full_url == "https://slack.com/api/chat.update"
@@ -137,6 +141,7 @@ def test_notify_feed_comment_sent_updates_original_feed_alert(monkeypatch):
         if block.get("block_id") == "feed_comment_status:sent"
     )
     assert "LinkedIn feed comment posted" in status["text"]["text"]
+    assert "Post liked" in status["text"]["text"]
 
 
 def test_notify_feed_comment_uncertain_falls_back_to_response_url(monkeypatch):
