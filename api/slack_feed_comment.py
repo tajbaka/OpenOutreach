@@ -31,6 +31,8 @@ INTENT_COMMENT_DRAFT = "feed_comment_draft"
 INTENT_COMMENT_CANCEL = "feed_comment_cancel"
 INTENT_COMMENT_SUBMISSION = "feed_comment_submission"
 
+_QUEUE_GRACE_SECONDS = 15
+
 INTENT_BY_ACTION_ID = {
     COMMENT_ACTION_ID: INTENT_COMMENT_BUTTON,
     OPEN_POST_ACTION_ID: INTENT_OPEN_POST,
@@ -397,9 +399,10 @@ def enqueue_feed_comment_task(conn, payload: dict) -> FeedCommentEnqueueResult:
         cur.execute(
             "INSERT INTO linkedin_task "
             "(task_type, status, scheduled_at, payload, error, created_at) "
-            "VALUES ('feed_comment', 'pending', now(), %s, '', now()) "
+            "VALUES ('feed_comment', 'pending', "
+            "now() + (%s * interval '1 second'), %s, '', now()) "
             "RETURNING id",
-            (Jsonb(task_payload),),
+            (_QUEUE_GRACE_SECONDS, Jsonb(task_payload)),
         )
         task_id = int(cur.fetchone()[0])
         cur.execute(
