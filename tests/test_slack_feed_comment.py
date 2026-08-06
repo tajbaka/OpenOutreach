@@ -226,7 +226,7 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
     ledger_sql = cur.execute.call_args_list[3][0][0]
     assert "'feed_comment'" in task_sql
     assert "interval '1 second'" in task_sql
-    assert task_params[0] == 15
+    assert task_params[0] == 60
     assert task_params[1].obj["operator"] == "Chuka"
     assert "slack_blocks" not in task_params[1].obj
     assert "INSERT INTO linkedin_linkedinfeedcomment" in ledger_sql

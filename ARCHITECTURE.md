@@ -42,7 +42,7 @@ High-signal feed alerts expose a human-approved public-comment workflow through 
 
 The queue-status Slack call remains best-effort, but Web API failures are logged by the Vercel function with the related task ID instead of being silently discarded.
 
-New feed-comment tasks receive a 15-second scheduling grace period. Vercel posts and persists the cancellable thread-status timestamp during that interval, preventing a fast sender daemon from completing before it knows which Slack message to update and giving the operator a usable pending-only cancellation window.
+New feed-comment tasks receive a 60-second scheduling grace period. Vercel posts and persists the cancellable thread-status timestamp during that interval, preventing a fast sender daemon from completing before it knows which Slack message to update and giving the operator a usable pending-only cancellation window.
 
 Each approved feed-comment task also runs the isolated `linkedin/actions/feed_like.py` action before comment submission. It reads the exact post's live `Reaction button state` ARIA label on every run: `no reaction` is clicked and polled until `Like`, an existing `Like` is a successful no-op, and any other reaction is preserved. Component UUIDs and CSS classes are never used for state. Expected Like failures and unverified clicks are logged and reflected in the eventual Slack sent status, but fail open so the human-approved comment still proceeds.
 
