@@ -25,11 +25,20 @@ COMMENT_EDITOR_SELECTORS = [
 ]
 
 COMMENT_SUBMIT_SELECTORS = [
-    'button.comments-comment-box__submit-button:not([disabled])',
-    'button[aria-label*="Post comment"]:not([disabled])',
-    'button[aria-label*="Comment"]:not([disabled]):has-text("Post")',
-    'button:has-text("Post"):not([disabled])',
+    'button.comments-comment-box__submit-button',
+    'button[aria-label*="Post comment" i]',
+    'button[aria-label="Comment" i]',
+    'button[type="submit"]',
+    'button:has-text("Post")',
+    'button:has-text("Comment")',
+    '[role="button"][aria-label*="Post comment" i]',
+    '[role="button"][aria-label="Comment" i]',
+    '[role="button"]:has-text("Post")',
+    '[role="button"]:has-text("Comment")',
 ]
+
+_COMMENT_SUBMIT_WAIT_MS = 10_000
+_COMMENT_SUBMIT_POLL_MS = 250
 
 
 class FeedCommentSendError(RuntimeError):
@@ -73,9 +82,12 @@ def comment_on_feed_post(
         human_type(editor, comment)
         page.wait_for_timeout(500)
 
-        submit = _first_visible(page, COMMENT_SUBMIT_SELECTORS)
+        submit = _wait_for_comment_submit(page, editor)
         if submit is None:
-            raise FeedCommentSendError("LinkedIn comment submit button was not found")
+            raise FeedCommentSendError(
+                "LinkedIn comment submit button was not found after waiting for "
+                "an enabled Post/Comment control in the comment composer"
+            )
 
         if on_submit_attempt is not None:
             on_submit_attempt()
@@ -123,6 +135,53 @@ def _first_visible(page, selectors: list[str]):
             item = locator.nth(index)
             try:
                 if item.is_visible():
+                    return item
+            except PlaywrightError:
+                continue
+    return None
+
+
+def _wait_for_comment_submit(page, editor, timeout_ms: int = _COMMENT_SUBMIT_WAIT_MS):
+    """Wait for an enabled submit control inside the active comment composer."""
+    elapsed_ms = 0
+    while elapsed_ms <= timeout_ms:
+        for scope in _comment_submit_scopes(editor):
+            submit = _first_enabled_visible(scope, COMMENT_SUBMIT_SELECTORS)
+            if submit is not None:
+                return submit
+        if elapsed_ms == timeout_ms:
+            break
+        wait_ms = min(_COMMENT_SUBMIT_POLL_MS, timeout_ms - elapsed_ms)
+        page.wait_for_timeout(wait_ms)
+        elapsed_ms += wait_ms
+    return None
+
+
+def _comment_submit_scopes(editor) -> list:
+    """Return nearby composer ancestors, from narrowest to broadest."""
+    scopes = []
+    for depth in range(1, 7):
+        ancestor = editor.locator(f"xpath=ancestor::*[{depth}]")
+        try:
+            if ancestor.count() == 0:
+                break
+        except PlaywrightError:
+            break
+        scopes.append(ancestor.first)
+    return scopes
+
+
+def _first_enabled_visible(scope, selectors: list[str]):
+    for selector in selectors:
+        locator = scope.locator(selector)
+        try:
+            count = min(locator.count(), 10)
+        except PlaywrightError:
+            continue
+        for index in range(count):
+            item = locator.nth(index)
+            try:
+                if item.is_visible() and item.is_enabled():
                     return item
             except PlaywrightError:
                 continue

@@ -4,10 +4,15 @@ import pytest
 from datetime import timedelta
 from django.utils import timezone
 
-from linkedin.daemon import _ensure_connect_task_for_campaign, heal_tasks
+from linkedin.daemon import (
+    _LOW_POOL_ALERTED,
+    _ensure_connect_task_for_campaign,
+    _maybe_alert_low_connect_pool,
+    heal_tasks,
+)
 from linkedin.db.deals import set_profile_state
 from linkedin.db.leads import create_enriched_lead, promote_lead_to_deal
-from linkedin.models import Campaign, Task
+from linkedin.models import ActionLog, Campaign, Task
 from linkedin.enums import ProfileState
 from linkedin.operators import resolve_operator
 
@@ -165,6 +170,71 @@ class TestHealTasks:
             task_type=Task.TaskType.CONNECT,
             payload__campaign_id=fake_session.campaign.pk,
         ).count() == 1
+
+    def test_low_pool_alert_ignores_empty_connect_task(
+        self,
+        fake_session,
+        monkeypatch,
+    ):
+        task = Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now(),
+            payload={"campaign_id": fake_session.campaign.pk},
+        )
+        notifications = []
+        monkeypatch.setattr(
+            "linkedin.daemon.notify_degraded",
+            lambda **kwargs: notifications.append(kwargs),
+        )
+        _LOW_POOL_ALERTED.clear()
+
+        _maybe_alert_low_connect_pool(
+            "Arian",
+            fake_session.campaign,
+            task=task,
+            profile=fake_session.linkedin_profile,
+        )
+
+        assert fake_session.campaign.pk not in _LOW_POOL_ALERTED
+        assert notifications == []
+        _LOW_POOL_ALERTED.clear()
+
+    def test_low_pool_alert_tracks_campaign_that_sent_connect(
+        self,
+        fake_session,
+        monkeypatch,
+    ):
+        task = Task.objects.create(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now() - timedelta(seconds=1),
+            payload={"campaign_id": fake_session.campaign.pk},
+        )
+        ActionLog.objects.create(
+            linkedin_profile=fake_session.linkedin_profile,
+            campaign=fake_session.campaign,
+            action_type=ActionLog.ActionType.CONNECT,
+        )
+        notifications = []
+        monkeypatch.setattr(
+            "linkedin.daemon.notify_degraded",
+            lambda **kwargs: notifications.append(kwargs),
+        )
+        _LOW_POOL_ALERTED.clear()
+
+        _maybe_alert_low_connect_pool(
+            "Arian",
+            fake_session.campaign,
+            task=task,
+            profile=fake_session.linkedin_profile,
+        )
+
+        assert fake_session.campaign.pk in _LOW_POOL_ALERTED
+        assert notifications[0]["title"] == "Arian's connect pool is low"
+        _LOW_POOL_ALERTED.clear()
 
     def test_seeds_sweep_connections_when_pending_profiles_exist(self, fake_session):
         _make_pending(fake_session, "alice")

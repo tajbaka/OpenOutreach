@@ -596,11 +596,18 @@ def _notify_connect_queue_recovered(sender: str, campaign) -> None:
     )
 
 
-def _maybe_alert_low_connect_pool(sender: str, campaign) -> None:
+def _maybe_alert_low_connect_pool(sender: str, campaign, *, task, profile) -> None:
     if (
         ENABLE_AUTO_DISCOVERY
         or CONNECT_LOW_POOL_THRESHOLD <= 0
         or campaign.pk in _LOW_POOL_ALERTED
+        or task.started_at is None
+        or not ActionLog.objects.filter(
+            linkedin_profile=profile,
+            campaign=campaign,
+            action_type=ActionLog.ActionType.CONNECT,
+            created_at__gte=task.started_at,
+        ).exists()
     ):
         return
 
@@ -935,7 +942,12 @@ def run_daemon(session):
             if cid:
                 campaign = Campaign.objects.filter(pk=cid).first()
                 if campaign:
-                    _maybe_alert_low_connect_pool(our_operator, campaign)
+                    _maybe_alert_low_connect_pool(
+                        our_operator,
+                        campaign,
+                        task=task,
+                        profile=session.linkedin_profile,
+                    )
                     if _ensure_connect_task_for_campaign(
                         campaign,
                         delay_seconds=recommended_action_delay(
