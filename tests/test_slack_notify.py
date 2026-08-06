@@ -115,15 +115,11 @@ def test_notify_manual_reply_failed_falls_back_to_response_url(monkeypatch):
     assert "LinkedIn reply failed" in sent["text"]
 
 
-def test_notify_feed_comment_sent_updates_original_feed_alert(monkeypatch):
+def test_notify_feed_comment_sent_replies_without_replacing_feed_alert(monkeypatch):
     monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "xoxb-test")
     payload = {
         "slack_channel_id": "C123",
         "slack_message_ts": "171234.567",
-        "slack_blocks": [
-            {"type": "section", "text": {"type": "mrkdwn", "text": "feed signal"}},
-            {"type": "actions", "elements": []},
-        ],
     }
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
         mock_urlopen.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
@@ -134,14 +130,13 @@ def test_notify_feed_comment_sent_updates_original_feed_alert(monkeypatch):
         )
 
     req = mock_urlopen.call_args[0][0]
-    assert req.full_url == "https://slack.com/api/chat.update"
+    assert req.full_url == "https://slack.com/api/chat.postMessage"
     sent = json.loads(req.data.decode("utf-8"))
-    status = next(
-        block for block in sent["blocks"]
-        if block.get("block_id") == "feed_comment_status:sent"
-    )
-    assert "LinkedIn feed comment posted" in status["text"]["text"]
-    assert "Post liked" in status["text"]["text"]
+    assert sent["channel"] == "C123"
+    assert sent["thread_ts"] == "171234.567"
+    assert "blocks" not in sent
+    assert "LinkedIn feed comment posted" in sent["text"]
+    assert "Post liked" in sent["text"]
 
 
 def test_notify_feed_comment_uncertain_falls_back_to_response_url(monkeypatch):

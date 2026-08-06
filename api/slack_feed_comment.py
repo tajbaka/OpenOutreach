@@ -16,7 +16,6 @@ from psycopg.types.json import Jsonb
 COMMENT_ACTION_ID = "linkedin_feed_comment_button"
 OPEN_POST_ACTION_ID = "linkedin_feed_open_post_button"
 COMMENT_DRAFT_ACTION_ID = "linkedin_feed_comment_draft_button"
-COMMENT_CANCEL_ACTION_ID = "linkedin_feed_comment_cancel_button"
 COMMENT_MODAL_CALLBACK_ID = "linkedin_feed_comment_modal"
 COMMENT_BODY_ACTION_ID = "linkedin_feed_comment_body"
 COMMENT_SENDER_ACTION_ID = "linkedin_feed_comment_sender"
@@ -24,14 +23,12 @@ COMMENT_SENDER_ACTION_ID = "linkedin_feed_comment_sender"
 INTENT_COMMENT_BUTTON = "feed_comment_button"
 INTENT_OPEN_POST = "feed_post_open"
 INTENT_COMMENT_DRAFT = "feed_comment_draft"
-INTENT_COMMENT_CANCEL = "feed_comment_cancel"
 INTENT_COMMENT_SUBMISSION = "feed_comment_submission"
 
 INTENT_BY_ACTION_ID = {
     COMMENT_ACTION_ID: INTENT_COMMENT_BUTTON,
     OPEN_POST_ACTION_ID: INTENT_OPEN_POST,
     COMMENT_DRAFT_ACTION_ID: INTENT_COMMENT_DRAFT,
-    COMMENT_CANCEL_ACTION_ID: INTENT_COMMENT_CANCEL,
 }
 VIEW_SUBMISSION_INTENTS = {
     COMMENT_MODAL_CALLBACK_ID: INTENT_COMMENT_SUBMISSION,
@@ -40,7 +37,6 @@ HANDLER_BY_INTENT = {
     INTENT_COMMENT_BUTTON: "_handle_feed_comment_button",
     INTENT_OPEN_POST: "_handle_feed_post_open",
     INTENT_COMMENT_DRAFT: "_handle_feed_comment_draft",
-    INTENT_COMMENT_CANCEL: "_handle_feed_comment_cancel",
     INTENT_COMMENT_SUBMISSION: "_handle_feed_comment_submission",
 }
 
@@ -50,7 +46,6 @@ def handle_post_open(responder, _body: str, **_kwargs) -> None:
     responder._respond_text(200, "")
 
 
-_STATUS_PREFIX = "feed_comment_status"
 _LLM_TIMEOUT_SECONDS = 12
 _METADATA_LIMIT = 2800
 _MODAL_TEXT_LIMIT = 2800
@@ -73,7 +68,6 @@ def parse_comment_button(body: str) -> dict:
         "response_url": payload.get("response_url") or "",
         "channel_id": channel.get("id") or "",
         "message_ts": message.get("ts") or "",
-        "blocks": message.get("blocks") or [],
     }
 
 
@@ -119,19 +113,6 @@ def parse_comment_modal_submission(body: str) -> dict:
         "slack_message_ts": metadata.get("message_ts") or "",
         "slack_response_url": metadata.get("response_url") or "",
         "slack_user_id": user.get("id") or "",
-        "blocks": metadata.get("blocks") or [],
-    }
-
-
-def parse_comment_cancel_button(body: str) -> dict:
-    """Extract the pending task id and current source-message blocks."""
-    payload = _decode_body(body)
-    action = _first_action(payload, COMMENT_CANCEL_ACTION_ID)
-    value = json.loads(action.get("value") or "{}")
-    message = payload.get("message") or {}
-    return {
-        "task_id": int(value["task_id"]),
-        "blocks": message.get("blocks") or [],
     }
 
 
@@ -390,7 +371,6 @@ def enqueue_feed_comment_task(conn, payload: dict) -> int:
             "slack_message_ts": payload.get("slack_message_ts", ""),
             "slack_response_url": payload.get("slack_response_url", ""),
             "slack_user_id": payload.get("slack_user_id", ""),
-            "slack_blocks": payload.get("blocks", []),
         }
         cur.execute(
             "INSERT INTO linkedin_task "
@@ -421,74 +401,6 @@ def enqueue_feed_comment_task(conn, payload: dict) -> int:
         )
     conn.commit()
     return task_id
-
-
-def cancel_feed_comment_task(conn, task_id: int) -> bool:
-    """Delete a feed-comment task and close its ledger only while pending."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT id FROM linkedin_task "
-            "WHERE id = %s AND task_type = 'feed_comment' AND status = 'pending' "
-            "FOR UPDATE",
-            (int(task_id),),
-        )
-        if cur.fetchone() is None:
-            conn.commit()
-            return False
-        cur.execute(
-            "UPDATE linkedin_linkedinfeedcomment "
-            "SET task_id = NULL, status = 'skipped', error = %s, updated_at = now() "
-            "WHERE task_id = %s",
-            ("Cancelled from Slack before the sender claimed the task.", int(task_id)),
-        )
-        cur.execute("DELETE FROM linkedin_task WHERE id = %s", (int(task_id),))
-    conn.commit()
-    return True
-
-
-def render_feed_comment_status_blocks(
-    original_blocks: list,
-    status_text: str,
-    *,
-    block_id_suffix: str,
-    cancel_task_id: int | None = None,
-) -> list:
-    """Insert one replaceable feed-comment status above the alert actions."""
-    status: dict = {
-        "type": "section",
-        "block_id": f"{_STATUS_PREFIX}:{block_id_suffix}",
-        "text": {"type": "mrkdwn", "text": status_text},
-    }
-    if cancel_task_id is not None:
-        status["accessory"] = {
-            "type": "button",
-            "action_id": COMMENT_CANCEL_ACTION_ID,
-            "text": {"type": "plain_text", "text": "Cancel queued comment"},
-            "style": "danger",
-            "value": json.dumps({"task_id": int(cancel_task_id)}, separators=(",", ":")),
-            "confirm": {
-                "title": {"type": "plain_text", "text": "Cancel comment?"},
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "This removes the queued public comment if its sender has not started.",
-                },
-                "confirm": {"type": "plain_text", "text": "Cancel comment"},
-                "deny": {"type": "plain_text", "text": "Keep queued"},
-            },
-        }
-
-    out: list = []
-    inserted = False
-    for block in original_blocks or []:
-        if (block.get("block_id") or "").startswith(f"{_STATUS_PREFIX}:"):
-            continue
-        if block.get("type") == "actions" and not inserted:
-            out.append(status)
-            inserted = True
-        out.append(block)
-    if not inserted:
-        out.append(status)
-    return out
 
 
 def generate_ai_feed_comment(context: dict, *, current_comment: str = "") -> str:
@@ -626,8 +538,6 @@ def handle_comment_submission(
     body: str,
     *,
     connect_factory,
-    slack_api,
-    post_response_url,
     **_kwargs,
 ) -> None:
     try:
@@ -641,56 +551,12 @@ def handle_comment_submission(
 
     try:
         with connect_factory() as conn:
-            task_id = enqueue_feed_comment_task(conn, payload)
+            enqueue_feed_comment_task(conn, payload)
     except Exception:
         responder._respond_text(500, "database error")
         return
 
-    queued_blocks = render_feed_comment_status_blocks(
-        payload.get("blocks") or [],
-        ":hourglass_flowing_sand: *LinkedIn comment + Like queued* - the selected sender daemon will apply both shortly. You can cancel before it starts.",
-        block_id_suffix="queued",
-        cancel_task_id=task_id,
-    )
-    _best_effort_source_update(
-        payload=payload,
-        blocks=queued_blocks,
-        text="LinkedIn comment + Like queued",
-        slack_api=slack_api,
-        post_response_url=post_response_url,
-    )
     responder._respond_json({"response_action": "clear"})
-
-
-def handle_comment_cancel(responder, body: str, *, connect_factory, **_kwargs) -> None:
-    try:
-        data = parse_comment_cancel_button(body)
-    except (ValueError, KeyError, json.JSONDecodeError):
-        responder._respond_text(400, "malformed feed comment cancel action")
-        return
-    try:
-        with connect_factory() as conn:
-            cancelled = cancel_feed_comment_task(conn, data["task_id"])
-    except Exception:
-        responder._respond_text(500, "database error")
-        return
-
-    if cancelled:
-        status = ":no_entry: *LinkedIn feed comment cancelled* - it will not be posted."
-        fallback = "LinkedIn feed comment cancelled"
-        suffix = "cancelled"
-    else:
-        status = ":warning: *Could not cancel LinkedIn feed comment* - it may have started posting."
-        fallback = "Could not cancel LinkedIn feed comment"
-        suffix = "cancel_failed"
-    responder._respond_blocks(
-        render_feed_comment_status_blocks(
-            data["blocks"],
-            status,
-            block_id_suffix=suffix,
-        ),
-        text=fallback,
-    )
 
 
 def _feed_comment_view(
@@ -727,48 +593,13 @@ def _comment_metadata(data: dict, context: dict) -> dict:
         "channel_id": data.get("channel_id") or "",
         "message_ts": data.get("message_ts") or "",
         "response_url": data.get("response_url") or "",
-        "blocks": data.get("blocks") or [],
         "senders": senders,
         "default_sender_key": senders[0]["key"],
     }
 
 
-def _best_effort_source_update(*, payload, blocks, text, slack_api, post_response_url) -> None:
-    response_url = payload.get("slack_response_url") or ""
-    if response_url:
-        try:
-            post_response_url(response_url, {
-                "replace_original": True,
-                "text": text,
-                "blocks": blocks,
-            })
-            return
-        except Exception:
-            pass
-    channel_id = payload.get("slack_channel_id") or ""
-    message_ts = payload.get("slack_message_ts") or ""
-    if channel_id and message_ts:
-        try:
-            slack_api("chat.update", {
-                "channel": channel_id,
-                "ts": message_ts,
-                "text": text,
-                "blocks": blocks,
-            })
-        except Exception:
-            pass
-
-
 def _compact_metadata(metadata: dict) -> str:
     value = dict(metadata)
-    encoded = _json(value)
-    if len(encoded) <= _METADATA_LIMIT:
-        return encoded
-    value["blocks"] = _compact_source_blocks(value.get("blocks") or [])
-    encoded = _json(value)
-    if len(encoded) <= _METADATA_LIMIT:
-        return encoded
-    value["blocks"] = []
     encoded = _json(value)
     if len(encoded) <= _METADATA_LIMIT:
         return encoded
@@ -777,18 +608,6 @@ def _compact_metadata(metadata: dict) -> str:
     if len(encoded) > _METADATA_LIMIT:
         raise ValueError("feed comment modal metadata exceeds Slack limit")
     return encoded
-
-
-def _compact_source_blocks(blocks: list) -> list:
-    compacted: list = []
-    for block in blocks:
-        clone = dict(block)
-        text_obj = clone.get("text")
-        if isinstance(text_obj, dict) and isinstance(text_obj.get("text"), str):
-            clone["text"] = dict(text_obj)
-            clone["text"]["text"] = _compact(text_obj["text"], 180)
-        compacted.append(clone)
-    return compacted
 
 
 def _decode_body(body: str) -> dict:

@@ -45,7 +45,6 @@ def _metadata():
         "channel_id": "C123",
         "message_ts": "171234.567",
         "response_url": "https://hooks.slack.com/actions/T/B/R",
-        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "signal"}}],
         "senders": _context()["senders"],
         "default_sender_key": "0",
     }
@@ -122,7 +121,7 @@ def test_parse_comment_button_extracts_source_message_context():
     assert out["trigger_id"] == "trigger-123"
     assert out["channel_id"] == "C123"
     assert out["message_ts"] == "171234.567"
-    assert out["blocks"]
+    assert "blocks" not in out
 
 
 def test_handle_post_open_acknowledges_url_button_interaction():
@@ -209,7 +208,6 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
         "slack_channel_id": "C123",
         "slack_message_ts": "171234.567",
         "slack_user_id": "U123",
-        "blocks": [{"type": "actions", "elements": []}],
     })
 
     assert task_id == 777
@@ -218,7 +216,7 @@ def test_enqueue_feed_comment_creates_task_and_ledger():
     ledger_sql = cur.execute.call_args_list[3][0][0]
     assert "'feed_comment'" in task_sql
     assert task_params[0].obj["operator"] == "Chuka"
-    assert task_params[0].obj["slack_blocks"]
+    assert "slack_blocks" not in task_params[0].obj
     assert "INSERT INTO linkedin_linkedinfeedcomment" in ledger_sql
     conn.commit.assert_called_once()
 
@@ -240,32 +238,27 @@ def test_enqueue_feed_comment_dedups_pending_task_under_advisory_lock():
     conn.commit.assert_called_once()
 
 
-def test_cancel_feed_comment_updates_ledger_before_deleting_pending_task():
+def test_submission_queues_without_replacing_source_alert(monkeypatch):
+    responder = MagicMock()
     conn = MagicMock()
-    cur = conn.cursor.return_value.__enter__.return_value
-    cur.fetchone.return_value = (777,)
+    connect_factory = MagicMock(return_value=conn)
+    enqueue = MagicMock(return_value=777)
+    monkeypatch.setattr(feed_comment, "enqueue_feed_comment_task", enqueue)
+    slack_api = MagicMock()
+    post_response_url = MagicMock()
 
-    assert feed_comment.cancel_feed_comment_task(conn, 777) is True
-
-    assert cur.execute.call_count == 3
-    assert "status = 'pending'" in cur.execute.call_args_list[0][0][0]
-    assert "UPDATE linkedin_linkedinfeedcomment" in cur.execute.call_args_list[1][0][0]
-    assert "task_id = NULL" in cur.execute.call_args_list[1][0][0]
-    assert "DELETE FROM linkedin_task" in cur.execute.call_args_list[2][0][0]
-    conn.commit.assert_called_once()
-
-
-def test_render_queued_status_has_pending_only_cancel_action():
-    blocks = feed_comment.render_feed_comment_status_blocks(
-        [{"type": "actions", "elements": []}],
-        "queued",
-        block_id_suffix="queued",
-        cancel_task_id=777,
+    feed_comment.handle_comment_submission(
+        responder,
+        _submission_body(),
+        connect_factory=connect_factory,
+        slack_api=slack_api,
+        post_response_url=post_response_url,
     )
 
-    status = next(block for block in blocks if block.get("block_id") == "feed_comment_status:queued")
-    assert status["accessory"]["action_id"] == feed_comment.COMMENT_CANCEL_ACTION_ID
-    assert json.loads(status["accessory"]["value"]) == {"task_id": 777}
+    enqueue.assert_called_once()
+    responder._respond_json.assert_called_once_with({"response_action": "clear"})
+    slack_api.assert_not_called()
+    post_response_url.assert_not_called()
 
 
 def test_handle_draft_keeps_typed_text_while_loading_and_on_failure(monkeypatch):

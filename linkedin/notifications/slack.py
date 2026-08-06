@@ -33,9 +33,9 @@ Eleven surfaces:
 10. `notify_marketplace_signal_group` — posts Codex-reviewed new Rev5 Ready
     and 20x Initial Implementation transitions from the official FedRAMP JSON
     feeds.
-11. `notify_feed_comment_*` — updates a high-signal feed alert after a
-    human-approved public LinkedIn comment task is sent, skipped, uncertain,
-    or failed.
+11. `notify_feed_comment_*` — replies in the high-signal feed alert's Slack
+    thread after a human-approved public LinkedIn comment task is sent,
+    skipped, uncertain, or failed.
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
@@ -247,26 +247,6 @@ def notify_manual_reply_failed(payload: dict, error: str) -> None:
     )
 
 
-def _feed_comment_status_blocks(original_blocks: list, status_text: str, suffix: str) -> list:
-    status = {
-        "type": "section",
-        "block_id": f"feed_comment_status:{suffix}",
-        "text": {"type": "mrkdwn", "text": status_text},
-    }
-    out: list = []
-    inserted = False
-    for block in original_blocks or []:
-        if block.get("block_id", "").startswith("feed_comment_status:"):
-            continue
-        if block.get("type") == "actions" and not inserted:
-            out.append(status)
-            inserted = True
-        out.append(block)
-    if not inserted:
-        out.append(status)
-    return out
-
-
 def _update_feed_comment_status(
     payload: dict,
     *,
@@ -276,19 +256,17 @@ def _update_feed_comment_status(
 ) -> None:
     channel_id = payload.get("slack_channel_id") or ""
     message_ts = payload.get("slack_message_ts") or ""
-    blocks = payload.get("slack_blocks") or []
-    if channel_id and message_ts and blocks:
-        updated = _slack_api(
-            "chat.update",
+    if channel_id and message_ts:
+        posted = _slack_api(
+            "chat.postMessage",
             {
                 "channel": channel_id,
-                "ts": message_ts,
-                "text": fallback,
-                "blocks": _feed_comment_status_blocks(blocks, status_text, suffix),
+                "thread_ts": message_ts,
+                "text": status_text,
             },
             f"feed comment {suffix}",
         )
-        if updated:
+        if posted:
             return
 
     _post_slack_response_url(

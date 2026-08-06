@@ -297,7 +297,6 @@ def _notification_payload(payload: dict) -> dict:
         "slack_message_ts": payload.get("slack_message_ts", ""),
         "slack_response_url": payload.get("slack_response_url", ""),
         "slack_user_id": payload.get("slack_user_id", ""),
-        "slack_blocks": payload.get("slack_blocks", []),
     }
 
 
