@@ -158,6 +158,8 @@ def _cancel_body(task_id=777):
     )
     return urlencode({"payload": json.dumps({
         "type": "block_actions",
+        "response_url": "https://hooks.slack.com/actions/T/B/CANCEL",
+        "channel": {"id": "C123"},
         "message": {"ts": "171234.567", "blocks": blocks},
         "actions": [{
             "action_id": feed_comment.COMMENT_CANCEL_ACTION_ID,
@@ -442,18 +444,52 @@ def test_cancel_replaces_only_inline_source_status(monkeypatch):
     conn = MagicMock()
     connect_factory = MagicMock(return_value=conn)
     monkeypatch.setattr(feed_comment, "cancel_feed_comment_task", lambda *_args: True)
+    slack_api = MagicMock()
+    post_response_url = MagicMock()
 
     feed_comment.handle_comment_cancel(
         responder,
         _cancel_body(),
         connect_factory=connect_factory,
+        slack_api=slack_api,
+        post_response_url=post_response_url,
     )
 
-    blocks = responder._respond_blocks.call_args.args[0]
+    response_url, payload = post_response_url.call_args.args
+    blocks = payload["blocks"]
+    assert response_url == "https://hooks.slack.com/actions/T/B/CANCEL"
+    assert payload["replace_original"] is True
     assert blocks[:3] == _source_blocks()[:3]
     assert blocks[-1] == _source_blocks()[-1]
     assert "cancelled" in blocks[-2]["text"]["text"]
     assert "accessory" not in blocks[-2]
+    slack_api.assert_not_called()
+    responder._respond_text.assert_called_once_with(200, "")
+
+
+def test_cancel_falls_back_to_original_chat_update(monkeypatch):
+    responder = MagicMock()
+    conn = MagicMock()
+    connect_factory = MagicMock(return_value=conn)
+    monkeypatch.setattr(feed_comment, "cancel_feed_comment_task", lambda *_args: True)
+    slack_api = MagicMock(return_value={"ok": True})
+    post_response_url = MagicMock(side_effect=RuntimeError("expired response URL"))
+
+    feed_comment.handle_comment_cancel(
+        responder,
+        _cancel_body(),
+        connect_factory=connect_factory,
+        slack_api=slack_api,
+        post_response_url=post_response_url,
+    )
+
+    method, payload = slack_api.call_args.args
+    assert method == "chat.update"
+    assert payload["channel"] == "C123"
+    assert payload["ts"] == "171234.567"
+    assert payload["blocks"][-2]["block_id"] == "feed_comment_status:cancelled"
+    assert "accessory" not in payload["blocks"][-2]
+    responder._respond_text.assert_called_once_with(200, "")
 
 
 def test_handle_draft_keeps_typed_text_while_loading_and_on_failure(monkeypatch):

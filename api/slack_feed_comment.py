@@ -144,14 +144,18 @@ def parse_comment_modal_submission(body: str) -> dict:
 
 
 def parse_comment_cancel_button(body: str) -> dict:
-    """Extract the pending task id and current source-message blocks."""
+    """Extract the pending task id and source-message update coordinates."""
     payload = _decode_body(body)
     action = _first_action(payload, COMMENT_CANCEL_ACTION_ID)
     value = json.loads(action.get("value") or "{}")
     message = payload.get("message") or {}
+    channel = payload.get("channel") or {}
     return {
         "task_id": int(value["task_id"]),
         "blocks": message.get("blocks") or [],
+        "slack_channel_id": channel.get("id") or "",
+        "slack_message_ts": message.get("ts") or "",
+        "slack_response_url": payload.get("response_url") or "",
     }
 
 
@@ -641,7 +645,15 @@ def handle_comment_submission(
     responder._respond_json({"response_action": "clear"})
 
 
-def handle_comment_cancel(responder, body: str, *, connect_factory, **_kwargs) -> None:
+def handle_comment_cancel(
+    responder,
+    body: str,
+    *,
+    connect_factory,
+    slack_api,
+    post_response_url,
+    **_kwargs,
+) -> None:
     try:
         data = parse_comment_cancel_button(body)
     except (ValueError, KeyError, json.JSONDecodeError):
@@ -660,14 +672,19 @@ def handle_comment_cancel(responder, body: str, *, connect_factory, **_kwargs) -
     else:
         status = ":warning: *Could not cancel LinkedIn feed comment* - it may have started posting."
         fallback = "Could not cancel LinkedIn feed comment"
-    responder._respond_blocks(
-        render_feed_comment_status_blocks(
-            data["blocks"],
-            status,
-            suffix="cancelled" if cancelled else "cancel_failed",
-        ),
-        text=fallback,
+    blocks = render_feed_comment_status_blocks(
+        data["blocks"],
+        status,
+        suffix="cancelled" if cancelled else "cancel_failed",
     )
+    _best_effort_source_update(
+        payload=data,
+        blocks=blocks,
+        text=fallback,
+        slack_api=slack_api,
+        post_response_url=post_response_url,
+    )
+    responder._respond_text(200, "")
 
 
 def _feed_comment_view(
