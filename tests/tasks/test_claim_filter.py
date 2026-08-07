@@ -332,6 +332,38 @@ def test_pending_feed_comment_requires_post_operator_and_message():
 
 
 @pytest.mark.django_db
+def test_feed_like_claims_only_for_matching_operator():
+    chuka_like = Task.objects.create(
+        task_type=Task.TaskType.FEED_LIKE,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=120),
+        payload={"post_id": 91, "operator": "Chuka"},
+    )
+    arian_like = Task.objects.create(
+        task_type=Task.TaskType.FEED_LIKE,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=10),
+        payload={"post_id": 91, "operator": "Arian"},
+    )
+
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[1])
+
+    assert claimed.pk == arian_like.pk
+    assert Task.objects.get(pk=chuka_like.pk).status == Task.Status.PENDING
+
+
+@pytest.mark.django_db
+def test_pending_feed_like_requires_post_and_operator():
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=Task.TaskType.FEED_LIKE,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={"post_id": 91, "operator": ""},
+        )
+
+
+@pytest.mark.django_db
 def test_next_enrichment_returns_none_when_not_due():
     Task.objects.create(
         task_type=Task.TaskType.ENRICH_PHONE,

@@ -27,7 +27,7 @@ from urllib.parse import parse_qs
 import psycopg
 from psycopg.types.json import Jsonb
 
-from api import slack_feed_comment
+from api import slack_feed_comment, slack_feed_context, slack_feed_like
 
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
@@ -85,10 +85,13 @@ _INTENT_BY_ACTION_ID = {
     _LEAD_CONTEXT_DRAFT_ACTION_ID: _INTENT_LEAD_CONTEXT_DRAFT,
 }
 _INTENT_BY_ACTION_ID.update(slack_feed_comment.INTENT_BY_ACTION_ID)
+_INTENT_BY_ACTION_ID.update(slack_feed_context.INTENT_BY_ACTION_ID)
+_INTENT_BY_ACTION_ID.update(slack_feed_like.INTENT_BY_ACTION_ID)
 
 _VIEW_SUBMISSION_INTENTS = {
     _REPLY_MODAL_CALLBACK_ID: _INTENT_REPLY_SUBMISSION,
     **slack_feed_comment.VIEW_SUBMISSION_INTENTS,
+    **slack_feed_like.VIEW_SUBMISSION_INTENTS,
 }
 
 _HANDLER_BY_INTENT = {
@@ -102,6 +105,8 @@ _HANDLER_BY_INTENT = {
     _INTENT_LEAD_CONTEXT_DRAFT: "_handle_lead_context_draft",
 }
 _HANDLER_BY_INTENT.update(slack_feed_comment.HANDLER_BY_INTENT)
+_HANDLER_BY_INTENT.update(slack_feed_context.HANDLER_BY_INTENT)
+_HANDLER_BY_INTENT.update(slack_feed_like.HANDLER_BY_INTENT)
 
 
 def verify_signature(
@@ -1803,21 +1808,33 @@ class handler(BaseHTTPRequestHandler):
         )
 
     def _handle_feed_comment_button(self, body: str) -> None:
-        self._dispatch_feed_comment(slack_feed_comment.handle_comment_button, body)
+        self._dispatch_feed_action(slack_feed_comment.handle_comment_button, body)
 
     def _handle_feed_post_open(self, body: str) -> None:
-        self._dispatch_feed_comment(slack_feed_comment.handle_post_open, body)
+        self._dispatch_feed_action(slack_feed_comment.handle_post_open, body)
 
     def _handle_feed_comment_draft(self, body: str) -> None:
-        self._dispatch_feed_comment(slack_feed_comment.handle_comment_draft, body)
+        self._dispatch_feed_action(slack_feed_comment.handle_comment_draft, body)
 
     def _handle_feed_comment_submission(self, body: str) -> None:
-        self._dispatch_feed_comment(slack_feed_comment.handle_comment_submission, body)
+        self._dispatch_feed_action(slack_feed_comment.handle_comment_submission, body)
 
     def _handle_feed_comment_cancel(self, body: str) -> None:
-        self._dispatch_feed_comment(slack_feed_comment.handle_comment_cancel, body)
+        self._dispatch_feed_action(slack_feed_comment.handle_comment_cancel, body)
 
-    def _dispatch_feed_comment(self, action_handler, body: str) -> None:
+    def _handle_feed_post_context(self, body: str) -> None:
+        self._dispatch_feed_action(slack_feed_context.handle_post_context, body)
+
+    def _handle_feed_post_context_ai(self, body: str) -> None:
+        self._dispatch_feed_action(slack_feed_context.handle_post_context_ai, body)
+
+    def _handle_feed_like_button(self, body: str) -> None:
+        self._dispatch_feed_action(slack_feed_like.handle_like_button, body)
+
+    def _handle_feed_like_submission(self, body: str) -> None:
+        self._dispatch_feed_action(slack_feed_like.handle_like_submission, body)
+
+    def _dispatch_feed_action(self, action_handler, body: str) -> None:
         action_handler(
             self,
             body,

@@ -53,6 +53,7 @@ from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.discovery import handle_discovery
 from linkedin.tasks.manual_reply import handle_manual_reply
 from linkedin.tasks.feed_comment import handle_feed_comment
+from linkedin.tasks.feed_like import handle_feed_like
 from linkedin.tasks.status_summary import enqueue_status_summary, handle_status_summary
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 
@@ -63,6 +64,7 @@ _HANDLERS = {
     Task.TaskType.FOLLOW_UP: handle_follow_up,
     Task.TaskType.MANUAL_REPLY: handle_manual_reply,
     Task.TaskType.FEED_COMMENT: handle_feed_comment,
+    Task.TaskType.FEED_LIKE: handle_feed_like,
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
     Task.TaskType.STATUS_SUMMARY: handle_status_summary,
     Task.TaskType.DISCOVERY: handle_discovery,
@@ -741,6 +743,7 @@ def run_daemon(session):
             always_on_task_types = {
                 Task.TaskType.MANUAL_REPLY,
                 Task.TaskType.FEED_COMMENT,
+                Task.TaskType.FEED_LIKE,
                 Task.TaskType.STATUS_SUMMARY,
             }
             always_on_wait = Task.objects.seconds_to_next(
@@ -771,6 +774,7 @@ def run_daemon(session):
             claimable_task_types = set(claimable_task_types) | {
                 Task.TaskType.MANUAL_REPLY,
                 Task.TaskType.FEED_COMMENT,
+                Task.TaskType.FEED_LIKE,
                 Task.TaskType.STATUS_SUMMARY,
             }
 
@@ -866,6 +870,7 @@ def run_daemon(session):
             Task.TaskType.SWEEP_CONNECTIONS,
             Task.TaskType.MANUAL_REPLY,
             Task.TaskType.FEED_COMMENT,
+            Task.TaskType.FEED_LIKE,
             Task.TaskType.STATUS_SUMMARY,
             Task.TaskType.DISCOVERY,
         }:

@@ -322,10 +322,12 @@ def test_analyze_linkedin_feed_applies_codex_decision_and_posts_slack(
     assert actions["type"] == "actions"
     assert [element["action_id"] for element in actions["elements"]] == [
         "linkedin_feed_open_post_button",
+        "linkedin_feed_context_button",
+        "linkedin_feed_like_button",
         "linkedin_feed_comment_button",
     ]
     assert actions["elements"][0]["url"] == post.post_url
-    comment_button = actions["elements"][1]
+    comment_button = actions["elements"][3]
     assert json.loads(comment_button["value"]) == {"post_id": post.id}
 
 
@@ -409,7 +411,9 @@ def test_analyze_linkedin_feed_groups_related_reposts_into_one_slack_alert(
     actions = payload["blocks"][-1]
     assert [element["action_id"] for element in actions["elements"]] == [
         "linkedin_feed_open_post_button",
+        "linkedin_feed_context_button",
+        "linkedin_feed_like_button",
         "linkedin_feed_comment_button",
     ]
-    comment_button = actions["elements"][1]
+    comment_button = actions["elements"][3]
     assert json.loads(comment_button["value"]) == {"post_id": original.id}

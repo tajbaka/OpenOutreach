@@ -6,18 +6,20 @@ registers these intents and delegates to the handlers below.
 """
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import logging
 import os
-import zlib
 from dataclasses import dataclass
 from urllib import request
 from urllib.parse import parse_qs
 
 from psycopg.types.json import Jsonb
 
+from api.slack_feed_common import (
+    best_effort_source_update,
+    decode_source_blocks as _decode_source_blocks,
+    encode_source_blocks as _encode_source_blocks,
+)
 from linkedin.feed_slack_status import (
     COMMENT_CANCEL_ACTION_ID,
     render_feed_comment_status_blocks,
@@ -634,12 +636,13 @@ def handle_comment_submission(
             suffix="queued",
             cancel_task_id=enqueue_result.task_id,
         )
-        _best_effort_source_update(
+        best_effort_source_update(
             payload=payload,
             blocks=queued_blocks,
             text="LinkedIn comment + Like queued",
             slack_api=slack_api,
             post_response_url=post_response_url,
+            workflow="feed comment",
         )
 
     responder._respond_json({"response_action": "clear"})
@@ -677,12 +680,13 @@ def handle_comment_cancel(
         status,
         suffix="cancelled" if cancelled else "cancel_failed",
     )
-    _best_effort_source_update(
+    best_effort_source_update(
         payload=data,
         blocks=blocks,
         text=fallback,
         slack_api=slack_api,
         post_response_url=post_response_url,
+        workflow="feed comment",
     )
     responder._respond_text(200, "")
 
@@ -737,65 +741,6 @@ def _compact_metadata(metadata: dict) -> str:
     if len(encoded) > _METADATA_LIMIT:
         raise ValueError("feed comment modal metadata exceeds Slack limit")
     return encoded
-
-
-def _best_effort_source_update(
-    *,
-    payload: dict,
-    blocks: list,
-    text: str,
-    slack_api,
-    post_response_url,
-) -> None:
-    response_url = payload.get("slack_response_url") or ""
-    if response_url:
-        try:
-            post_response_url(response_url, {
-                "replace_original": True,
-                "text": text,
-                "blocks": blocks,
-            })
-            return
-        except Exception:
-            logger.exception("Failed to update feed alert through Slack response_url")
-
-    channel_id = payload.get("slack_channel_id") or ""
-    message_ts = payload.get("slack_message_ts") or ""
-    if channel_id and message_ts:
-        try:
-            slack_api("chat.update", {
-                "channel": channel_id,
-                "ts": message_ts,
-                "text": text,
-                "blocks": blocks,
-            })
-            return
-        except Exception:
-            logger.exception("Failed to update feed alert through Slack chat.update")
-
-    logger.warning("No Slack source-message update path succeeded for feed comment")
-
-
-def _encode_source_blocks(blocks: list) -> str:
-    raw = json.dumps(blocks or [], separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return base64.urlsafe_b64encode(zlib.compress(raw, level=9)).decode("ascii")
-
-
-def _decode_source_blocks(value: str) -> list[dict]:
-    if not value:
-        raise ValueError("feed comment source blocks are missing")
-    try:
-        raw = zlib.decompress(base64.urlsafe_b64decode(value)).decode("utf-8")
-        decoded = json.loads(raw)
-    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, zlib.error) as exc:
-        raise ValueError("feed comment source blocks are malformed") from exc
-    if (
-        not isinstance(decoded, list)
-        or not decoded
-        or not all(isinstance(block, dict) for block in decoded)
-    ):
-        raise ValueError("feed comment source blocks are malformed")
-    return decoded
 
 
 def _decode_body(body: str) -> dict:

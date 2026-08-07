@@ -74,6 +74,7 @@ from linkedin.conf import (
     SLACK_WEBHOOK_URL,
 )
 from linkedin.feed_slack_status import render_feed_comment_status_blocks
+from linkedin.feed_like_slack_status import render_feed_like_status_blocks
 from linkedin.icp_outbound import is_unknown_company_name
 
 logger = logging.getLogger(__name__)
@@ -358,6 +359,96 @@ def notify_feed_comment_skipped(payload: dict, reason: str) -> None:
         status_text=f":leftwards_arrow_with_hook: *LinkedIn feed comment skipped* — `{short}`",
         suffix="skipped",
         fallback=fallback,
+    )
+
+
+def _update_feed_like_status(
+    payload: dict,
+    *,
+    status_text: str,
+    suffix: str,
+    fallback: str,
+) -> None:
+    channel_id = payload.get("slack_channel_id") or ""
+    message_ts = payload.get("slack_message_ts") or ""
+    source_blocks = payload.get("slack_blocks") or []
+    if not source_blocks:
+        logger.warning("Slack source blocks missing for feed Like %s", suffix)
+        return
+
+    updated_blocks = render_feed_like_status_blocks(
+        source_blocks,
+        status_text,
+        suffix=suffix,
+    )
+    if _post_slack_response_url(
+        payload.get("slack_response_url", ""),
+        {
+            "replace_original": True,
+            "text": fallback,
+            "blocks": updated_blocks,
+        },
+        f"feed Like {suffix}",
+    ):
+        return
+    if channel_id and message_ts:
+        if _slack_api(
+            "chat.update",
+            {
+                "channel": channel_id,
+                "ts": message_ts,
+                "text": fallback,
+                "blocks": updated_blocks,
+            },
+            f"feed Like {suffix}",
+        ):
+            return
+    logger.warning("Could not update source Slack alert for feed Like %s", suffix)
+
+
+def notify_feed_like_complete(
+    payload: dict,
+    *,
+    result: str,
+    post_label: str = "",
+) -> None:
+    target = f" on {post_label}" if post_label else ""
+    status, suffix = {
+        "liked": (f":white_check_mark: *LinkedIn post liked*{target}.", "liked"),
+        "already_liked": (
+            f":white_check_mark: *LinkedIn post was already liked*{target}.",
+            "already_liked",
+        ),
+        "preserved_reaction": (
+            f":information_source: *Existing LinkedIn reaction preserved*{target}.",
+            "preserved_reaction",
+        ),
+    }.get(result, (f":white_check_mark: *LinkedIn reaction checked*{target}.", "complete"))
+    _update_feed_like_status(
+        payload,
+        status_text=status,
+        suffix=suffix,
+        fallback=status.replace("*", ""),
+    )
+
+
+def notify_feed_like_uncertain(payload: dict, error: str) -> None:
+    short = (error or "Verify the reaction before retrying.").splitlines()[0][:240]
+    _update_feed_like_status(
+        payload,
+        status_text=f":warning: *LinkedIn Like needs manual verification* - `{short}`",
+        suffix="uncertain",
+        fallback=f"LinkedIn Like needs manual verification: {short}",
+    )
+
+
+def notify_feed_like_failed(payload: dict, error: str) -> None:
+    short = (error or "Unknown error").splitlines()[0][:240]
+    _update_feed_like_status(
+        payload,
+        status_text=f":warning: *LinkedIn Like failed* - `{short}`",
+        suffix="failed",
+        fallback=f"LinkedIn Like failed: {short}",
     )
 
 
@@ -785,7 +876,7 @@ def notify_feed_intent_signal_group(*, posts: list) -> bool:
 
 
 def _feed_action_block(post, target_url: str) -> dict:
-    """Render the post link and public-comment entrypoint in one action row."""
+    """Render feed navigation and engagement entrypoints in one action row."""
     return {
         "type": "actions",
         "block_id": f"feed_comment_actions:{post.id}",
@@ -795,6 +886,18 @@ def _feed_action_block(post, target_url: str) -> dict:
                 "action_id": "linkedin_feed_open_post_button",
                 "text": {"type": "plain_text", "text": "Open post"},
                 "url": target_url,
+                "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
+            },
+            {
+                "type": "button",
+                "action_id": "linkedin_feed_context_button",
+                "text": {"type": "plain_text", "text": "Post context"},
+                "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
+            },
+            {
+                "type": "button",
+                "action_id": "linkedin_feed_like_button",
+                "text": {"type": "plain_text", "text": "Like"},
                 "value": json.dumps({"post_id": post.id}, separators=(",", ":")),
             },
             {

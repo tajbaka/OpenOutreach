@@ -768,6 +768,7 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
         (Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.FEED_COMMENT) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.FEED_LIKE) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.DISCOVERY) & Q(payload__operator=operator))
         | (
@@ -786,8 +787,8 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     requests and 32 follow-up DMs for Chuka's campaign, from the wrong
     account.
 
-    - follow_up / manual_reply / sweep_connections / discovery: claimable when
-      `payload.operator` matches.
+    - follow_up / manual_reply / feed_comment / feed_like / sweep_connections /
+      discovery: claimable when `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
       account that owns the campaign.
@@ -847,8 +848,8 @@ class TaskQuerySet(models.QuerySet):
         daemon is logged in as; `campaign_ids` are the pks of the
         campaigns that account owns. When `operator` is supplied:
 
-          - follow_up/manual_reply/discovery Tasks are filtered to those whose
-            `payload.operator` matches;
+          - follow_up/manual_reply/feed_comment/feed_like/discovery Tasks are
+            filtered to those whose `payload.operator` matches;
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
             request must go out from the account that owns the campaign;
@@ -872,6 +873,7 @@ class TaskQuerySet(models.QuerySet):
         priority_queries = [
             qs.filter(task_type=Task.TaskType.MANUAL_REPLY),
             qs.filter(task_type=Task.TaskType.FEED_COMMENT),
+            qs.filter(task_type=Task.TaskType.FEED_LIKE),
             qs.filter(
                 task_type=Task.TaskType.SWEEP_CONNECTIONS,
                 scheduled_at__lte=timezone.now() - timedelta(
@@ -889,6 +891,7 @@ class TaskQuerySet(models.QuerySet):
                 task_type__in=[
                     Task.TaskType.MANUAL_REPLY,
                     Task.TaskType.FEED_COMMENT,
+                    Task.TaskType.FEED_LIKE,
                     Task.TaskType.STATUS_SUMMARY,
                     Task.TaskType.FOLLOW_UP,
                     Task.TaskType.CONNECT,
@@ -961,6 +964,7 @@ class Task(models.Model):
         GMAIL_FOLLOW_UP = "gmail_follow_up"
         MANUAL_REPLY = "manual_reply"
         FEED_COMMENT = "feed_comment"
+        FEED_LIKE = "feed_like"
         STATUS_SUMMARY = "status_summary"
         DISCOVERY = "discovery"
 
@@ -988,6 +992,7 @@ class Task(models.Model):
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
             cls.TaskType.FEED_COMMENT,
+            cls.TaskType.FEED_LIKE,
             cls.TaskType.SWEEP_CONNECTIONS,
             cls.TaskType.DISCOVERY,
         ]
@@ -1053,6 +1058,15 @@ class Task(models.Model):
                 errors.append("feed_comment tasks require non-empty payload.operator")
             if not (payload.get("message") or "").strip():
                 errors.append("feed_comment tasks require non-empty payload.message")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.FEED_LIKE
+        ):
+            if not payload.get("post_id"):
+                errors.append("feed_like tasks require payload.post_id")
+            if not payload.get("operator"):
+                errors.append("feed_like tasks require non-empty payload.operator")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

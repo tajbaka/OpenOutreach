@@ -249,6 +249,9 @@ def test_interaction_intent_routes_feed_comment_actions_through_registry():
     action_cases = {
         "linkedin_feed_comment_button": "feed_comment_button",
         "linkedin_feed_open_post_button": "feed_post_open",
+        "linkedin_feed_context_button": "feed_post_context",
+        "linkedin_feed_context_ai_button": "feed_post_context_ai",
+        "linkedin_feed_like_button": "feed_like_button",
         "linkedin_feed_comment_draft_button": "feed_comment_draft",
         "linkedin_feed_comment_cancel_button": "feed_comment_cancel",
     }
@@ -263,6 +266,10 @@ def test_interaction_intent_routes_feed_comment_actions_through_registry():
         "type": "view_submission",
         "view": {"callback_id": "linkedin_feed_comment_modal"},
     }) == "feed_comment_submission"
+    assert slack_enrich.interaction_intent({
+        "type": "view_submission",
+        "view": {"callback_id": "linkedin_feed_like_modal"},
+    }) == "feed_like_submission"
 
 
 def test_interaction_intent_rejects_unknown_select_action():

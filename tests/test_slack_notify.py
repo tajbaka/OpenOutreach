@@ -196,6 +196,27 @@ def test_notify_feed_comment_uncertain_falls_back_to_response_url(monkeypatch):
     assert sent["blocks"][-2]["block_id"] == "feed_comment_status:uncertain"
 
 
+def test_notify_feed_like_complete_updates_original_alert():
+    payload = {
+        "slack_response_url": "https://hooks.slack.com/actions/T/B/R",
+        "slack_blocks": _feed_source_blocks(),
+    }
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value.read.return_value = b"ok"
+        slack_mod.notify_feed_like_complete(
+            payload,
+            result="already_liked",
+            post_label="Ada Lovelace",
+        )
+
+    req = mock_urlopen.call_args[0][0]
+    assert req.full_url == "https://hooks.slack.com/actions/T/B/R"
+    sent = json.loads(req.data.decode("utf-8"))
+    assert sent["replace_original"] is True
+    assert sent["blocks"][-2]["block_id"] == "feed_like_status:already_liked"
+    assert "already liked" in sent["blocks"][-2]["text"]["text"]
+
+
 def test_notify_error_posts_block_kit_when_webhook_set(slack_url):
     """Exercises the POST body shape — header, traceback section, context block."""
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:

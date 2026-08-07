@@ -1437,6 +1437,7 @@ def test_enrich_phone_task_type_exists():
     assert Task.TaskType.GMAIL_FOLLOW_UP == "gmail_follow_up"
     assert Task.TaskType.MANUAL_REPLY == "manual_reply"
     assert Task.TaskType.FEED_COMMENT == "feed_comment"
+    assert Task.TaskType.FEED_LIKE == "feed_like"
     assert Task.TaskType.STATUS_SUMMARY == "status_summary"
 
 
