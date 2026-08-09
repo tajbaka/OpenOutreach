@@ -173,7 +173,6 @@ class LinkedInProfile(models.Model):
     connect_daily_limit = models.PositiveIntegerField(default=20)
     connect_weekly_limit = models.PositiveIntegerField(default=100)
     follow_up_daily_limit = models.PositiveIntegerField(default=30)
-    discovery_daily_limit = models.PositiveIntegerField(default=25)
     legal_accepted = models.BooleanField(default=False)
     newsletter_processed = models.BooleanField(default=False)
     # Cookies: stored on disk at `data/cookies-<safe_username>.json`

@@ -81,21 +81,9 @@ ENABLE_PACING_CATCH_UP = os.getenv("ENABLE_PACING_CATCH_UP", "false").strip().lo
 ENABLE_PROFILE_DISCOVERY = os.getenv(
     "ENABLE_PROFILE_DISCOVERY", "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
-DISCOVERY_TIMEZONE = os.getenv("DISCOVERY_TIMEZONE", "America/Toronto")
-DISCOVERY_WEEKDAY_START_HOUR = int(
-    os.getenv("DISCOVERY_WEEKDAY_START_HOUR", "18"),
-)
-DISCOVERY_WEEKDAY_END_HOUR = int(
-    os.getenv("DISCOVERY_WEEKDAY_END_HOUR", "21"),
-)
-DISCOVERY_RUN_ON_REST_DAYS = os.getenv(
-    "DISCOVERY_RUN_ON_REST_DAYS", "true",
-).strip().lower() in {"1", "true", "yes", "on"}
-DISCOVERY_REST_DAY_START_HOUR = int(
-    os.getenv("DISCOVERY_REST_DAY_START_HOUR", "11"),
-)
-DISCOVERY_REST_DAY_END_HOUR = int(
-    os.getenv("DISCOVERY_REST_DAY_END_HOUR", "16"),
+DISCOVERY_DAILY_LIMIT = int(os.getenv("DISCOVERY_DAILY_LIMIT", "25"))
+DISCOVERY_CONNECT_LIMIT_GRACE = int(
+    os.getenv("DISCOVERY_CONNECT_LIMIT_GRACE", "5"),
 )
 DISCOVERY_MAX_CARDS_PER_RUN = int(
     os.getenv("DISCOVERY_MAX_CARDS_PER_RUN", "200"),

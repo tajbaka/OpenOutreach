@@ -6,27 +6,26 @@ import pytest
 from linkedin import conf
 from linkedin.discovery.config import (
     discovery_day_bounds,
+    discovery_gate_open,
     discovery_limits,
-    discovery_window_open,
-    next_discovery_window_start,
+    next_discovery_day_start,
+    weekday_connection_work_complete,
 )
 from linkedin.exceptions import DiscoveryConfigurationError
+from linkedin.models import ActionLog
 
 
 def _configure(monkeypatch):
     monkeypatch.setattr(conf, "ENABLE_PROFILE_DISCOVERY", True)
-    monkeypatch.setattr(conf, "ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr(conf, "ENABLE_CONNECT", True)
+    monkeypatch.setattr(conf, "ENABLE_AUTO_DISCOVERY", False)
     monkeypatch.setattr(conf, "LLM_API_KEY", "test-key")
     monkeypatch.setattr(conf, "AI_MODEL", "test-model")
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "America/Toronto")
-    monkeypatch.setattr(conf, "ACTIVE_END_HOUR", 17)
-    monkeypatch.setattr(conf, "DISCOVERY_TIMEZONE", "America/Toronto")
-    monkeypatch.setattr(conf, "DISCOVERY_WEEKDAY_START_HOUR", 18)
-    monkeypatch.setattr(conf, "DISCOVERY_WEEKDAY_END_HOUR", 21)
-    monkeypatch.setattr(conf, "DISCOVERY_RUN_ON_REST_DAYS", True)
-    monkeypatch.setattr(conf, "DISCOVERY_REST_DAY_START_HOUR", 11)
-    monkeypatch.setattr(conf, "DISCOVERY_REST_DAY_END_HOUR", 16)
     monkeypatch.setattr(conf, "REST_DAYS", (5, 6))
+    monkeypatch.setattr(conf, "CONNECT_DAILY_LIMIT", None)
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 25)
+    monkeypatch.setattr(conf, "DISCOVERY_CONNECT_LIMIT_GRACE", 5)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_CARDS_PER_RUN", 200)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PAGES_PER_RUN", 10)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PROFILE_VISITS_PER_RUN", 40)
@@ -36,34 +35,68 @@ def _configure(monkeypatch):
     monkeypatch.setattr(conf, "DISCOVERY_PROFILE_DELAY_MAX_SECONDS", 45)
 
 
-def test_weekday_discovery_opens_only_after_outbound(monkeypatch):
+@pytest.mark.django_db
+def test_weekday_waits_until_within_grace_of_connect_limit(
+    fake_session,
+    monkeypatch,
+):
+    from tests.factories import DealFactory
+    from linkedin.enums import ProfileState
+
     _configure(monkeypatch)
-    tz = ZoneInfo("America/Toronto")
+    fake_session.linkedin_profile.connect_daily_limit = 20
+    fake_session.linkedin_profile.save(update_fields=["connect_daily_limit"])
+    DealFactory(campaign=fake_session.campaign, state=ProfileState.READY_TO_CONNECT)
+    now = datetime(2026, 7, 29, 12, 0, tzinfo=ZoneInfo("America/Toronto"))
 
-    assert not discovery_window_open(datetime(2026, 7, 29, 17, 59, tzinfo=tz))
-    assert discovery_window_open(datetime(2026, 7, 29, 18, 0, tzinfo=tz))
-    assert not discovery_window_open(datetime(2026, 7, 29, 21, 0, tzinfo=tz))
+    assert not weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
+    logs = ActionLog.objects.bulk_create(
+        [
+            ActionLog(
+                linkedin_profile=fake_session.linkedin_profile,
+                campaign=fake_session.campaign,
+                action_type=ActionLog.ActionType.CONNECT,
+            )
+            for _ in range(15)
+        ],
+    )
+    ActionLog.objects.filter(pk__in=[log.pk for log in logs]).update(created_at=now)
+
+    assert weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
+    assert discovery_gate_open(fake_session.linkedin_profile, now=now)
 
 
-def test_rest_day_uses_its_own_window(monkeypatch):
+@pytest.mark.django_db
+def test_weekday_opens_when_connect_lane_has_no_work(fake_session, monkeypatch):
     _configure(monkeypatch)
-    tz = ZoneInfo("America/Toronto")
+    now = datetime(2026, 7, 29, 10, 0, tzinfo=ZoneInfo("America/Toronto"))
 
-    assert discovery_window_open(datetime(2026, 8, 1, 12, 0, tzinfo=tz))
-    assert not discovery_window_open(datetime(2026, 8, 1, 17, 0, tzinfo=tz))
+    assert discovery_gate_open(fake_session.linkedin_profile, now=now)
 
 
-def test_next_window_moves_to_rest_day_window(monkeypatch):
+@pytest.mark.django_db
+def test_rest_day_is_free_without_connection_progress(fake_session, monkeypatch):
     _configure(monkeypatch)
-    tz = ZoneInfo("America/Toronto")
-    friday_after_window = datetime(2026, 7, 31, 22, 0, tzinfo=tz)
+    saturday = datetime(2026, 8, 1, 1, 0, tzinfo=ZoneInfo("America/Toronto"))
 
-    result = next_discovery_window_start(friday_after_window)
-
-    assert result == datetime(2026, 8, 1, 11, 0, tzinfo=tz)
+    assert discovery_gate_open(fake_session.linkedin_profile, now=saturday)
 
 
-def test_day_bounds_use_discovery_timezone(monkeypatch):
+def test_next_discovery_day_is_local_midnight(monkeypatch):
+    _configure(monkeypatch)
+    current = datetime(2026, 7, 31, 22, 0, tzinfo=ZoneInfo("America/Toronto"))
+
+    assert next_discovery_day_start(current) == datetime(
+        2026,
+        8,
+        1,
+        0,
+        0,
+        tzinfo=ZoneInfo("America/Toronto"),
+    )
+
+
+def test_day_bounds_use_active_timezone(monkeypatch):
     _configure(monkeypatch)
     utc = ZoneInfo("UTC")
 
@@ -75,17 +108,9 @@ def test_day_bounds_use_discovery_timezone(monkeypatch):
 
 def test_invalid_limit_configuration_fails(monkeypatch):
     _configure(monkeypatch)
-    monkeypatch.setattr(conf, "DISCOVERY_MAX_CARDS_PER_RUN", 0)
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 0)
 
     with pytest.raises(DiscoveryConfigurationError, match="must be positive"):
-        discovery_limits()
-
-
-def test_discovery_requires_active_hours(monkeypatch):
-    _configure(monkeypatch)
-    monkeypatch.setattr(conf, "ENABLE_ACTIVE_HOURS", False)
-
-    with pytest.raises(DiscoveryConfigurationError, match="ENABLE_ACTIVE_HOURS"):
         discovery_limits()
 
 
@@ -94,12 +119,4 @@ def test_discovery_requires_llm_configuration(monkeypatch):
     monkeypatch.setattr(conf, "LLM_API_KEY", "")
 
     with pytest.raises(DiscoveryConfigurationError, match="LLM_API_KEY and AI_MODEL"):
-        discovery_limits()
-
-
-def test_discovery_timezone_must_match_outbound_timezone(monkeypatch):
-    _configure(monkeypatch)
-    monkeypatch.setattr(conf, "DISCOVERY_TIMEZONE", "UTC")
-
-    with pytest.raises(DiscoveryConfigurationError, match="must match ACTIVE_TIMEZONE"):
         discovery_limits()

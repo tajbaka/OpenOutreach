@@ -9,12 +9,12 @@ from django.utils import timezone
 from linkedin import conf
 from linkedin.browser.registry import get_or_create_session
 from linkedin.discovery.collector import (
+    discovery_available_now,
     discovery_enabled_for_sender,
     reconcile_discovery_tasks,
 )
 from linkedin.discovery.config import (
-    discovery_window_end,
-    discovery_window_open,
+    discovery_day_end,
     validate_discovery_settings,
 )
 from linkedin.models import LinkedInDiscoveryLead, LinkedInProfile, Task
@@ -45,8 +45,6 @@ class Command(BaseCommand):
         validate_discovery_settings()
         if not conf.ENABLE_PROFILE_DISCOVERY:
             raise CommandError("ENABLE_PROFILE_DISCOVERY is false.")
-        if not discovery_window_open():
-            raise CommandError("The configured discovery window is not open.")
         max_tasks = options["max_tasks"]
         if max_tasks < 1:
             raise CommandError("--max-tasks must be at least 1.")
@@ -63,6 +61,11 @@ class Command(BaseCommand):
         if not discovery_enabled_for_sender(profile, operator):
             raise CommandError(
                 f"Discovery is not configured for sender {operator}.",
+            )
+        if not discovery_available_now(profile, operator):
+            raise CommandError(
+                "Discovery is not currently eligible: weekday connection work "
+                "is incomplete or today's discovery limit has been reached.",
             )
 
         reconcile_discovery_tasks(profile, operator)
@@ -96,11 +99,9 @@ class Command(BaseCommand):
                 )
                 if wait_seconds is None:
                     break
-                window_end = discovery_window_end()
-                if window_end is None:
-                    break
+                day_end = discovery_day_end()
                 if wait_seconds:
-                    if wait_seconds >= (window_end - timezone.now()).total_seconds():
+                    if wait_seconds >= (day_end - timezone.now()).total_seconds():
                         break
                     time.sleep(wait_seconds)
 

@@ -5,10 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from linkedin import conf
 from linkedin.discovery.collector import enqueue_discovery
-from linkedin.discovery.config import (
-    next_discovery_window_start,
-    validate_discovery_settings,
-)
+from linkedin.discovery.config import discovery_gate_open, validate_discovery_settings
 from linkedin.discovery.limits import remaining_today, saved_today
 from linkedin.icp_outbound import (
     discovery_search_queries,
@@ -51,14 +48,14 @@ class Command(BaseCommand):
             targets = load_discovery_targets(operator)
             queries = discovery_search_queries(targets)
             saved = saved_today(operator)
-            remaining = remaining_today(profile, operator)
-            next_window = next_discovery_window_start()
+            remaining = remaining_today(operator)
+            gate = discovery_gate_open(profile)
 
             self.stdout.write(
                 f"{operator} ({profile.user.username}): "
                 f"enabled_icps={len(targets)} queries={len(queries)} "
-                f"saved_today={saved}/{profile.discovery_daily_limit} "
-                f"remaining={remaining} next_window={next_window or 'disabled'}",
+                f"saved_today={saved}/{conf.DISCOVERY_DAILY_LIMIT} "
+                f"remaining={remaining} eligible_now={gate}",
             )
             if options["dry_run"]:
                 continue

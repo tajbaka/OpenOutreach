@@ -17,12 +17,12 @@ from linkedin.actions.search import search_profile
 from linkedin.api.client import PlaywrightLinkedinAPI
 from linkedin.db.urls import public_id_to_url, url_to_public_id
 from linkedin.discovery.config import (
+    discovery_day_end,
     discovery_day_bounds,
+    discovery_gate_open,
     discovery_limits,
     discovery_local_now,
-    discovery_window_end,
-    discovery_window_open,
-    next_discovery_window_start,
+    next_discovery_day_start,
 )
 from linkedin.discovery.limits import remaining_today, saved_today
 from linkedin.discovery.screening import screen_cards
@@ -162,7 +162,7 @@ def save_discovery_profile(
 
     try:
         with transaction.atomic():
-            locked_profile = LinkedInProfile.objects.select_for_update().get(
+            LinkedInProfile.objects.select_for_update().get(
                 pk=linkedin_profile.pk,
             )
             count = LinkedInDiscoveryLead.objects.filter(
@@ -170,10 +170,7 @@ def save_discovery_profile(
                 created_at__gte=start,
                 created_at__lt=end,
             ).count()
-            if (
-                locked_profile.discovery_daily_limit == 0
-                or count >= locked_profile.discovery_daily_limit
-            ):
+            if count >= conf.DISCOVERY_DAILY_LIMIT:
                 return DiscoverySaveResult(False, True, "daily_save_limit_reached")
 
             LinkedInDiscoveryLead.objects.create(
@@ -193,7 +190,7 @@ def save_discovery_profile(
                 last_seen_at=now,
                 last_profiled_at=now,
             )
-            reached = count + 1 >= locked_profile.discovery_daily_limit
+            reached = count + 1 >= conf.DISCOVERY_DAILY_LIMIT
     except IntegrityError:
         return DiscoverySaveResult(False, False, "existing_discovery_lead")
 
@@ -243,18 +240,15 @@ def enqueue_discovery(
     if not conf.ENABLE_PROFILE_DISCOVERY:
         return False
     targets = load_discovery_targets(operator)
-    if not targets or linkedin_profile.discovery_daily_limit == 0:
+    if not targets:
         return False
     discovery_limits()  # validate settings before creating queue state
     if _active_discovery_task_exists(operator):
         return False
-    if remaining_today(linkedin_profile, operator) <= 0:
-        scheduled_at = next_discovery_window_start(
-            timezone.now(),
-            after_current_day=True,
-        )
+    if remaining_today(operator) <= 0:
+        scheduled_at = next_discovery_day_start()
     else:
-        scheduled_at = scheduled_at or next_discovery_window_start()
+        scheduled_at = scheduled_at or timezone.now()
     if scheduled_at is None:
         return False
     Task.objects.create(
@@ -265,10 +259,11 @@ def enqueue_discovery(
     return True
 
 
-def disable_pending_discovery_tasks(reason: str) -> int:
+def disable_pending_discovery_tasks(operator: str, reason: str) -> int:
     return Task.objects.filter(
         task_type=Task.TaskType.DISCOVERY,
         status=Task.Status.PENDING,
+        payload__operator=operator,
     ).update(
         status=Task.Status.COMPLETED,
         completed_at=timezone.now(),
@@ -282,8 +277,20 @@ def discovery_enabled_for_sender(
 ) -> bool:
     return bool(
         conf.ENABLE_PROFILE_DISCOVERY
-        and linkedin_profile.discovery_daily_limit > 0
         and load_discovery_targets(operator)
+    )
+
+
+def discovery_available_now(
+    linkedin_profile: LinkedInProfile,
+    operator: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    return bool(
+        discovery_enabled_for_sender(linkedin_profile, operator)
+        and remaining_today(operator, now=now) > 0
+        and discovery_gate_open(linkedin_profile, now=now)
     )
 
 
@@ -293,11 +300,11 @@ def reconcile_discovery_tasks(
 ) -> bool:
     """Normalize startup queue state and ensure one correctly timed task."""
     if not conf.ENABLE_PROFILE_DISCOVERY:
-        disable_pending_discovery_tasks("Profile discovery disabled")
+        disable_pending_discovery_tasks(operator, "Profile discovery disabled")
         return False
 
     targets = load_discovery_targets(operator)
-    if linkedin_profile.discovery_daily_limit == 0 or not targets:
+    if not targets:
         Task.objects.filter(
             task_type=Task.TaskType.DISCOVERY,
             status=Task.Status.PENDING,
@@ -329,14 +336,16 @@ def reconcile_discovery_tasks(
     now = timezone.now()
     if pending:
         task = pending[0]
-        at_daily_limit = remaining_today(linkedin_profile, operator, now=now) <= 0
+        at_daily_limit = remaining_today(operator, now=now) <= 0
         if at_daily_limit:
-            scheduled_at = next_discovery_window_start(
-                now,
-                after_current_day=True,
+            scheduled_at = next_discovery_day_start(now)
+        elif (
+            not task.payload.get("run_started_at")
+            and task.scheduled_at > now + timedelta(
+                seconds=conf.DISCOVERY_PROFILE_DELAY_MAX_SECONDS,
             )
-        elif task.scheduled_at <= now and not discovery_window_open(now):
-            scheduled_at = next_discovery_window_start(now)
+        ):
+            scheduled_at = now
         else:
             scheduled_at = None
         if (
@@ -362,16 +371,13 @@ def _create_pending_task(payload: dict, scheduled_at: datetime) -> None:
     )
 
 
-def _schedule_fresh_next_window(
+def _schedule_fresh_task(
     *,
     operator: str,
     now: datetime,
-    after_current_day: bool,
+    next_day: bool,
 ) -> None:
-    scheduled_at = next_discovery_window_start(
-        now,
-        after_current_day=after_current_day,
-    )
+    scheduled_at = next_discovery_day_start(now) if next_day else now
     if scheduled_at is None:
         return
     if Task.objects.filter(
@@ -402,7 +408,7 @@ def _record_stop(task: Task, payload: dict, reason: str) -> None:
     )
 
 
-def _finish_for_window(
+def _finish_for_day(
     task: Task,
     payload: dict,
     *,
@@ -412,10 +418,10 @@ def _finish_for_window(
 ) -> None:
     _record_stop(task, payload, reason)
     if schedule_next:
-        _schedule_fresh_next_window(
+        _schedule_fresh_task(
             operator=payload["operator"],
             now=now,
-            after_current_day=True,
+            next_day=True,
         )
 
 
@@ -437,9 +443,9 @@ def _hard_stop_before_visit(
     now: datetime,
 ) -> str:
     limits = discovery_limits()
-    if not discovery_window_open(now):
-        return "window_closed"
-    if remaining_today(session.linkedin_profile, operator, now=now) <= 0:
+    if not discovery_gate_open(session.linkedin_profile, now=now):
+        return "weekday_connection_work_incomplete"
+    if remaining_today(operator, now=now) <= 0:
         return "daily_save_limit_reached"
     if _run_time_exhausted(payload, now, limits.max_run_minutes):
         return "run_time_limit_reached"
@@ -502,19 +508,18 @@ def _continuation_delay() -> int:
     return random.randint(limits.delay_min_seconds, limits.delay_max_seconds)
 
 
-def _queue_continuation_or_next_window(
+def _queue_continuation_or_next_day(
     task: Task,
     payload: dict,
     *,
     now: datetime,
 ) -> None:
     scheduled_at = now + timedelta(seconds=_continuation_delay())
-    window_end = discovery_window_end(now)
-    if window_end is None or scheduled_at >= window_end:
-        _finish_for_window(
+    if scheduled_at >= discovery_day_end(now):
+        _finish_for_day(
             task,
             payload,
-            reason="window_closed",
+            reason="day_ended",
             now=now,
         )
         return
@@ -586,7 +591,7 @@ def _process_pending_card(
         now=now,
     )
     if stop_reason:
-        _finish_for_window(task, payload, reason=stop_reason, now=now)
+        _finish_for_day(task, payload, reason=stop_reason, now=now)
         return
 
     pending = list(payload.get("pending_cards") or [])
@@ -609,11 +614,11 @@ def _process_pending_card(
         card.potential_icp,
         result.reason,
         saved_today(operator),
-        session.linkedin_profile.discovery_daily_limit,
+        conf.DISCOVERY_DAILY_LIMIT,
     )
 
     if result.daily_limit_reached:
-        _finish_for_window(
+        _finish_for_day(
             task,
             payload,
             reason="daily_save_limit_reached",
@@ -621,21 +626,21 @@ def _process_pending_card(
         )
         return
     if pending:
-        _queue_continuation_or_next_window(
+        _queue_continuation_or_next_day(
             task,
             payload,
             now=timezone.now(),
         )
         return
     if payload.get("stop_after_pending"):
-        _finish_for_window(
+        _finish_for_day(
             task,
             payload,
             reason=payload["stop_after_pending"],
             now=timezone.now(),
         )
         return
-    _queue_continuation_or_next_window(
+    _queue_continuation_or_next_day(
         task,
         payload,
         now=timezone.now(),
@@ -659,19 +664,16 @@ def handle_discovery(task: Task, session, qualifiers=None) -> None:
     if not conf.ENABLE_PROFILE_DISCOVERY:
         _record_stop(task, payload, "discovery_disabled")
         return
-    if session.linkedin_profile.discovery_daily_limit == 0:
-        _record_stop(task, payload, "sender_disabled")
-        return
     if not targets:
         _record_stop(task, payload, "no_enabled_icps")
         return
     discovery_limits()
-    if not discovery_window_open(now):
-        _record_stop(task, payload, "window_closed")
-        _schedule_fresh_next_window(
+    if not discovery_gate_open(session.linkedin_profile, now=now):
+        _record_stop(task, payload, "weekday_connection_work_incomplete")
+        _schedule_fresh_task(
             operator=operator,
             now=now,
-            after_current_day=False,
+            next_day=False,
         )
         return
 
@@ -689,11 +691,11 @@ def handle_discovery(task: Task, session, qualifiers=None) -> None:
         now=now,
     )
     if hard_stop:
-        _finish_for_window(task, payload, reason=hard_stop, now=now)
+        _finish_for_day(task, payload, reason=hard_stop, now=now)
         return
     scan_stop = _scan_stop_reason(payload)
     if scan_stop:
-        _finish_for_window(task, payload, reason=scan_stop, now=now)
+        _finish_for_day(task, payload, reason=scan_stop, now=now)
         return
 
     queries = discovery_search_queries(targets)
@@ -710,7 +712,7 @@ def handle_discovery(task: Task, session, qualifiers=None) -> None:
             page_number=page_number,
         )
     except LinkedInDiscoveryLimitError:
-        _finish_for_window(
+        _finish_for_day(
             task,
             payload,
             reason="linkedin_limit_detected",
@@ -804,14 +806,14 @@ def handle_discovery(task: Task, session, qualifiers=None) -> None:
         _process_pending_card(task, session, payload, targets, now=timezone.now())
         return
     if payload.get("stop_after_pending"):
-        _finish_for_window(
+        _finish_for_day(
             task,
             payload,
             reason=payload["stop_after_pending"],
             now=timezone.now(),
         )
         return
-    _queue_continuation_or_next_window(
+    _queue_continuation_or_next_day(
         task,
         payload,
         now=timezone.now(),
