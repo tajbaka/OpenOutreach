@@ -108,7 +108,7 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 | **`connect`** | Sends invite + initial note; persists outbound to `crm.Message`. Gated by daily/weekly limits per profile. |
 | **`sweep_connections`** | Visits the connections page every 6h (configurable), bulk-detects accepts, transitions PENDING → CONNECTED, captures first reply, posts Slack. Replaces the legacy per-profile `check_pending`. |
 | **`follow_up`** | Runs the multi-turn LLM agent on connected leads. Gated by `ENABLE_FOLLOW_UP` — when off, queued tasks are cancelled at startup. |
-| **`discovery`** | On weekdays after sender connection work finishes, or at any time on rest days, scans bounded `/mynetwork/grow/` and one-hop profile recommendations, lightly matches cards to that sender's enabled non-CMMC ICP blocks in `icp_messages.json`, opens plausible profiles, and saves them to `LinkedInDiscoveryLead` up to `DISCOVERY_DAILY_LIMIT`. Never creates CRM or outbound state. |
+| **`discovery`** | On weekdays after sender connection work finishes, or at any time on rest days, scans bounded `/mynetwork/grow/` and one-hop profile recommendations, scores cards against that sender's enabled non-CMMC ICP blocks in `icp_messages.json`, opens profiles at or above `DISCOVERY_VISIT_SCORE_THRESHOLD`, and saves them to `LinkedInDiscoveryLead` up to `DISCOVERY_DAILY_LIMIT`. Never creates CRM or outbound state. |
 | **`check_pending`** | Legacy task type, retained for migration compatibility. New deployments should use `sweep_connections`. |
 
 **Storage:**
@@ -197,6 +197,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 | `ENABLE_ACTIVE_HOURS` | `false` | Restrict daemon to a daily window |
 | `ENABLE_AUTO_DISCOVERY` | `false` | Autonomous lead-search via the ML pipeline |
 | `ENABLE_PROFILE_DISCOVERY` | `false` | Separate bounded profile collection after outbound hours/rest days |
+| `DISCOVERY_VISIT_SCORE_THRESHOLD` | `70` | Minimum discovery ICP-fit score before opening a recommended profile |
 | `CONNECTION_SWEEP_INTERVAL_HOURS` | `2` | How often the sweep task fires |
 | `AI_MODEL` | `gpt-4o` | Used for both qualification and synthesis (cheap models work fine for synthesis) |
 | `DATABASE_URL` | (unset → SQLite) | Postgres connection string |

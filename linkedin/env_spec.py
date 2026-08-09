@@ -133,6 +133,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Comma-separated weekday indices the daemon rests on (Mon=0)."),
     EnvVar("DISCOVERY_DAILY_LIMIT", False, False, "25", "discovery",
            "Maximum new discovery profiles stored per sender/local day."),
+    EnvVar("DISCOVERY_VISIT_SCORE_THRESHOLD", False, False, "70", "discovery",
+           "Minimum LLM ICP-fit score required before opening a discovered profile."),
     EnvVar("DISCOVERY_MAX_CARDS_PER_RUN", False, False, "200", "discovery",
            "Hard cap on recommendation cards scanned in one sender run."),
     EnvVar("DISCOVERY_MAX_SECTIONS_PER_RUN", False, False, "12", "discovery",

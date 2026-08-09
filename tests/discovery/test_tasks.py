@@ -575,7 +575,7 @@ def test_recommendation_screening_is_batched(
         targets=icp_outbound.load_discovery_targets("testuser@example.com"),
     )
 
-    assert batch_sizes == [20, 1]
+    assert batch_sizes == [5, 5, 5, 5, 1]
 
 
 def test_mynetwork_budget_reserves_capacity_for_profile_recommendations(

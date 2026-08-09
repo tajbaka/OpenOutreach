@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from linkedin.db.urls import public_id_to_url, url_to_public_id
 from linkedin.exceptions import AuthenticationError, DiscoverySurfaceError
 
@@ -163,7 +166,10 @@ def scroll_recommendation_container(container) -> None:
     )
     links = container.locator('a[href*="/in/"]')
     if links.count() > 0:
-        links.last.scroll_into_view_if_needed(timeout=2_000)
+        try:
+            links.last.scroll_into_view_if_needed(timeout=2_000)
+        except (PlaywrightError, PlaywrightTimeoutError):
+            pass
     container.page.wait_for_timeout(900)
 
 

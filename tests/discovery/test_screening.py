@@ -1,5 +1,6 @@
 import pytest
 
+from linkedin import conf
 from linkedin.exceptions import DiscoveryScreeningError
 from linkedin.icp_outbound import DiscoveryTarget
 from linkedin.discovery.screening import screen_cards
@@ -34,17 +35,19 @@ def _targets():
     )
 
 
-def test_structured_screen_accepts_enabled_icp():
+def test_structured_screen_visits_best_score_above_threshold(monkeypatch):
+    monkeypatch.setattr(conf, "DISCOVERY_VISIT_SCORE_THRESHOLD", 70)
     decisions = screen_cards(
         [_card()],
         _targets(),
         structured_model=_Model(
             {
-                "decisions": [
+                "scores": [
                     {
                         "public_identifier": "jane",
-                        "should_visit": True,
-                        "potential_icp": "CSPs",
+                        "best_icp": "CSPs",
+                        "score": 82,
+                        "reason": "Security leadership matches the ICP.",
                     },
                 ],
             },
@@ -53,6 +56,80 @@ def test_structured_screen_accepts_enabled_icp():
 
     assert decisions["jane"].should_visit
     assert decisions["jane"].potential_icp == "CSPs"
+    assert decisions["jane"].score == 82
+
+
+def test_structured_screen_skips_below_threshold(monkeypatch):
+    monkeypatch.setattr(conf, "DISCOVERY_VISIT_SCORE_THRESHOLD", 70)
+    decisions = screen_cards(
+        [_card()],
+        _targets(),
+        structured_model=_Model(
+            {
+                "scores": [
+                    {
+                        "public_identifier": "jane",
+                        "best_icp": "CSPs",
+                        "score": 45,
+                        "reason": "Generic cloud company signal only.",
+                    },
+                ],
+            },
+        ),
+    )
+
+    assert not decisions["jane"].should_visit
+    assert decisions["jane"].potential_icp == ""
+    assert decisions["jane"].score == 45
+
+
+def test_structured_screen_accepts_best_scoring_enabled_icp(monkeypatch):
+    monkeypatch.setattr(conf, "DISCOVERY_VISIT_SCORE_THRESHOLD", 70)
+    decisions = screen_cards(
+        [_card()],
+        (
+            DiscoveryTarget(icp="CSPs", profile="Cloud security leaders"),
+            DiscoveryTarget(icp="Advisors", profile="Compliance advisors"),
+        ),
+        structured_model=_Model(
+            {
+                "scores": [
+                    {
+                        "public_identifier": "jane",
+                        "best_icp": "Advisors",
+                        "score": 91,
+                        "reason": "Compliance advisory role.",
+                    },
+                ],
+            },
+        ),
+    )
+
+    assert decisions["jane"].should_visit
+    assert decisions["jane"].potential_icp == "Advisors"
+    assert decisions["jane"].score == 91
+
+
+def test_structured_screen_canonicalizes_wrapped_identifier(monkeypatch):
+    monkeypatch.setattr(conf, "DISCOVERY_VISIT_SCORE_THRESHOLD", 70)
+    decisions = screen_cards(
+        [_card()],
+        _targets(),
+        structured_model=_Model(
+            {
+                "scores": [
+                    {
+                        "public_identifier": "ja\nne",
+                        "best_icp": "CSPs",
+                        "score": 82,
+                        "reason": "Security leadership matches the ICP.",
+                    },
+                ],
+            },
+        ),
+    )
+
+    assert decisions["jane"].should_visit
 
 
 def test_structured_screen_rejects_invented_icp():
@@ -62,11 +139,12 @@ def test_structured_screen_rejects_invented_icp():
             _targets(),
             structured_model=_Model(
                 {
-                    "decisions": [
+                    "scores": [
                         {
                             "public_identifier": "jane",
-                            "should_visit": True,
-                            "potential_icp": "Invented",
+                            "best_icp": "Invented",
+                            "score": 90,
+                            "reason": "Invalid ICP.",
                         },
                     ],
                 },
@@ -79,5 +157,5 @@ def test_structured_screen_requires_every_card():
         screen_cards(
             [_card()],
             _targets(),
-            structured_model=_Model({"decisions": []}),
+            structured_model=_Model({"scores": []}),
         )

@@ -72,6 +72,11 @@ def validate_discovery_settings() -> None:
         if value <= 0:
             raise DiscoveryConfigurationError(f"{name} must be positive")
 
+    if not 0 <= conf.DISCOVERY_VISIT_SCORE_THRESHOLD <= 100:
+        raise DiscoveryConfigurationError(
+            "DISCOVERY_VISIT_SCORE_THRESHOLD must be between 0 and 100",
+        )
+
     if (
         conf.DISCOVERY_PROFILE_DELAY_MIN_SECONDS
         > conf.DISCOVERY_PROFILE_DELAY_MAX_SECONDS

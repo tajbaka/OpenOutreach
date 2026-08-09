@@ -224,8 +224,10 @@ scheduled beyond the local day, no connectable work remains, or the connect lane
 is disabled; on configured rest days it may run at any hour. Each bounded unit
 reads source-specific `/mynetwork/grow/` recommendation sections
 and one depth-1 `More profiles for you` hop, skips self/existing CRM/existing
-discovery/suppressed profiles, runs a structured visit/no-visit screen against
-enabled ICP descriptions, and stores a fetched Voyager profile in
+discovery/suppressed profiles, runs a structured best-ICP score screen against
+enabled ICP descriptions, opens only cards at or above
+`DISCOVERY_VISIT_SCORE_THRESHOLD`, canonicalizes whitespace-wrapped returned
+profile IDs before validation, and stores a fetched Voyager profile in
 `LinkedInDiscoveryLead`. `DISCOVERY_DAILY_LIMIT` (default 25) counts only new
 rows per sender/local day; independent card/section/scroll/profile-visit/
 no-match/run-time caps bound low-yield browsing. This lane never creates

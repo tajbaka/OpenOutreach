@@ -52,7 +52,7 @@ from linkedin.suppression import lead_suppression_match
 
 logger = logging.getLogger(__name__)
 
-DISCOVERY_SCREEN_BATCH_SIZE = 20
+DISCOVERY_SCREEN_BATCH_SIZE = 5
 
 
 @dataclass(frozen=True)
@@ -587,39 +587,25 @@ def _screen_new_cards(
         for value in payload.get("seen_public_identifiers", [])
         if _canonical_public_identifier(value)
     }
-    considered: list[DiscoveryCard] = []
-    processed_cards: list[DiscoveryCard] = []
-    candidate_ids: set[str] = set()
-    skip_reasons: dict[str, str] = {}
+    operator = (payload.get("operator") or "").strip()
+    match_capacity = min(
+        max(limits.max_profile_visits - payload["profile_visits"], 0),
+        remaining_today(operator) if operator else limits.max_profile_visits,
+    )
+    if match_capacity <= 0:
+        payload["seen_public_identifiers"] = sorted(seen)
+        payload["stop_after_pending"] = "profile_visit_limit_reached"
+        return []
 
-    for card in cards:
-        public_identifier = _canonical_public_identifier(card.public_identifier)
-        if not public_identifier or public_identifier in seen:
-            continue
-        if payload["cards_scanned"] >= limits.max_cards:
-            payload["stop_after_pending"] = "card_limit_reached"
-            break
-        seen.add(public_identifier)
-        payload["cards_scanned"] += 1
-        processed_cards.append(card)
-        reason = known_profile_reason(card)
-        if reason:
-            skip_reasons[public_identifier] = reason
-            continue
-        considered.append(card)
-        candidate_ids.add(public_identifier)
-
-    payload["seen_public_identifiers"] = sorted(seen)
-    decisions = {}
-    for offset in range(0, len(considered), DISCOVERY_SCREEN_BATCH_SIZE):
-        batch = considered[offset : offset + DISCOVERY_SCREEN_BATCH_SIZE]
-        decisions.update(screen_cards(batch, targets))
     matches: list[DiscoveryCard] = []
-    for card in processed_cards:
-        public_identifier = _canonical_public_identifier(card.public_identifier)
-        if public_identifier in skip_reasons:
-            payload["consecutive_no_matches"] += 1
-        elif public_identifier in candidate_ids:
+    pending_batch: list[DiscoveryCard] = []
+
+    def flush_batch() -> bool:
+        if not pending_batch:
+            return False
+        decisions = screen_cards(pending_batch, targets)
+        for card in pending_batch:
+            public_identifier = _canonical_public_identifier(card.public_identifier)
             decision = decisions[public_identifier]
             if decision.should_visit:
                 payload["consecutive_no_matches"] = 0
@@ -640,16 +626,49 @@ def _screen_new_cards(
                         recommendation_depth=card.recommendation_depth,
                     ),
                 )
+                if len(matches) >= match_capacity:
+                    return True
             else:
                 payload["consecutive_no_matches"] += 1
-        if (
-            payload["consecutive_no_matches"]
-            >= limits.max_consecutive_no_matches
-        ):
-            payload["stop_after_pending"] = (
-                "consecutive_no_match_limit_reached"
-            )
+            if (
+                payload["consecutive_no_matches"]
+                >= limits.max_consecutive_no_matches
+            ):
+                payload["stop_after_pending"] = (
+                    "consecutive_no_match_limit_reached"
+                )
+                return True
+        pending_batch.clear()
+        return False
+
+    for card in cards:
+        public_identifier = _canonical_public_identifier(card.public_identifier)
+        if not public_identifier or public_identifier in seen:
+            continue
+        if payload["cards_scanned"] >= limits.max_cards:
+            payload["stop_after_pending"] = "card_limit_reached"
             break
+        seen.add(public_identifier)
+        payload["cards_scanned"] += 1
+        reason = known_profile_reason(card)
+        if reason:
+            payload["consecutive_no_matches"] += 1
+            if (
+                payload["consecutive_no_matches"]
+                >= limits.max_consecutive_no_matches
+            ):
+                payload["stop_after_pending"] = (
+                    "consecutive_no_match_limit_reached"
+                )
+                break
+            continue
+        pending_batch.append(card)
+        if len(pending_batch) >= DISCOVERY_SCREEN_BATCH_SIZE and flush_batch():
+            break
+
+    payload["seen_public_identifiers"] = sorted(seen)
+    if len(matches) < match_capacity:
+        flush_batch()
     return matches
 
 
