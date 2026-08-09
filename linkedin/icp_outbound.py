@@ -183,7 +183,6 @@ class DiscoveryTarget:
 
     icp: str
     profile: str
-    search_queries: tuple[str, ...]
 
 
 def is_unknown_company_name(company_name: str | None) -> bool:
@@ -316,13 +315,12 @@ def load_discovery_targets(sender: str) -> tuple[DiscoveryTarget, ...]:
 
     Discovery metadata lives alongside that sender's existing outbound
     channels in ``icp_messages.json``. A missing ``discovery`` block means
-    disabled. Disabled blocks may omit a profile and queries; enabled blocks
-    must provide both a non-empty profile and at least one explicit search
-    query so the browser never invents an unbounded search.
+    disabled. Enabled blocks must provide a non-empty profile description used
+    by the lightweight recommendation-card screen.
     """
     messages = load_icp_messages(sender)
     targets: list[DiscoveryTarget] = []
-    allowed_keys = {"enabled", "profile", "search_queries"}
+    allowed_keys = {"enabled", "profile"}
 
     for icp, channels in messages.items():
         if not isinstance(channels, dict):
@@ -355,50 +353,20 @@ def load_discovery_targets(sender: str) -> tuple[DiscoveryTarget, ...]:
             )
         profile = profile.strip()
 
-        raw_queries = discovery.get("search_queries", [])
-        if not isinstance(raw_queries, list) or any(
-            not isinstance(query, str) or not query.strip()
-            for query in raw_queries
-        ):
-            raise DiscoveryConfigurationError(
-                f"{sender}/{icp}: discovery.search_queries must contain "
-                "only non-empty strings",
-            )
-        queries = tuple(dict.fromkeys(query.strip() for query in raw_queries))
-
         if not enabled:
             continue
         if not profile:
             raise DiscoveryConfigurationError(
                 f"{sender}/{icp}: enabled discovery requires a non-empty profile",
             )
-        if not queries:
-            raise DiscoveryConfigurationError(
-                f"{sender}/{icp}: enabled discovery requires search_queries",
-            )
         targets.append(
             DiscoveryTarget(
                 icp=icp,
                 profile=profile,
-                search_queries=queries,
             ),
         )
 
     return tuple(targets)
-
-
-def discovery_search_queries(
-    targets: tuple[DiscoveryTarget, ...],
-) -> tuple[str, ...]:
-    """Flatten sender targets into a stable, de-duplicated query sequence."""
-    return tuple(
-        dict.fromkeys(
-            query
-            for target in targets
-            for query in target.search_queries
-        ),
-    )
-
 
 def load_gmail_messages(sender: str) -> dict[str, list[dict[str, object]]]:
     """Return one sender's Gmail template block, or `{}` when absent."""

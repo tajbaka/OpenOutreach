@@ -27,15 +27,19 @@ from linkedin.discovery.config import (
 from linkedin.discovery.limits import remaining_today, saved_today
 from linkedin.discovery.screening import screen_cards
 from linkedin.discovery.sources.base import DiscoveryCard
-from linkedin.discovery.sources.people_search import collect_people_search_cards
+from linkedin.discovery.sources.mynetwork_recommendations import (
+    collect_mynetwork_recommendations,
+)
+from linkedin.discovery.sources.profile_recommendations import (
+    collect_profile_recommendations,
+)
 from linkedin.exceptions import (
     AuthenticationError,
-    LinkedInDiscoveryLimitError,
+    DiscoverySurfaceError,
     SkipProfile,
 )
 from linkedin.icp_outbound import (
     DiscoveryTarget,
-    discovery_search_queries,
     load_discovery_targets,
 )
 from linkedin.models import (
@@ -48,12 +52,22 @@ from linkedin.suppression import lead_suppression_match
 
 logger = logging.getLogger(__name__)
 
+DISCOVERY_SCREEN_BATCH_SIZE = 20
+
 
 @dataclass(frozen=True)
 class DiscoverySaveResult:
     created: bool
     daily_limit_reached: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class DiscoveryVisitResult:
+    save: DiscoverySaveResult
+    related_cards: tuple[DiscoveryCard, ...] = ()
+    related_scroll_rounds: int = 0
+    related_empty_scrolls: int = 0
 
 
 def _canonical_public_identifier(value: str | None) -> str:
@@ -205,21 +219,70 @@ def fresh_discovery_payload(
     local = discovery_local_now(scheduled_for)
     return {
         "operator": operator,
-        "source": "people_search",
+        "source": "mynetwork_recommendations",
         "run_date": local.date().isoformat(),
         "run_started_at": "",
-        "query_index": 0,
-        "page": 1,
-        "query_pages": {},
-        "exhausted_query_indexes": [],
+        "source_complete": False,
+        "section_cursor": 0,
+        "section_headings": [],
         "pending_cards": [],
+        "seen_public_identifiers": [],
         "cards_scanned": 0,
-        "pages_scanned": 0,
+        "sections_scanned": 0,
+        "scroll_rounds": 0,
+        "consecutive_scrolls_without_new_cards": 0,
         "profile_visits": 0,
+        "recommendation_depth": 0,
         "consecutive_no_matches": 0,
         "saved": 0,
         "stop_after_pending": "",
     }
+
+
+def validate_discovery_payload(payload: dict) -> None:
+    """Fail loudly for malformed or search-era discovery cursor state."""
+    if payload.get("source") != "mynetwork_recommendations":
+        raise ValueError(
+            "Discovery payload source must be mynetwork_recommendations",
+        )
+    if not isinstance(payload.get("section_cursor"), int) or (
+        payload["section_cursor"] < 0
+    ):
+        raise ValueError("Discovery payload section_cursor must be non-negative")
+    for field in (
+        "cards_scanned",
+        "sections_scanned",
+        "scroll_rounds",
+        "consecutive_scrolls_without_new_cards",
+        "profile_visits",
+        "consecutive_no_matches",
+        "saved",
+    ):
+        if not isinstance(payload.get(field), int) or payload[field] < 0:
+            raise ValueError(f"Discovery payload {field} must be non-negative")
+    for field in (
+        "section_headings",
+        "pending_cards",
+        "seen_public_identifiers",
+    ):
+        if not isinstance(payload.get(field), list):
+            raise ValueError(f"Discovery payload {field} must be a list")
+    depth = payload.get("recommendation_depth")
+    if depth not in {0, 1}:
+        raise ValueError("Discovery payload recommendation_depth must be 0 or 1")
+
+
+def _mynetwork_card_budget(payload: dict) -> int:
+    """Reserve part of the run-wide card cap for one-hop profile suggestions."""
+    limits = discovery_limits()
+    remaining = limits.max_cards - payload["cards_scanned"]
+    if remaining <= 1:
+        return max(remaining, 0)
+    reserved = min(
+        limits.max_profile_recommendations_per_visit,
+        max(1, remaining // 4),
+    )
+    return max(1, remaining - reserved)
 
 
 def _active_discovery_task_exists(operator: str) -> bool:
@@ -336,9 +399,16 @@ def reconcile_discovery_tasks(
     now = timezone.now()
     if pending:
         task = pending[0]
+        search_era_payload = (
+            task.payload.get("source") != "mynetwork_recommendations"
+            or "query_index" in task.payload
+            or "page" in task.payload
+        )
         at_daily_limit = remaining_today(operator, now=now) <= 0
         if at_daily_limit:
             scheduled_at = next_discovery_day_start(now)
+        elif search_era_payload:
+            scheduled_at = now
         elif (
             not task.payload.get("run_started_at")
             and task.scheduled_at > now + timedelta(
@@ -350,7 +420,11 @@ def reconcile_discovery_tasks(
             scheduled_at = None
         if (
             scheduled_at is not None
-            and (task.scheduled_at != scheduled_at or at_daily_limit)
+            and (
+                task.scheduled_at != scheduled_at
+                or at_daily_limit
+                or search_era_payload
+            )
         ):
             task.scheduled_at = scheduled_at
             task.payload = fresh_discovery_payload(
@@ -358,6 +432,8 @@ def reconcile_discovery_tasks(
                 scheduled_for=scheduled_at,
             )
             task.save(update_fields=["scheduled_at", "payload"])
+        else:
+            validate_discovery_payload(dict(task.payload or {}))
         return True
 
     return enqueue_discovery(linkedin_profile, operator)
@@ -397,12 +473,13 @@ def _record_stop(task: Task, payload: dict, reason: str) -> None:
     task.payload = payload
     task.save(update_fields=["payload"])
     logger.info(
-        "Discovery stopped operator=%s reason=%s cards=%d pages=%d "
-        "visits=%d saved=%d",
+        "Discovery stopped operator=%s reason=%s cards=%d sections=%d "
+        "scrolls=%d visits=%d saved=%d",
         payload["operator"],
         reason,
         payload["cards_scanned"],
-        payload["pages_scanned"],
+        payload["sections_scanned"],
+        payload["scroll_rounds"],
         payload["profile_visits"],
         payload["saved"],
     )
@@ -458,49 +535,18 @@ def _scan_stop_reason(payload: dict) -> str:
     limits = discovery_limits()
     if payload["cards_scanned"] >= limits.max_cards:
         return "card_limit_reached"
-    if payload["pages_scanned"] >= limits.max_pages:
-        return "page_limit_reached"
+    if payload["sections_scanned"] >= limits.max_sections:
+        return "section_limit_reached"
+    if payload["scroll_rounds"] >= limits.max_scroll_rounds:
+        return "scroll_limit_reached"
+    if (
+        payload["consecutive_scrolls_without_new_cards"]
+        >= limits.max_consecutive_empty_scrolls
+    ):
+        return "empty_scroll_limit_reached"
     if payload["consecutive_no_matches"] >= limits.max_consecutive_no_matches:
         return "consecutive_no_match_limit_reached"
     return ""
-
-
-def _advance_query_cursor(
-    payload: dict,
-    *,
-    query_count: int,
-    current_had_cards: bool,
-) -> bool:
-    """Advance round-robin across queries. Return True when all are exhausted."""
-    current = int(payload["query_index"])
-    exhausted = {
-        int(value)
-        for value in payload.get("exhausted_query_indexes", [])
-    }
-    pages = {
-        str(key): int(value)
-        for key, value in (payload.get("query_pages") or {}).items()
-    }
-    if current_had_cards:
-        pages[str(current)] = int(payload["page"]) + 1
-    else:
-        exhausted.add(current)
-
-    if len(exhausted) >= query_count:
-        payload["exhausted_query_indexes"] = sorted(exhausted)
-        payload["query_pages"] = pages
-        return True
-
-    for offset in range(1, query_count + 1):
-        candidate = (current + offset) % query_count
-        if candidate in exhausted:
-            continue
-        payload["query_index"] = candidate
-        payload["page"] = pages.get(str(candidate), 1)
-        payload["exhausted_query_indexes"] = sorted(exhausted)
-        payload["query_pages"] = pages
-        return False
-    return True
 
 
 def _continuation_delay() -> int:
@@ -528,6 +574,85 @@ def _queue_continuation_or_next_day(
     _create_pending_task(payload, scheduled_at)
 
 
+def _screen_new_cards(
+    *,
+    cards: list[DiscoveryCard] | tuple[DiscoveryCard, ...],
+    payload: dict,
+    targets: tuple[DiscoveryTarget, ...],
+) -> list[DiscoveryCard]:
+    """Deduplicate, skip, and lightly screen one bounded recommendation batch."""
+    limits = discovery_limits()
+    seen = {
+        _canonical_public_identifier(value)
+        for value in payload.get("seen_public_identifiers", [])
+        if _canonical_public_identifier(value)
+    }
+    considered: list[DiscoveryCard] = []
+    processed_cards: list[DiscoveryCard] = []
+    candidate_ids: set[str] = set()
+    skip_reasons: dict[str, str] = {}
+
+    for card in cards:
+        public_identifier = _canonical_public_identifier(card.public_identifier)
+        if not public_identifier or public_identifier in seen:
+            continue
+        if payload["cards_scanned"] >= limits.max_cards:
+            payload["stop_after_pending"] = "card_limit_reached"
+            break
+        seen.add(public_identifier)
+        payload["cards_scanned"] += 1
+        processed_cards.append(card)
+        reason = known_profile_reason(card)
+        if reason:
+            skip_reasons[public_identifier] = reason
+            continue
+        considered.append(card)
+        candidate_ids.add(public_identifier)
+
+    payload["seen_public_identifiers"] = sorted(seen)
+    decisions = {}
+    for offset in range(0, len(considered), DISCOVERY_SCREEN_BATCH_SIZE):
+        batch = considered[offset : offset + DISCOVERY_SCREEN_BATCH_SIZE]
+        decisions.update(screen_cards(batch, targets))
+    matches: list[DiscoveryCard] = []
+    for card in processed_cards:
+        public_identifier = _canonical_public_identifier(card.public_identifier)
+        if public_identifier in skip_reasons:
+            payload["consecutive_no_matches"] += 1
+        elif public_identifier in candidate_ids:
+            decision = decisions[public_identifier]
+            if decision.should_visit:
+                payload["consecutive_no_matches"] = 0
+                matches.append(
+                    DiscoveryCard(
+                        public_identifier=card.public_identifier,
+                        linkedin_url=card.linkedin_url,
+                        name=card.name,
+                        headline=card.headline,
+                        company_name=card.company_name,
+                        source_context=card.source_context,
+                        potential_icp=decision.potential_icp,
+                        source_kind=card.source_kind,
+                        source_section=card.source_section,
+                        source_profile_public_identifier=(
+                            card.source_profile_public_identifier
+                        ),
+                        recommendation_depth=card.recommendation_depth,
+                    ),
+                )
+            else:
+                payload["consecutive_no_matches"] += 1
+        if (
+            payload["consecutive_no_matches"]
+            >= limits.max_consecutive_no_matches
+        ):
+            payload["stop_after_pending"] = (
+                "consecutive_no_match_limit_reached"
+            )
+            break
+    return matches
+
+
 def _visit_one(
     *,
     session,
@@ -535,12 +660,14 @@ def _visit_one(
     card: DiscoveryCard,
     payload: dict,
     enabled_icps: set[str],
-) -> DiscoverySaveResult:
+) -> DiscoveryVisitResult:
     if card.potential_icp not in enabled_icps:
-        return DiscoverySaveResult(False, False, "invalid_potential_icp")
+        return DiscoveryVisitResult(
+            DiscoverySaveResult(False, False, "invalid_potential_icp"),
+        )
     skip_reason = known_profile_reason(card)
     if skip_reason:
-        return DiscoverySaveResult(False, False, skip_reason)
+        return DiscoveryVisitResult(DiscoverySaveResult(False, False, skip_reason))
 
     payload["profile_visits"] += 1
     try:
@@ -556,22 +683,58 @@ def _visit_one(
             public_identifier=card.public_identifier,
         )
     except SkipProfile:
-        return DiscoverySaveResult(False, False, "restricted_profile")
+        return DiscoveryVisitResult(
+            DiscoverySaveResult(False, False, "restricted_profile"),
+        )
     except IOError:
         logger.warning(
             "Discovery profile fetch exhausted retries for %s",
             card.public_identifier,
             exc_info=True,
         )
-        return DiscoverySaveResult(False, False, "profile_fetch_failed")
+        return DiscoveryVisitResult(
+            DiscoverySaveResult(False, False, "profile_fetch_failed"),
+        )
 
     if not profile:
-        return DiscoverySaveResult(False, False, "restricted_profile")
-    return save_discovery_profile(
+        return DiscoveryVisitResult(
+            DiscoverySaveResult(False, False, "restricted_profile"),
+        )
+    save_result = save_discovery_profile(
         linkedin_profile=session.linkedin_profile,
         operator=operator,
         potential_icp=card.potential_icp,
         profile=profile,
+    )
+    if (
+        not save_result.created
+        or save_result.daily_limit_reached
+        or card.recommendation_depth != 0
+    ):
+        return DiscoveryVisitResult(save_result)
+
+    limits = discovery_limits()
+    remaining_card_capacity = limits.max_cards - payload["cards_scanned"]
+    if remaining_card_capacity <= 0:
+        return DiscoveryVisitResult(save_result)
+    related = collect_profile_recommendations(
+        session,
+        source_profile_public_identifier=card.public_identifier,
+        max_cards=min(
+            limits.max_profile_recommendations_per_visit,
+            remaining_card_capacity,
+        ),
+        max_scroll_rounds=max(
+            0,
+            limits.max_scroll_rounds - payload["scroll_rounds"],
+        ),
+        max_consecutive_empty_scrolls=limits.max_consecutive_empty_scrolls,
+    )
+    return DiscoveryVisitResult(
+        save=save_result,
+        related_cards=related.cards,
+        related_scroll_rounds=related.scroll_rounds,
+        related_empty_scrolls=related.consecutive_empty_scrolls,
     )
 
 
@@ -597,15 +760,36 @@ def _process_pending_card(
     pending = list(payload.get("pending_cards") or [])
     card = DiscoveryCard.from_payload(pending.pop(0))
     payload["pending_cards"] = pending
-    result = _visit_one(
+    visit = _visit_one(
         session=session,
         operator=operator,
         card=card,
         payload=payload,
         enabled_icps={target.icp for target in targets},
     )
+    result = visit.save
     if result.created:
         payload["saved"] += 1
+    payload["recommendation_depth"] = max(
+        payload["recommendation_depth"],
+        card.recommendation_depth,
+    )
+    if visit.related_cards:
+        payload["scroll_rounds"] += visit.related_scroll_rounds
+        payload["consecutive_scrolls_without_new_cards"] = (
+            visit.related_empty_scrolls
+        )
+        related_matches = _screen_new_cards(
+            cards=visit.related_cards,
+            payload=payload,
+            targets=targets,
+        )
+        pending.extend(card.to_payload() for card in related_matches)
+        payload["pending_cards"] = pending
+        if not payload.get("stop_after_pending"):
+            cap_reason = _scan_stop_reason(payload)
+            if cap_reason:
+                payload["stop_after_pending"] = cap_reason
     logger.info(
         "Discovery profile operator=%s profile=%s icp=%s result=%s "
         "saved_today=%d/%d",
@@ -648,9 +832,10 @@ def _process_pending_card(
 
 
 def handle_discovery(task: Task, session, qualifiers=None) -> None:
-    """Handle one bounded search page or one queued profile visit."""
+    """Handle one bounded recommendation scan or one queued profile visit."""
     del qualifiers
     payload = dict(task.payload or {})
+    validate_discovery_payload(payload)
     operator = (payload.get("operator") or "").strip()
     session_operator = resolve_operator(session.linkedin_profile.linkedin_username)
     if not operator or operator != session_operator:
@@ -698,111 +883,78 @@ def handle_discovery(task: Task, session, qualifiers=None) -> None:
         _finish_for_day(task, payload, reason=scan_stop, now=now)
         return
 
-    queries = discovery_search_queries(targets)
-    query_index = int(payload.get("query_index", 0))
-    if query_index < 0 or query_index >= len(queries):
-        raise ValueError(f"Invalid discovery query_index: {query_index}")
-    page_number = int(payload.get("page", 1))
-    query = queries[query_index]
-
-    try:
-        cards = collect_people_search_cards(
-            session,
-            query=query,
-            page_number=page_number,
-        )
-    except LinkedInDiscoveryLimitError:
+    if payload.get("source_complete"):
         _finish_for_day(
             task,
             payload,
-            reason="linkedin_limit_detected",
+            reason=payload.get("stop_after_pending") or "recommendation_source_exhausted",
             now=now,
         )
         return
+
+    limits = discovery_limits()
+
+    try:
+        source_result = collect_mynetwork_recommendations(
+            session,
+            max_cards=_mynetwork_card_budget(payload),
+            max_sections=limits.max_sections - payload["sections_scanned"],
+            max_scroll_rounds=limits.max_scroll_rounds - payload["scroll_rounds"],
+            max_consecutive_empty_scrolls=(
+                limits.max_consecutive_empty_scrolls
+            ),
+        )
     except AuthenticationError:
         payload["stop_reason"] = "authentication_lost"
         task.payload = payload
         task.save(update_fields=["payload"])
         raise
+    except DiscoverySurfaceError as exc:
+        payload["surface_error"] = str(exc)
+        _record_stop(task, payload, "surface_error")
+        raise
 
-    limits = discovery_limits()
-    remaining_card_capacity = limits.max_cards - payload["cards_scanned"]
-    cards = cards[:remaining_card_capacity]
-    payload["pages_scanned"] += 1
-    payload["cards_scanned"] += len(cards)
-
-    candidates: list[DiscoveryCard] = []
-    candidate_ids: set[str] = set()
-    skip_reasons: dict[str, str] = {}
-    for card in cards:
-        reason = known_profile_reason(card)
-        if reason:
-            skip_reasons[card.public_identifier] = reason
-            continue
-        candidates.append(card)
-        candidate_ids.add(card.public_identifier)
-
-    decisions = screen_cards(candidates, targets) if candidates else {}
-    pending_cards: list[dict] = []
-    reached_no_match_cap = False
-    for card in cards:
-        if card.public_identifier in skip_reasons:
-            payload["consecutive_no_matches"] += 1
-        elif card.public_identifier in candidate_ids:
-            decision = decisions[card.public_identifier]
-            if decision.should_visit:
-                payload["consecutive_no_matches"] = 0
-                pending_cards.append(
-                    DiscoveryCard(
-                        public_identifier=card.public_identifier,
-                        linkedin_url=card.linkedin_url,
-                        name=card.name,
-                        headline=card.headline,
-                        company_name=card.company_name,
-                        source_context=card.source_context,
-                        potential_icp=decision.potential_icp,
-                    ).to_payload(),
-                )
-            else:
-                payload["consecutive_no_matches"] += 1
-        if (
-            payload["consecutive_no_matches"]
-            >= limits.max_consecutive_no_matches
-        ):
-            reached_no_match_cap = True
-            break
-
-    queries_exhausted = _advance_query_cursor(
-        payload,
-        query_count=len(queries),
-        current_had_cards=bool(cards),
+    payload["source_complete"] = True
+    payload["sections_scanned"] += source_result.sections_scanned
+    payload["section_cursor"] = payload["sections_scanned"]
+    payload["scroll_rounds"] += source_result.scroll_rounds
+    payload["consecutive_scrolls_without_new_cards"] = (
+        source_result.consecutive_empty_scrolls
     )
-    payload["pending_cards"] = pending_cards
+    section_headings = list(payload.get("section_headings") or [])
+    for heading in source_result.section_headings:
+        if heading not in section_headings:
+            section_headings.append(heading)
+    payload["section_headings"] = section_headings
 
-    if reached_no_match_cap:
-        payload["stop_after_pending"] = "consecutive_no_match_limit_reached"
-    elif payload["cards_scanned"] >= limits.max_cards:
-        payload["stop_after_pending"] = "card_limit_reached"
-    elif payload["pages_scanned"] >= limits.max_pages:
-        payload["stop_after_pending"] = "page_limit_reached"
-    elif queries_exhausted:
-        payload["stop_after_pending"] = "queries_exhausted"
+    pending_matches = _screen_new_cards(
+        cards=source_result.cards,
+        payload=payload,
+        targets=targets,
+    )
+    payload["pending_cards"] = [card.to_payload() for card in pending_matches]
+    if not payload.get("stop_after_pending"):
+        payload["stop_after_pending"] = (
+            "recommendation_source_exhausted"
+            if source_result.stop_reason == "source_exhausted"
+            else source_result.stop_reason
+        )
 
     logger.info(
-        "Discovery scan operator=%s query=%r page=%d cards=%d candidates=%d "
-        "matches=%d totals(cards=%d pages=%d no_match=%d)",
+        "Discovery scan operator=%s sections=%d scrolls=%d cards=%d "
+        "matches=%d totals(cards=%d sections=%d no_match=%d) stop=%s",
         operator,
-        query,
-        page_number,
-        len(cards),
-        len(candidates),
-        len(pending_cards),
+        source_result.sections_scanned,
+        source_result.scroll_rounds,
+        len(source_result.cards),
+        len(pending_matches),
         payload["cards_scanned"],
-        payload["pages_scanned"],
+        payload["sections_scanned"],
         payload["consecutive_no_matches"],
+        source_result.stop_reason,
     )
 
-    if pending_cards:
+    if pending_matches:
         _process_pending_card(task, session, payload, targets, now=timezone.now())
         return
     if payload.get("stop_after_pending"):

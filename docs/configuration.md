@@ -63,10 +63,12 @@ This check runs once per account (a database sentinel record prevents re-runs).
 ## Standalone Profile Discovery
 
 Profile discovery is a separate, disabled-by-default daemon lane. It runs only
-after normal outbound hours or in the configured rest-day window. One bounded
-task scans a LinkedIn People-search page, compares visible cards with the
-logged-in sender's enabled ICP descriptions, opens plausible profiles, and
-saves structured profile data to `LinkedInDiscoveryLead`.
+after the sender's weekday connect lane is closed or at any time on configured
+rest days. One bounded task scans personalized recommendation sections on
+`/mynetwork/grow/`, compares visible cards with the logged-in sender's enabled
+ICP descriptions, opens plausible profiles, optionally collects one bounded
+hop from `More profiles for you`, and saves structured profile data to
+`LinkedInDiscoveryLead`.
 
 It does not create `crm.Lead`, `crm.Deal`, connection requests, messages, or
 other outbound state.
@@ -82,8 +84,7 @@ Discovery metadata lives inside each sender's existing
     "CSPs": {
       "discovery": {
         "enabled": true,
-        "profile": "Security, compliance, and public-sector leaders at cloud software providers with possible FedRAMP relevance.",
-        "search_queries": ["FedRAMP SaaS founder", "public sector cloud CISO"]
+        "profile": "Security, compliance, and public-sector leaders at cloud software providers with possible FedRAMP relevance."
       },
       "linkedin_connect_note": ["..."],
       "linkedin_connect_followup": ["..."]
@@ -94,7 +95,8 @@ Discovery metadata lives inside each sender's existing
 
 Every non-CMMC ICP under each sender has its own enabled `discovery` block;
 CMMC buckets intentionally have none. Enabled definitions require a non-empty
-`profile` and at least one explicit `search_queries` value. The ICP Messages
+`profile`; that description drives the lightweight recommendation-card screen.
+The ICP Messages
 Sheet pull preserves this JSON-only metadata. `LLM_API_KEY` and `AI_MODEL` must
 also be configured before the feature can be enabled; startup validation fails
 before browser activity when either is missing.
@@ -105,8 +107,11 @@ before browser activity when either is missing.
 |:---------|:--------|:------------|
 | `ENABLE_PROFILE_DISCOVERY` | `false` | Global feature gate. |
 | `DISCOVERY_DAILY_LIMIT` | `25` | Maximum new profiles stored per sender/local day. |
-| `DISCOVERY_MAX_CARDS_PER_RUN` | `200` | Maximum result cards scanned in one sender run. |
-| `DISCOVERY_MAX_PAGES_PER_RUN` | `10` | Maximum search pages scanned in one sender run. |
+| `DISCOVERY_MAX_CARDS_PER_RUN` | `200` | Maximum unique recommendation cards scanned in one sender run. |
+| `DISCOVERY_MAX_SECTIONS_PER_RUN` | `12` | Maximum My Network recommendation sections scanned per run. |
+| `DISCOVERY_MAX_SCROLL_ROUNDS_PER_RUN` | `12` | Maximum recommendation-surface scroll rounds per run. |
+| `DISCOVERY_MAX_CONSECUTIVE_EMPTY_SCROLLS` | `3` | Stop after this many scrolls reveal no new profiles. |
+| `DISCOVERY_MAX_PROFILE_RECOMMENDATIONS_PER_VISIT` | `20` | Maximum one-hop `More profiles for you` cards collected from a visited profile. |
 | `DISCOVERY_MAX_PROFILE_VISITS_PER_RUN` | `40` | Maximum profiles opened in one sender run. |
 | `DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES` | `75` | Sparse-result stop condition. |
 | `DISCOVERY_MAX_RUN_MINUTES` | `120` | Wall-clock run cap. |
@@ -118,12 +123,21 @@ eligible only after the daemon has closed its connect lane for the day, every
 connect task is scheduled beyond the local day, or there is no connectable
 work; rest days have no clock gate. Once the daily
 limit is reached, the next task is scheduled for local midnight. Independent
-card/page/profile/no-match/time caps still stop runs that save nothing.
+card/section/scroll/profile/no-match/time caps still stop runs that save nothing.
 
 Inspect configuration without writing queue state:
 
 ```bash
 .venv/bin/python manage.py start_discovery --dry-run
+```
+
+Probe the live recommendation selectors in one saved sender session without
+database writes, queue changes, or outbound LinkedIn actions:
+
+```bash
+.venv/bin/python manage.py probe_discovery_recommendations \
+  --handle athenaaghdami \
+  --output artifacts/discovery/athena-recommendations.json
 ```
 
 Enqueue the next eligible task for all active profiles or one Django handle:

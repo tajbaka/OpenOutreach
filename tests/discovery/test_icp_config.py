@@ -21,7 +21,6 @@ def test_loads_only_enabled_discovery_icps(tmp_path, monkeypatch):
                     "discovery": {
                         "enabled": True,
                         "profile": "Cloud security leaders",
-                        "search_queries": ["FedRAMP CISO", "FedRAMP CISO"],
                     },
                     "linkedin_connect_note": ["hello"],
                 },
@@ -39,20 +38,18 @@ def test_loads_only_enabled_discovery_icps(tmp_path, monkeypatch):
 
     assert len(targets) == 1
     assert targets[0].icp == "CSPs"
-    assert targets[0].search_queries == ("FedRAMP CISO",)
+    assert targets[0].profile == "Cloud security leaders"
 
 
 @pytest.mark.parametrize(
     "discovery, message",
     [
-        ({"enabled": "yes", "profile": "x", "search_queries": ["q"]}, "boolean"),
-        ({"enabled": True, "profile": "", "search_queries": ["q"]}, "profile"),
-        ({"enabled": True, "profile": "x", "search_queries": []}, "search_queries"),
+        ({"enabled": "yes", "profile": "x"}, "boolean"),
+        ({"enabled": True, "profile": ""}, "profile"),
         (
             {
                 "enabled": True,
                 "profile": "x",
-                "search_queries": ["q"],
                 "campaign": 1,
             },
             "unknown discovery keys",
@@ -76,7 +73,6 @@ def test_sheet_save_preserves_discovery_metadata(tmp_path, monkeypatch):
     discovery = {
         "enabled": True,
         "profile": "Cloud security leaders",
-        "search_queries": ["FedRAMP CISO"],
     }
     path = _write(
         tmp_path,
@@ -114,4 +110,4 @@ def test_checked_in_json_enables_all_non_cmmc_icps_for_every_sender():
                 f"{sender}/{icp} must enable discovery"
             )
             assert discovery["profile"].strip()
-            assert discovery["search_queries"]
+            assert set(discovery) == {"enabled", "profile"}

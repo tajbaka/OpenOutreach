@@ -13,6 +13,10 @@ class DiscoveryCard:
     company_name: str = ""
     source_context: str = ""
     potential_icp: str = ""
+    source_kind: str = ""
+    source_section: str = ""
+    source_profile_public_identifier: str = ""
+    recommendation_depth: int = 0
 
     def to_payload(self) -> dict[str, str]:
         return asdict(self)
@@ -27,5 +31,13 @@ class DiscoveryCard:
             "company_name",
             "source_context",
             "potential_icp",
+            "source_kind",
+            "source_section",
+            "source_profile_public_identifier",
+            "recommendation_depth",
         }
-        return cls(**{key: value.get(key, "") for key in allowed})
+        payload = {key: value.get(key, "") for key in allowed}
+        payload["recommendation_depth"] = int(
+            value.get("recommendation_depth", 0),
+        )
+        return cls(**payload)

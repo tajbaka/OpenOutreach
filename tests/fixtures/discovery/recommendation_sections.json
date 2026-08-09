@@ -1,0 +1,72 @@
+{
+  "sections": [
+    {
+      "heading": "People you may know from Example Cloud",
+      "show_all_label": "Show all suggestions for People you may know from Example Cloud",
+      "rows": [
+        {
+          "href": "/in/example-security-leader/?trackingId=abc",
+          "name": "Example Security Leader",
+          "headline": "VP Security and Compliance",
+          "company_name": "Example Cloud",
+          "context": "Example Security Leader VP Security and Compliance Example Cloud"
+        }
+      ]
+    },
+    {
+      "heading": "Suggestions for you",
+      "show_all_label": "",
+      "rows": [
+        {
+          "href": "https://www.linkedin.com/in/example-public-sector-founder/",
+          "name": "Example Public Sector Founder",
+          "headline": "Founder, Public Sector SaaS",
+          "company_name": "Sample Software",
+          "context": "Example Public Sector Founder Founder, Public Sector SaaS"
+        }
+      ]
+    },
+    {
+      "heading": "Invitations (20)",
+      "show_all_label": "Show all invitations",
+      "rows": [
+        {
+          "href": "/in/example-invitation-sender/",
+          "name": "Example Invitation Sender",
+          "headline": "Unrelated",
+          "company_name": "",
+          "context": "Invitation"
+        }
+      ]
+    },
+    {
+      "heading": "Explore Premium profiles",
+      "show_all_label": "",
+      "rows": [
+        {
+          "href": "/in/example-premium-profile/",
+          "name": "Example Premium Profile",
+          "headline": "Unrelated",
+          "company_name": "",
+          "context": "Premium upsell"
+        }
+      ]
+    }
+  ],
+  "profile_rows": [
+    {
+      "href": "/in/example-related-ciso/",
+      "name": "Example Related CISO",
+      "headline": "Chief Information Security Officer",
+      "company_name": "Sample Bank",
+      "context": "Example Related CISO Chief Information Security Officer"
+    },
+    {
+      "href": "/messaging/compose/?recipient=example",
+      "name": "Message",
+      "headline": "",
+      "company_name": "",
+      "context": "Message"
+    }
+  ]
+}
