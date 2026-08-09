@@ -15,6 +15,8 @@ used by the daemon + management commands). Verifies:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -68,6 +70,54 @@ def test_notify_error_noop_when_webhook_unset():
     with patch("linkedin.notifications.slack.request.urlopen") as mock_urlopen:
         slack_mod.notify_error("test_workflow", _make_exc())
     mock_urlopen.assert_not_called()
+
+
+def test_marketplace_alert_includes_official_listing_details(monkeypatch):
+    monkeypatch.setattr(
+        slack_mod,
+        "SLACK_HIGH_SIGNAL_URL",
+        "https://hooks.slack.test/marketplace",
+    )
+    signal = SimpleNamespace(
+        priority="urgent",
+        recorded_at=datetime(2026, 8, 8, tzinfo=timezone.utc),
+        first_seen_at=datetime(2026, 8, 8, tzinfo=timezone.utc),
+        transition_at=None,
+        provider_name="Acme Cloud",
+        offering_name="Acme Secure Cloud",
+        product_id="FR1234",
+        marketplace_url="https://marketplace.fedramp.gov/products/FR1234/",
+        signal_type="20x_initial",
+        icp_bucket="20x Pipeline",
+        certification_path="Program",
+        from_status="In Process",
+        to_status="Initial Implementation",
+        relevance_reason="New Program-path entrant.",
+        suggested_action="Research the compliance owner.",
+        source_url="https://example.test/fedramp.json",
+        product_context={
+            "website": "https://acme.example/",
+            "partnering_agency": "GSA",
+            "impact_level": "Moderate",
+            "auth_type": "Agency",
+            "small_business": True,
+            "sales_email": "fedramp@acme.example",
+        },
+    )
+
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.status = 200
+        assert slack_mod.notify_marketplace_signal_group(signals=[signal]) is True
+
+    sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+    body = json.dumps(sent)
+    assert "Official listing details" in body
+    assert "https://acme.example/" in body
+    assert "GSA" in body
+    assert "Moderate" in body
+    assert "Agency" in body
+    assert "Small business" in body
+    assert "fedramp@acme.example" in body
 
 
 def test_notify_manual_reply_sent_updates_original_slack_message(monkeypatch):

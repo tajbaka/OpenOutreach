@@ -1044,6 +1044,32 @@ def notify_marketplace_signal_group(*, signals: list) -> bool:
         if primary.source_url
         else "Official source URL unavailable"
     )
+    product_context = primary.product_context or {}
+    official_details: list[str] = []
+    website = str(product_context.get("website") or "").strip()
+    if website:
+        website_label = "Company website"
+        official_details.append(
+            f"*Website:* <{website}|{website_label}>"
+            if website.startswith(("https://", "http://"))
+            else f"*Website:* {_escape_slack_text(website)}"
+        )
+    detail_fields = (
+        ("partnering_agency", "Partnering agency"),
+        ("impact_level", "Impact level"),
+        ("auth_type", "Authorization type"),
+        ("small_business", "Small business"),
+        ("sales_email", "Sales contact"),
+    )
+    for field, label in detail_fields:
+        value = product_context.get(field)
+        if value in (None, ""):
+            continue
+        if field == "small_business" and isinstance(value, bool):
+            value = "Yes" if value else "No"
+        official_details.append(
+            f"*{label}:* {_escape_slack_text(str(value))}"
+        )
     blocks = [
         {
             "type": "section",
@@ -1053,6 +1079,16 @@ def notify_marketplace_signal_group(*, signals: list) -> bool:
             "type": "section",
             "text": {"type": "mrkdwn", "text": "\n".join(offerings)[:_SLACK_SECTION_TEXT_LIMIT]},
         },
+        *([{
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "*Official listing details:*\n"
+                    + "\n".join(official_details)
+                )[:_SLACK_SECTION_TEXT_LIMIT],
+            },
+        }] if official_details else []),
         {
             "type": "section",
             "text": {
