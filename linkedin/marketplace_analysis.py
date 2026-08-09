@@ -44,6 +44,17 @@ def codex_review_instructions() -> str:
 
 
 def serialize_signals_for_codex(signals: Iterable[FedRAMPMarketplaceSignal]) -> dict:
+    from crm.models import Lead
+
+    signal_list = list(signals)
+    crm_leads = list(
+        Lead.objects.exclude(company_name="")
+        .only(
+            "id", "first_name", "last_name", "company_name",
+            "linkedin_url", "icp", "disqualified",
+        )
+        .order_by("company_name", "id")
+    )
     return {
         "instructions": codex_review_instructions(),
         "schema": {
@@ -54,7 +65,10 @@ def serialize_signals_for_codex(signals: Iterable[FedRAMPMarketplaceSignal]) -> 
             "relevance_reason": "one or two short sentences grounded in the transition",
             "suggested_action": "one concrete next action for the operator",
         },
-        "signals": [_serialize_signal(signal) for signal in signals],
+        "signals": [
+            _serialize_signal(signal, crm_leads=crm_leads)
+            for signal in signal_list
+        ],
     }
 
 
@@ -162,7 +176,7 @@ def group_marketplace_signals_for_alert(
     ]
 
 
-def _serialize_signal(signal: FedRAMPMarketplaceSignal) -> dict:
+def _serialize_signal(signal: FedRAMPMarketplaceSignal, *, crm_leads=None) -> dict:
     return {
         "id": signal.id,
         "signal_type": signal.signal_type,
@@ -180,18 +194,30 @@ def _serialize_signal(signal: FedRAMPMarketplaceSignal) -> dict:
         "source_url": signal.source_url,
         "source_kind": signal.source_kind,
         "product_context": signal.product_context,
-        "crm_matches": crm_matches_for_marketplace_signal(signal),
+        "crm_matches": crm_matches_for_marketplace_signal(
+            signal,
+            leads=crm_leads,
+        ),
     }
 
 
-def crm_matches_for_marketplace_signal(signal: FedRAMPMarketplaceSignal) -> list[dict]:
+def crm_matches_for_marketplace_signal(
+    signal: FedRAMPMarketplaceSignal,
+    *,
+    leads=None,
+) -> list[dict]:
     from crm.models import Deal, Lead
 
     target = normalize_company_name(signal.provider_name)
     if not target:
         return []
     matched_leads = []
-    for lead in Lead.objects.exclude(company_name="").order_by("company_name", "id"):
+    lead_rows = (
+        leads
+        if leads is not None
+        else Lead.objects.exclude(company_name="").order_by("company_name", "id")
+    )
+    for lead in lead_rows:
         candidate = normalize_company_name(lead.company_name)
         if not candidate:
             continue

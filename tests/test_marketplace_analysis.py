@@ -55,6 +55,22 @@ def test_codex_queue_explains_20x_and_ready_routing():
     assert payload["signals"][0]["expected_icp_bucket"] == "20x Pipeline"
 
 
+@pytest.mark.django_db
+def test_codex_queue_loads_crm_leads_once(django_assert_num_queries):
+    first = _signal()
+    second = _signal(
+        event_key="20x_initial:FR2:2026-07-22",
+        source_event_id="event-2",
+        product_id="FR2",
+        provider_name="Other Cloud",
+    )
+
+    with django_assert_num_queries(1):
+        payload = serialize_signals_for_codex([first, second])
+
+    assert len(payload["signals"]) == 2
+
+
 def test_decision_requires_relevance_and_high_priority_for_alert():
     result = decision_from_mapping({
         "signal_id": 1,
