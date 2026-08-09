@@ -54,6 +54,18 @@ def test_rest_day_claims_discovery_at_any_hour():
         assert _claimable_task_types_now(object()) == {Task.TaskType.DISCOVERY}
 
 
+def test_after_hours_connect_catch_up_finishes_before_discovery():
+    now = datetime(2026, 7, 29, 19, 0, tzinfo=ZoneInfo("UTC"))
+    patches = _schedule(now, discovery_available=True) + (
+        patch(
+            "linkedin.daemon._catch_up_task_types",
+            return_value={Task.TaskType.CONNECT},
+        ),
+    )
+    with _enter(patches):
+        assert _claimable_task_types_now(object()) == {Task.TaskType.CONNECT}
+
+
 def test_daemon_stays_awake_when_dynamic_discovery_is_available():
     now = datetime(2026, 8, 1, 2, 0, tzinfo=ZoneInfo("UTC"))
     patches = _schedule(now, discovery_available=True)

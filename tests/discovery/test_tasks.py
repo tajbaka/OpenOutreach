@@ -27,7 +27,6 @@ def _configure(monkeypatch, tmp_path):
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "UTC")
     monkeypatch.setattr(conf, "ACTIVE_END_HOUR", 17)
     monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 25)
-    monkeypatch.setattr(conf, "DISCOVERY_CONNECT_LIMIT_GRACE", 5)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_CARDS_PER_RUN", 200)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PAGES_PER_RUN", 10)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PROFILE_VISITS_PER_RUN", 40)

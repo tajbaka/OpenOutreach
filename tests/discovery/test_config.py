@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -12,20 +12,23 @@ from linkedin.discovery.config import (
     weekday_connection_work_complete,
 )
 from linkedin.exceptions import DiscoveryConfigurationError
-from linkedin.models import ActionLog
+from linkedin.models import Task
 
 
 def _configure(monkeypatch):
     monkeypatch.setattr(conf, "ENABLE_PROFILE_DISCOVERY", True)
     monkeypatch.setattr(conf, "ENABLE_CONNECT", True)
     monkeypatch.setattr(conf, "ENABLE_AUTO_DISCOVERY", False)
+    monkeypatch.setattr(conf, "ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr(conf, "ENABLE_PACING_CATCH_UP", False)
     monkeypatch.setattr(conf, "LLM_API_KEY", "test-key")
     monkeypatch.setattr(conf, "AI_MODEL", "test-model")
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "America/Toronto")
+    monkeypatch.setattr(conf, "ACTIVE_START_HOUR", 9)
+    monkeypatch.setattr(conf, "ACTIVE_END_HOUR", 17)
     monkeypatch.setattr(conf, "REST_DAYS", (5, 6))
     monkeypatch.setattr(conf, "CONNECT_DAILY_LIMIT", None)
     monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 25)
-    monkeypatch.setattr(conf, "DISCOVERY_CONNECT_LIMIT_GRACE", 5)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_CARDS_PER_RUN", 200)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PAGES_PER_RUN", 10)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PROFILE_VISITS_PER_RUN", 40)
@@ -36,7 +39,7 @@ def _configure(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_weekday_waits_until_within_grace_of_connect_limit(
+def test_weekday_waits_until_connect_task_is_parked_for_next_day(
     fake_session,
     monkeypatch,
 ):
@@ -44,23 +47,58 @@ def test_weekday_waits_until_within_grace_of_connect_limit(
     from linkedin.enums import ProfileState
 
     _configure(monkeypatch)
-    fake_session.linkedin_profile.connect_daily_limit = 20
-    fake_session.linkedin_profile.save(update_fields=["connect_daily_limit"])
     DealFactory(campaign=fake_session.campaign, state=ProfileState.READY_TO_CONNECT)
+    Task.objects.filter(task_type=Task.TaskType.CONNECT).delete()
+    now = datetime(2026, 7, 29, 12, 0, tzinfo=ZoneInfo("America/Toronto"))
+    task = Task.objects.create(
+        task_type=Task.TaskType.CONNECT,
+        scheduled_at=now + timedelta(hours=1),
+        payload={"campaign_id": fake_session.campaign.pk},
+    )
+
+    assert not weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
+    task.scheduled_at = now + timedelta(days=1)
+    task.save(update_fields=["scheduled_at"])
+
+    assert weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
+    assert discovery_gate_open(fake_session.linkedin_profile, now=now)
+
+
+@pytest.mark.django_db
+def test_weekday_stays_closed_for_missing_connect_task_with_work(
+    fake_session,
+    monkeypatch,
+):
+    from tests.factories import DealFactory
+    from linkedin.enums import ProfileState
+
+    _configure(monkeypatch)
+    DealFactory(
+        campaign=fake_session.campaign,
+        state=ProfileState.READY_TO_CONNECT,
+    )
     now = datetime(2026, 7, 29, 12, 0, tzinfo=ZoneInfo("America/Toronto"))
 
     assert not weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
-    logs = ActionLog.objects.bulk_create(
-        [
-            ActionLog(
-                linkedin_profile=fake_session.linkedin_profile,
-                campaign=fake_session.campaign,
-                action_type=ActionLog.ActionType.CONNECT,
-            )
-            for _ in range(15)
-        ],
+
+
+@pytest.mark.django_db
+def test_weekday_opens_when_daemon_has_closed_connect_lane_for_day(
+    fake_session,
+    monkeypatch,
+):
+    from tests.factories import DealFactory
+    from linkedin.enums import ProfileState
+
+    _configure(monkeypatch)
+    DealFactory(campaign=fake_session.campaign, state=ProfileState.READY_TO_CONNECT)
+    Task.objects.filter(task_type=Task.TaskType.CONNECT).delete()
+    now = datetime(2026, 7, 29, 19, 0, tzinfo=ZoneInfo("America/Toronto"))
+    Task.objects.create(
+        task_type=Task.TaskType.CONNECT,
+        scheduled_at=now + timedelta(hours=1),
+        payload={"campaign_id": fake_session.campaign.pk},
     )
-    ActionLog.objects.filter(pk__in=[log.pk for log in logs]).update(created_at=now)
 
     assert weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
     assert discovery_gate_open(fake_session.linkedin_profile, now=now)

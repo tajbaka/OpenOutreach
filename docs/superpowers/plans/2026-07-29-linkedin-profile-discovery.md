@@ -34,12 +34,13 @@ Deals, connection requests, follow-up messages, or other outbound work.
 
 - Discovery is its own scheduled workflow.
 - It does not run in the middle of normal connection-request activity.
-- On weekdays it becomes eligible when the sender is within the configured
-  grace of the daily connection limit, cannot send more connections, or has no
-  connectable work.
+- On weekdays it becomes eligible when the daemon closes the sender's connect
+  lane for the day, all connect tasks are scheduled beyond the local day, or
+  no connectable work remains.
 - On rest days/weekends it may run at any hour.
 - Discovery uses each sender's existing `linkedin/icp_messages.json` block.
-- Only ICPs explicitly enabled for discovery are considered.
+- Every non-CMMC ICP under every sender is enabled for discovery; CMMC is
+  intentionally omitted.
 - Initial validation is deliberately lightweight.
 - The initial validation chooses one potential ICP; it is not final
   qualification.
@@ -99,8 +100,8 @@ daily saved-lead limit reached?
 
 Extend `linkedin/icp_messages.json`. Do not create a separate discovery JSON.
 
-The file is already keyed by canonical sender and then by canonical ICP. This
-lets discovery be enabled independently for each sender and ICP.
+The file is keyed by canonical sender and then canonical ICP. Every non-CMMC
+ICP has an explicit discovery block under each sender.
 
 ### Implemented shape
 
@@ -111,29 +112,8 @@ lets discovery be enabled independently for each sender and ICP.
       "discovery": {
         "enabled": true,
         "profile": "Executives, security, compliance, and public-sector leaders at cloud software providers with possible FedRAMP relevance.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud CTO"
-        ]
-      },
-      "linkedin_connect_note": [
-        "..."
-      ],
-      "linkedin_connect_followup": [
-        "..."
-      ]
-    },
-    "CMMC Buyers": {
-      "discovery": {
-        "enabled": false,
-        "profile": ""
-      },
-      "linkedin_connect_note": [
-        "..."
-      ],
-      "linkedin_connect_followup": [
-        "..."
-      ]
+        "search_queries": ["FedRAMP SaaS founder", "public sector cloud CTO"]
+      }
     }
   }
 }
@@ -141,7 +121,7 @@ lets discovery be enabled independently for each sender and ICP.
 
 ### Field semantics
 
-- `enabled`: whether this sender wants discovery for the ICP.
+- `enabled`: whether this sender/ICP target participates in discovery.
 - `profile`: a short description used for broad card-level matching.
 - `search_queries`: optional explicit LinkedIn People-search queries for this
   sender/ICP.
@@ -273,7 +253,6 @@ Add the following settings:
 ```dotenv
 ENABLE_PROFILE_DISCOVERY=false
 DISCOVERY_DAILY_LIMIT=25
-DISCOVERY_CONNECT_LIMIT_GRACE=5
 
 DISCOVERY_MAX_CARDS_PER_RUN=200
 DISCOVERY_MAX_PAGES_PER_RUN=10
@@ -295,7 +274,6 @@ Validation requirements:
 
 - discovery defaults off,
 - the daily limit must be positive,
-- the connection-limit grace must be nonnegative,
 - scan/page/visit/no-match limits must be positive,
 - delays must be positive,
 - minimum delay cannot exceed maximum delay,
@@ -454,8 +432,8 @@ Discovery may run on a normal workday only when:
 
 - `ENABLE_PROFILE_DISCOVERY=true`,
 - at least one sender ICP has discovery enabled,
-- the sender is within `DISCOVERY_CONNECT_LIMIT_GRACE` of the connection daily
-  limit, cannot execute another connection, or has no connectable work,
+- the daemon has closed the sender connect lane for the day, every connect task
+  is scheduled beyond the local day, or there is no connectable work,
 - the sender has not reached the discovery daily save limit.
 
 ### Rest-day behavior
@@ -544,7 +522,7 @@ actions.
   - seed discovery tasks,
   - apply the weekday connection-completion gate and unrestricted rest days.
 - `linkedin/conf.py`
-  - discovery daily save, connection grace, and browsing limits.
+  - discovery daily save and browsing limits.
 - `linkedin/env_spec.py`
   - discovery environment registry.
 - `.env.example`
@@ -567,7 +545,7 @@ actions.
 - [x] Implement strict `load_discovery_targets(sender)`.
 - [x] Verify existing message rendering ignores discovery metadata.
 - [x] Verify Sheets pull preserves discovery metadata.
-- [ ] Add one controlled sender/ICP discovery block.
+- [x] Enable every non-CMMC ICP for every sender and omit CMMC.
 
 Acceptance criteria:
 
@@ -792,9 +770,10 @@ violates LinkedIn's terms, and pacing/limits cannot eliminate account risk.
 
 The feature is complete when:
 
-- selected ICP blocks can enable discovery per sender;
+- every sender's non-CMMC ICP blocks enable discovery;
 - each sender has a configurable daily discovery-lead limit;
-- discovery runs only after outbound hours or in configured rest-day windows;
+- weekday discovery runs only after connect tasks are parked for the day, while
+  rest-day discovery has no clock gate;
 - the workflow scans only a bounded number of cards/pages/profiles;
 - plausible cards are opened and fetched as structured profiles;
 - each new profile is stored once in `LinkedInDiscoveryLead`;

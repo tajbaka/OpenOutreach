@@ -99,3 +99,19 @@ def test_sheet_save_preserves_discovery_metadata(tmp_path, monkeypatch):
     saved = json.loads(path.read_text())
     assert saved["Arian"]["CSPs"]["discovery"] == discovery
     assert saved["Arian"]["CSPs"]["linkedin_connect_note"] == ["new"]
+
+
+def test_checked_in_json_enables_all_non_cmmc_icps_for_every_sender():
+    payload = json.loads(icp_outbound._MESSAGES_PATH.read_text())
+
+    for sender, blocks in payload.items():
+        for icp, channels in blocks.items():
+            discovery = channels.get("discovery")
+            if icp.startswith("CMMC"):
+                assert discovery is None, f"{sender}/{icp} must not use discovery"
+                continue
+            assert discovery and discovery["enabled"] is True, (
+                f"{sender}/{icp} must enable discovery"
+            )
+            assert discovery["profile"].strip()
+            assert discovery["search_queries"]
