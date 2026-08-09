@@ -110,6 +110,24 @@ Apply the decisions:
   --apply-json artifacts/marketplace/codex-decisions.json
 ```
 
+After every scheduled run, post exactly one rollup to the regular ops Slack
+channel. Use `--status success` after a reviewed/apply run, `--status empty`
+when the queue is empty, and `--status failed` when collection, export, review,
+or apply fails:
+
+```bash
+.venv/bin/python manage.py notify_fedramp_marketplace_status \
+  --status success \
+  --new-source-entries 0 \
+  --target-transitions 0 \
+  --reviewed-decisions 0 \
+  --slack-alerts 0 \
+  --detail "Daily listener completed."
+```
+
+This status command posts to `SLACK_WEBHOOK_URL`; Marketplace signal alerts
+remain isolated on the workflow-scoped `SLACK_HIGH_SIGNAL_URL`.
+
 Use `--no-slack` to test decision validation and persistence without notifying the channel.
 
 ## Prompt for a scheduled Codex task

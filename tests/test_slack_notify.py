@@ -120,6 +120,26 @@ def test_marketplace_alert_includes_official_listing_details(monkeypatch):
     assert "fedramp@acme.example" in body
 
 
+def test_marketplace_listener_failed_status_posts_to_ops_slack(slack_url):
+    with patch("linkedin.notifications.slack.request.urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.status = 200
+        assert slack_mod.notify_marketplace_listener_status(
+            status="failed",
+            new_source_entries=12,
+            target_transitions=3,
+            reviewed_decisions=1,
+            slack_alerts=0,
+            detail="Apply command exited nonzero.",
+        ) is True
+
+    sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+    body = json.dumps(sent)
+    assert "FedRAMP Marketplace Listener: FAILED" in body
+    assert "New source entries" in body and "12" in body
+    assert "Target transitions" in body and "3" in body
+    assert "Apply command exited nonzero" in body
+
+
 def test_notify_manual_reply_sent_updates_original_slack_message(monkeypatch):
     monkeypatch.setattr(slack_mod, "SLACK_BOT_TOKEN", "xoxb-test")
     payload = {

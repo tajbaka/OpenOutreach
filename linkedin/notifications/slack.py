@@ -1123,6 +1123,64 @@ def notify_marketplace_signal_group(*, signals: list) -> bool:
     )
 
 
+def notify_marketplace_listener_status(
+    *,
+    status: str,
+    new_source_entries: int = 0,
+    target_transitions: int = 0,
+    reviewed_decisions: int = 0,
+    slack_alerts: int = 0,
+    detail: str = "",
+) -> bool:
+    """Post one Marketplace workflow rollup to the regular ops channel."""
+    if not SLACK_WEBHOOK_URL:
+        return False
+    normalized = (status or "failed").strip().lower()
+    emoji = {
+        "success": ":white_check_mark:",
+        "empty": ":white_check_mark:",
+        "failed": ":rotating_light:",
+    }.get(normalized, ":warning:")
+    label = {
+        "success": "SUCCESS",
+        "empty": "SUCCESS - NO NEW SIGNALS",
+        "failed": "FAILED",
+    }.get(normalized, normalized.upper() or "UNKNOWN")
+    fields = [
+        {"type": "mrkdwn", "text": f"*New source entries:* {max(0, new_source_entries)}"},
+        {"type": "mrkdwn", "text": f"*Target transitions:* {max(0, target_transitions)}"},
+        {"type": "mrkdwn", "text": f"*Reviewed decisions:* {max(0, reviewed_decisions)}"},
+        {"type": "mrkdwn", "text": f"*High-signal alerts:* {max(0, slack_alerts)}"},
+    ]
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"{emoji} *FedRAMP Marketplace Listener: {label}*",
+            },
+        },
+        {"type": "section", "fields": fields},
+    ]
+    if detail.strip():
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Details:* {_escape_slack_text(detail.strip()[:1200])}",
+            },
+        })
+    payload = {
+        "text": f"FedRAMP Marketplace Listener: {label}",
+        "blocks": blocks,
+    }
+    return _post_to_slack(
+        SLACK_WEBHOOK_URL,
+        payload,
+        "fedramp-marketplace-status",
+    )
+
+
 def notify_degraded(*, sender: str, title: str, detail: str) -> None:
     """Post a monitoring alert to the ops channel (SLACK_WEBHOOK_URL).
 
