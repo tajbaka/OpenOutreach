@@ -20,7 +20,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
+        "search_queries": [
+          "FedRAMP SaaS founder",
+          "public sector cloud security leader"
+        ]
+      }
     },
     "20x Initial Implementation": {
       "linkedin_connect_note": [
@@ -42,7 +50,15 @@
             "I've been digging into how teams keep measures and supporting evidence current after the first implementation push.\n\nWould it help to compare what Boundera is seeing with the process at {company_name}?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives, security leaders, and compliance leaders at cloud service providers actively implementing FedRAMP 20x.",
+        "search_queries": [
+          "FedRAMP 20x cloud security",
+          "FedRAMP 20x compliance leader"
+        ]
+      }
     },
     "Active FedRAMP Path": {
       "linkedin_connect_note": [
@@ -64,7 +80,15 @@
             "I've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives, security leaders, and compliance leaders at cloud providers actively pursuing a FedRAMP authorization path.",
+        "search_queries": [
+          "FedRAMP authorization cloud compliance",
+          "FedRAMP cloud security leader"
+        ]
+      }
     },
     "FedRAMP Mature": {
       "linkedin_connect_note": [
@@ -86,7 +110,15 @@
             "I've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives and security or compliance leaders at established FedRAMP-authorized cloud providers.",
+        "search_queries": [
+          "FedRAMP authorized cloud security",
+          "FedRAMP compliance executive"
+        ]
+      }
     },
     "CSP Stage Verify": {
       "linkedin_connect_note": [
@@ -108,7 +140,15 @@
             "I'm comparing notes with the people responsible for keeping 20x certification data current.\n\nWould you be open to pointing me toward the right owner at {company_name}?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Security and compliance leaders at cloud service providers working through FedRAMP verification, validation, evidence, or continuous monitoring.",
+        "search_queries": [
+          "FedRAMP continuous monitoring cloud",
+          "FedRAMP evidence compliance leader"
+        ]
+      }
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
@@ -127,7 +167,15 @@
             "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
+        "search_queries": [
+          "FedRAMP 3PAO assessor",
+          "FedRAMP assessment leader"
+        ]
+      }
     },
     "Advisors": {
       "linkedin_connect_note": [
@@ -149,7 +197,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
+        "search_queries": [
+          "FedRAMP advisor consultant",
+          "FedRAMP compliance consulting"
+        ]
+      }
     },
     "Channel": {
       "linkedin_connect_note": [
@@ -168,7 +224,15 @@
             "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
+        "search_queries": [
+          "FedRAMP public sector cloud partner",
+          "FedRAMP channel partner"
+        ]
+      }
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
@@ -190,7 +254,15 @@
             "I've been comparing how ready teams are approaching the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives and security or compliance leaders at cloud providers prepared for or operating under FedRAMP Rev. 5 and evaluating their next authorization path.",
+        "search_queries": [
+          "FedRAMP Rev 5 cloud compliance",
+          "FedRAMP readiness cloud security"
+        ]
+      }
     },
     "White Label Product/Executive": {
       "linkedin_connect_note": [
@@ -210,7 +282,15 @@
             "{first_name}, the reason I asked is we're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Product leaders, founders, and executives at FedRAMP advisory or delivery firms that could embed a white-label compliance platform.",
+        "search_queries": [
+          "FedRAMP product executive",
+          "FedRAMP consulting founder"
+        ]
+      }
     },
     "White Label Partnerships": {
       "linkedin_connect_note": [
@@ -230,7 +310,15 @@
             "One more question, {first_name}.\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with that 20x workflow. The firm would keep the relationship, while Boundera handles the current evidence and data work.\n\nIs that something you own, or is there someone better internally?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Alliance, channel, and partnership leaders at firms serving FedRAMP and public-sector cloud customers.",
+        "search_queries": [
+          "FedRAMP partnerships",
+          "public sector cloud alliances"
+        ]
+      }
     },
     "White Label Delivery": {
       "linkedin_connect_note": [
@@ -250,7 +338,15 @@
             "One more thought, {first_name}.\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP delivery, managed services, and implementation leaders who could use a white-label compliance platform for client work.",
+        "search_queries": [
+          "FedRAMP managed services delivery",
+          "FedRAMP implementation partner"
+        ]
+      }
     },
     "White Label Champions": {
       "linkedin_connect_note": [
@@ -270,7 +366,15 @@
             "{first_name}, one more question.\n\nWho is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise."
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP practice champions and senior operators who could sponsor a white-label compliance automation partnership.",
+        "search_queries": [
+          "FedRAMP practice leader",
+          "FedRAMP compliance automation partner"
+        ]
+      }
     },
     "CMMC Buyers": {
       "linkedin_connect_note": [
@@ -332,7 +436,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
+        "search_queries": [
+          "FedRAMP SaaS founder",
+          "public sector cloud security leader"
+        ]
+      }
     },
     "20x Initial Implementation": {
       "linkedin_connect_note": [
@@ -354,7 +466,15 @@
             "I've been digging into how teams keep measures and supporting evidence current after the first implementation push.\n\nWould it help to compare what Boundera is seeing with the process at {company_name}?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives, security leaders, and compliance leaders at cloud service providers actively implementing FedRAMP 20x.",
+        "search_queries": [
+          "FedRAMP 20x cloud security",
+          "FedRAMP 20x compliance leader"
+        ]
+      }
     },
     "Active FedRAMP Path": {
       "linkedin_connect_note": [
@@ -376,7 +496,15 @@
             "I've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives, security leaders, and compliance leaders at cloud providers actively pursuing a FedRAMP authorization path.",
+        "search_queries": [
+          "FedRAMP authorization cloud compliance",
+          "FedRAMP cloud security leader"
+        ]
+      }
     },
     "FedRAMP Mature": {
       "linkedin_connect_note": [
@@ -398,7 +526,15 @@
             "I've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives and security or compliance leaders at established FedRAMP-authorized cloud providers.",
+        "search_queries": [
+          "FedRAMP authorized cloud security",
+          "FedRAMP compliance executive"
+        ]
+      }
     },
     "CSP Stage Verify": {
       "linkedin_connect_note": [
@@ -420,7 +556,15 @@
             "I'm comparing notes with the people responsible for keeping 20x certification data current.\n\nWould you be open to pointing me toward the right owner at {company_name}?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Security and compliance leaders at cloud service providers working through FedRAMP verification, validation, evidence, or continuous monitoring.",
+        "search_queries": [
+          "FedRAMP continuous monitoring cloud",
+          "FedRAMP evidence compliance leader"
+        ]
+      }
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
@@ -439,7 +583,15 @@
             "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
+        "search_queries": [
+          "FedRAMP 3PAO assessor",
+          "FedRAMP assessment leader"
+        ]
+      }
     },
     "Advisors": {
       "linkedin_connect_note": [
@@ -461,7 +613,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
+        "search_queries": [
+          "FedRAMP advisor consultant",
+          "FedRAMP compliance consulting"
+        ]
+      }
     },
     "Channel": {
       "linkedin_connect_note": [
@@ -480,7 +640,15 @@
             "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
+        "search_queries": [
+          "FedRAMP public sector cloud partner",
+          "FedRAMP channel partner"
+        ]
+      }
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
@@ -502,7 +670,15 @@
             "I've been comparing how ready teams are approaching the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Executives and security or compliance leaders at cloud providers prepared for or operating under FedRAMP Rev. 5 and evaluating their next authorization path.",
+        "search_queries": [
+          "FedRAMP Rev 5 cloud compliance",
+          "FedRAMP readiness cloud security"
+        ]
+      }
     },
     "White Label Product/Executive": {
       "linkedin_connect_note": [
@@ -522,7 +698,15 @@
             "{first_name}, the reason I asked is we're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Product leaders, founders, and executives at FedRAMP advisory or delivery firms that could embed a white-label compliance platform.",
+        "search_queries": [
+          "FedRAMP product executive",
+          "FedRAMP consulting founder"
+        ]
+      }
     },
     "White Label Partnerships": {
       "linkedin_connect_note": [
@@ -542,7 +726,15 @@
             "One more question, {first_name}.\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with that 20x workflow. The firm would keep the relationship, while Boundera handles the current evidence and data work.\n\nIs that something you own, or is there someone better internally?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Alliance, channel, and partnership leaders at firms serving FedRAMP and public-sector cloud customers.",
+        "search_queries": [
+          "FedRAMP partnerships",
+          "public sector cloud alliances"
+        ]
+      }
     },
     "White Label Delivery": {
       "linkedin_connect_note": [
@@ -562,7 +754,15 @@
             "One more thought, {first_name}.\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP delivery, managed services, and implementation leaders who could use a white-label compliance platform for client work.",
+        "search_queries": [
+          "FedRAMP managed services delivery",
+          "FedRAMP implementation partner"
+        ]
+      }
     },
     "White Label Champions": {
       "linkedin_connect_note": [
@@ -582,7 +782,15 @@
             "{first_name}, one more question.\n\nWho is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise."
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP practice champions and senior operators who could sponsor a white-label compliance automation partnership.",
+        "search_queries": [
+          "FedRAMP practice leader",
+          "FedRAMP compliance automation partner"
+        ]
+      }
     },
     "CMMC Buyers": {
       "linkedin_connect_note": [
@@ -644,7 +852,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
+        "search_queries": [
+          "FedRAMP SaaS founder",
+          "public sector cloud security leader"
+        ]
+      }
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
@@ -663,7 +879,15 @@
             "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
+        "search_queries": [
+          "FedRAMP 3PAO assessor",
+          "FedRAMP assessment leader"
+        ]
+      }
     },
     "Advisors": {
       "linkedin_connect_note": [
@@ -685,7 +909,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
+        "search_queries": [
+          "FedRAMP advisor consultant",
+          "FedRAMP compliance consulting"
+        ]
+      }
     },
     "Channel": {
       "linkedin_connect_note": [
@@ -704,7 +936,15 @@
             "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
+        "search_queries": [
+          "FedRAMP public sector cloud partner",
+          "FedRAMP channel partner"
+        ]
+      }
     },
     "CMMC Buyers": {
       "linkedin_connect_note": [
@@ -747,14 +987,6 @@
   },
   "Athena": {
     "CSPs": {
-      "discovery": {
-        "enabled": true,
-        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud security leader"
-        ]
-      },
       "linkedin_connect_note": [
         "Hi {first_name}, saw {company_name} in public-sector cloud. FedRAMP's June 2026 rules made 20x evidence/measures more concrete. Curious how your team is reading it. Good to connect?"
       ],
@@ -774,7 +1006,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
+        "search_queries": [
+          "FedRAMP SaaS founder",
+          "public sector cloud security leader"
+        ]
+      }
     },
     "3PAOs/Assessors": {
       "linkedin_connect_note": [
@@ -793,7 +1033,15 @@
             "{first_name}, quick follow-up.\n\nThe question I am pressure-testing: does automated evidence make assessment easier, or does the hard part move to evidence quality, context, and validation?\n\nInterested in comparing notes on the shift?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
+        "search_queries": [
+          "FedRAMP 3PAO assessor",
+          "FedRAMP assessment leader"
+        ]
+      }
     },
     "Advisors": {
       "linkedin_connect_note": [
@@ -815,7 +1063,15 @@
       ],
       "media": [
         "demo.gif"
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
+        "search_queries": [
+          "FedRAMP advisor consultant",
+          "FedRAMP compliance consulting"
+        ]
+      }
     },
     "Channel": {
       "linkedin_connect_note": [
@@ -834,7 +1090,15 @@
             "{first_name}, one more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIs this coming up with vendors or agency teams you work with?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
+        "search_queries": [
+          "FedRAMP public sector cloud partner",
+          "FedRAMP channel partner"
+        ]
+      }
     },
     "CMMC Buyers": {
       "linkedin_connect_note": [

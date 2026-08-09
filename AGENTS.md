@@ -120,10 +120,13 @@ pytest -k test_name                # single test
 
 # Standalone People-search profile discovery. This is a sender-scoped daemon
 # lane, not the legacy campaign qualification path. Configuration comes from
-# each sender/ICP's optional `discovery` block in linkedin/icp_messages.json.
-# Default is disabled. Weekdays become eligible when sender connection work is
-# complete (within DISCOVERY_CONNECT_LIMIT_GRACE of the daily connect cap, or no
-# connect work remains); rest days are unrestricted. DISCOVERY_DAILY_LIMIT plus
+# each sender/ICP's `discovery` block in linkedin/icp_messages.json. Every
+# non-CMMC ICP is enabled for every sender; CMMC targets are intentionally
+# omitted.
+# Default is disabled. Weekdays become eligible only when the daemon closes the
+# sender's connect lane for the day, its connect tasks are scheduled beyond the
+# local day, or no connect work remains;
+# rest days are unrestricted. DISCOVERY_DAILY_LIMIT plus
 # independent card/page/profile/no-match/time caps bound collection.
 .venv/bin/python manage.py start_discovery --dry-run
 .venv/bin/python manage.py start_discovery [--handle arian]
@@ -207,10 +210,12 @@ The parser auto-detects which format and treats `Message` / `Last Name` / `Compa
 Standalone profile discovery is separate from both `discover_inbox_leads` and
 the legacy `ENABLE_AUTO_DISCOVERY` campaign pipeline.
 `ENABLE_PROFILE_DISCOVERY=false` by default. When enabled, the daemon loads
-each sender's explicitly enabled `discovery` blocks from
-`linkedin/icp_messages.json`. On weekdays it claims discovery only after that
-sender reaches the connection threshold, has no connectable work, or the
-connect lane is disabled/limited; on configured rest days it may run at any
+each sender's enabled discovery ICPs from `linkedin/icp_messages.json`. Every
+checked-in non-CMMC ICP is enabled for every sender, while CMMC is omitted. On
+weekdays it claims discovery only after that
+the daemon has closed that sender's connect lane for the day, connect tasks are
+scheduled beyond the local day, no connectable work remains, or the connect lane
+is disabled; on configured rest days it may run at any
 hour. Each
 bounded unit reads source-specific People-search cards, skips self/existing
 CRM/existing discovery/suppressed profiles, runs a structured visit/no-visit

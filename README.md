@@ -108,7 +108,7 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 | **`connect`** | Sends invite + initial note; persists outbound to `crm.Message`. Gated by daily/weekly limits per profile. |
 | **`sweep_connections`** | Visits the connections page every 6h (configurable), bulk-detects accepts, transitions PENDING → CONNECTED, captures first reply, posts Slack. Replaces the legacy per-profile `check_pending`. |
 | **`follow_up`** | Runs the multi-turn LLM agent on connected leads. Gated by `ENABLE_FOLLOW_UP` — when off, queued tasks are cancelled at startup. |
-| **`discovery`** | On weekdays after sender connection work finishes, or at any time on rest days, scans bounded People-search pages, lightly matches cards to sender-enabled ICPs, opens plausible profiles, and saves them to `LinkedInDiscoveryLead` up to `DISCOVERY_DAILY_LIMIT`. Never creates CRM or outbound state. |
+| **`discovery`** | On weekdays after sender connection work finishes, or at any time on rest days, scans bounded People-search pages, lightly matches cards to that sender's enabled non-CMMC ICP blocks in `icp_messages.json`, opens plausible profiles, and saves them to `LinkedInDiscoveryLead` up to `DISCOVERY_DAILY_LIMIT`. Never creates CRM or outbound state. |
 | **`check_pending`** | Legacy task type, retained for migration compatibility. New deployments should use `sweep_connections`. |
 
 **Storage:**

@@ -82,9 +82,6 @@ ENABLE_PROFILE_DISCOVERY = os.getenv(
     "ENABLE_PROFILE_DISCOVERY", "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
 DISCOVERY_DAILY_LIMIT = int(os.getenv("DISCOVERY_DAILY_LIMIT", "25"))
-DISCOVERY_CONNECT_LIMIT_GRACE = int(
-    os.getenv("DISCOVERY_CONNECT_LIMIT_GRACE", "5"),
-)
 DISCOVERY_MAX_CARDS_PER_RUN = int(
     os.getenv("DISCOVERY_MAX_CARDS_PER_RUN", "200"),
 )

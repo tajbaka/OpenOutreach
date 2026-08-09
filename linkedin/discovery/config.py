@@ -60,11 +60,6 @@ def validate_discovery_settings() -> None:
         if value <= 0:
             raise DiscoveryConfigurationError(f"{name} must be positive")
 
-    if conf.DISCOVERY_CONNECT_LIMIT_GRACE < 0:
-        raise DiscoveryConfigurationError(
-            "DISCOVERY_CONNECT_LIMIT_GRACE cannot be negative",
-        )
-
     if (
         conf.DISCOVERY_PROFILE_DELAY_MIN_SECONDS
         > conf.DISCOVERY_PROFILE_DELAY_MAX_SECONDS
@@ -115,16 +110,14 @@ def next_discovery_day_start(now: datetime | None = None) -> datetime | None:
     return discovery_day_end(now)
 
 
-def _connectable_work_exists(profile) -> bool:
+def _connectable_work_exists(profile, campaign_ids: list[int]) -> bool:
     if conf.ENABLE_AUTO_DISCOVERY:
         return True
     from crm.models import Deal
     from linkedin.enums import ProfileState
-    from linkedin.models import Campaign
 
     return Deal.objects.filter(
-        campaign__user=profile.user,
-        campaign__status=Campaign.Status.ACTIVE,
+        campaign_id__in=campaign_ids,
         lead__disqualified=False,
         state__in=[ProfileState.QUALIFIED, ProfileState.READY_TO_CONNECT],
     ).exists()
@@ -135,26 +128,58 @@ def weekday_connection_work_complete(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Whether weekday connection work is done enough to yield to discovery."""
+    """Whether the sender's connect lane is parked for the rest of the day."""
     if not conf.ENABLE_CONNECT:
         return True
 
-    from linkedin.models import ActionLog
+    from linkedin.models import Campaign, Task
 
-    daily_limit = conf.CONNECT_DAILY_LIMIT or profile.connect_daily_limit
-    threshold = max(daily_limit - conf.DISCOVERY_CONNECT_LIMIT_GRACE, 1)
-    start, end = discovery_day_bounds(now)
-    sent = ActionLog.objects.filter(
-        linkedin_profile=profile,
-        action_type=ActionLog.ActionType.CONNECT,
-        created_at__gte=start,
-        created_at__lt=end,
-    ).count()
-    if sent >= threshold:
+    local = discovery_local_now(now)
+    if (
+        conf.ENABLE_ACTIVE_HOURS
+        and local.hour >= conf.ACTIVE_END_HOUR
+        and (
+            not conf.ENABLE_PACING_CATCH_UP
+            or not _connect_catch_up_active(profile)
+        )
+    ):
         return True
-    if not profile.can_execute(ActionLog.ActionType.CONNECT):
+
+    campaign_ids = list(
+        Campaign.objects.filter(
+            user=profile.user,
+            status=Campaign.Status.ACTIVE,
+        ).values_list("id", flat=True),
+    )
+    if not campaign_ids:
         return True
-    return not _connectable_work_exists(profile)
+
+    connect_tasks = Task.objects.filter(
+        task_type=Task.TaskType.CONNECT,
+        payload__campaign_id__in=campaign_ids,
+    )
+    if connect_tasks.filter(status=Task.Status.RUNNING).exists():
+        return False
+
+    _start, day_end = discovery_day_bounds(local)
+    pending = connect_tasks.filter(status=Task.Status.PENDING)
+    if pending.filter(
+        scheduled_at__lt=day_end,
+    ).exists():
+        return False
+    if pending.exists():
+        return True
+
+    # A missing connect task is recoverable queue drift, not proof that the
+    # lane finished. Keep discovery closed so the daemon can heal that queue.
+    return not _connectable_work_exists(profile, campaign_ids)
+
+
+def _connect_catch_up_active(profile) -> bool:
+    from linkedin.models import ActionLog
+    from linkedin.tasks.connect import _is_behind_normal_window_pace
+
+    return _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT)
 
 
 def discovery_gate_open(profile, *, now: datetime | None = None) -> bool:

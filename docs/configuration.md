@@ -83,10 +83,7 @@ Discovery metadata lives inside each sender's existing
       "discovery": {
         "enabled": true,
         "profile": "Security, compliance, and public-sector leaders at cloud software providers with possible FedRAMP relevance.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud CISO"
-        ]
+        "search_queries": ["FedRAMP SaaS founder", "public sector cloud CISO"]
       },
       "linkedin_connect_note": ["..."],
       "linkedin_connect_followup": ["..."]
@@ -95,12 +92,12 @@ Discovery metadata lives inside each sender's existing
 }
 ```
 
-A missing block or `"enabled": false` disables that sender/ICP combination.
-Enabled blocks require a non-empty `profile` and at least one explicit
-`search_queries` value. The ICP Messages Sheet pull preserves this JSON-only
-metadata. `LLM_API_KEY` and `AI_MODEL` must also be configured before the
-feature can be enabled; startup validation fails before browser activity when
-either is missing.
+Every non-CMMC ICP under each sender has its own enabled `discovery` block;
+CMMC buckets intentionally have none. Enabled definitions require a non-empty
+`profile` and at least one explicit `search_queries` value. The ICP Messages
+Sheet pull preserves this JSON-only metadata. `LLM_API_KEY` and `AI_MODEL` must
+also be configured before the feature can be enabled; startup validation fails
+before browser activity when either is missing.
 
 ### Discovery environment settings
 
@@ -108,7 +105,6 @@ either is missing.
 |:---------|:--------|:------------|
 | `ENABLE_PROFILE_DISCOVERY` | `false` | Global feature gate. |
 | `DISCOVERY_DAILY_LIMIT` | `25` | Maximum new profiles stored per sender/local day. |
-| `DISCOVERY_CONNECT_LIMIT_GRACE` | `5` | On weekdays, allow discovery once successful connection requests are within this many of the sender's daily cap. |
 | `DISCOVERY_MAX_CARDS_PER_RUN` | `200` | Maximum result cards scanned in one sender run. |
 | `DISCOVERY_MAX_PAGES_PER_RUN` | `10` | Maximum search pages scanned in one sender run. |
 | `DISCOVERY_MAX_PROFILE_VISITS_PER_RUN` | `40` | Maximum profiles opened in one sender run. |
@@ -118,8 +114,9 @@ either is missing.
 
 `DISCOVERY_DAILY_LIMIT` is authoritative for saved volume and uses
 `ACTIVE_TIMEZONE` day boundaries. Duplicates do not consume it. Weekdays become
-eligible after the sender reaches the connection threshold, has no connectable
-work, or cannot send connections; rest days have no clock gate. Once the daily
+eligible only after the daemon has closed its connect lane for the day, every
+connect task is scheduled beyond the local day, or there is no connectable
+work; rest days have no clock gate. Once the daily
 limit is reached, the next task is scheduled for local midnight. Independent
 card/page/profile/no-match/time caps still stop runs that save nothing.
 

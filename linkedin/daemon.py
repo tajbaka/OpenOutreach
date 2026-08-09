@@ -267,11 +267,11 @@ def _claimable_task_types_now(profile=None):
         return None if discovery_active else _browser_task_types_without_discovery()
     if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
         return None if discovery_active else _browser_task_types_without_discovery()
-    if discovery_active:
-        return {Task.TaskType.DISCOVERY}
     catch_up = _catch_up_task_types(profile, now=now)
     if catch_up:
         return catch_up
+    if discovery_active:
+        return {Task.TaskType.DISCOVERY}
     return set()
 
 
