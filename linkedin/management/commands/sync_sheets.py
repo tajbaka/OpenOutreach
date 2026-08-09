@@ -31,6 +31,10 @@ class Command(BaseCommand):
         parser.add_argument("--dry-run", action="store_true",
                             help="Show planned changes without writing to Sheets.")
 
+    def _console_text(self, message: str) -> str:
+        encoding = getattr(self.stdout, "encoding", None) or sys.stdout.encoding or "utf-8"
+        return message.encode(encoding, errors="replace").decode(encoding)
+
     def handle(self, *args, **options):
         from crm.models import Deal
 
@@ -192,13 +196,17 @@ class Command(BaseCommand):
                 if was_new:
                     appended += 1
                     self.stdout.write(
-                        f"  + {full:35s} status={effective_status} "
-                        f"stage={target_stage}"
+                        self._console_text(
+                            f"  + {full:35s} status={effective_status} "
+                            f"stage={target_stage}"
+                        )
                     )
                 elif changed:
                     updated += 1
                     self.stdout.write(
-                        f"  ~ {full:35s} {', '.join(changed)}"
+                        self._console_text(
+                            f"  ~ {full:35s} {', '.join(changed)}"
+                        )
                     )
                 else:
                     unchanged += 1
