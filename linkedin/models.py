@@ -1080,10 +1080,13 @@ class Task(models.Model):
         ):
             if not payload.get("operator"):
                 errors.append("discovery tasks require non-empty payload.operator")
-            if payload.get("query_index") is None:
-                errors.append("discovery tasks require payload.query_index")
-            if payload.get("page") is None:
-                errors.append("discovery tasks require payload.page")
+            if payload.get("source") != "mynetwork_recommendations":
+                errors.append(
+                    "discovery tasks require "
+                    "payload.source=mynetwork_recommendations"
+                )
+            if payload.get("section_cursor") is None:
+                errors.append("discovery tasks require payload.section_cursor")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

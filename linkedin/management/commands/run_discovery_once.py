@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from linkedin import conf
 from linkedin.browser.registry import get_or_create_session
+from linkedin.discovery.browser_safety import assert_discovery_browser_available
 from linkedin.discovery.collector import (
     discovery_available_now,
     discovery_enabled_for_sender,
@@ -17,6 +18,7 @@ from linkedin.discovery.config import (
     discovery_day_end,
     validate_discovery_settings,
 )
+from linkedin.exceptions import DiscoverySessionConflictError
 from linkedin.models import LinkedInDiscoveryLead, LinkedInProfile, Task
 from linkedin.operators import resolve_operator
 from linkedin.tasks.discovery import handle_discovery
@@ -58,6 +60,13 @@ class Command(BaseCommand):
             raise CommandError("No matching active LinkedInProfile found.") from exc
 
         operator = resolve_operator(profile.linkedin_username)
+        try:
+            assert_discovery_browser_available(
+                operator=operator,
+                account_username=profile.linkedin_username,
+            )
+        except DiscoverySessionConflictError as exc:
+            raise CommandError(str(exc)) from exc
         if not discovery_enabled_for_sender(profile, operator):
             raise CommandError(
                 f"Discovery is not configured for sender {operator}.",

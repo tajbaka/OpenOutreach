@@ -23,11 +23,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud security leader"
-        ]
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization."
       }
     },
     "20x Initial Implementation": {
@@ -53,11 +49,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives, security leaders, and compliance leaders at cloud service providers actively implementing FedRAMP 20x.",
-        "search_queries": [
-          "FedRAMP 20x cloud security",
-          "FedRAMP 20x compliance leader"
-        ]
+        "profile": "Executives, security leaders, and compliance leaders at cloud service providers actively implementing FedRAMP 20x."
       }
     },
     "Active FedRAMP Path": {
@@ -83,11 +75,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives, security leaders, and compliance leaders at cloud providers actively pursuing a FedRAMP authorization path.",
-        "search_queries": [
-          "FedRAMP authorization cloud compliance",
-          "FedRAMP cloud security leader"
-        ]
+        "profile": "Executives, security leaders, and compliance leaders at cloud providers actively pursuing a FedRAMP authorization path."
       }
     },
     "FedRAMP Mature": {
@@ -113,11 +101,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives and security or compliance leaders at established FedRAMP-authorized cloud providers.",
-        "search_queries": [
-          "FedRAMP authorized cloud security",
-          "FedRAMP compliance executive"
-        ]
+        "profile": "Executives and security or compliance leaders at established FedRAMP-authorized cloud providers."
       }
     },
     "CSP Stage Verify": {
@@ -143,11 +127,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Security and compliance leaders at cloud service providers working through FedRAMP verification, validation, evidence, or continuous monitoring.",
-        "search_queries": [
-          "FedRAMP continuous monitoring cloud",
-          "FedRAMP evidence compliance leader"
-        ]
+        "profile": "Security and compliance leaders at cloud service providers working through FedRAMP verification, validation, evidence, or continuous monitoring."
       }
     },
     "3PAOs/Assessors": {
@@ -170,11 +150,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
-        "search_queries": [
-          "FedRAMP 3PAO assessor",
-          "FedRAMP assessment leader"
-        ]
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders."
       }
     },
     "Advisors": {
@@ -200,11 +176,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
-        "search_queries": [
-          "FedRAMP advisor consultant",
-          "FedRAMP compliance consulting"
-        ]
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization."
       }
     },
     "Channel": {
@@ -227,11 +199,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
-        "search_queries": [
-          "FedRAMP public sector cloud partner",
-          "FedRAMP channel partner"
-        ]
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs."
       }
     },
     "Rev5 Ready": {
@@ -257,11 +225,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives and security or compliance leaders at cloud providers prepared for or operating under FedRAMP Rev. 5 and evaluating their next authorization path.",
-        "search_queries": [
-          "FedRAMP Rev 5 cloud compliance",
-          "FedRAMP readiness cloud security"
-        ]
+        "profile": "Executives and security or compliance leaders at cloud providers prepared for or operating under FedRAMP Rev. 5 and evaluating their next authorization path."
       }
     },
     "White Label Product/Executive": {
@@ -285,11 +249,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Product leaders, founders, and executives at FedRAMP advisory or delivery firms that could embed a white-label compliance platform.",
-        "search_queries": [
-          "FedRAMP product executive",
-          "FedRAMP consulting founder"
-        ]
+        "profile": "Product leaders, founders, and executives at FedRAMP advisory or delivery firms that could embed a white-label compliance platform."
       }
     },
     "White Label Partnerships": {
@@ -313,11 +273,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Alliance, channel, and partnership leaders at firms serving FedRAMP and public-sector cloud customers.",
-        "search_queries": [
-          "FedRAMP partnerships",
-          "public sector cloud alliances"
-        ]
+        "profile": "Alliance, channel, and partnership leaders at firms serving FedRAMP and public-sector cloud customers."
       }
     },
     "White Label Delivery": {
@@ -341,11 +297,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP delivery, managed services, and implementation leaders who could use a white-label compliance platform for client work.",
-        "search_queries": [
-          "FedRAMP managed services delivery",
-          "FedRAMP implementation partner"
-        ]
+        "profile": "FedRAMP delivery, managed services, and implementation leaders who could use a white-label compliance platform for client work."
       }
     },
     "White Label Champions": {
@@ -369,11 +321,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP practice champions and senior operators who could sponsor a white-label compliance automation partnership.",
-        "search_queries": [
-          "FedRAMP practice leader",
-          "FedRAMP compliance automation partner"
-        ]
+        "profile": "FedRAMP practice champions and senior operators who could sponsor a white-label compliance automation partnership."
       }
     },
     "CMMC Buyers": {
@@ -439,11 +387,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud security leader"
-        ]
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization."
       }
     },
     "20x Initial Implementation": {
@@ -469,11 +413,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives, security leaders, and compliance leaders at cloud service providers actively implementing FedRAMP 20x.",
-        "search_queries": [
-          "FedRAMP 20x cloud security",
-          "FedRAMP 20x compliance leader"
-        ]
+        "profile": "Executives, security leaders, and compliance leaders at cloud service providers actively implementing FedRAMP 20x."
       }
     },
     "Active FedRAMP Path": {
@@ -499,11 +439,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives, security leaders, and compliance leaders at cloud providers actively pursuing a FedRAMP authorization path.",
-        "search_queries": [
-          "FedRAMP authorization cloud compliance",
-          "FedRAMP cloud security leader"
-        ]
+        "profile": "Executives, security leaders, and compliance leaders at cloud providers actively pursuing a FedRAMP authorization path."
       }
     },
     "FedRAMP Mature": {
@@ -529,11 +465,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives and security or compliance leaders at established FedRAMP-authorized cloud providers.",
-        "search_queries": [
-          "FedRAMP authorized cloud security",
-          "FedRAMP compliance executive"
-        ]
+        "profile": "Executives and security or compliance leaders at established FedRAMP-authorized cloud providers."
       }
     },
     "CSP Stage Verify": {
@@ -559,11 +491,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Security and compliance leaders at cloud service providers working through FedRAMP verification, validation, evidence, or continuous monitoring.",
-        "search_queries": [
-          "FedRAMP continuous monitoring cloud",
-          "FedRAMP evidence compliance leader"
-        ]
+        "profile": "Security and compliance leaders at cloud service providers working through FedRAMP verification, validation, evidence, or continuous monitoring."
       }
     },
     "3PAOs/Assessors": {
@@ -586,11 +514,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
-        "search_queries": [
-          "FedRAMP 3PAO assessor",
-          "FedRAMP assessment leader"
-        ]
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders."
       }
     },
     "Advisors": {
@@ -616,11 +540,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
-        "search_queries": [
-          "FedRAMP advisor consultant",
-          "FedRAMP compliance consulting"
-        ]
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization."
       }
     },
     "Channel": {
@@ -643,11 +563,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
-        "search_queries": [
-          "FedRAMP public sector cloud partner",
-          "FedRAMP channel partner"
-        ]
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs."
       }
     },
     "Rev5 Ready": {
@@ -673,11 +589,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Executives and security or compliance leaders at cloud providers prepared for or operating under FedRAMP Rev. 5 and evaluating their next authorization path.",
-        "search_queries": [
-          "FedRAMP Rev 5 cloud compliance",
-          "FedRAMP readiness cloud security"
-        ]
+        "profile": "Executives and security or compliance leaders at cloud providers prepared for or operating under FedRAMP Rev. 5 and evaluating their next authorization path."
       }
     },
     "White Label Product/Executive": {
@@ -701,11 +613,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Product leaders, founders, and executives at FedRAMP advisory or delivery firms that could embed a white-label compliance platform.",
-        "search_queries": [
-          "FedRAMP product executive",
-          "FedRAMP consulting founder"
-        ]
+        "profile": "Product leaders, founders, and executives at FedRAMP advisory or delivery firms that could embed a white-label compliance platform."
       }
     },
     "White Label Partnerships": {
@@ -729,11 +637,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Alliance, channel, and partnership leaders at firms serving FedRAMP and public-sector cloud customers.",
-        "search_queries": [
-          "FedRAMP partnerships",
-          "public sector cloud alliances"
-        ]
+        "profile": "Alliance, channel, and partnership leaders at firms serving FedRAMP and public-sector cloud customers."
       }
     },
     "White Label Delivery": {
@@ -757,11 +661,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP delivery, managed services, and implementation leaders who could use a white-label compliance platform for client work.",
-        "search_queries": [
-          "FedRAMP managed services delivery",
-          "FedRAMP implementation partner"
-        ]
+        "profile": "FedRAMP delivery, managed services, and implementation leaders who could use a white-label compliance platform for client work."
       }
     },
     "White Label Champions": {
@@ -785,11 +685,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP practice champions and senior operators who could sponsor a white-label compliance automation partnership.",
-        "search_queries": [
-          "FedRAMP practice leader",
-          "FedRAMP compliance automation partner"
-        ]
+        "profile": "FedRAMP practice champions and senior operators who could sponsor a white-label compliance automation partnership."
       }
     },
     "CMMC Buyers": {
@@ -855,11 +751,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud security leader"
-        ]
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization."
       }
     },
     "3PAOs/Assessors": {
@@ -882,11 +774,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
-        "search_queries": [
-          "FedRAMP 3PAO assessor",
-          "FedRAMP assessment leader"
-        ]
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders."
       }
     },
     "Advisors": {
@@ -912,11 +800,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
-        "search_queries": [
-          "FedRAMP advisor consultant",
-          "FedRAMP compliance consulting"
-        ]
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization."
       }
     },
     "Channel": {
@@ -939,11 +823,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
-        "search_queries": [
-          "FedRAMP public sector cloud partner",
-          "FedRAMP channel partner"
-        ]
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs."
       }
     },
     "CMMC Buyers": {
@@ -1009,11 +889,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization.",
-        "search_queries": [
-          "FedRAMP SaaS founder",
-          "public sector cloud security leader"
-        ]
+        "profile": "Founders, executives, public-sector leaders, security leaders, and compliance leaders at cloud software providers that may need or pursue FedRAMP authorization."
       }
     },
     "3PAOs/Assessors": {
@@ -1036,11 +912,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders.",
-        "search_queries": [
-          "FedRAMP 3PAO assessor",
-          "FedRAMP assessment leader"
-        ]
+        "profile": "FedRAMP 3PAO executives, assessors, auditors, and assessment delivery leaders."
       }
     },
     "Advisors": {
@@ -1066,11 +938,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization.",
-        "search_queries": [
-          "FedRAMP advisor consultant",
-          "FedRAMP compliance consulting"
-        ]
+        "profile": "FedRAMP advisors, consultants, fractional compliance leaders, and firms helping cloud providers prepare for authorization."
       }
     },
     "Channel": {
@@ -1093,11 +961,7 @@
       ],
       "discovery": {
         "enabled": true,
-        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs.",
-        "search_queries": [
-          "FedRAMP public sector cloud partner",
-          "FedRAMP channel partner"
-        ]
+        "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs."
       }
     },
     "CMMC Buyers": {

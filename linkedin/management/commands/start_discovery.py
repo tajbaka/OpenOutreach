@@ -5,12 +5,13 @@ from django.core.management.base import BaseCommand, CommandError
 
 from linkedin import conf
 from linkedin.discovery.collector import enqueue_discovery
-from linkedin.discovery.config import discovery_gate_open, validate_discovery_settings
-from linkedin.discovery.limits import remaining_today, saved_today
-from linkedin.icp_outbound import (
-    discovery_search_queries,
-    load_discovery_targets,
+from linkedin.discovery.config import (
+    discovery_gate_open,
+    discovery_limits,
+    validate_discovery_settings,
 )
+from linkedin.discovery.limits import remaining_today, saved_today
+from linkedin.icp_outbound import load_discovery_targets
 from linkedin.models import LinkedInProfile
 from linkedin.operators import resolve_operator
 
@@ -46,14 +47,16 @@ class Command(BaseCommand):
         for profile in profiles:
             operator = resolve_operator(profile.linkedin_username)
             targets = load_discovery_targets(operator)
-            queries = discovery_search_queries(targets)
+            limits = discovery_limits()
             saved = saved_today(operator)
             remaining = remaining_today(operator)
             gate = discovery_gate_open(profile)
 
             self.stdout.write(
                 f"{operator} ({profile.user.username}): "
-                f"enabled_icps={len(targets)} queries={len(queries)} "
+                f"enabled_icps={len(targets)} "
+                f"section_cap={limits.max_sections} "
+                f"scroll_cap={limits.max_scroll_rounds} "
                 f"saved_today={saved}/{conf.DISCOVERY_DAILY_LIMIT} "
                 f"remaining={remaining} eligible_now={gate}",
             )

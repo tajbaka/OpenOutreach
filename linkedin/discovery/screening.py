@@ -46,7 +46,7 @@ def _screening_prompt(
     ]
     return (
         "You are doing a deliberately lightweight first-pass ICP screen of "
-        "LinkedIn People-search cards. Decide only whether each visible card "
+        "LinkedIn recommendation cards. Decide only whether each visible card "
         "is plausibly worth opening. Prefer should_visit=true when the card is "
         "ambiguous but reasonably compatible. For a visited card, select "
         "exactly one ICP from the supplied enabled ICP list. Do not invent ICP "

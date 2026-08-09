@@ -30,7 +30,14 @@ def _configure(monkeypatch):
     monkeypatch.setattr(conf, "CONNECT_DAILY_LIMIT", None)
     monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 25)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_CARDS_PER_RUN", 200)
-    monkeypatch.setattr(conf, "DISCOVERY_MAX_PAGES_PER_RUN", 10)
+    monkeypatch.setattr(conf, "DISCOVERY_MAX_SECTIONS_PER_RUN", 12)
+    monkeypatch.setattr(conf, "DISCOVERY_MAX_SCROLL_ROUNDS_PER_RUN", 12)
+    monkeypatch.setattr(conf, "DISCOVERY_MAX_CONSECUTIVE_EMPTY_SCROLLS", 3)
+    monkeypatch.setattr(
+        conf,
+        "DISCOVERY_MAX_PROFILE_RECOMMENDATIONS_PER_VISIT",
+        20,
+    )
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PROFILE_VISITS_PER_RUN", 40)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES", 75)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_RUN_MINUTES", 120)
@@ -144,9 +151,20 @@ def test_day_bounds_use_active_timezone(monkeypatch):
     assert (end - start).total_seconds() == 86400
 
 
-def test_invalid_limit_configuration_fails(monkeypatch):
+@pytest.mark.parametrize(
+    "field",
+    [
+        "DISCOVERY_DAILY_LIMIT",
+        "DISCOVERY_MAX_SECTIONS_PER_RUN",
+        "DISCOVERY_MAX_SCROLL_ROUNDS_PER_RUN",
+        "DISCOVERY_MAX_CONSECUTIVE_EMPTY_SCROLLS",
+        "DISCOVERY_MAX_PROFILE_RECOMMENDATIONS_PER_VISIT",
+    ],
+)
+@pytest.mark.parametrize("value", [0, -1])
+def test_invalid_limit_configuration_fails(monkeypatch, field, value):
     _configure(monkeypatch)
-    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 0)
+    monkeypatch.setattr(conf, field, value)
 
     with pytest.raises(DiscoveryConfigurationError, match="must be positive"):
         discovery_limits()

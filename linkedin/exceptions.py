@@ -66,13 +66,13 @@ class DiscoverySurfaceError(Exception):
     pass
 
 
-class DiscoveryScreeningError(Exception):
-    """The discovery ICP screen returned an invalid structured result."""
+class DiscoverySessionConflictError(Exception):
+    """A standalone discovery command conflicts with a live sender daemon."""
 
     pass
 
 
-class LinkedInDiscoveryLimitError(Exception):
-    """LinkedIn displayed a search/commercial-use restriction."""
+class DiscoveryScreeningError(Exception):
+    """The discovery ICP screen returned an invalid structured result."""
 
     pass

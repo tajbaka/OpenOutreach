@@ -41,8 +41,15 @@ def test_save_stores_profile_sender_and_potential_icp(fake_session):
     row = LinkedInDiscoveryLead.objects.get()
     assert result.created
     assert row.stored_by_operator == "Arian"
+    assert (
+        row.stored_by_account_username
+        == fake_session.linkedin_profile.linkedin_username
+    )
     assert row.potential_icp == "CSPs"
     assert row.profile_data["headline"] == "VP Security"
+    assert row.profile_data["positions"] == [
+        {"company_name": "Example Cloud"},
+    ]
     assert row.company_name == "Example Cloud"
     assert Deal.objects.count() == deals_before
 

@@ -4,8 +4,10 @@
 
 **Branch:** `codex/discovery-mode-review`
 
-**Status:** Implemented in this branch; disabled pending controlled sender/ICP
-activation and live selector verification
+**Status:** Storage, scheduling, and ICP controls implemented. The People-search
+source and its query/page state are superseded by
+`2026-08-08-linkedin-recommendation-discovery.md`; do not use this document as
+the current source implementation runbook.
 
 ## Goal
 

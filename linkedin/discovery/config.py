@@ -14,7 +14,10 @@ from linkedin.exceptions import DiscoveryConfigurationError
 @dataclass(frozen=True)
 class DiscoveryLimits:
     max_cards: int
-    max_pages: int
+    max_sections: int
+    max_scroll_rounds: int
+    max_consecutive_empty_scrolls: int
+    max_profile_recommendations_per_visit: int
     max_profile_visits: int
     max_consecutive_no_matches: int
     max_run_minutes: int
@@ -41,7 +44,16 @@ def validate_discovery_settings() -> None:
     positive = {
         "DISCOVERY_DAILY_LIMIT": conf.DISCOVERY_DAILY_LIMIT,
         "DISCOVERY_MAX_CARDS_PER_RUN": conf.DISCOVERY_MAX_CARDS_PER_RUN,
-        "DISCOVERY_MAX_PAGES_PER_RUN": conf.DISCOVERY_MAX_PAGES_PER_RUN,
+        "DISCOVERY_MAX_SECTIONS_PER_RUN": conf.DISCOVERY_MAX_SECTIONS_PER_RUN,
+        "DISCOVERY_MAX_SCROLL_ROUNDS_PER_RUN": (
+            conf.DISCOVERY_MAX_SCROLL_ROUNDS_PER_RUN
+        ),
+        "DISCOVERY_MAX_CONSECUTIVE_EMPTY_SCROLLS": (
+            conf.DISCOVERY_MAX_CONSECUTIVE_EMPTY_SCROLLS
+        ),
+        "DISCOVERY_MAX_PROFILE_RECOMMENDATIONS_PER_VISIT": (
+            conf.DISCOVERY_MAX_PROFILE_RECOMMENDATIONS_PER_VISIT
+        ),
         "DISCOVERY_MAX_PROFILE_VISITS_PER_RUN": (
             conf.DISCOVERY_MAX_PROFILE_VISITS_PER_RUN
         ),
@@ -74,7 +86,14 @@ def discovery_limits() -> DiscoveryLimits:
     validate_discovery_settings()
     return DiscoveryLimits(
         max_cards=conf.DISCOVERY_MAX_CARDS_PER_RUN,
-        max_pages=conf.DISCOVERY_MAX_PAGES_PER_RUN,
+        max_sections=conf.DISCOVERY_MAX_SECTIONS_PER_RUN,
+        max_scroll_rounds=conf.DISCOVERY_MAX_SCROLL_ROUNDS_PER_RUN,
+        max_consecutive_empty_scrolls=(
+            conf.DISCOVERY_MAX_CONSECUTIVE_EMPTY_SCROLLS
+        ),
+        max_profile_recommendations_per_visit=(
+            conf.DISCOVERY_MAX_PROFILE_RECOMMENDATIONS_PER_VISIT
+        ),
         max_profile_visits=conf.DISCOVERY_MAX_PROFILE_VISITS_PER_RUN,
         max_consecutive_no_matches=conf.DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES,
         max_run_minutes=conf.DISCOVERY_MAX_RUN_MINUTES,

@@ -30,7 +30,6 @@ def _targets():
         DiscoveryTarget(
             icp="CSPs",
             profile="Cloud security and compliance leaders",
-            search_queries=("FedRAMP CISO",),
         ),
     )
 

@@ -118,7 +118,7 @@ pytest -k test_name                # single test
   [--limit N] \
   --apply
 
-# Standalone People-search profile discovery. This is a sender-scoped daemon
+# Standalone recommendation-based profile discovery. This is a sender-scoped daemon
 # lane, not the legacy campaign qualification path. Configuration comes from
 # each sender/ICP's `discovery` block in linkedin/icp_messages.json. Every
 # non-CMMC ICP is enabled for every sender; CMMC targets are intentionally
@@ -126,14 +126,20 @@ pytest -k test_name                # single test
 # Default is disabled. Weekdays become eligible only when the daemon closes the
 # sender's connect lane for the day, its connect tasks are scheduled beyond the
 # local day, or no connect work remains;
-# rest days are unrestricted. DISCOVERY_DAILY_LIMIT plus
-# independent card/page/profile/no-match/time caps bound collection.
+# rest days are unrestricted. DISCOVERY_DAILY_LIMIT plus independent
+# card/section/scroll/profile/no-match/time caps bound collection.
 .venv/bin/python manage.py start_discovery --dry-run
 .venv/bin/python manage.py start_discovery [--handle arian]
 # Controlled live verification: keeps one sender browser open for a bounded
 # discovery batch (default one Task), then exits.
 # It never claims connect/follow-up/sweep/status/manual-reply Tasks.
 .venv/bin/python manage.py run_discovery_once --handle arian --max-tasks 3
+# Read-only live selector probe. Reuses the saved sender session, verifies the
+# authenticated identity, My Network sections/Show All, and one More profiles
+# overlay. It makes no database writes or outbound LinkedIn actions.
+.venv/bin/python manage.py probe_discovery_recommendations \
+  --handle athenaaghdami \
+  --output artifacts/discovery/athena-recommendations.json
 
 # Export Sales Navigator searches/lists for local lead review. Outputs stay
 # compatible with add_seeds but include review metadata columns:
@@ -212,17 +218,17 @@ the legacy `ENABLE_AUTO_DISCOVERY` campaign pipeline.
 `ENABLE_PROFILE_DISCOVERY=false` by default. When enabled, the daemon loads
 each sender's enabled discovery ICPs from `linkedin/icp_messages.json`. Every
 checked-in non-CMMC ICP is enabled for every sender, while CMMC is omitted. On
-weekdays it claims discovery only after that
-the daemon has closed that sender's connect lane for the day, connect tasks are
+weekdays it claims discovery only after the daemon has closed that sender's
+connect lane for the day, connect tasks are
 scheduled beyond the local day, no connectable work remains, or the connect lane
-is disabled; on configured rest days it may run at any
-hour. Each
-bounded unit reads source-specific People-search cards, skips self/existing
-CRM/existing discovery/suppressed profiles, runs a structured visit/no-visit
-screen against enabled ICPs, and stores a fetched Voyager profile in
+is disabled; on configured rest days it may run at any hour. Each bounded unit
+reads source-specific `/mynetwork/grow/` recommendation sections
+and one depth-1 `More profiles for you` hop, skips self/existing CRM/existing
+discovery/suppressed profiles, runs a structured visit/no-visit screen against
+enabled ICP descriptions, and stores a fetched Voyager profile in
 `LinkedInDiscoveryLead`. `DISCOVERY_DAILY_LIMIT` (default 25) counts only new
-rows per sender/local day; independent card/page/profile-
-visit/no-match/run-time caps bound low-yield browsing. This lane never creates
+rows per sender/local day; independent card/section/scroll/profile-visit/
+no-match/run-time caps bound low-yield browsing. This lane never creates
 CRM Leads, Deals, Messages, connection requests, or other outbound state.
 
 ## Architecture (quick reference)
