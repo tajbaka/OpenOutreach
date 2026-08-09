@@ -1,5 +1,5 @@
-from unittest.mock import Mock
 from datetime import timedelta
+from unittest.mock import Mock
 
 import pytest
 from django.core.management import call_command
@@ -14,14 +14,16 @@ from linkedin.models import Task
 @pytest.mark.django_db
 def test_run_once_claims_only_discovery_task(fake_session, monkeypatch):
     monkeypatch.setattr(conf, "ENABLE_PROFILE_DISCOVERY", True)
+    monkeypatch.setattr(conf, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(conf, "AI_MODEL", "test-model")
     monkeypatch.setattr(
         "linkedin.management.commands.run_discovery_once."
         "validate_discovery_settings",
         lambda: None,
     )
     monkeypatch.setattr(
-        "linkedin.management.commands.run_discovery_once.discovery_window_open",
-        lambda: True,
+        "linkedin.management.commands.run_discovery_once.discovery_available_now",
+        lambda profile, operator: True,
     )
     monkeypatch.setattr(
         "linkedin.management.commands.run_discovery_once."
@@ -70,10 +72,12 @@ def test_run_once_claims_only_discovery_task(fake_session, monkeypatch):
 @pytest.mark.django_db
 def test_run_once_keeps_one_browser_for_bounded_batch(fake_session, monkeypatch):
     monkeypatch.setattr(conf, "ENABLE_PROFILE_DISCOVERY", True)
+    monkeypatch.setattr(conf, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(conf, "AI_MODEL", "test-model")
     command = "linkedin.management.commands.run_discovery_once"
     monkeypatch.setattr(f"{command}.validate_discovery_settings", lambda: None)
-    monkeypatch.setattr(f"{command}.discovery_window_open", lambda: True)
-    monkeypatch.setattr(f"{command}.discovery_window_end", lambda: timezone.now() + timedelta(hours=1))
+    monkeypatch.setattr(f"{command}.discovery_available_now", lambda profile, operator: True)
+    monkeypatch.setattr(f"{command}.discovery_day_end", lambda: timezone.now() + timedelta(hours=1))
     monkeypatch.setattr(f"{command}.discovery_enabled_for_sender", lambda profile, operator: True)
     monkeypatch.setattr(f"{command}.reconcile_discovery_tasks", lambda profile, operator: True)
     monkeypatch.setattr(f"{command}.get_or_create_session", lambda handle: fake_session)

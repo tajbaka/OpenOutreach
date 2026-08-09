@@ -26,12 +26,8 @@ def _configure(monkeypatch, tmp_path):
     monkeypatch.setattr(conf, "AI_MODEL", "test-model")
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "UTC")
     monkeypatch.setattr(conf, "ACTIVE_END_HOUR", 17)
-    monkeypatch.setattr(conf, "DISCOVERY_TIMEZONE", "UTC")
-    monkeypatch.setattr(conf, "DISCOVERY_WEEKDAY_START_HOUR", 18)
-    monkeypatch.setattr(conf, "DISCOVERY_WEEKDAY_END_HOUR", 21)
-    monkeypatch.setattr(conf, "DISCOVERY_RUN_ON_REST_DAYS", True)
-    monkeypatch.setattr(conf, "DISCOVERY_REST_DAY_START_HOUR", 11)
-    monkeypatch.setattr(conf, "DISCOVERY_REST_DAY_END_HOUR", 16)
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 25)
+    monkeypatch.setattr(conf, "DISCOVERY_CONNECT_LIMIT_GRACE", 5)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_CARDS_PER_RUN", 200)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PAGES_PER_RUN", 10)
     monkeypatch.setattr(conf, "DISCOVERY_MAX_PROFILE_VISITS_PER_RUN", 40)
@@ -57,11 +53,11 @@ def _configure(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
     monkeypatch.setattr(
-        "linkedin.discovery.collector.discovery_window_open",
-        lambda now=None: True,
+        "linkedin.discovery.collector.discovery_gate_open",
+        lambda profile, now=None: True,
     )
     monkeypatch.setattr(
-        "linkedin.discovery.collector.discovery_window_end",
+        "linkedin.discovery.collector.discovery_day_end",
         lambda now=None: timezone.now() + timedelta(hours=1),
     )
 
@@ -167,8 +163,7 @@ def test_daily_limit_stops_and_schedules_next_day(
     tmp_path,
 ):
     _configure(monkeypatch, tmp_path)
-    fake_session.linkedin_profile.discovery_daily_limit = 1
-    fake_session.linkedin_profile.save(update_fields=["discovery_daily_limit"])
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 1)
     monkeypatch.setattr(
         "linkedin.discovery.collector.collect_people_search_cards",
         lambda *args, **kwargs: [_card("daily-limit-profile")],
@@ -187,8 +182,8 @@ def test_daily_limit_stops_and_schedules_next_day(
     monkeypatch.setattr("linkedin.discovery.collector.PlaywrightLinkedinAPI", _API)
     next_day = timezone.now() + timedelta(days=1)
     monkeypatch.setattr(
-        "linkedin.discovery.collector.next_discovery_window_start",
-        lambda now=None, after_current_day=False: next_day,
+        "linkedin.discovery.collector.next_discovery_day_start",
+        lambda now=None: next_day,
     )
     task = Task.objects.create(
         task_type=Task.TaskType.DISCOVERY,
@@ -233,8 +228,8 @@ def test_sparse_results_stop_at_no_match_cap(
         },
     )
     monkeypatch.setattr(
-        "linkedin.discovery.collector.next_discovery_window_start",
-        lambda now=None, after_current_day=False: timezone.now() + timedelta(days=1),
+        "linkedin.discovery.collector.next_discovery_day_start",
+        lambda now=None: timezone.now() + timedelta(days=1),
     )
     task = Task.objects.create(
         task_type=Task.TaskType.DISCOVERY,
@@ -268,12 +263,6 @@ def test_startup_reconciliation_keeps_one_sender_task(
     tmp_path,
 ):
     _configure(monkeypatch, tmp_path)
-    scheduled = timezone.now() + timedelta(hours=1)
-    monkeypatch.setattr(
-        "linkedin.discovery.collector.next_discovery_window_start",
-        lambda now=None, after_current_day=False: scheduled,
-    )
-
     assert reconcile_discovery_tasks(
         fake_session.linkedin_profile,
         "testuser@example.com",
@@ -314,14 +303,41 @@ def test_discovery_tasks_are_claimed_only_by_matching_operator():
 
 
 @pytest.mark.django_db
+def test_disabled_sender_does_not_cancel_another_senders_discovery(
+    fake_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(conf, "ENABLE_PROFILE_DISCOVERY", False)
+    own = Task.objects.create(
+        task_type=Task.TaskType.DISCOVERY,
+        scheduled_at=timezone.now(),
+        payload=fresh_discovery_payload("testuser@example.com"),
+    )
+    other = Task.objects.create(
+        task_type=Task.TaskType.DISCOVERY,
+        scheduled_at=timezone.now(),
+        payload=fresh_discovery_payload("Athena"),
+    )
+
+    assert not reconcile_discovery_tasks(
+        fake_session.linkedin_profile,
+        "testuser@example.com",
+    )
+
+    own.refresh_from_db()
+    other.refresh_from_db()
+    assert own.status == Task.Status.COMPLETED
+    assert other.status == Task.Status.PENDING
+
+
+@pytest.mark.django_db
 def test_enqueue_at_daily_limit_defers_until_next_day(
     fake_session,
     monkeypatch,
     tmp_path,
 ):
     _configure(monkeypatch, tmp_path)
-    fake_session.linkedin_profile.discovery_daily_limit = 1
-    fake_session.linkedin_profile.save(update_fields=["discovery_daily_limit"])
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 1)
     save_discovery_profile(
         linkedin_profile=fake_session.linkedin_profile,
         operator="testuser@example.com",
@@ -330,8 +346,8 @@ def test_enqueue_at_daily_limit_defers_until_next_day(
     )
     next_day = timezone.now() + timedelta(days=1)
     monkeypatch.setattr(
-        "linkedin.discovery.collector.next_discovery_window_start",
-        lambda now=None, after_current_day=False: next_day,
+        "linkedin.discovery.collector.next_discovery_day_start",
+        lambda now=None: next_day,
     )
 
     assert enqueue_discovery(

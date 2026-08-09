@@ -48,7 +48,7 @@ class OutreachSuppressionAdmin(admin.ModelAdmin):
 @admin.register(LinkedInProfile)
 class LinkedInProfileAdmin(admin.ModelAdmin):
     list_display = (
-        "user", "linkedin_username", "active", "discovery_daily_limit",
+        "user", "linkedin_username", "active",
         "legal_accepted",
     )
     list_filter = ("active",)

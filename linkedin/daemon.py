@@ -181,28 +181,22 @@ def _build_qualifiers(campaigns, cfg, kit_model=None):
 
 
 def seconds_until_active(profile=None) -> float:
-    """Return seconds to the next outbound or discovery window."""
-    if not ENABLE_ACTIVE_HOURS:
-        return 0.0
+    """Return seconds until outbound work or dynamically gated discovery."""
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
     is_workday = now.weekday() not in REST_DAYS
     is_normal_active = ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR
     is_catch_up_active = bool(_catch_up_task_types(profile, now=now))
-    from linkedin.discovery.config import (
-        discovery_window_open,
-        next_discovery_window_start,
-    )
-    is_discovery_active = discovery_window_open(now)
+    is_discovery_active = _discovery_available_now(profile, now=now)
 
-    if (is_workday and (is_normal_active or is_catch_up_active)) or is_discovery_active:
+    if (
+        not ENABLE_ACTIVE_HOURS
+        or (is_workday and (is_normal_active or is_catch_up_active))
+        or is_discovery_active
+    ):
         return 0.0
 
-    waits = [_seconds_until_next_active_start(now)]
-    discovery_start = next_discovery_window_start(now)
-    if discovery_start is not None:
-        waits.append(max((discovery_start - now).total_seconds(), 0))
-    return min(waits)
+    return _seconds_until_next_active_start(now)
 
 
 def _seconds_until_next_active_start(now=None) -> float:
@@ -243,20 +237,41 @@ def _catch_up_task_types(profile=None, *, now=None) -> set[str]:
     return task_types
 
 
+def _discovery_available_now(profile, *, now=None) -> bool:
+    if profile is None or not getattr(profile, "linkedin_username", None):
+        return False
+    from linkedin.discovery.collector import discovery_available_now
+    from linkedin.operators import resolve_operator
+
+    return discovery_available_now(
+        profile,
+        resolve_operator(profile.linkedin_username),
+        now=now,
+    )
+
+
+def _browser_task_types_without_discovery() -> set[str]:
+    return (
+        set(Task.TaskType.values)
+        - set(Task.non_linkedin_outbound_task_types())
+        - {Task.TaskType.DISCOVERY}
+    )
+
+
 def _claimable_task_types_now(profile=None):
-    """Return None for outbound mode, or the restricted off-hours lanes."""
-    if not ENABLE_ACTIVE_HOURS:
-        return None
+    """Gate discovery dynamically while preserving every other browser lane."""
     tz = ZoneInfo(ACTIVE_TIMEZONE)
     now = timezone.localtime(timezone=tz)
+    discovery_active = _discovery_available_now(profile, now=now)
+    if not ENABLE_ACTIVE_HOURS:
+        return None if discovery_active else _browser_task_types_without_discovery()
     if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
-        return None
+        return None if discovery_active else _browser_task_types_without_discovery()
+    if discovery_active:
+        return {Task.TaskType.DISCOVERY}
     catch_up = _catch_up_task_types(profile, now=now)
     if catch_up:
         return catch_up
-    from linkedin.discovery.config import discovery_window_open
-    if discovery_window_open(now):
-        return {Task.TaskType.DISCOVERY}
     return set()
 
 
@@ -412,8 +427,8 @@ def heal_tasks(session):
     # may claim it, then it self-reschedules for the next hour.
     enqueue_status_summary(delay_seconds=0, since=timezone.now() - timedelta(hours=1))
 
-    # 6. Standalone profile discovery. Reconcile one future/current task for
-    # this sender. It is claimed only in the separate discovery windows.
+    # 6. Standalone profile discovery. Reconcile one sender task. Weekdays it
+    # becomes claimable after connect work finishes; rest days are unrestricted.
     from linkedin.discovery.collector import reconcile_discovery_tasks
 
     if reconcile_discovery_tasks(session.linkedin_profile, our_operator):
@@ -927,12 +942,9 @@ def run_daemon(session):
                     enqueue_connect(cid, delay_seconds=60)
             elif task.task_type == Task.TaskType.DISCOVERY and ENABLE_PROFILE_DISCOVERY:
                 from linkedin.discovery.collector import enqueue_discovery
-                from linkedin.discovery.config import next_discovery_window_start
+                from linkedin.discovery.config import next_discovery_day_start
 
-                retry_at = next_discovery_window_start(
-                    timezone.now(),
-                    after_current_day=True,
-                )
+                retry_at = next_discovery_day_start(timezone.now())
                 if retry_at is not None:
                     enqueue_discovery(
                         session.linkedin_profile,

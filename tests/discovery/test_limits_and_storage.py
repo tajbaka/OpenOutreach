@@ -80,10 +80,8 @@ def test_first_sender_ownership_is_not_overwritten(fake_session):
 
 @pytest.mark.django_db
 def test_sender_daily_limit_blocks_second_new_profile(fake_session, monkeypatch):
-    monkeypatch.setattr(conf, "DISCOVERY_TIMEZONE", "UTC")
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "UTC")
-    fake_session.linkedin_profile.discovery_daily_limit = 1
-    fake_session.linkedin_profile.save(update_fields=["discovery_daily_limit"])
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 1)
 
     first = save_discovery_profile(
         linkedin_profile=fake_session.linkedin_profile,
@@ -105,10 +103,8 @@ def test_sender_daily_limit_blocks_second_new_profile(fake_session, monkeypatch)
 
 @pytest.mark.django_db
 def test_duplicate_does_not_consume_sender_capacity(fake_session, monkeypatch):
-    monkeypatch.setattr(conf, "DISCOVERY_TIMEZONE", "UTC")
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "UTC")
-    fake_session.linkedin_profile.discovery_daily_limit = 2
-    fake_session.linkedin_profile.save(update_fields=["discovery_daily_limit"])
+    monkeypatch.setattr(conf, "DISCOVERY_DAILY_LIMIT", 2)
     save_discovery_profile(
         linkedin_profile=fake_session.linkedin_profile,
         operator="Arian",
@@ -125,12 +121,11 @@ def test_duplicate_does_not_consume_sender_capacity(fake_session, monkeypatch):
 
     assert not duplicate.created
     assert saved_today("Arian") == 1
-    assert remaining_today(fake_session.linkedin_profile, "Arian") == 1
+    assert remaining_today("Arian") == 1
 
 
 @pytest.mark.django_db
 def test_old_rows_do_not_count_against_today(fake_session, monkeypatch):
-    monkeypatch.setattr(conf, "DISCOVERY_TIMEZONE", "UTC")
     monkeypatch.setattr(conf, "ACTIVE_TIMEZONE", "UTC")
     save_discovery_profile(
         linkedin_profile=fake_session.linkedin_profile,

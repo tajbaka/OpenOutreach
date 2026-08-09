@@ -121,9 +121,10 @@ pytest -k test_name                # single test
 # Standalone People-search profile discovery. This is a sender-scoped daemon
 # lane, not the legacy campaign qualification path. Configuration comes from
 # each sender/ICP's optional `discovery` block in linkedin/icp_messages.json.
-# Default is disabled. Each bounded run stops on the sender's
-# LinkedInProfile.discovery_daily_limit plus independent card/page/profile/
-# no-match/time caps. Saves only LinkedInDiscoveryLead rows.
+# Default is disabled. Weekdays become eligible when sender connection work is
+# complete (within DISCOVERY_CONNECT_LIMIT_GRACE of the daily connect cap, or no
+# connect work remains); rest days are unrestricted. DISCOVERY_DAILY_LIMIT plus
+# independent card/page/profile/no-match/time caps bound collection.
 .venv/bin/python manage.py start_discovery --dry-run
 .venv/bin/python manage.py start_discovery [--handle arian]
 # Controlled live verification: keeps one sender browser open for a bounded
@@ -207,13 +208,15 @@ Standalone profile discovery is separate from both `discover_inbox_leads` and
 the legacy `ENABLE_AUTO_DISCOVERY` campaign pipeline.
 `ENABLE_PROFILE_DISCOVERY=false` by default. When enabled, the daemon loads
 each sender's explicitly enabled `discovery` blocks from
-`linkedin/icp_messages.json`, waits until the weekday post-outbound or
-rest-day discovery window, and claims only matching `discovery` Tasks. Each
+`linkedin/icp_messages.json`. On weekdays it claims discovery only after that
+sender reaches the connection threshold, has no connectable work, or the
+connect lane is disabled/limited; on configured rest days it may run at any
+hour. Each
 bounded unit reads source-specific People-search cards, skips self/existing
 CRM/existing discovery/suppressed profiles, runs a structured visit/no-visit
 screen against enabled ICPs, and stores a fetched Voyager profile in
-`LinkedInDiscoveryLead`. `LinkedInProfile.discovery_daily_limit` (default 25;
-zero disables the sender) counts only new rows; independent card/page/profile-
+`LinkedInDiscoveryLead`. `DISCOVERY_DAILY_LIMIT` (default 25) counts only new
+rows per sender/local day; independent card/page/profile-
 visit/no-match/run-time caps bound low-yield browsing. This lane never creates
 CRM Leads, Deals, Messages, connection requests, or other outbound state.
 

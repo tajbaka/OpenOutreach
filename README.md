@@ -108,7 +108,7 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 | **`connect`** | Sends invite + initial note; persists outbound to `crm.Message`. Gated by daily/weekly limits per profile. |
 | **`sweep_connections`** | Visits the connections page every 6h (configurable), bulk-detects accepts, transitions PENDING → CONNECTED, captures first reply, posts Slack. Replaces the legacy per-profile `check_pending`. |
 | **`follow_up`** | Runs the multi-turn LLM agent on connected leads. Gated by `ENABLE_FOLLOW_UP` — when off, queued tasks are cancelled at startup. |
-| **`discovery`** | After outbound hours or during the rest-day window, scans bounded People-search pages, lightly matches cards to sender-enabled ICPs, opens plausible profiles, and saves them to `LinkedInDiscoveryLead`. Never creates CRM or outbound state. |
+| **`discovery`** | On weekdays after sender connection work finishes, or at any time on rest days, scans bounded People-search pages, lightly matches cards to sender-enabled ICPs, opens plausible profiles, and saves them to `LinkedInDiscoveryLead` up to `DISCOVERY_DAILY_LIMIT`. Never creates CRM or outbound state. |
 | **`check_pending`** | Legacy task type, retained for migration compatibility. New deployments should use `sweep_connections`. |
 
 **Storage:**
@@ -226,7 +226,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── conf.py                         # .env loading + defaults
 │   ├── daemon.py                       # Task queue worker loop
 │   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
-│   ├── discovery/                      # ICP config, windows, search cards, screening, persistence
+│   ├── discovery/                      # ICP config, dynamic gating, search cards, screening, persistence
 │   ├── django_settings.py              # Django settings (Postgres or SQLite)
 │   ├── management/commands/            # backfill_messages, sync_sheets, import_connections, ...
 │   ├── ml/                             # Bayesian qualifier (GPR), embeddings

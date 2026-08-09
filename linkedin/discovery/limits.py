@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from linkedin import conf
 from linkedin.discovery.config import discovery_day_bounds
 from linkedin.models import LinkedInDiscoveryLead
 
@@ -16,6 +17,5 @@ def saved_today(operator: str, *, now: datetime | None = None) -> int:
     ).count()
 
 
-def remaining_today(profile, operator: str, *, now: datetime | None = None) -> int:
-    profile.refresh_from_db(fields=["discovery_daily_limit"])
-    return max(profile.discovery_daily_limit - saved_today(operator, now=now), 0)
+def remaining_today(operator: str, *, now: datetime | None = None) -> int:
+    return max(conf.DISCOVERY_DAILY_LIMIT - saved_today(operator, now=now), 0)

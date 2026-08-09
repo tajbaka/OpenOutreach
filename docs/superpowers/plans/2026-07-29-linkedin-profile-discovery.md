@@ -9,8 +9,8 @@ activation and live selector verification
 
 ## Goal
 
-Build a standalone LinkedIn discovery workflow that runs after normal outbound
-activity or during configured rest-day windows.
+Build a standalone LinkedIn discovery workflow that runs after a sender's
+weekday connection work is complete or freely on configured rest days.
 
 The workflow does only four things:
 
@@ -34,8 +34,10 @@ Deals, connection requests, follow-up messages, or other outbound work.
 
 - Discovery is its own scheduled workflow.
 - It does not run in the middle of normal connection-request activity.
-- It may run after the sender's outbound window has finished.
-- It may run during separately configured rest-day/weekend windows.
+- On weekdays it becomes eligible when the sender is within the configured
+  grace of the daily connection limit, cannot send more connections, or has no
+  connectable work.
+- On rest days/weekends it may run at any hour.
 - Discovery uses each sender's existing `linkedin/icp_messages.json` block.
 - Only ICPs explicitly enabled for discovery are considered.
 - Initial validation is deliberately lightweight.
@@ -64,7 +66,7 @@ This plan does not include:
 ## High-Level Flow
 
 ```text
-valid discovery window
+discovery gate eligible
         ↓
 load sender's enabled discovery ICPs
         ↓
@@ -155,7 +157,7 @@ The discovery block contains no Deal or sending state.
 - `search_queries`, when present, must be a list of non-empty strings.
 - Unknown discovery keys should fail validation.
 - A sender with no enabled discovery ICPs produces a clean no-op.
-- Configuration is loaded fresh for each discovery window.
+- Configuration is loaded fresh for each discovery run.
 - Existing message rendering must ignore discovery metadata.
 
 ### Sheets round trip
@@ -215,21 +217,17 @@ dedupe and are not accumulated.
 
 ## Per-Sender Daily Save Limit
 
-### Required sender setting
+### Required environment setting
 
-Add `discovery_daily_limit` to `linkedin.LinkedInProfile`.
-
-This follows the existing per-sender limit pattern used for connection and
-follow-up actions.
+Use `DISCOVERY_DAILY_LIMIT` as the shared per-sender save cap.
 
 Implemented behavior:
 
 - Default to a conservative positive value of `25`.
-- Editable per sender in Django Admin.
-- `0` means discovery is disabled for that sender.
+- A non-positive value is rejected as invalid configuration.
 - Count only newly created `LinkedInDiscoveryLead` rows.
 - Duplicate encounters and updates do not consume the limit.
-- The day boundary uses `DISCOVERY_TIMEZONE`.
+- The day boundary uses `ACTIVE_TIMEZONE`.
 
 ### Limit calculation
 
@@ -241,7 +239,7 @@ saved_today =
   where stored_by_operator = current sender
   and created_at >= discovery local-day start
 
-remaining_today = discovery_daily_limit - saved_today
+remaining_today = DISCOVERY_DAILY_LIMIT - saved_today
 ```
 
 When `remaining_today <= 0`:
@@ -262,7 +260,7 @@ Every run also needs:
 - maximum cards scanned,
 - maximum search result pages,
 - maximum profile visits,
-- discovery window end time,
+- maximum run time,
 - source/query exhaustion,
 - a maximum consecutive-no-match threshold.
 
@@ -274,26 +272,21 @@ Add the following settings:
 
 ```dotenv
 ENABLE_PROFILE_DISCOVERY=false
-DISCOVERY_TIMEZONE=America/Toronto
-
-DISCOVERY_WEEKDAY_START_HOUR=18
-DISCOVERY_WEEKDAY_END_HOUR=21
-
-DISCOVERY_RUN_ON_REST_DAYS=true
-DISCOVERY_REST_DAY_START_HOUR=11
-DISCOVERY_REST_DAY_END_HOUR=16
+DISCOVERY_DAILY_LIMIT=25
+DISCOVERY_CONNECT_LIMIT_GRACE=5
 
 DISCOVERY_MAX_CARDS_PER_RUN=200
 DISCOVERY_MAX_PAGES_PER_RUN=10
 DISCOVERY_MAX_PROFILE_VISITS_PER_RUN=40
 DISCOVERY_MAX_CONSECUTIVE_NO_MATCHES=75
+DISCOVERY_MAX_RUN_MINUTES=120
 
 DISCOVERY_PROFILE_DELAY_MIN_SECONDS=20
 DISCOVERY_PROFILE_DELAY_MAX_SECONDS=45
 ```
 
-The per-sender `LinkedInProfile.discovery_daily_limit` remains the authoritative
-limit for how many new discovery leads are saved per day.
+`DISCOVERY_DAILY_LIMIT` is authoritative for how many new discovery leads each
+sender may save per day.
 
 Environment limits bound browsing work independently of how many records are
 saved.
@@ -301,9 +294,8 @@ saved.
 Validation requirements:
 
 - discovery defaults off,
-- hours must be within `0..24`,
-- each start must be earlier than its end,
-- discovery and outbound timezones must match,
+- the daily limit must be positive,
+- the connection-limit grace must be nonnegative,
 - scan/page/visit/no-match limits must be positive,
 - delays must be positive,
 - minimum delay cannot exceed maximum delay,
@@ -393,7 +385,7 @@ table.
 For a card that passes the lightweight screen:
 
 1. Re-check the sender's remaining daily save capacity.
-2. Re-check the discovery window and run caps.
+2. Re-check the dynamic discovery gate and run caps.
 3. Navigate to the canonical LinkedIn profile.
 4. Verify the browser reached the expected profile or an accepted canonical
    redirect.
@@ -456,24 +448,22 @@ Requirements:
 - One discovery task execution performs one bounded browser unit and then
   completes/re-enqueues.
 
-### Weekday window
+### Weekday gate
 
 Discovery may run on a normal workday only when:
 
 - `ENABLE_PROFILE_DISCOVERY=true`,
-- the sender's `discovery_daily_limit` is greater than zero,
 - at least one sender ICP has discovery enabled,
-- the discovery window is open,
-- normal outbound active hours have ended,
-- no after-hours pacing catch-up lane is active,
+- the sender is within `DISCOVERY_CONNECT_LIMIT_GRACE` of the connection daily
+  limit, cannot execute another connection, or has no connectable work,
 - the sender has not reached the discovery daily save limit.
 
-### Rest-day window
+### Rest-day behavior
 
 On configured rest days:
 
 - normal connect/follow-up tasks remain blocked,
-- discovery is claimable only inside its rest-day discovery window,
+- discovery is claimable at any hour,
 - manual replies and status summaries retain existing priority,
 - the same daily save and browsing caps apply.
 
@@ -481,7 +471,7 @@ On configured rest days:
 
 The daemon should ensure at most one pending/running discovery task per sender.
 
-It should seed a fresh cursor when a valid window opens and:
+It should seed a fresh cursor when the dynamic gate opens and:
 
 - no active discovery task exists,
 - the daily save limit has not been reached,
@@ -496,12 +486,6 @@ Use a small per-sender/day completion marker in the Task payload/history or a
 minimal scheduling marker if needed.
 
 ## Django Admin
-
-### `LinkedInProfile`
-
-Expose:
-
-- `discovery_daily_limit`.
 
 ### `LinkedInDiscoveryLead`
 
@@ -548,21 +532,19 @@ actions.
 - `tests/discovery/`
 - Django migration for:
   - `LinkedInDiscoveryLead`,
-  - `LinkedInProfile.discovery_daily_limit`,
   - discovery Task choice.
 
 ### Modify
 
 - `linkedin/models.py`
   - add `LinkedInDiscoveryLead`,
-  - add sender discovery limit,
   - add Task type and operator scoping.
 - `linkedin/daemon.py`
   - register the handler,
   - seed discovery tasks,
-  - allow discovery only in valid weekday/rest-day windows.
+  - apply the weekday connection-completion gate and unrestricted rest days.
 - `linkedin/conf.py`
-  - discovery schedule and browsing limits.
+  - discovery daily save, connection grace, and browsing limits.
 - `linkedin/env_spec.py`
   - discovery environment registry.
 - `.env.example`
@@ -593,11 +575,11 @@ Acceptance criteria:
 - Malformed configuration fails before browser activity.
 - Existing outbound messaging behavior is unchanged.
 
-### Phase 2 — Discovery table and sender daily limit
+### Phase 2 — Discovery table and daily limit
 
 - [x] Add `LinkedInDiscoveryLead` model tests.
 - [x] Add global canonical profile uniqueness.
-- [x] Add `LinkedInProfile.discovery_daily_limit`.
+- [x] Add the `DISCOVERY_DAILY_LIMIT` environment setting.
 - [x] Implement sender-local-day saved count.
 - [x] Add Admin visibility.
 - [x] Add migrations.
@@ -749,7 +731,8 @@ Required stop reasons:
 - `page_limit_reached`,
 - `profile_visit_limit_reached`,
 - `consecutive_no_match_limit_reached`,
-- `window_closed`,
+- `weekday_connection_work_incomplete`,
+- `day_ended`,
 - `queries_exhausted`,
 - `discovery_disabled`,
 - `no_enabled_icps`,
@@ -761,7 +744,7 @@ Discovery metrics must not be added to outbound `ActionLog` counts.
 ## Safety and Failure Rules
 
 - Discovery defaults off.
-- `discovery_daily_limit=0` disables it for that sender.
+- `DISCOVERY_DAILY_LIMIT` is a positive per-sender saved-row cap.
 - No silent sender fallback.
 - No generic profile-link harvesting.
 - No browser concurrency with outbound tasks.

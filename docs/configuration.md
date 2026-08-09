@@ -43,7 +43,6 @@ Django Admin or created during interactive onboarding.
 | `connect_daily_limit` | integer | Max connection requests per day. | `20` |
 | `connect_weekly_limit` | integer | Max connection requests per week. | `100` |
 | `follow_up_daily_limit` | integer | Max follow-up messages per day. | `30` |
-| `discovery_daily_limit` | integer | Max newly saved discovery profiles per discovery-local day; `0` disables discovery for this sender. | `25` |
 | `legal_accepted` | boolean | Whether the user accepted the legal notice. | `false` |
 
 Rate limiting is enforced by `LinkedInProfile` methods (`can_execute()`, `record_action()`,
@@ -107,11 +106,9 @@ either is missing.
 
 | Variable | Default | Description |
 |:---------|:--------|:------------|
-| `ENABLE_PROFILE_DISCOVERY` | `false` | Global feature gate. `ENABLE_ACTIVE_HOURS` must also remain enabled. |
-| `DISCOVERY_TIMEZONE` | `America/Toronto` | Timezone for windows and per-sender daily counts; must match `ACTIVE_TIMEZONE`. |
-| `DISCOVERY_WEEKDAY_START_HOUR` / `DISCOVERY_WEEKDAY_END_HOUR` | `18` / `21` | Weekday window; start must be at or after `ACTIVE_END_HOUR`. |
-| `DISCOVERY_RUN_ON_REST_DAYS` | `true` | Permit the separate rest-day window. |
-| `DISCOVERY_REST_DAY_START_HOUR` / `DISCOVERY_REST_DAY_END_HOUR` | `11` / `16` | Rest-day discovery window. |
+| `ENABLE_PROFILE_DISCOVERY` | `false` | Global feature gate. |
+| `DISCOVERY_DAILY_LIMIT` | `25` | Maximum new profiles stored per sender/local day. |
+| `DISCOVERY_CONNECT_LIMIT_GRACE` | `5` | On weekdays, allow discovery once successful connection requests are within this many of the sender's daily cap. |
 | `DISCOVERY_MAX_CARDS_PER_RUN` | `200` | Maximum result cards scanned in one sender run. |
 | `DISCOVERY_MAX_PAGES_PER_RUN` | `10` | Maximum search pages scanned in one sender run. |
 | `DISCOVERY_MAX_PROFILE_VISITS_PER_RUN` | `40` | Maximum profiles opened in one sender run. |
@@ -119,9 +116,11 @@ either is missing.
 | `DISCOVERY_MAX_RUN_MINUTES` | `120` | Wall-clock run cap. |
 | `DISCOVERY_PROFILE_DELAY_MIN_SECONDS` / `DISCOVERY_PROFILE_DELAY_MAX_SECONDS` | `20` / `45` | Randomized delay between bounded task units. |
 
-The `LinkedInProfile.discovery_daily_limit` database field is authoritative
-for saved volume. Duplicates do not consume it. Once reached, the next
-discovery task is scheduled for the next eligible local day. The independent
+`DISCOVERY_DAILY_LIMIT` is authoritative for saved volume and uses
+`ACTIVE_TIMEZONE` day boundaries. Duplicates do not consume it. Weekdays become
+eligible after the sender reaches the connection threshold, has no connectable
+work, or cannot send connections; rest days have no clock gate. Once the daily
+limit is reached, the next task is scheduled for local midnight. Independent
 card/page/profile/no-match/time caps still stop runs that save nothing.
 
 Inspect configuration without writing queue state:
