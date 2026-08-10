@@ -64,7 +64,18 @@ Then apply:
    - Reads People-tab Outreach status.
    - Reads existing Followups tabs to preserve already-sent rows.
    - Reads `ICP Goals`.
+   - Exports only leads whose conversation, meeting, CRM, Sheet status,
+     eligibility bucket, or ICP goal changed since the last successful apply.
+   - Retains the last applied Codex decision for unchanged leads.
    - Writes `artifacts/followups/codex-review.json`.
+
+The review JSON includes `maintenance_required`. When `candidates` is empty
+but `maintenance_required` is true, write `{ "rows": [] }` and run the apply
+command so sent, disqualified, or otherwise ineligible rows are removed. When
+both are empty/false, stop successfully without applying.
+
+`--full-review` is an operator escape hatch that exports every eligible lead.
+Normal daily automation must remain incremental.
 
 ## Codex Drafting Instructions
 

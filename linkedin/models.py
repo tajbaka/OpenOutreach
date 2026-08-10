@@ -1222,6 +1222,37 @@ class WorkflowRun(models.Model):
         return f"{self.name} {op}@ {self.completed_at:%Y-%m-%d %H:%M}"
 
 
+class FollowupDraftState(models.Model):
+    """Last successfully applied Codex decision for one lead.
+
+    The context fingerprint is advanced only by the apply step. A failed
+    export or review therefore leaves the lead dirty for the next run.
+    """
+
+    lead = models.OneToOneField(
+        "crm.Lead",
+        on_delete=models.CASCADE,
+        related_name="followup_draft_state",
+    )
+    operator = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    context_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    decision = models.JSONField(blank=True, default=dict)
+    active = models.BooleanField(default=True, db_index=True)
+    eligible = models.BooleanField(default=True, db_index=True)
+    reviewed_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [models.Index(fields=["active", "eligible", "operator"])]
+
+    def __str__(self):
+        return (
+            f"followup lead={self.lead_id} operator={self.operator} "
+            f"active={self.active} eligible={self.eligible}"
+        )
+
+
 class DaemonHeartbeat(models.Model):
     """One row per daemon node, keyed by sender (the resolved operator
     handle — "Arian" / "Chuka").

@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
 
 from django.core.management.base import BaseCommand
+from django.db.models import Exists, Max, OuterRef
+from django.utils import timezone
 
 
 class Command(BaseCommand):
@@ -36,7 +37,7 @@ class Command(BaseCommand):
         return message.encode(encoding, errors="replace").decode(encoding)
 
     def handle(self, *args, **options):
-        from crm.models import Deal
+        from crm.models import Deal, Meeting
 
         from linkedin.conf import GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEETS_ID
         from linkedin.enums import ProfileState
@@ -68,6 +69,23 @@ class Command(BaseCommand):
                 lead__disqualified=False,
             )
             .select_related("lead", "campaign")
+            .defer(
+                "lead__embedding",
+                "lead__description",
+                "lead__phones",
+                "lead__phone_providers_tried",
+                "lead__email_providers_tried",
+                "campaign__model_blob",
+                "campaign__product_docs",
+                "campaign__campaign_objective",
+                "campaign__seed_public_ids",
+            )
+            .annotate(latest_message_at=Max("lead__messages__sent_at"))
+            .annotate(
+                has_meeting=Exists(
+                    Meeting.objects.filter(lead_id=OuterRef("lead_id"))
+                )
+            )
             .order_by("id")
         )
         if campaign_pk is not None:
@@ -104,7 +122,7 @@ class Command(BaseCommand):
             return
 
         idx = sheets.SheetIndex.load()
-        last_synced = datetime.now(timezone.utc).date().isoformat()
+        last_synced = timezone.localdate().isoformat()
 
         appended = updated = unchanged = errored = 0
         synth_ok = synth_err = 0
@@ -137,20 +155,26 @@ class Command(BaseCommand):
                 # the same row write below. Notes column is human-only — we
                 # never write synthesis-derived text there.
                 synth_status_override = ""
-                try:
-                    from linkedin.notifications.synthesis import synthesize_for_deal
-                    synth_result = synthesize_for_deal(
-                        deal_in_group,
-                        current_outreach_status=current_status_in_sheet,
-                    )
-                    if synth_result and synth_result.wants_meeting_now:
-                        synth_status_override = sheets.STATUS_WANTS_MEETING
-                    synth_ok += 1
-                except Exception as e:
-                    self.stdout.write(self.style.WARNING(
-                        f"    ! synthesis failed for {full}: {e}"
-                    ))
-                    synth_err += 1
+                latest_message_at = deal_in_group.latest_message_at
+                needs_synthesis = latest_message_at is not None and (
+                    deal_in_group.last_synthesized_at is None
+                    or deal_in_group.last_synthesized_at < latest_message_at
+                )
+                if needs_synthesis:
+                    try:
+                        from linkedin.notifications.synthesis import synthesize_for_deal
+                        synth_result = synthesize_for_deal(
+                            deal_in_group,
+                            current_outreach_status=current_status_in_sheet,
+                        )
+                        if synth_result and synth_result.wants_meeting_now:
+                            synth_status_override = sheets.STATUS_WANTS_MEETING
+                        synth_ok += 1
+                    except Exception as e:
+                        self.stdout.write(self.style.WARNING(
+                            f"    ! synthesis failed for {full}: {e}"
+                        ))
+                        synth_err += 1
 
                 effective_status = synth_status_override or target_status
 

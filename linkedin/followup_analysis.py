@@ -1,6 +1,7 @@
 """Codex review/apply helpers for manual followup sheet generation."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import Counter
@@ -9,12 +10,13 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Iterable
 
+from django.db import transaction
+from django.db.models import Exists, F, OuterRef, Prefetch
 from django.utils import timezone
 
-from crm.models import Lead, Message
+from crm.models import Deal, Lead, Meeting, Message
 from linkedin.exceptions import SheetsError
-from linkedin.models import WorkflowRun
-from linkedin.notifications.calendar_events import latest_meeting_for
+from linkedin.models import FollowupDraftState, WorkflowRun
 from linkedin.notifications.sheets import (
     COL_LINKEDIN_URL,
     COL_OUTREACH_STATUS,
@@ -90,6 +92,7 @@ class FollowupDraftDecision:
     convo: str
     draft_email: str
     draft_linkedin: str
+    context_fingerprint: str
     raw: dict
 
 
@@ -111,6 +114,7 @@ def serialize_followup_queue(
     limit: int | None = None,
     include_active: bool = True,
     read_sheet: bool = True,
+    incremental: bool = True,
 ) -> dict:
     rows, warnings = followup_candidates(
         operators=operators,
@@ -118,12 +122,18 @@ def serialize_followup_queue(
         limit=limit,
         include_active=include_active,
         read_sheet=read_sheet,
+        incremental=incremental,
+        update_activity=incremental,
     )
+    maintenance_required = incremental and FollowupDraftState.objects.exclude(
+        active=F("eligible")
+    ).exists()
     return {
         "instructions": codex_followup_instructions(),
         "schema": {
             "rows": [{
                 "lead_id": "integer from candidates[].lead.id",
+                "context_fingerprint": "copy candidates[].context_fingerprint exactly",
                 "operator": list(DEFAULT_OPERATORS),
                 "status": "use candidate.sheet_row.Status unless correcting a clear mismatch",
                 "state": [STATE_BALL_ON_US, STATE_COLD_THREAD, STATE_BALL_ON_THEM],
@@ -135,6 +145,11 @@ def serialize_followup_queue(
             }],
         },
         "warnings": warnings,
+        "incremental": incremental,
+        "maintenance_required": maintenance_required,
+        "retained_decision_count": FollowupDraftState.objects.filter(
+            active=True,
+        ).exclude(decision={}).count() if incremental else 0,
         "candidates": rows,
     }
 
@@ -146,6 +161,8 @@ def followup_candidates(
     limit: int | None = None,
     include_active: bool = True,
     read_sheet: bool = True,
+    incremental: bool = False,
+    update_activity: bool = False,
 ) -> tuple[list[dict], list[str]]:
     now = timezone.now()
     operator_values = tuple(operators or DEFAULT_OPERATORS)
@@ -155,15 +172,54 @@ def followup_candidates(
     status_by_url = _status_by_url(warnings=warnings) if read_sheet else {}
     icp_goals = _icp_goals(warnings=warnings) if read_sheet else {}
 
+    deal_qs = (
+        Deal.objects.select_related("campaign__user")
+        .annotate(
+            has_meeting=Exists(
+                Meeting.objects.filter(lead_id=OuterRef("lead_id"))
+            )
+        )
+        .defer(
+            "campaign__model_blob",
+            "campaign__product_docs",
+            "campaign__campaign_objective",
+            "campaign__seed_public_ids",
+        )
+        .order_by("-creation_date")
+    )
+    message_qs = Message.objects.only(
+        "id", "lead_id", "source", "direction", "sender", "body",
+        "sent_at", "thread_external_id",
+    ).order_by("sent_at")
+    meeting_qs = Meeting.objects.only(
+        "id", "lead_id", "start_at", "title", "gemini_notes_raw",
+    ).order_by("-start_at")
     qs = (
         Lead.objects.filter(disqualified=False)
-        .filter(messages__isnull=False)
+        .filter(messages__direction=Message.Direction.INBOUND)
         .distinct()
+        .defer(
+            "embedding", "description", "phones",
+            "phone_providers_tried", "email_providers_tried",
+        )
+        .prefetch_related(
+            Prefetch("messages", queryset=message_qs, to_attr="_followup_messages"),
+            Prefetch("meetings", queryset=meeting_qs, to_attr="_followup_meetings"),
+            Prefetch("deal_set", queryset=deal_qs, to_attr="_followup_deals"),
+        )
         .order_by("id")
     )
     if campaign_id is not None:
         qs = qs.filter(deal__campaign_id=campaign_id)
 
+    state_qs = FollowupDraftState.objects.all()
+    if operator_set:
+        state_qs = state_qs.filter(operator__in=operator_set)
+    states = {
+        state.lead_id: state
+        for state in state_qs
+    } if incremental or update_activity else {}
+    eligible_ids: set[int] = set()
     out: list[dict] = []
     for lead in qs.iterator(chunk_size=200):
         if limit is not None and len(out) >= limit:
@@ -182,7 +238,42 @@ def followup_candidates(
             continue
         if operator_set and row["operator"] not in operator_set:
             continue
+        eligible_ids.add(lead.pk)
+        fingerprint = _candidate_context_fingerprint(row)
+        row["context_fingerprint"] = fingerprint
+        state = states.get(lead.pk)
+        if (
+            incremental
+            and state is not None
+            and state.active
+            and state.eligible
+            and state.decision
+            and state.context_fingerprint == fingerprint
+        ):
+            continue
         out.append(row)
+
+    if update_activity and limit is None and campaign_id is None:
+        stale_ids = [
+            lead_id for lead_id, state in states.items()
+            if state.eligible and lead_id not in eligible_ids
+        ]
+        if stale_ids:
+            FollowupDraftState.objects.filter(lead_id__in=stale_ids).update(eligible=False)
+        current_ids = [lead_id for lead_id in eligible_ids if lead_id in states]
+        if current_ids:
+            FollowupDraftState.objects.filter(lead_id__in=current_ids).update(eligible=True)
+        missing_rows = [row for row in out if row["lead"]["id"] not in states]
+        if missing_rows:
+            FollowupDraftState.objects.bulk_create([
+                FollowupDraftState(
+                    lead_id=row["lead"]["id"],
+                    operator=row["operator"],
+                    active=False,
+                    eligible=True,
+                )
+                for row in missing_rows
+            ], ignore_conflicts=True)
     return out, warnings
 
 
@@ -218,6 +309,7 @@ def followup_decision_from_mapping(row: dict) -> FollowupDraftDecision:
         draft_linkedin=str(
             row.get("draft_linkedin") or row.get("Draft LinkedIn") or ""
         ).strip(),
+        context_fingerprint=str(row.get("context_fingerprint") or "").strip(),
         raw=dict(row),
     )
 
@@ -227,14 +319,81 @@ def apply_followup_decisions(
     *,
     record_workflow: bool = True,
 ) -> dict[str, int]:
-    rows_by_operator: dict[str, list[dict]] = {}
-    now = timezone.now()
+    states = list(
+        FollowupDraftState.objects.filter(eligible=True).order_by("lead_id")
+    )
+    decision_by_lead = {
+        state.lead_id: followup_decision_from_mapping(state.decision)
+        for state in states
+        if state.decision
+    }
     for decision in decisions:
-        lead = Lead.objects.get(pk=decision.lead_id)
+        decision_by_lead[decision.lead_id] = decision
+
+    lead_ids = list(decision_by_lead)
+    leads = {
+        lead.pk: lead
+        for lead in Lead.objects.filter(pk__in=lead_ids).defer(
+            "embedding", "description", "phones",
+            "phone_providers_tried", "email_providers_tried",
+        ).prefetch_related(
+            Prefetch(
+                "messages",
+                queryset=Message.objects.only(
+                    "id", "lead_id", "source", "direction", "sender", "body",
+                    "sent_at", "thread_external_id",
+                ).order_by("sent_at"),
+                to_attr="_followup_messages",
+            ),
+            Prefetch(
+                "deal_set",
+                queryset=(
+                    Deal.objects.select_related("campaign__user")
+                    .annotate(
+                        has_meeting=Exists(
+                            Meeting.objects.filter(lead_id=OuterRef("lead_id"))
+                        )
+                    )
+                    .defer(
+                        "campaign__model_blob",
+                        "campaign__product_docs",
+                        "campaign__campaign_objective",
+                        "campaign__seed_public_ids",
+                    )
+                    .order_by("-creation_date")
+                ),
+                to_attr="_followup_deals",
+            ),
+        )
+    }
+
+    rows_by_operator: dict[str, list[dict]] = {op: [] for op in DEFAULT_OPERATORS}
+    now = timezone.now()
+    for lead_id, decision in decision_by_lead.items():
+        lead = leads.get(lead_id)
+        if lead is None:
+            continue
         sheet_row = _sheet_row_for_decision(lead, decision, now=now)
         rows_by_operator.setdefault(decision.operator, []).append(sheet_row)
 
     counts = write_followups(rows_by_operator)
+
+    # Advance fingerprints only after Google Sheets accepted the complete
+    # merged payload. Failed writes leave every changed lead dirty.
+    with transaction.atomic():
+        for decision in decisions:
+            FollowupDraftState.objects.update_or_create(
+                lead_id=decision.lead_id,
+                defaults={
+                    "operator": decision.operator,
+                    "context_fingerprint": decision.context_fingerprint,
+                    "decision": _decision_mapping(decision),
+                    "active": True,
+                    "eligible": True,
+                },
+            )
+        FollowupDraftState.objects.filter(eligible=False).update(active=False)
+        FollowupDraftState.objects.filter(eligible=True).exclude(decision={}).update(active=True)
     if record_workflow:
         WorkflowRun.objects.create(
             name="followup",
@@ -259,13 +418,13 @@ def _candidate_for_lead(
     status_by_url: dict[str, str],
     icp_goals: dict[str, dict[str, str]],
 ) -> dict | None:
-    msgs = list(lead.messages.order_by("sent_at"))
+    msgs = _messages_for(lead)
     if not msgs:
         return None
     if not any(m.direction == Message.Direction.INBOUND for m in msgs):
         return None
 
-    deal = lead.deal_set.order_by("-creation_date").first()
+    deal = _latest_deal(lead)
     status = status_by_url.get(lead.linkedin_url or "")
     if not status and deal is not None:
         status = deal_to_outreach_status(deal)
@@ -281,7 +440,7 @@ def _candidate_for_lead(
 
     role = _role_for_lead(lead)
     icp = FU_ROLE_TO_ICP.get(role, lead.icp or "")
-    latest_meeting = latest_meeting_for(lead)
+    latest_meeting = _latest_past_meeting(lead, now=now)
     latest_any = msgs[-1] if msgs else None
     latest_inbound = _latest_by_direction(msgs, Message.Direction.INBOUND)
     latest_outbound = _latest_by_direction(msgs, Message.Direction.OUTBOUND)
@@ -371,8 +530,8 @@ def _candidate_for_lead(
 
 
 def _sheet_row_for_decision(lead: Lead, decision: FollowupDraftDecision, *, now) -> dict:
-    msgs = list(lead.messages.order_by("sent_at"))
-    deal = lead.deal_set.order_by("-creation_date").first()
+    msgs = _messages_for(lead)
+    deal = _latest_deal(lead)
     return {
         FU_COL_NAME: _lead_name(lead),
         FU_COL_STATUS: decision.status or (deal_to_outreach_status(deal) if deal else ""),
@@ -514,7 +673,7 @@ def _operator_for(lead: Lead, msgs: list[Message]) -> str:
     counts = Counter(outbound)
     if counts:
         return counts.most_common(1)[0][0]
-    deal = lead.deal_set.select_related("campaign__user").order_by("-creation_date").first()
+    deal = _latest_deal(lead)
     if deal and deal.campaign and deal.campaign.user:
         user = deal.campaign.user
         candidates = [
@@ -587,6 +746,56 @@ def _norm_name(value: str) -> str:
 
 def _days_since(dt, now) -> int:
     return max(0, (now - dt).days)
+
+
+def _messages_for(lead: Lead) -> list[Message]:
+    prefetched = getattr(lead, "_followup_messages", None)
+    if prefetched is not None:
+        return list(prefetched)
+    return list(lead.messages.order_by("sent_at"))
+
+
+def _latest_deal(lead: Lead) -> Deal | None:
+    prefetched = getattr(lead, "_followup_deals", None)
+    if prefetched is not None:
+        return prefetched[0] if prefetched else None
+    return lead.deal_set.select_related("campaign__user").order_by("-creation_date").first()
+
+
+def _latest_past_meeting(lead: Lead, *, now) -> Meeting | None:
+    prefetched = getattr(lead, "_followup_meetings", None)
+    if prefetched is not None:
+        return next((meeting for meeting in prefetched if meeting.start_at <= now), None)
+    return lead.meetings.filter(start_at__lte=now).order_by("-start_at").first()
+
+
+def _candidate_context_fingerprint(candidate: dict) -> str:
+    """Hash only context that can change the draft, not daily counters."""
+    payload = json.loads(json.dumps(candidate, default=str))
+    payload.pop("context_fingerprint", None)
+    freshness = payload.get("freshness") or {}
+    for key in ("days_since", "days_since_inbound", "days_since_outbound"):
+        freshness.pop(key, None)
+    sheet_row = payload.get("sheet_row") or {}
+    sheet_row.pop(FU_COL_DAYS_SINCE, None)
+    sheet_row.pop(FU_COL_DAYS_SINCE_CONNECTION, None)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _decision_mapping(decision: FollowupDraftDecision) -> dict:
+    return {
+        "lead_id": decision.lead_id,
+        "operator": decision.operator,
+        "status": decision.status,
+        "state": decision.state,
+        "role": decision.role,
+        "priority": decision.priority,
+        "convo": decision.convo,
+        "draft_email": decision.draft_email,
+        "draft_linkedin": decision.draft_linkedin,
+        "context_fingerprint": decision.context_fingerprint,
+    }
 
 
 def write_review_queue(path: str | Path, payload: dict) -> None:

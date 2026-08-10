@@ -79,7 +79,10 @@ def deal_to_stage(deal) -> str:
     if state == ProfileState.FAILED:
         return STAGE_LOST
     if state == ProfileState.COMPLETED:
-        if Meeting.objects.filter(lead_id=deal.lead_id).exists():
+        has_meeting = getattr(deal, "has_meeting", None)
+        if has_meeting is None:
+            has_meeting = Meeting.objects.filter(lead_id=deal.lead_id).exists()
+        if has_meeting:
             return STAGE_MEETING
         if deal.last_reply_at is not None:
             return STAGE_QUALIFICATION
@@ -169,7 +172,10 @@ def deal_to_outreach_status(deal) -> str:
     if state == ProfileState.FAILED:
         return STATUS_LOST
     if state == ProfileState.COMPLETED:
-        if Meeting.objects.filter(lead_id=deal.lead_id).exists():
+        has_meeting = getattr(deal, "has_meeting", None)
+        if has_meeting is None:
+            has_meeting = Meeting.objects.filter(lead_id=deal.lead_id).exists()
+        if has_meeting:
             return STATUS_HAD_MEETING
         if deal.last_reply_at is not None:
             return STATUS_REPLIED
@@ -447,7 +453,9 @@ class SheetIndex:
         for i in range(len(self.actual_headers)):
             new_row[i] = existing_row[i] if i < len(existing_row) else ""
 
-        for col in HEADERS:
+        # Last synced is metadata about a substantive row sync. It must not
+        # make an otherwise identical row dirty every time the date changes.
+        for col in (h for h in HEADERS if h != COL_LAST_SYNCED):
             pos = self.actual_index_0[col]
             current = existing.get(col, "") or ""
             target = payload.get(col, current) or ""
@@ -467,6 +475,12 @@ class SheetIndex:
 
         if not changed:
             return False, []
+
+        if COL_LAST_SYNCED in payload:
+            pos = self.actual_index_0[COL_LAST_SYNCED]
+            target = payload.get(COL_LAST_SYNCED, "") or ""
+            if target != (existing.get(COL_LAST_SYNCED, "") or ""):
+                new_row[pos] = target
 
         # Schedule a row-level update — span the full live width so we
         # don't shift columns or truncate the operator-managed tail.

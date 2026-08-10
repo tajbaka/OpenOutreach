@@ -13,7 +13,7 @@ from linkedin.followup_analysis import (
     followup_decision_from_mapping,
     serialize_followup_queue,
 )
-from linkedin.models import Campaign, WorkflowRun
+from linkedin.models import Campaign, FollowupDraftState, WorkflowRun
 from linkedin.notifications import sheets
 
 
@@ -145,9 +145,147 @@ def test_apply_followup_decisions_writes_rows_and_records_workflow(lead, monkeyp
 
     counts = apply_followup_decisions([decision])
 
-    assert counts == {"Arian": 1}
+    assert counts == {"Arian": 1, "Chuka": 0, "Athena": 0, "Leili": 0}
     row = captured["Arian"][0]
     assert row[sheets.FU_COL_NAME] == "Jane Doe"
     assert row[sheets.FU_COL_CONVO] == "Jane asked for more context after the intro."
     assert row[sheets.FU_COL_DRAFT_LINKEDIN] == "Jane, sending the context here."
     assert WorkflowRun.objects.filter(name="followup", operator="").exists()
+    state = FollowupDraftState.objects.get(lead=lead)
+    assert state.operator == "Arian"
+    assert state.active is True
+
+
+def test_incremental_export_omits_unchanged_applied_context(lead, monkeypatch):
+    campaign = _campaign()
+    Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.CONNECTED)
+    _message(
+        lead,
+        direction=Message.Direction.OUTBOUND,
+        sender="Arian Taj",
+        days_ago=2,
+        body="Initial note",
+    )
+    _message(
+        lead,
+        direction=Message.Direction.INBOUND,
+        sender="Jane Doe",
+        days_ago=1,
+        body="Please send context.",
+    )
+
+    first = serialize_followup_queue(operators=["Arian"], read_sheet=False)
+    candidate = first["candidates"][0]
+    monkeypatch.setattr(
+        "linkedin.followup_analysis.write_followups",
+        lambda rows: {op: len(values) for op, values in rows.items()},
+    )
+    decision = followup_decision_from_mapping({
+        "lead_id": lead.pk,
+        "context_fingerprint": candidate["context_fingerprint"],
+        "operator": "Arian",
+        "status": "Replied",
+        "state": sheets.STATE_BALL_ON_US,
+        "role": "CSP",
+        "priority": "HIGH",
+        "convo": "Jane requested context.",
+        "draft_linkedin": "Sending that context now.",
+        "draft_email": "",
+    })
+    apply_followup_decisions([decision], record_workflow=False)
+
+    second = serialize_followup_queue(operators=["Arian"], read_sheet=False)
+
+    assert second["candidates"] == []
+    assert second["retained_decision_count"] == 1
+
+
+def test_incremental_export_redrafts_after_new_message(lead, monkeypatch):
+    campaign = _campaign()
+    Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.CONNECTED)
+    _message(
+        lead,
+        direction=Message.Direction.OUTBOUND,
+        sender="Arian Taj",
+        days_ago=2,
+        body="Initial note",
+    )
+    inbound = _message(
+        lead,
+        direction=Message.Direction.INBOUND,
+        sender="Jane Doe",
+        days_ago=1,
+        body="First reply",
+    )
+    first = serialize_followup_queue(operators=["Arian"], read_sheet=False)
+    candidate = first["candidates"][0]
+    FollowupDraftState.objects.filter(lead=lead).update(
+        active=True,
+        eligible=True,
+        context_fingerprint=candidate["context_fingerprint"],
+        decision={
+            "lead_id": lead.pk,
+            "operator": "Arian",
+            "state": sheets.STATE_BALL_ON_US,
+            "priority": "HIGH",
+        },
+    )
+
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.INBOUND,
+        sender="Jane Doe",
+        body="New context",
+        external_id=f"new:{inbound.pk}",
+        sent_at=timezone.now(),
+    )
+
+    second = serialize_followup_queue(operators=["Arian"], read_sheet=False)
+
+    assert [row["lead"]["id"] for row in second["candidates"]] == [lead.pk]
+    assert second["candidates"][0]["context_fingerprint"] != candidate["context_fingerprint"]
+
+
+def test_failed_sheet_write_does_not_advance_fingerprint(lead, monkeypatch):
+    campaign = _campaign()
+    Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.CONNECTED)
+    _message(
+        lead,
+        direction=Message.Direction.OUTBOUND,
+        sender="Arian Taj",
+        days_ago=2,
+        body="Initial note",
+    )
+    _message(
+        lead,
+        direction=Message.Direction.INBOUND,
+        sender="Jane Doe",
+        days_ago=1,
+        body="Please send details.",
+    )
+    candidate = serialize_followup_queue(
+        operators=["Arian"], read_sheet=False,
+    )["candidates"][0]
+    decision = followup_decision_from_mapping({
+        "lead_id": lead.pk,
+        "context_fingerprint": candidate["context_fingerprint"],
+        "operator": "Arian",
+        "status": "Replied",
+        "state": sheets.STATE_BALL_ON_US,
+        "role": "CSP",
+        "priority": "HIGH",
+        "convo": "Jane asked for details.",
+        "draft_linkedin": "Here are those details.",
+    })
+    monkeypatch.setattr(
+        "linkedin.followup_analysis.write_followups",
+        lambda rows: (_ for _ in ()).throw(RuntimeError("sheet unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="sheet unavailable"):
+        apply_followup_decisions([decision], record_workflow=False)
+
+    state = FollowupDraftState.objects.get(lead=lead)
+    assert state.context_fingerprint == ""
+    assert state.active is False

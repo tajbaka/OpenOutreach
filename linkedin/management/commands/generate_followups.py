@@ -46,6 +46,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Do not write WorkflowRun(name='followup') after apply.",
         )
+        parser.add_argument(
+            "--full-review",
+            action="store_true",
+            help="Export every eligible candidate instead of only changed context.",
+        )
 
     def handle(self, *args, **opts):
         from linkedin.followup_analysis import (
@@ -85,6 +90,7 @@ class Command(BaseCommand):
             limit=limit,
             include_active=not opts["no_active"],
             read_sheet=not opts["no_sheet_read"],
+            incremental=not opts["full_review"],
         )
         encoded = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         if opts.get("output"):

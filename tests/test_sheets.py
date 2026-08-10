@@ -71,6 +71,20 @@ def test_aggregate_company_stage_all_lost_is_lost():
     ) == sheets.STAGE_LOST
 
 
+def test_deal_mapping_uses_annotated_meeting_flag_without_querying():
+    from linkedin.enums import ProfileState
+
+    deal = SimpleNamespace(
+        state=ProfileState.COMPLETED,
+        lead_id=123,
+        last_reply_at=None,
+        has_meeting=True,
+    )
+
+    assert sheets.deal_to_stage(deal) == sheets.STAGE_MEETING
+    assert sheets.deal_to_outreach_status(deal) == sheets.STATUS_HAD_MEETING
+
+
 # ---------------------------------------------------------------------------
 # Schema invariants
 # ---------------------------------------------------------------------------
@@ -405,6 +419,28 @@ def test_build_row_payload_serializes_created_at_as_iso_date():
         last_synced="",
     )
     assert payload[sheets.COL_CREATED_AT] == "2025-12-31"
+
+
+def test_last_synced_alone_does_not_dirty_existing_row():
+    ws = _FakeWorksheet()
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_NAME: "Jane Doe",
+        sheets.COL_LINKEDIN_URL: "https://www.linkedin.com/in/janedoe/",
+        sheets.COL_LAST_SYNCED: "2026-08-08",
+    })
+    idx = sheets.SheetIndex(
+        ws=ws,
+        actual_headers=list(sheets.HEADERS),
+        rows=[list(sheets.HEADERS), [existing[h] for h in sheets.HEADERS]],
+    )
+    payload = dict(existing)
+    payload[sheets.COL_LAST_SYNCED] = "2026-08-09"
+
+    was_new, changed = idx.upsert_row(payload)
+
+    assert was_new is False
+    assert changed == []
 
 
 # ---------------------------------------------------------------------------
