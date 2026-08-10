@@ -427,9 +427,11 @@ runs every `MONITOR_INTERVAL_SECONDS`:
 1. **Heartbeat** — `write_heartbeat()` stamps this node's `DaemonHeartbeat`
    row (`linkedin` app; one row per sender, keyed by the resolved operator
    handle) with `last_alive = now()` and clears `down_alerted_at`.
-2. **Peer scan** — `check_peers()` reads every *other* node's row; a peer
-   whose `last_alive` is older than `PEER_STALE_MINUTES` is reported down
-   to the ops Slack channel via `notify_degraded`.
+2. **Peer scan** — `check_peers()` considers every *other* node whose
+   `LinkedInProfile.active` DB switch is enabled; a monitored peer whose
+   `last_alive` is older than `PEER_STALE_MINUTES` is reported down to the
+   ops Slack channel via `notify_degraded`. Historical heartbeat rows for
+   inactive profiles are ignored.
 
 The thread runs through the daemon's off-hours sleeps (separate thread),
 so the heartbeat reflects "process alive", not "actively working".
@@ -438,8 +440,11 @@ the `filter(...).update(down_alerted_at=now)` posts (so N peers don't all
 alert for one outage), and the row is re-claimable only after
 `DEGRADED_REALERT_HOURS`. `last_alive = NULL` means intentionally stopped —
 the daemon calls `clear_heartbeat()` on a clean empty-queue exit so peers
-don't false-alarm. **Coverage needs ≥2 daemons running**: a lone daemon
-has no peer to watch it (an accepted limitation).
+don't false-alarm. For an intentionally retired sender, clear the `active`
+checkbox on its LinkedIn profile in Django Admin; the checkbox is editable
+directly from the profile list. It is authoritative even if the sender remains
+listed in `EXPECTED_OUTBOUND_SENDERS`. **Coverage needs ≥2 daemons running**:
+a lone daemon has no peer to watch it (an accepted limitation).
 
 **Sender activity — "is the alive sender actually progressing".** The same
 `NodeMonitor` tick also runs `check_expected_sender_activity()`. Expected

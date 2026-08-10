@@ -2,8 +2,9 @@
 
 Each daemon is a "node". Its `NodeMonitor` background thread stamps the
 node's own `DaemonHeartbeat` row every `MONITOR_INTERVAL_SECONDS`, scans
-every other node's row for stale heartbeats, and checks expected senders for
-outbound activity progress. A node whose heartbeat is older than
+enabled peer nodes for stale heartbeats, and checks expected senders for
+outbound activity progress. `LinkedInProfile.active` is the DB switch for
+whether a sender is monitored. An enabled node whose heartbeat is older than
 `PEER_STALE_MINUTES`, or whose heartbeat is fresh but outbound lane is stuck,
 is reported to the ops Slack channel.
 
@@ -58,6 +59,24 @@ def clear_heartbeat(sender: str) -> None:
     )
 
 
+def _active_sender_handles() -> set[str]:
+    """Return canonical sender handles enabled in LinkedInProfile.
+
+    A stale DaemonHeartbeat row can outlive the machine or account that wrote
+    it. LinkedInProfile.active is the operator-controlled source of truth for
+    whether that sender is still expected to run.
+    """
+    from linkedin.models import LinkedInProfile
+
+    return {
+        sender
+        for username in LinkedInProfile.objects.filter(active=True).values_list(
+            "linkedin_username", flat=True,
+        )
+        if (sender := resolve_operator(username))
+    }
+
+
 def check_peers(self_sender: str) -> None:
     """Scan peer heartbeats; Slack-alert each peer that has gone stale.
 
@@ -69,8 +88,10 @@ def check_peers(self_sender: str) -> None:
     now = timezone.now()
     stale_before = now - timedelta(minutes=conf.PEER_STALE_MINUTES)
     realert_before = now - timedelta(hours=conf.DEGRADED_REALERT_HOURS)
+    active_senders = _active_sender_handles()
 
     stale_peers = DaemonHeartbeat.objects.filter(
+        sender__in=active_senders,
         last_alive__isnull=False,
         last_alive__lt=stale_before,
     ).exclude(sender=self_sender)
@@ -205,17 +226,27 @@ def _expected_sender_profiles() -> dict[str, object | None]:
     from linkedin.models import Campaign, LinkedInProfile
 
     profiles = list(
-        LinkedInProfile.objects.filter(active=True)
+        LinkedInProfile.objects.all()
         .select_related("user")
         .order_by("user__username")
     )
-    by_sender = {
-        resolve_operator(profile.linkedin_username) or profile.user.username: profile
-        for profile in profiles
-    }
+    active_by_sender = {}
+    inactive_senders = set()
+    for profile in profiles:
+        sender = resolve_operator(profile.linkedin_username) or profile.user.username
+        if profile.active:
+            active_by_sender[sender] = profile
+            inactive_senders.discard(sender)
+        elif sender not in active_by_sender:
+            inactive_senders.add(sender)
+
     if conf.EXPECTED_OUTBOUND_SENDERS:
         expected = [resolve_operator(sender) for sender in conf.EXPECTED_OUTBOUND_SENDERS]
-        return {sender: by_sender.get(sender) for sender in expected}
+        return {
+            sender: active_by_sender.get(sender)
+            for sender in expected
+            if sender not in inactive_senders
+        }
 
     active_user_ids = set(
         Campaign.objects.filter(status=Campaign.Status.ACTIVE)
@@ -223,7 +254,7 @@ def _expected_sender_profiles() -> dict[str, object | None]:
     )
     return {
         sender: profile
-        for sender, profile in by_sender.items()
+        for sender, profile in active_by_sender.items()
         if profile.user_id in active_user_ids
     }
 

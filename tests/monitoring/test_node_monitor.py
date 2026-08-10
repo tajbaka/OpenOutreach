@@ -57,8 +57,23 @@ class TestClearHeartbeat:
 
 
 class TestCheckPeers:
-    def _peer(self, sender, age_minutes=None, down_alerted_at=None):
+    def _peer(
+        self,
+        sender,
+        age_minutes=None,
+        down_alerted_at=None,
+        *,
+        active=True,
+        linkedin_username=None,
+    ):
         """Create a peer row. age_minutes=None ⇒ last_alive NULL (stopped)."""
+        user = User.objects.create_user(username=f"{sender.lower()}-peer")
+        LinkedInProfile.objects.create(
+            user=user,
+            linkedin_username=linkedin_username or sender,
+            linkedin_password="x",
+            active=active,
+        )
         last_alive = (
             None if age_minutes is None
             else timezone.now() - timedelta(minutes=age_minutes)
@@ -90,6 +105,20 @@ class TestCheckPeers:
         nm.check_peers("Arian")
         patched_notify.assert_not_called()
 
+    def test_ignores_inactive_sender_with_stale_heartbeat(self, db, patched_notify):
+        self._peer(
+            "Athena",
+            age_minutes=120,
+            active=False,
+            linkedin_username="athenaaghdami@gmail.com",
+        )
+
+        nm.check_peers("Arian")
+
+        patched_notify.assert_not_called()
+        row = DaemonHeartbeat.objects.get(sender="Athena")
+        assert row.down_alerted_at is None
+
     def test_claim_dedupes_repeat_alert(self, db, patched_notify):
         self._peer("Chuka", age_minutes=120)
         nm.check_peers("Arian")
@@ -109,12 +138,19 @@ class TestCheckPeers:
 
 
 class TestCheckExpectedSenderActivity:
-    def _sender(self, username="chukyjack", linkedin_username="chukyjack@gmail.com"):
+    def _sender(
+        self,
+        username="chukyjack",
+        linkedin_username="chukyjack@gmail.com",
+        *,
+        active=True,
+    ):
         user = User.objects.create_user(username=username)
         profile = LinkedInProfile.objects.create(
             user=user,
             linkedin_username=linkedin_username,
             linkedin_password="x",
+            active=active,
         )
         campaign = Campaign.objects.create(name=f"{username} campaign", user=user)
         lead = Lead.objects.create(
@@ -280,3 +316,23 @@ class TestCheckExpectedSenderActivity:
         patched_notify.assert_called_once()
         assert patched_notify.call_args.kwargs["sender"] == "Missing"
         assert "not configured" in patched_notify.call_args.kwargs["title"]
+
+    def test_explicit_expected_sender_is_ignored_when_profile_inactive(
+        self, db, monkeypatch, patched_notify,
+    ):
+        self._sender(
+            username="athenaaghdami",
+            linkedin_username="athenaaghdami@gmail.com",
+            active=False,
+        )
+        monkeypatch.setattr(nm.conf, "EXPECTED_OUTBOUND_SENDERS", ("Athena",))
+        monkeypatch.setattr(nm.conf, "SENDER_ACTIVITY_GRACE_MINUTES", 0)
+        monkeypatch.setattr(
+            nm,
+            "_activity_check_window",
+            lambda _now: timezone.now() - timedelta(hours=3),
+        )
+
+        nm.check_expected_sender_activity("Arian")
+
+        patched_notify.assert_not_called()

@@ -52,6 +52,7 @@ class LinkedInProfileAdmin(admin.ModelAdmin):
         "legal_accepted",
     )
     list_filter = ("active",)
+    list_editable = ("active",)
     raw_id_fields = ("user",)
 
 
