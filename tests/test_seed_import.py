@@ -51,6 +51,26 @@ def test_parse_csv_leads_normalizes_white_label_icp_labels():
     assert [row["icp"] for row in rows] == labels
 
 
+def test_parse_csv_leads_normalizes_investor_channel_icp_labels():
+    labels = [
+        ("Investor / Portfolio Ops", "Investor / Portfolio Ops"),
+        ("investor portfolio ops", "Investor / Portfolio Ops"),
+        ("Accelerator / Ecosystem", "Accelerator / Ecosystem"),
+        ("accelerator ecosystem", "Accelerator / Ecosystem"),
+    ]
+    rows = parse_csv_leads(
+        "Profile URL,First Name,ICP\n"
+        + "".join(
+            f'https://www.linkedin.com/in/investor-{idx}/,Lead,"{label}"\n'
+            for idx, (label, _expected) in enumerate(labels)
+        )
+    )
+
+    assert [row["icp"] for row in rows] == [
+        expected for _label, expected in labels
+    ]
+
+
 def test_parse_csv_leads_normalizes_stage_specific_csp_icp_labels():
     labels = [
         ("20x Initial Implementation", "20x Initial Implementation"),

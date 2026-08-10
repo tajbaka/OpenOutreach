@@ -1,5 +1,45 @@
 {
   "Arian": {
+    "Investor / Portfolio Ops": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "20x readiness across the portfolio"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw your portfolio work at {company_name}. I'm trying to understand when FedRAMP 20x becomes a portfolio-level issue for investors, especially as cloud companies plan for current validation evidence.\n\nAre founders raising this once federal demand appears?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "A 20x readiness clinic for founders"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we work on keeping 20x measures and validation evidence current as products change. I'm exploring a short readiness clinic for investor portfolios, focused on scoping the work before federal demand turns urgent.\n\nWould that be useful for companies in your portfolio?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Accelerator / Ecosystem": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x for startup cohorts"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw your founder programs at {company_name}. I'm trying to understand where FedRAMP 20x starts creating practical work for government-facing startups, especially turning live implementation into validation evidence they can keep current.\n\nAre founders asking your team for help with this yet?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x office hours for founders"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we're considering a practical office-hours session for accelerator cohorts on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
     "White Label Product/Executive": [
       {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
       {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
@@ -606,6 +646,46 @@
     ]
   },
   "Chuka": {
+    "Investor / Portfolio Ops": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "20x readiness across the portfolio"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw your portfolio work at {company_name}. I'm trying to understand when FedRAMP 20x becomes a portfolio-level issue for investors, especially as cloud companies plan for current validation evidence.\n\nAre founders raising this once federal demand appears?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "A 20x readiness clinic for founders"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we work on keeping 20x measures and validation evidence current as products change. I'm exploring a short readiness clinic for investor portfolios, focused on scoping the work before federal demand turns urgent.\n\nWould that be useful for companies in your portfolio?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
+    "Accelerator / Ecosystem": [
+      {
+        "delay_hours": 0.33,
+        "subject_variants": [
+          "FedRAMP 20x for startup cohorts"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nI saw your founder programs at {company_name}. I'm trying to understand where FedRAMP 20x starts creating practical work for government-facing startups, especially turning live implementation into validation evidence they can keep current.\n\nAre founders asking your team for help with this yet?\n\nBest,\n{my_name}"
+        ]
+      },
+      {
+        "delay_hours": 192,
+        "subject_variants": [
+          "20x office hours for founders"
+        ],
+        "body_variants": [
+          "Hi {first_name},\n\nAt Boundera, we're considering a practical office-hours session for accelerator cohorts on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?\n\nBest,\n{my_name}"
+        ]
+      }
+    ],
     "White Label Product/Executive": [
       {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
       {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}

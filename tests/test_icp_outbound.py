@@ -132,6 +132,34 @@ def test_stage_specific_csp_copy_is_short_and_available_to_both_senders():
             assert len(gmail_messages[icp]) == 2
 
 
+@pytest.mark.parametrize("sender", ("Arian", "Chuka"))
+def test_investor_channel_icps_are_sheet_backed_for_participating_senders(sender):
+    icps = ("Investor / Portfolio Ops", "Accelerator / Ecosystem")
+    messages = icp_outbound.load_icp_messages(sender)
+    gmail_messages = icp_outbound.load_gmail_messages(sender)
+    rows = icp_outbound.icp_messages_rows(sender)
+    row_labels = {row[0] for row in rows[1:]}
+
+    for icp in icps:
+        assert icp in messages
+        connect_variants = messages[icp]["linkedin_connect_note"]
+        assert len(connect_variants) == 2
+        for message in connect_variants:
+            assert 21 <= len(message.split()) <= 40
+            assert len(message) < 300
+            assert message.count("?") == 1
+            assert "http" not in message.lower()
+            assert not any(mark in message for mark in ("—", "–", "--"))
+        assert icp_outbound.channel_steps(
+            sender=sender,
+            icp=icp,
+            channel="linkedin_connect_followup",
+        )
+        assert icp in gmail_messages
+        assert len(gmail_messages[icp]) == 2
+        assert icp in row_labels
+
+
 def test_participating_sender_copy_uses_established_boundera_language():
     for sender in ("Arian", "Chuka"):
         combined = json.dumps(

@@ -202,6 +202,46 @@
         "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs."
       }
     },
+    "Investor / Portfolio Ops": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your portfolio work at {company_name}. I'm comparing notes on how cloud startups handle 20x validation evidence when federal demand shows up. Is this crossing your portfolio yet?",
+        "Hi {first_name}, saw your investment work at {company_name}. I'm studying whether a credible 20x plan for current certification data is becoming a fundraising signal for cloud startups. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm trying to understand whether keeping 20x validation evidence current has become a portfolio-level issue for investors.\n\nAre companies raising this once federal demand appears?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "At Boundera, we work on keeping 20x measures and validation evidence current as products change.\n\nWould a short readiness clinic be useful for companies in your portfolio?"
+          ]
+        }
+      ]
+    },
+    "Accelerator / Ecosystem": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your founder programs at {company_name}. I'm comparing notes on how cohorts prepare for FedRAMP 20x when federal demand appears, especially keeping validation evidence current. Good to connect?",
+        "Hi {first_name}, noticed {company_name}'s work with government-facing startups. I'm exploring when current certification data under 20x belongs in cohort programming. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Thanks for connecting, {first_name}.\n\nI'm trying to understand where accelerators see the 20x readiness gap first.\n\nAre founders asking for help turning their implementation into validation evidence?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "At Boundera, we're considering a practical office-hours session on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?"
+          ]
+        }
+      ]
+    },
     "Rev5 Ready": {
       "linkedin_connect_note": [
         "Hi {first_name}, saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how your team plans to carry that work into class A or another 20x path. Good to connect?",
@@ -565,6 +605,46 @@
         "enabled": true,
         "profile": "Public-sector cloud, cybersecurity, reseller, integrator, and advisory partners who influence or support FedRAMP programs."
       }
+    },
+    "Investor / Portfolio Ops": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your portfolio work at {company_name}. I'm comparing notes on how cloud startups handle 20x validation evidence when federal demand shows up. Is this crossing your portfolio yet?",
+        "Hi {first_name}, saw your investment work at {company_name}. I'm studying whether a credible 20x plan for current certification data is becoming a fundraising signal for cloud startups. Good to connect?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Appreciate the connect, {first_name}.\n\nI'm trying to understand whether keeping 20x validation evidence current has become a portfolio-level issue for investors.\n\nAre companies raising this once federal demand appears?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "At Boundera, we work on keeping 20x measures and validation evidence current as products change.\n\nWould a short readiness clinic be useful for companies in your portfolio?"
+          ]
+        }
+      ]
+    },
+    "Accelerator / Ecosystem": {
+      "linkedin_connect_note": [
+        "Hi {first_name}, saw your founder programs at {company_name}. I'm comparing notes on how cohorts prepare for FedRAMP 20x when federal demand appears, especially keeping validation evidence current. Good to connect?",
+        "Hi {first_name}, noticed {company_name}'s work with government-facing startups. I'm exploring when current certification data under 20x belongs in cohort programming. Open to connecting?"
+      ],
+      "linkedin_connect_followup": [
+        {
+          "delay_hours": 0,
+          "variants": [
+            "Thanks for connecting, {first_name}.\n\nI'm trying to understand where accelerators see the 20x readiness gap first.\n\nAre founders asking for help turning their implementation into validation evidence?"
+          ]
+        },
+        {
+          "delay_hours": 96,
+          "variants": [
+            "At Boundera, we're considering a practical office-hours session on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?"
+          ]
+        }
+      ]
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
