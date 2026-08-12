@@ -8,6 +8,8 @@ from linkedin.actions.feed_like import (
     FeedLikeSendError,
     FeedLikeUncertainError,
     REACTION_BUTTON_SELECTOR,
+    _reaction_state,
+    _wait_for_unique_reaction_button,
     ensure_feed_post_liked,
 )
 
@@ -23,7 +25,7 @@ def test_feed_like_clicks_only_from_no_reaction_and_verifies_like():
 
     with (
         patch(
-            "linkedin.actions.feed_like._unique_visible_reaction_button",
+            "linkedin.actions.feed_like._wait_for_unique_reaction_button",
             return_value=button,
         ),
         patch(
@@ -46,7 +48,7 @@ def test_feed_like_does_not_toggle_existing_like():
     button.get_attribute.return_value = "Reaction button state: Like"
 
     with patch(
-        "linkedin.actions.feed_like._unique_visible_reaction_button",
+        "linkedin.actions.feed_like._wait_for_unique_reaction_button",
         return_value=button,
     ):
         result = ensure_feed_post_liked(
@@ -64,7 +66,7 @@ def test_feed_like_preserves_another_reaction():
     button.get_attribute.return_value = "Reaction button state: Celebrate"
 
     with patch(
-        "linkedin.actions.feed_like._unique_visible_reaction_button",
+        "linkedin.actions.feed_like._wait_for_unique_reaction_button",
         return_value=button,
     ):
         result = ensure_feed_post_liked(
@@ -83,7 +85,7 @@ def test_feed_like_marks_unverified_click_uncertain():
 
     with (
         patch(
-            "linkedin.actions.feed_like._unique_visible_reaction_button",
+            "linkedin.actions.feed_like._wait_for_unique_reaction_button",
             return_value=button,
         ),
         patch(
@@ -109,3 +111,54 @@ def test_feed_like_requires_exactly_one_visible_reaction_button():
         )
 
     page.locator.assert_called_with(REACTION_BUTTON_SELECTOR)
+
+
+def test_feed_like_waits_for_delayed_reaction_controls():
+    page = MagicMock()
+    button = MagicMock()
+
+    with patch(
+        "linkedin.actions.feed_like._visible_reaction_buttons",
+        side_effect=[[], [], [button]],
+    ):
+        found = _wait_for_unique_reaction_button(page, timeout_ms=500)
+
+    assert found is button
+    assert page.wait_for_timeout.call_count == 2
+
+
+def test_reaction_state_supports_unreacted_aria_pressed_markup():
+    button = MagicMock()
+    button.get_attribute.side_effect = lambda name: {
+        "aria-label": "Like Mike Kim's post",
+        "aria-pressed": "false",
+        "data-reaction-type": None,
+    }.get(name)
+    button.inner_text.return_value = "Like"
+
+    assert _reaction_state(button) == "no reaction"
+
+
+def test_reaction_state_supports_selected_aria_pressed_markup():
+    button = MagicMock()
+    button.get_attribute.side_effect = lambda name: {
+        "aria-label": "Unlike Mike Kim's post",
+        "aria-pressed": "true",
+        "data-reaction-type": None,
+    }.get(name)
+    button.inner_text.return_value = "Like"
+
+    assert _reaction_state(button) == "like"
+
+
+def test_reaction_state_rejects_markup_without_authoritative_state():
+    button = MagicMock()
+    button.get_attribute.side_effect = lambda name: {
+        "aria-label": "Like Mike Kim's post",
+        "aria-pressed": None,
+        "data-reaction-type": None,
+    }.get(name)
+    button.inner_text.return_value = "Like"
+
+    with pytest.raises(FeedLikeSendError, match="ambiguous"):
+        _reaction_state(button)
