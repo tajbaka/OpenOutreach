@@ -65,3 +65,37 @@ def test_conversation_urn_match_wins_over_sender(db):
         sender_member_urn="urn:li:fsd_profile:S1",
     )
     assert got == by_conv
+
+
+def test_sender_urn_wins_when_conversation_points_to_operator_profile(db):
+    operator_profile = Lead.objects.create(
+        first_name="Arian",
+        last_name="Taj",
+        linkedin_url="https://www.linkedin.com/in/arian-taj/",
+        public_identifier="arian-taj",
+        description=json.dumps({"urn": "urn:li:fsd_profile:ARIAN"}),
+    )
+    Message.objects.create(
+        lead=operator_profile,
+        source=Message.Source.LINKEDIN,
+        external_id="m1",
+        direction=Message.Direction.OUTBOUND,
+        sender="Arian Taj",
+        body="Hi Lori",
+        sent_at=datetime(2026, 8, 7, tzinfo=timezone.utc),
+        thread_external_id="urn:li:msg_conversation:(urn:li:fsd_profile:ARIAN,2-lori)",
+    )
+    lori = Lead.objects.create(
+        first_name="Lori",
+        last_name="Crooks",
+        linkedin_url="https://www.linkedin.com/in/lori-crooks/",
+        public_identifier="lori-crooks",
+        description=json.dumps({"urn": "urn:li:fsd_profile:LORI"}),
+    )
+
+    got = resolve_lead_for_realtime(
+        conversation_urn="urn:li:msg_conversation:(urn:li:fsd_profile:ARIAN,2-lori)",
+        sender_member_urn="urn:li:fsd_profile:LORI",
+    )
+
+    assert got == lori
