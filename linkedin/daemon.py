@@ -267,11 +267,14 @@ def _claimable_task_types_now(profile=None):
         return None if discovery_active else _browser_task_types_without_discovery()
     if now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR:
         return None if discovery_active else _browser_task_types_without_discovery()
+    # On weekdays discovery_active means the connect lane is genuinely parked:
+    # either no connectable candidates remain or its work is scheduled beyond
+    # today. Do not let pacing catch-up for an empty pool mask that handoff.
+    if discovery_active:
+        return {Task.TaskType.DISCOVERY}
     catch_up = _catch_up_task_types(profile, now=now)
     if catch_up:
         return catch_up
-    if discovery_active:
-        return {Task.TaskType.DISCOVERY}
     return set()
 
 

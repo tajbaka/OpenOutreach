@@ -120,6 +120,28 @@ def test_weekday_opens_when_connect_lane_has_no_work(fake_session, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_empty_pool_ignores_rescheduled_connect_task_and_after_hours_catch_up(
+    fake_session,
+    monkeypatch,
+):
+    _configure(monkeypatch)
+    monkeypatch.setattr(conf, "ENABLE_PACING_CATCH_UP", True)
+    monkeypatch.setattr(
+        "linkedin.discovery.config._connect_catch_up_active",
+        lambda _profile: True,
+    )
+    now = datetime(2026, 7, 29, 19, 0, tzinfo=ZoneInfo("America/Toronto"))
+    Task.objects.create(
+        task_type=Task.TaskType.CONNECT,
+        scheduled_at=now + timedelta(minutes=5),
+        payload={"campaign_id": fake_session.campaign.pk},
+    )
+
+    assert weekday_connection_work_complete(fake_session.linkedin_profile, now=now)
+    assert discovery_gate_open(fake_session.linkedin_profile, now=now)
+
+
+@pytest.mark.django_db
 def test_rest_day_is_free_without_connection_progress(fake_session, monkeypatch):
     _configure(monkeypatch)
     saturday = datetime(2026, 8, 1, 1, 0, tzinfo=ZoneInfo("America/Toronto"))

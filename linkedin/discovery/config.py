@@ -159,6 +159,22 @@ def weekday_connection_work_complete(
     from linkedin.models import Campaign, Task
 
     local = discovery_local_now(now)
+    campaign_ids = list(
+        Campaign.objects.filter(
+            user=profile.user,
+            status=Campaign.Status.ACTIVE,
+        ).values_list("id", flat=True),
+    )
+    if not campaign_ids:
+        return True
+
+    # Empty connect tasks self-reschedule so the lane can recover when new
+    # candidates arrive. They are not evidence of unfinished work. Check the
+    # actual candidate pool before pacing catch-up or pending-task state so an
+    # exhausted pool hands off to discovery immediately.
+    if not _connectable_work_exists(profile, campaign_ids):
+        return True
+
     if (
         conf.ENABLE_ACTIVE_HOURS
         and local.hour >= conf.ACTIVE_END_HOUR
@@ -167,15 +183,6 @@ def weekday_connection_work_complete(
             or not _connect_catch_up_active(profile)
         )
     ):
-        return True
-
-    campaign_ids = list(
-        Campaign.objects.filter(
-            user=profile.user,
-            status=Campaign.Status.ACTIVE,
-        ).values_list("id", flat=True),
-    )
-    if not campaign_ids:
         return True
 
     connect_tasks = Task.objects.filter(
@@ -196,7 +203,7 @@ def weekday_connection_work_complete(
 
     # A missing connect task is recoverable queue drift, not proof that the
     # lane finished. Keep discovery closed so the daemon can heal that queue.
-    return not _connectable_work_exists(profile, campaign_ids)
+    return False
 
 
 def _connect_catch_up_active(profile) -> bool:

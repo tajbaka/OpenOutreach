@@ -126,7 +126,9 @@ pytest -k test_name                # single test
 # Default is disabled. Weekdays become eligible only when the daemon closes the
 # sender's connect lane for the day, its connect tasks are scheduled beyond the
 # local day, or no connect work remains;
-# rest days are unrestricted. DISCOVERY_DAILY_LIMIT plus independent
+# rest days are unrestricted. Self-rescheduling empty connect tasks and their
+# synthetic pacing catch-up do not block the handoff once no connectable pool
+# remains. DISCOVERY_DAILY_LIMIT plus independent
 # card/section/scroll/profile/no-match/time caps bound collection.
 .venv/bin/python manage.py start_discovery --dry-run
 .venv/bin/python manage.py start_discovery [--handle arian]
@@ -221,7 +223,8 @@ checked-in non-CMMC ICP is enabled for every sender, while CMMC is omitted. On
 weekdays it claims discovery only after the daemon has closed that sender's
 connect lane for the day, connect tasks are
 scheduled beyond the local day, no connectable work remains, or the connect lane
-is disabled; on configured rest days it may run at any hour. Each bounded unit
+is disabled; empty connect-task retries and their pacing catch-up do not block
+this handoff. On configured rest days it may run at any hour. Each bounded unit
 reads source-specific `/mynetwork/grow/` recommendation sections
 and one depth-1 `More profiles for you` hop, skips self/existing CRM/existing
 discovery/suppressed profiles, runs a structured best-ICP score screen against

@@ -220,7 +220,11 @@
             "At Boundera, we work on keeping 20x measures and validation evidence current as products change.\n\nWould a short readiness clinic be useful for companies in your portfolio?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Investors, venture partners, operating partners, and portfolio leaders who support cloud, cybersecurity, GovTech, or government-facing software companies pursuing federal growth."
+      }
     },
     "Accelerator / Ecosystem": {
       "linkedin_connect_note": [
@@ -240,7 +244,11 @@
             "At Boundera, we're considering a practical office-hours session on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Accelerator, incubator, ecosystem, and founder-program leaders who support cloud, cybersecurity, GovTech, or government-facing software companies preparing for federal markets."
+      }
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
@@ -624,7 +632,11 @@
             "At Boundera, we work on keeping 20x measures and validation evidence current as products change.\n\nWould a short readiness clinic be useful for companies in your portfolio?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Investors, venture partners, operating partners, and portfolio leaders who support cloud, cybersecurity, GovTech, or government-facing software companies pursuing federal growth."
+      }
     },
     "Accelerator / Ecosystem": {
       "linkedin_connect_note": [
@@ -644,7 +656,11 @@
             "At Boundera, we're considering a practical office-hours session on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?"
           ]
         }
-      ]
+      ],
+      "discovery": {
+        "enabled": true,
+        "profile": "Accelerator, incubator, ecosystem, and founder-program leaders who support cloud, cybersecurity, GovTech, or government-facing software companies preparing for federal markets."
+      }
     },
     "Rev5 Ready": {
       "linkedin_connect_note": [
