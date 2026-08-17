@@ -204,20 +204,20 @@
     },
     "Investor / Portfolio Ops": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw your portfolio work at {company_name}. I'm comparing notes on how cloud startups handle 20x validation evidence when federal demand shows up. Is this crossing your portfolio yet?",
-        "Hi {first_name}, saw your investment work at {company_name}. I'm studying whether a credible 20x plan for current certification data is becoming a fundraising signal for cloud startups. Good to connect?"
+        "Hi {first_name}, saw your portfolio work at {company_name}. I'm curious whether founders are exploring FedRAMP as a path to federal customers. With 20x, the path looks more approachable. Are you seeing interest?",
+        "Hi {first_name}, saw your investment work at {company_name}. Are founders asking whether FedRAMP 20x can help them reach agencies or strengthen a future raise? Curious what you're seeing."
       ],
       "linkedin_connect_followup": [
         {
           "delay_hours": 0,
           "variants": [
-            "Appreciate the connect, {first_name}.\n\nI'm trying to understand whether keeping 20x validation evidence current has become a portfolio-level issue for investors.\n\nAre companies raising this once federal demand appears?"
+            "Appreciate the connect, {first_name}.\n\nOne thing I'm trying to understand is whether founders now see FedRAMP certification as part of their federal go-to-market plan before an agency asks for it.\n\nIs this coming up across your portfolio?"
           ]
         },
         {
           "delay_hours": 96,
           "variants": [
-            "At Boundera, we work on keeping 20x measures and validation evidence current as products change.\n\nWould a short readiness clinic be useful for companies in your portfolio?"
+            "{first_name}, eligible cloud companies preparing for certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find companies already pursuing certification.\n\nWould a short portfolio readiness session around that opportunity be useful?"
           ]
         }
       ],
@@ -228,20 +228,20 @@
     },
     "Accelerator / Ecosystem": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw your founder programs at {company_name}. I'm comparing notes on how cohorts prepare for FedRAMP 20x when federal demand appears, especially keeping validation evidence current. Good to connect?",
-        "Hi {first_name}, noticed {company_name}'s work with government-facing startups. I'm exploring when current certification data under 20x belongs in cohort programming. Open to connecting?"
+        "Hi {first_name}, saw your founder programs at {company_name}. I'm curious whether startups are exploring federal agencies as a customer channel. FedRAMP 20x offers eligible cloud companies a more approachable path. Good to connect?",
+        "Hi {first_name}, noticed {company_name}'s work with government-facing startups. Are founders asking how FedRAMP 20x could help them enter the federal market and become visible to agencies?"
       ],
       "linkedin_connect_followup": [
         {
           "delay_hours": 0,
           "variants": [
-            "Thanks for connecting, {first_name}.\n\nI'm trying to understand where accelerators see the 20x readiness gap first.\n\nAre founders asking for help turning their implementation into validation evidence?"
+            "Thanks for connecting, {first_name}.\n\nOne thing I'm trying to understand is when founders start treating FedRAMP certification as part of their go-to-market plan.\n\nIs this coming up before they have an agency relationship?"
           ]
         },
         {
           "delay_hours": 96,
           "variants": [
-            "At Boundera, we're considering a practical office-hours session on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?"
+            "{first_name}, eligible cloud companies preparing for certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find startups already doing the work.\n\nWould a practical 20x readiness session fit an upcoming {company_name} cohort?"
           ]
         }
       ],
@@ -616,20 +616,20 @@
     },
     "Investor / Portfolio Ops": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw your portfolio work at {company_name}. I'm comparing notes on how cloud startups handle 20x validation evidence when federal demand shows up. Is this crossing your portfolio yet?",
-        "Hi {first_name}, saw your investment work at {company_name}. I'm studying whether a credible 20x plan for current certification data is becoming a fundraising signal for cloud startups. Good to connect?"
+        "Hi {first_name}, saw your portfolio work at {company_name}. I'm curious whether founders are exploring FedRAMP as a path to federal customers. With 20x, the path looks more approachable. Are you seeing interest?",
+        "Hi {first_name}, saw your investment work at {company_name}. Are founders asking whether FedRAMP 20x can help them reach agencies or strengthen a future raise? Curious what you're seeing."
       ],
       "linkedin_connect_followup": [
         {
           "delay_hours": 0,
           "variants": [
-            "Appreciate the connect, {first_name}.\n\nI'm trying to understand whether keeping 20x validation evidence current has become a portfolio-level issue for investors.\n\nAre companies raising this once federal demand appears?"
+            "Appreciate the connect, {first_name}.\n\nOne thing I'm trying to understand is whether founders now see FedRAMP certification as part of their federal go-to-market plan before an agency asks for it.\n\nIs this coming up across your portfolio?"
           ]
         },
         {
           "delay_hours": 96,
           "variants": [
-            "At Boundera, we work on keeping 20x measures and validation evidence current as products change.\n\nWould a short readiness clinic be useful for companies in your portfolio?"
+            "{first_name}, eligible cloud companies preparing for certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find companies already pursuing certification.\n\nWould a short portfolio readiness session around that opportunity be useful?"
           ]
         }
       ],
@@ -640,20 +640,20 @@
     },
     "Accelerator / Ecosystem": {
       "linkedin_connect_note": [
-        "Hi {first_name}, saw your founder programs at {company_name}. I'm comparing notes on how cohorts prepare for FedRAMP 20x when federal demand appears, especially keeping validation evidence current. Good to connect?",
-        "Hi {first_name}, noticed {company_name}'s work with government-facing startups. I'm exploring when current certification data under 20x belongs in cohort programming. Open to connecting?"
+        "Hi {first_name}, saw your founder programs at {company_name}. I'm curious whether startups are exploring federal agencies as a customer channel. FedRAMP 20x offers eligible cloud companies a more approachable path. Good to connect?",
+        "Hi {first_name}, noticed {company_name}'s work with government-facing startups. Are founders asking how FedRAMP 20x could help them enter the federal market and become visible to agencies?"
       ],
       "linkedin_connect_followup": [
         {
           "delay_hours": 0,
           "variants": [
-            "Thanks for connecting, {first_name}.\n\nI'm trying to understand where accelerators see the 20x readiness gap first.\n\nAre founders asking for help turning their implementation into validation evidence?"
+            "Thanks for connecting, {first_name}.\n\nOne thing I'm trying to understand is when founders start treating FedRAMP certification as part of their go-to-market plan.\n\nIs this coming up before they have an agency relationship?"
           ]
         },
         {
           "delay_hours": 96,
           "variants": [
-            "At Boundera, we're considering a practical office-hours session on keeping 20x measures and validation evidence current as products change.\n\nWould that fit an upcoming {company_name} cohort?"
+            "{first_name}, eligible cloud companies preparing for certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find startups already doing the work.\n\nWould a practical 20x readiness session fit an upcoming {company_name} cohort?"
           ]
         }
       ],
