@@ -59,6 +59,14 @@ Separate prerequisites:
 Granola is primary meeting-note context when deterministically matched; stored
 Gemini is secondary. Context alone cannot make stale work eligible.
 
+Synthetic Gmail-note Meeting identity uses exact normalized full-name/token
+matching; one-character initials and substring matches are invalid. Historical
+rows are reviewed with audit_gmail_note_meetings and repaired only one explicit,
+uniquely resolved --meeting-id at a time through repair_gmail_note_meetings.
+Both commands keep stdout aggregate-only. Audit --output optionally creates a
+record-level mode-0600 JSON and refuses overwrite. Repair is rollback dry-run by
+default and never deletes meetings/notes.
+
 
 ================================================================================
 3. CANONICAL SALES CRM IN POSTGRES
@@ -67,11 +75,13 @@ Lead / Deal remain contact and outreach-automation records.
 
 The account-first sales domain is separate:
   Account
-    -> Opportunity (owner, stage, 15-step motion, commercial state, admission)
+    -> Opportunity (owner, radar admission, Trello pipeline stage, 15-step motion)
       -> OpportunityContact (champion / decision maker / stakeholder / other)
       -> OpportunityAction (one current open/waiting Action)
       -> OpportunityStageEvent (audit history)
       -> OpportunitySheetState (three-way merge baseline)
+      -> OpportunityTrelloState (stable board/card/list mapping + baseline)
+      -> OpportunityPipelineEvent (high-level stage audit history)
 
 Admission priority:
   1. human pin / Sales Motion / human-managed opportunity;
@@ -80,8 +90,10 @@ Admission priority:
   4. substantive bidirectional LinkedIn conversation.
 
 One-sided outbound remains People-only. Don't send stops outreach to the exact
-target but does not erase account relevance. Owner, stage, close state, and
-human actions remain authoritative.
+target but does not erase account relevance. Active Accounts is deliberately a
+broader radar than the curated pipeline. Blank pipeline_stage means Radar only.
+Owner and human actions remain authoritative; high-level stage movement is
+human-owned in Trello after the narrow initial triage rule.
 
 
 ================================================================================
@@ -110,8 +122,13 @@ One run:
   5. resolves account evidence and reconciles DB state;
   6. imports valid human edits by stable ID;
   7. reconciles at most one current Action per opportunity;
-  8. stages and verifies Active Accounts plus Actions; and
-  9. swaps both live tabs atomically and commits baselines.
+  8. promotes only eligible blank pipeline stages to Potential / Triage;
+  9. stages and verifies Active Accounts plus Actions; and
+ 10. swaps both live tabs atomically and commits baselines.
+
+Automatic pipeline triage requires authoritative account state or both a
+completed meeting and real human Gmail evidence. Meeting-only and LinkedIn-only
+accounts remain Radar only. No automatic stage advancement occurs after triage.
 
 Routine mode requires both canonical v2 tabs and no exact legacy canonical
 titles. First cutover requires a recent matching private preview_crm_v2
@@ -132,12 +149,15 @@ People
 
 Active Accounts
   - One row per currently relevant account/opportunity.
-  - Shows owner, stage, attention, why active, last meaningful touch, who owes,
-    next action, due date, and key contacts.
+  - Broad radar, not only the curated deal board.
+  - Shows owner, read-only Trello-stage projection (or Radar only), attention,
+    why active, last meaningful touch, who owes, next action, due, key contacts.
 
 Actions
   - One owner-filterable current work queue plus retained handled history.
-  - Requires deterministic owner, opportunity, and target contact.
+  - Primary/authoritative work can be labeled Unassigned; unowned LinkedIn-only
+    work does not enter the queue.
+  - Account-level review is explicit; contact work requires an exact target.
   - Outreach-stopped rows expose state without a send channel/draft.
 
 ICP Goals / separate Sales Motion workbook
@@ -149,7 +169,36 @@ Retired
 
 
 ================================================================================
-6. MANUAL DRAFTING
+6. CURATED TRELLO PIPELINE
+================================================================================
+Trello is the only human-operated high-level pipeline-stage surface. A card
+exists only when Opportunity.pipeline_stage is nonblank.
+
+Exact ordered lists:
+  1. Potential / Triage
+  2. Discovery
+  3. Demo / Evaluation
+  4. Pilot / Validation
+  5. Commercial / Procurement
+  6. Nurture / Later
+  7. Closed Won
+  8. Closed Lost
+
+  .venv/bin/python manage.py sync_trello_pipeline
+  .venv/bin/python manage.py sync_trello_pipeline --apply
+
+Default is no-write planning. --bootstrap-lists reports missing exact lists;
+combined with --apply it creates only missing lists at the bottom. The board is
+dedicated: unknown/duplicate lists or cards, missing UUID footers, stale
+mappings, edited managed card content, concurrent drift, and DB/Trello stage
+conflicts fail closed before writes. Identity is OpportunityTrelloState plus an
+exact OpenOutreach Opportunity ID UUID footer, never a card/company name. The
+sync never deletes/archives a card or copies messages/transcripts. Trello Free
+has no Custom Fields, so compact managed descriptions carry only summary data.
+
+
+================================================================================
+7. MANUAL DRAFTING
 ================================================================================
 manage.py generate_followups
   - Exports explicitly owned current Actions for draft generation.
@@ -164,7 +213,7 @@ manually, then record handled/disposition/waiting state in the stable-ID row.
 
 
 ================================================================================
-7. WINDOWS SCHEDULED RUNNER
+8. WINDOWS SCHEDULED RUNNER
 ================================================================================
 The existing Task Scheduler action still targets:
 
@@ -185,9 +234,13 @@ and logs run/phase markers to:
 notify_sync_sheets_health retains the deployed task name but considers only the
 newest run and requires both phases to finish successfully.
 
+The checked-in wrapper runs only context + Sheets publication. Once Trello is
+configured and its dry-run is clean, schedule sync_trello_pipeline --apply as a
+separately observable post-refresh operation.
+
 
 ================================================================================
-8. ONE-OFF CONNECTION IMPORT
+9. ONE-OFF CONNECTION IMPORT
 ================================================================================
   .venv/bin/python manage.py import_connections --csv <file> [--campaign N]
 

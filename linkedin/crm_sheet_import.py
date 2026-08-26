@@ -551,7 +551,7 @@ def _apply_one_opportunity(
 
     if crm_sheets.COL_OWNER in values:
         raw_owner = values[crm_sheets.COL_OWNER].strip()
-        if raw_owner:
+        if raw_owner and raw_owner.casefold() != "unassigned":
             handle = resolve_sales_owner_handle(raw_owner)
             if not handle:
                 raise ValidationError({crm_sheets.COL_OWNER: "unknown owner"})

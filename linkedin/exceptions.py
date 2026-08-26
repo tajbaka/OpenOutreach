@@ -99,6 +99,30 @@ class GranolaTransientError(GranolaError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class TrelloError(Exception):
+    """Base error for the optional Trello pipeline integration."""
+
+
+class TrelloAuthenticationError(TrelloError):
+    """Trello rejected the configured API key or user token."""
+
+
+class TrelloResponseError(TrelloError):
+    """Trello returned a response that violates the expected schema."""
+
+
+class TrelloConflictError(TrelloError):
+    """Trello and canonical CRM state changed incompatibly."""
+
+
+class TrelloTransientError(TrelloError):
+    """A retryable Trello transport, rate-limit, or server failure persisted."""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class DiscoveryConfigurationError(Exception):
     """Discovery configuration is missing or malformed."""
 

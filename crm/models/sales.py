@@ -121,6 +121,27 @@ class Opportunity(models.Model):
         WEAK = "weak", "Weak"
         NONE = "none", "None"
 
+    class PipelineStage(models.TextChoices):
+        """Human-controlled, high-level sales stage used by the Trello board.
+
+        This is intentionally separate from ``stage``/``sales_motion_step``.
+        Evidence may place an account in the broad CRM radar, but it must not
+        manufacture a deal stage.  A blank value means the relationship is
+        radar-only and has no curated pipeline card.
+        """
+
+        TRIAGE = "triage", "Potential / Triage"
+        DISCOVERY = "discovery", "Discovery"
+        DEMO_EVALUATION = "demo_evaluation", "Demo / Evaluation"
+        PILOT_VALIDATION = "pilot_validation", "Pilot / Validation"
+        COMMERCIAL_PROCUREMENT = (
+            "commercial_procurement",
+            "Commercial / Procurement",
+        )
+        NURTURE_LATER = "nurture_later", "Nurture / Later"
+        CLOSED_WON = "closed_won", "Closed Won"
+        CLOSED_LOST = "closed_lost", "Closed Lost"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(
         "crm.Account",
@@ -179,6 +200,14 @@ class Opportunity(models.Model):
     admission_evaluated_at = models.DateTimeField(null=True, blank=True, db_index=True)
     inactive_at = models.DateTimeField(null=True, blank=True, db_index=True)
     inactive_reason = models.CharField(max_length=64, blank=True, default="")
+    pipeline_stage = models.CharField(
+        max_length=32,
+        choices=PipelineStage.choices,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    pipeline_stage_entered_at = models.DateTimeField(null=True, blank=True)
     human_revision = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

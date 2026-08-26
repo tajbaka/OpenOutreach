@@ -514,14 +514,23 @@ def recommend_reminder(
                 priority=Priority.HIGH,
                 allowed=allowed,
             )
-        return _reminder(
-            ReminderState.REVIEW,
-            ReminderReasonCode.OLD_MEETING_FOLLOWUP_REVIEW,
-            priority=Priority.LOW,
+        return _review_reminder(
+            facts,
+            today=today,
+            state=ReminderState.REVIEW,
+            reason=ReminderReasonCode.OLD_MEETING_FOLLOWUP_REVIEW,
             allowed=allowed,
         )
 
     if conversation_reminder is not None:
+        if conversation_reminder.state == ReminderState.REVIEW:
+            return _review_reminder(
+                facts,
+                today=today,
+                state=conversation_reminder.state,
+                reason=conversation_reminder.reason_code,
+                allowed=allowed,
+            )
         return conversation_reminder
 
     if facts.next_action_due_on is not None:
@@ -835,6 +844,53 @@ def _conversation_reminder(
     return event, source, reminder
 
 
+def _review_reminder(
+    facts: AccountPolicyFacts,
+    *,
+    today: date,
+    state: ReminderState,
+    reason: ReminderReasonCode,
+    allowed: bool,
+) -> ReminderRecommendation:
+    """Keep old relationships quiet unless recovery evidence is strong.
+
+    A review task is warranted only when a human has made the account
+    authoritative, or when two independent primary source types corroborate
+    the relationship.  Meetings and real human Gmail are the only strong
+    source types here; LinkedIn never widens recovery eligibility.
+    """
+    strong_source_count = _strong_recovery_source_count(facts)
+    should_recover = (
+        strong_source_count >= 1 and _has_authoritative_account_state(facts)
+    ) or (
+        strong_source_count >= 2
+    )
+    return _reminder(
+        state,
+        reason,
+        due_on=today if should_recover else None,
+        priority=Priority.LOW,
+        allowed=allowed,
+        should_create=should_recover,
+    )
+
+
+def _has_authoritative_account_state(facts: AccountPolicyFacts) -> bool:
+    return bool(
+        facts.manual_pin
+        or facts.sales_motion_active
+        or facts.human_managed_opportunity
+        or facts.human_current_action
+    )
+
+
+def _strong_recovery_source_count(facts: AccountPolicyFacts) -> int:
+    return sum((
+        facts.latest_completed_external_meeting_on is not None,
+        facts.gmail.real_human_inbound_count > 0,
+    ))
+
+
 def _event_date(value: date | datetime) -> date:
     return value.date() if isinstance(value, datetime) else value
 
@@ -903,15 +959,18 @@ def _reminder(
     priority: Priority,
     allowed: bool,
     due_on: date | None = None,
+    should_create: bool | None = None,
 ) -> ReminderRecommendation:
-    return ReminderRecommendation(
-        state=state,
-        reason_code=reason,
-        should_create_reminder=state not in {
+    if should_create is None:
+        should_create = state not in {
             ReminderState.NONE,
             ReminderState.WAITING,
             ReminderState.REVIEW,
-        },
+        }
+    return ReminderRecommendation(
+        state=state,
+        reason_code=reason,
+        should_create_reminder=should_create,
         due_on=due_on,
         priority=priority,
         automated_outreach_allowed=allowed,

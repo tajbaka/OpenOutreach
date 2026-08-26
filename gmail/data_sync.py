@@ -25,6 +25,7 @@ from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from typing import Iterable
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone as dj_tz
 
 from crm.models import Lead, Meeting, Message
@@ -1092,6 +1093,18 @@ def _match_or_build_meeting_for_note(
     if existing is not None:
         return existing, False
 
+    # A prior version could attach a synthetic Gmail-note Meeting to the wrong
+    # Lead through substring matching (for example, surname ``S.`` matching the
+    # letter "s" in ``Allison``).  Fail closed when that same Gmail message ID
+    # already exists but no longer passes identity validation: creating a
+    # replacement would violate the stable external-ID constraint, while
+    # updating it would silently preserve the bad relationship.
+    if Meeting.objects.filter(
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id=f"gmail-note:{note.message_id}",
+    ).exists():
+        return None, False
+
     if not create_missing_meetings:
         return None, False
 
@@ -1123,10 +1136,18 @@ def _find_existing_meeting(note: GmailNote) -> Meeting | None:
     normalized_note = _norm(note.title)
     start = note.sent_at - timedelta(days=2)
     end = note.sent_at + timedelta(days=1)
-    candidates = Meeting.objects.filter(start_at__gte=start, start_at__lte=end)
+    candidates = Meeting.objects.filter(
+        start_at__gte=start,
+        start_at__lte=end,
+    ).select_related("lead")
     exact = []
     contains = []
     for meeting in candidates:
+        if (
+            _is_synthetic_gmail_note_meeting(meeting)
+            and not gmail_note_meeting_identity_is_valid(meeting)
+        ):
+            continue
         title_norm = _norm(meeting.title)
         doc_norm = _norm(meeting.gemini_doc_title)
         if not title_norm and not doc_norm:
@@ -1147,24 +1168,9 @@ def _find_existing_meeting(note: GmailNote) -> Meeting | None:
 
 
 def _unique_lead_for_note_title(title: str, leads: list[Lead]) -> Lead | None:
-    title_norm = _norm(title)
     scored: list[tuple[int, Lead]] = []
     for lead in leads:
-        first = _norm(lead.first_name)
-        last = _norm(lead.last_name)
-        company = _norm(lead.company_name)
-        full = _norm(f"{lead.first_name} {lead.last_name}")
-        score = 0
-        if full and full in title_norm:
-            score += 5
-        if first and last and first in title_norm and last in title_norm:
-            score += 4
-        elif last and last in title_norm:
-            score += 2
-        if company and company in title_norm:
-            score += 2
-        if first and first in title_norm:
-            score += 1
+        score = _lead_note_title_identity_score(title, lead)
         if score >= 4:
             scored.append((score, lead))
 
@@ -1174,6 +1180,137 @@ def _unique_lead_for_note_title(title: str, leads: list[Lead]) -> Lead | None:
     if len(scored) > 1 and scored[0][0] == scored[1][0]:
         return None
     return scored[0][1]
+
+
+def _lead_note_title_identity_score(title: str, lead: Lead) -> int:
+    """Score exact normalized identity evidence in one Gemini note title.
+
+    Matching operates on complete normalized tokens or token sequences.  A
+    one-character first/last name (normally an initial) is never identity
+    evidence by itself, and a surname must contain at least one substantive
+    token.  This intentionally preserves the old evidence weights while
+    removing unsafe arbitrary-substring matches.
+    """
+    title_tokens = _normalized_tokens(title)
+    if not title_tokens:
+        return 0
+
+    first_tokens = _normalized_tokens(lead.first_name)
+    last_tokens = _normalized_tokens(lead.last_name)
+    company_tokens = _normalized_tokens(lead.company_name)
+    first_is_substantive = _has_substantive_token(first_tokens)
+    last_is_substantive = _has_substantive_token(last_tokens)
+
+    first_matches = (
+        first_is_substantive
+        and _contains_token_sequence(title_tokens, first_tokens)
+    )
+    last_matches = (
+        last_is_substantive
+        and _contains_token_sequence(title_tokens, last_tokens)
+    )
+    full_matches = (
+        first_is_substantive
+        and last_is_substantive
+        and _contains_token_sequence(
+            title_tokens,
+            (*first_tokens, *last_tokens),
+        )
+    )
+    company_matches = (
+        _has_substantive_token(company_tokens)
+        and _contains_token_sequence(title_tokens, company_tokens)
+    )
+
+    score = 0
+    if full_matches:
+        score += 5
+    if first_matches and last_matches:
+        score += 4
+    elif last_matches:
+        score += 2
+    if company_matches:
+        score += 2
+    if first_matches:
+        score += 1
+    return score
+
+
+def gmail_note_title_identifies_lead(title: str, lead: Lead) -> bool:
+    """Return whether a title contains enough exact evidence for ``lead``."""
+    return _lead_note_title_identity_score(title, lead) >= 4
+
+
+def _is_synthetic_gmail_note_meeting(meeting: Meeting) -> bool:
+    raw = meeting.raw if isinstance(meeting.raw, dict) else {}
+    return (
+        meeting.external_id.startswith("gmail-note:")
+        or raw.get("source") == "gmail_note_email"
+    )
+
+
+def _original_gmail_note_title(meeting: Meeting) -> str:
+    raw = meeting.raw if isinstance(meeting.raw, dict) else {}
+    subject = raw.get("subject")
+    if isinstance(subject, str) and subject.strip():
+        parsed = _note_title(subject)
+        if parsed:
+            return parsed
+    raw_title = raw.get("title")
+    if isinstance(raw_title, str) and raw_title.strip():
+        return _clean_text(raw_title)
+    return _clean_text(meeting.title or meeting.gemini_doc_title)
+
+
+def gmail_note_meeting_identity_is_valid(meeting: Meeting) -> bool:
+    """Validate a synthetic Gmail-note Meeting against its linked Lead."""
+    title = _original_gmail_note_title(meeting)
+    return bool(title and gmail_note_title_identifies_lead(title, meeting.lead))
+
+
+def audit_gmail_note_meeting_identities(
+    *,
+    meetings: Iterable[Meeting] | None = None,
+) -> list[dict[str, object]]:
+    """Return identity-invalid synthetic Gmail-note Meetings without writes."""
+    if meetings is None:
+        meetings = (
+            Meeting.objects.filter(source=Meeting.Source.GOOGLE_CALENDAR)
+            .filter(
+                Q(external_id__startswith="gmail-note:")
+                | Q(raw__source="gmail_note_email")
+            )
+            .select_related("lead")
+            .order_by("id")
+        )
+
+    issues = []
+    for meeting in meetings:
+        if not _is_synthetic_gmail_note_meeting(meeting):
+            continue
+        original_title = _original_gmail_note_title(meeting)
+        if original_title and gmail_note_title_identifies_lead(
+            original_title,
+            meeting.lead,
+        ):
+            continue
+        issues.append({
+            "meeting_id": meeting.id,
+            "external_id": meeting.external_id,
+            "start_at": meeting.start_at.isoformat(),
+            "original_title": original_title,
+            "linked_lead_id": meeting.lead_id,
+            "linked_lead_name": _clean_text(
+                f"{meeting.lead.first_name} {meeting.lead.last_name}"
+            ),
+            "linked_company": _clean_text(meeting.lead.company_name),
+            "reason": (
+                "linked lead is not identified by original note title"
+                if original_title
+                else "original note title is missing"
+            ),
+        })
+    return issues
 
 
 def _headers(msg: dict) -> dict[str, str]:
@@ -1280,6 +1417,27 @@ def _drive_doc_id(body: str) -> str:
 
 def _norm(value: str) -> str:
     return _NON_ALNUM_RE.sub(" ", (value or "").lower()).strip()
+
+
+def _normalized_tokens(value: str) -> tuple[str, ...]:
+    return tuple(token for token in _norm(value).split() if token)
+
+
+def _has_substantive_token(tokens: tuple[str, ...]) -> bool:
+    return any(len(token) > 1 for token in tokens)
+
+
+def _contains_token_sequence(
+    haystack: tuple[str, ...],
+    needle: tuple[str, ...],
+) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    width = len(needle)
+    return any(
+        haystack[start:start + width] == needle
+        for start in range(len(haystack) - width + 1)
+    )
 
 
 def combine_results(*results: GmailContextSyncResult) -> GmailContextSyncResult:

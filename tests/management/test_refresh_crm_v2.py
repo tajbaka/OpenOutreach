@@ -90,19 +90,23 @@ class MemoryWorksheet:
     def add_cols(self, count):
         self.col_count += count
 
-    def update(self, *, values, range_name):
+    def update(self, *, values, range_name, value_input_option=None):
+        if self.fail_append:
+            raise SheetsError("test append failure")
         start = range_name.split(":", 1)[0]
         row_number, column_number = _split_cell(start)
-        while len(self.rows) < row_number:
-            self.rows.append([])
-        row = self.rows[row_number - 1]
-        while len(row) < column_number - 1:
-            row.append("")
-        for offset, value in enumerate(values[0]):
-            index = column_number - 1 + offset
-            while len(row) <= index:
+        for row_offset, values_row in enumerate(values):
+            target_row = row_number + row_offset
+            while len(self.rows) < target_row:
+                self.rows.append([])
+            row = self.rows[target_row - 1]
+            while len(row) < column_number - 1:
                 row.append("")
-            row[index] = str(value)
+            for offset, value in enumerate(values_row):
+                index = column_number - 1 + offset
+                while len(row) <= index:
+                    row.append("")
+                row[index] = str(value)
 
     def batch_update(self, updates, value_input_option=None):
         for update in updates:
@@ -369,6 +373,54 @@ def test_existing_dry_run_imports_reconciles_and_replans_inside_rollback(monkeyp
     assert payload["sheet_plan"]["imports"] == 0
     opportunity.refresh_from_db()
     assert opportunity.owner_id == arian.id
+    assert spreadsheet.batch_calls == []
+
+
+def test_existing_dry_run_reports_first_pass_pipeline_and_action_mutations(monkeypatch):
+    from linkedin import conf
+    from linkedin.notifications import sheets
+
+    lead = Lead.objects.create(
+        first_name="Champion",
+        company_name="Pipeline Candidate",
+        email="champion@pipeline-candidate.example",
+    )
+    account = Account.objects.create(name="Pipeline Candidate")
+    opportunity = Opportunity.objects.create(
+        account=account,
+        source=Opportunity.Source.MANUAL,
+        manual_pin=True,
+    )
+    OpportunityContact.objects.create(
+        opportunity=opportunity,
+        lead=lead,
+        is_primary=True,
+    )
+    spreadsheet = MemorySpreadsheet(
+        [
+            _people_worksheet(lead),
+            MemoryWorksheet("Active Accounts", 1),
+            MemoryWorksheet("Actions", 2),
+        ],
+        spreadsheet_id="pipeline-mutation-workbook",
+    )
+    monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", "pipeline-mutation-workbook")
+    monkeypatch.setattr(sheets, "_gspread_client", lambda: spreadsheet)
+    stdout = io.StringIO()
+
+    call_command(
+        "refresh_crm_v2",
+        "--skip-sales-motion",
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert payload["pipeline_triage"]["promoted"] == 1
+    assert payload["actions"]["actions_created"] == 1
+    assert payload["sheet_plan"]["imports"] == 0
+    opportunity.refresh_from_db()
+    assert opportunity.pipeline_stage == ""
+    assert OpportunityAction.objects.filter(opportunity=opportunity).count() == 0
     assert spreadsheet.batch_calls == []
 
 

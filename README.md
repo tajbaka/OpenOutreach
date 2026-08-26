@@ -136,14 +136,17 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 
 - `People` is durable and growing: update in place, append once, never
   clear/reorder/prune, and preserve operator columns/formulas/formatting.
-- `Active Accounts` is the concise account workspace: one row per admitted
-  account/opportunity with explicit owner, stage, attention, evidence, next
-  action, due date, and key contacts.
-- `Actions` is one owner-filterable current-work queue. There are no separate
-  Pipeline, Recovery, or sender Followups surfaces.
+- `Active Accounts` is the broad relationship radar: one row per admitted
+  account/opportunity with owner, Trello-stage projection (`Radar only` when
+  uncurated), attention, evidence, next action, due date, and key contacts.
+- `Actions` is one owner-filterable current-work queue. Genuine
+  primary/authoritative work can appear as `Unassigned`; LinkedIn-only noise
+  does not. There are no separate Sheet Pipeline, Recovery, or sender Followups
+  surfaces.
 - Granola is primary meeting context; stored Gemini notes are secondary.
-- Human fields round-trip through a conservative three-way merge. Invalid or
-  conflicting edits fail closed instead of being guessed.
+- Human Sheet fields round-trip through a conservative three-way merge.
+  `Active Accounts.Stage` is a system projection, not an editable Sheet field.
+  Invalid or conflicting edits fail closed instead of being guessed.
 - Admission prioritizes explicit human/Sales Motion state, real meetings, and
   human Gmail; LinkedIn qualifies only when the exchange is substantive and
   bidirectional. One-sided outbound remains in People.
@@ -164,6 +167,19 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 - Plans/publishes only the durable People ledger.
 - Performs no LLM synthesis, opportunity-stage decisions, or followup
   eligibility.
+
+**Curated Trello pipeline** (`manage.py sync_trello_pipeline`):
+
+- Trello is the only human-operated high-level stage surface; only
+  Opportunities with nonblank `pipeline_stage` receive cards.
+- The system may promote only a blank stage to `Potential / Triage`, and only
+  from authoritative account state or completed-meeting plus human-Gmail
+  evidence. It never auto-advances after triage.
+- Card identity is a durable DB mapping plus an exact Opportunity UUID footer;
+  names are never identity.
+- Dry-run is the default. `--apply` writes reviewed changes and the explicit
+  `--bootstrap-lists` option creates missing canonical lists. The Trello Free
+  design uses lists/card descriptions because Custom Fields are unavailable.
 
 ---
 
@@ -213,6 +229,10 @@ pytest -k test_name                # single test
 # Narrow People publisher diagnostics
 .venv/bin/python manage.py sync_sheets --dry-run
 
+# Review/apply the curated Trello pipeline after CRM refresh
+.venv/bin/python manage.py sync_trello_pipeline
+.venv/bin/python manage.py sync_trello_pipeline --apply
+
 # Resync crm.Message from LinkedIn DM threads (run on cron)
 .venv/bin/python manage.py backfill_messages [--campaign 1] [--limit 50] [--dry-run]
 
@@ -250,6 +270,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 | `GOOGLE_SHEETS_ID` + `GOOGLE_SHEETS_CREDENTIALS_PATH` | required by Sheets commands | Missing configuration makes `sync_sheets` and `refresh_crm_v2` fail closed |
 | `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | recommended CRM v2 input | Separate read-only workbook whose account tabs are authoritative admission evidence |
 | `GRANOLA_API_KEY` | unset | Optional read-only primary meeting-note source |
+| `TRELLO_API_KEY` + `TRELLO_API_TOKEN` + `TRELLO_BOARD_ID` | required by Trello sync | Dedicated curated pipeline board credentials/identity |
 | `SLACK_WEBHOOK_URL` | (unset → no Slack) | Notifications when sweep detects accepts |
 
 ---
@@ -278,7 +299,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
 │   ├── discovery/                      # ICP config, dynamic gating, search cards, screening, persistence
 │   ├── django_settings.py              # Runtime Postgres settings; pytest alone uses in-memory SQLite
-│   ├── management/commands/            # sync_crm_v2_context, refresh_crm_v2, sync_sheets, ...
+│   ├── management/commands/            # context/CRM/Trello sync commands, ...
 │   ├── ml/                             # Bayesian qualifier (GPR), embeddings
 │   ├── models.py                       # Campaign, LinkedInProfile, Task, etc.
 │   ├── notifications/                  # sheets.py, slack.py, synthesis.py
@@ -299,6 +320,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 
 - [Module-level architecture (CLAUDE.md)](CLAUDE.md)
 - [Configuration](docs/configuration.md)
+- [CRM v2 evidence and pipeline contract](docs/crm-v2-contract.md)
 - [Canonical CRM refresh](docs/crm-refresh-workflow.md)
 - [System flow (operational)](docs/system-flow.txt)
 - [Human-in-the-loop workflows](docs/human-workflows.md)

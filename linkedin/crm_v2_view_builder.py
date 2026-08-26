@@ -32,8 +32,9 @@ def build_crm_v2_database_view(
 ) -> CrmV2DatabaseView:
     """Serialize admitted reconciled Opportunities and only work due now.
 
-    Waiting, scheduled, and review-only relationships remain legible on Active
-    Accounts but do not clutter Actions.  No target or owner is ever guessed.
+    Waiting and scheduled relationships remain legible on Active Accounts but
+    do not clutter Actions.  Policy-qualified recovery reviews and unowned
+    work are published without guessing a target or owner.
     """
     admitted = [row for row in evidence_rows if row.decision.admitted]
     missing_ids = [row.account_key for row in admitted if not row.opportunity_id]
@@ -79,7 +80,8 @@ def build_crm_v2_database_view(
             or evidence.reminder_do_not_outreach
             else "Allowed"
         )
-        owner = opportunity.owner.handle if opportunity.owner_id else ""
+        owner_handle = opportunity.owner.handle if opportunity.owner_id else ""
+        owner = owner_handle or "Unassigned"
         next_action = (
             current_action.description
             if current_action is not None
@@ -90,8 +92,12 @@ def build_crm_v2_database_view(
             account_id=opportunity.account_id,
             account=opportunity.account.name,
             owner=owner,
-            stage=opportunity.get_stage_display(),
-            attention=_attention(evidence, owner=owner),
+            stage=(
+                opportunity.get_pipeline_stage_display()
+                if opportunity.pipeline_stage
+                else "Radar only"
+            ),
+            attention=_attention(evidence, owner=owner_handle),
             why_active=_why_active(evidence),
             evidence_tier=_tier_label(evidence.decision.evidence_tier),
             outreach=outreach,
@@ -115,7 +121,13 @@ def build_crm_v2_database_view(
         if (
             not recommendation.should_create_reminder
             or current_action is None
-            or not owner
+            or (
+                not owner_handle
+                and evidence.decision.evidence_tier not in {
+                    EvidenceTier.AUTHORITATIVE,
+                    EvidenceTier.PRIMARY,
+                }
+            )
         ):
             continue
         target = current_action.target_lead

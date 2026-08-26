@@ -1456,8 +1456,24 @@ def apply_tab_plan(
             [_stringify(row.get(header)) for header in headers]
             for row in plan.appends
         ]
+        # Never use Sheets' values.append table detection here.  Derived views
+        # deliberately keep stable IDs on rows whose visible managed cells were
+        # cleared.  Google may treat the first such visually blank row as the
+        # end of the table and overwrite that durable identity.  Write one
+        # explicit rectangle after the final material snapshot row instead.
+        start_row = len(before.rows) + 2
+        end_row = start_row + len(rows) - 1
+        if getattr(ws, "row_count", end_row) < end_row:
+            try:
+                ws.add_rows(end_row - ws.row_count)
+            except APIError as exc:
+                raise SheetsError(f"failed expanding {plan.title}: {exc}") from exc
+        last_column = _column_letter(len(headers))
         try:
-            ws.append_rows(rows, value_input_option="RAW", table_range="A1")
+            ws.update(
+                values=rows,
+                range_name=f"A{start_row}:{last_column}{end_row}",
+            )
         except APIError as exc:
             raise SheetsError(f"failed appending to {plan.title}: {exc}") from exc
     return summary

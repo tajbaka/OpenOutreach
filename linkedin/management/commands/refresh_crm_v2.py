@@ -172,6 +172,7 @@ class Command(BaseCommand):
         from linkedin.crm_v2_actions import apply_action_reconciliation
         from linkedin.crm_v2_evidence import collect_account_evidence
         from linkedin.crm_v2_reconcile import apply_reconciliation
+        from linkedin.crm_pipeline_policy import reconcile_pipeline_triage
         from linkedin.crm_v2_view_builder import build_crm_v2_database_view
         from linkedin.management.commands.preview_crm_v2 import (
             _configured_sales_motion_accounts,
@@ -308,15 +309,18 @@ class Command(BaseCommand):
         # Action can make the older human next step look invalid even though the
         # human edit is authoritative.  Routine runs already import from the v2
         # tabs below and therefore keep their existing two-pass flow.
-        reconciled_evidence, action_report, database_view = _refresh_database_view(
+        reconciled_evidence, triage_report, action_report, database_view = _refresh_database_view(
             collect_account_evidence=collect_account_evidence,
             apply_reconciliation=apply_reconciliation,
+            reconcile_pipeline_triage=reconcile_pipeline_triage,
             apply_action_reconciliation=apply_action_reconciliation,
             build_crm_v2_database_view=build_crm_v2_database_view,
             resolved_inputs=resolved_inputs,
             dont_send_lead_ids=dont_send_lead_ids,
             evaluated_at=evaluated_at,
         )
+        triage_reports = [triage_report]
+        action_reports = [action_report]
         if existing_mode == "in_place":
             preliminary_plans = _build_plans(
                 worksheets[crm_v2_sheets.ACTIVE_ACCOUNTS_TAB],
@@ -351,29 +355,35 @@ class Command(BaseCommand):
                 "legacy_unresolved_rows": 0,
                 "invalid_edits": 0,
             }
-            # Human edits are authoritative.  Recollect and fully re-run the
-            # evidence/reconciliation/action path before planning any writes.
-            fresh = collect_account_evidence(
-                sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
-                manual_account_pins=resolved_inputs["manual_pins"],
-                owner_overrides=resolved_inputs["owner_overrides"],
-                dont_send_lead_ids=dont_send_lead_ids,
-                now=evaluated_at,
-            )
-            imported_reconcile = apply_reconciliation(
-                fresh,
-                evaluated_at=evaluated_at,
-            )
-            _assert_reconciliation_safe(imported_reconcile)
-            reconciled_evidence, action_report, database_view = _refresh_database_view(
-                collect_account_evidence=collect_account_evidence,
-                apply_reconciliation=apply_reconciliation,
-                apply_action_reconciliation=apply_action_reconciliation,
-                build_crm_v2_database_view=build_crm_v2_database_view,
-                resolved_inputs=resolved_inputs,
-                dont_send_lead_ids=dont_send_lead_ids,
-                evaluated_at=evaluated_at,
-            )
+            if active_import.fields_imported or action_import.fields_imported:
+                # Human edits are authoritative.  Recollect and fully re-run
+                # the evidence/reconciliation/action path before planning any
+                # writes.  A no-import run keeps the first exact pass so its
+                # mutation telemetry is not overwritten by a duplicate no-op.
+                fresh = collect_account_evidence(
+                    sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
+                    manual_account_pins=resolved_inputs["manual_pins"],
+                    owner_overrides=resolved_inputs["owner_overrides"],
+                    dont_send_lead_ids=dont_send_lead_ids,
+                    now=evaluated_at,
+                )
+                imported_reconcile = apply_reconciliation(
+                    fresh,
+                    evaluated_at=evaluated_at,
+                )
+                _assert_reconciliation_safe(imported_reconcile)
+                reconciled_evidence, triage_report, action_report, database_view = _refresh_database_view(
+                    collect_account_evidence=collect_account_evidence,
+                    apply_reconciliation=apply_reconciliation,
+                    reconcile_pipeline_triage=reconcile_pipeline_triage,
+                    apply_action_reconciliation=apply_action_reconciliation,
+                    build_crm_v2_database_view=build_crm_v2_database_view,
+                    resolved_inputs=resolved_inputs,
+                    dont_send_lead_ids=dont_send_lead_ids,
+                    evaluated_at=evaluated_at,
+                )
+                triage_reports.append(triage_report)
+                action_reports.append(action_report)
 
         active_plan = action_plan = None
         if existing_mode == "in_place":
@@ -411,7 +421,14 @@ class Command(BaseCommand):
             },
             "evidence": _evidence_counts(reconciled_evidence),
             "reconciliation": _reconciliation_counts(reconcile_report),
-            "actions": _action_counts(action_report),
+            "pipeline_triage": _pipeline_triage_counts(
+                triage_report,
+                reports=triage_reports,
+            ),
+            "actions": _action_counts(
+                action_report,
+                reports=action_reports,
+            ),
             "human_imports": import_reports,
             "sheet_plan": _sheet_plan_counts(
                 active_plan,
@@ -438,11 +455,11 @@ class Command(BaseCommand):
             prefix="crm-v2-before-apply",
         )
         report["backup"]["created"] = True
-        owner_values = tuple(
+        owner_values = ("Unassigned", *tuple(
             SalesOwner.objects.filter(active=True)
             .order_by("normalized_handle")
             .values_list("handle", flat=True)
-        )
+        ))
 
         if existing_mode == "first_cutover":
             active_plan, action_plan, cutover_state = _apply_first_cutover(
@@ -504,6 +521,7 @@ def _refresh_database_view(
     *,
     collect_account_evidence,
     apply_reconciliation,
+    reconcile_pipeline_triage,
     apply_action_reconciliation,
     build_crm_v2_database_view,
     resolved_inputs,
@@ -529,6 +547,16 @@ def _refresh_database_view(
         dont_send_lead_ids=dont_send_lead_ids,
         now=evaluated_at,
     )
+    triage_report = reconcile_pipeline_triage(
+        with_ids,
+        apply=True,
+        evaluated_at=evaluated_at,
+    )
+    if triage_report.issues:
+        raise SheetsError(
+            f"CRM pipeline triage has {len(triage_report.issues)} "
+            "stable-identity issue(s)"
+        )
     action_report = apply_action_reconciliation(
         with_ids,
         evaluated_at=evaluated_at,
@@ -545,7 +573,12 @@ def _refresh_database_view(
         dont_send_lead_ids=dont_send_lead_ids,
         now=evaluated_at,
     )
-    return post_action, action_report, build_crm_v2_database_view(post_action)
+    return (
+        post_action,
+        triage_report,
+        action_report,
+        build_crm_v2_database_view(post_action),
+    )
 
 
 def _build_plans(active_ws, actions_ws, database_view, *, crm_v2_sheets):
@@ -1585,7 +1618,8 @@ def _reconciliation_counts(report) -> dict[str, Any]:
         "evidence_rows", "admitted_rows", "people_only_rows", "accounts_created",
         "opportunities_created", "opportunities_activated",
         "opportunities_deactivated", "contacts_linked", "owners_assigned",
-        "domains_populated", "opportunities_unchanged",
+        "domains_populated", "meetings_linked", "meeting_notes_linked",
+        "opportunities_unchanged",
     )
     return {
         **{field: int(getattr(report, field)) for field in fields},
@@ -1593,15 +1627,34 @@ def _reconciliation_counts(report) -> dict[str, Any]:
     }
 
 
-def _action_counts(report) -> dict[str, Any]:
-    fields = (
-        "evidence_rows", "actionable_rows", "actions_created", "actions_updated",
-        "actions_reused", "actions_cancelled", "actions_unchanged",
+def _pipeline_triage_counts(report, *, reports=()) -> dict[str, Any]:
+    passes = tuple(reports) or (report,)
+    return {
+        "evaluated": int(report.evaluated),
+        "eligible": int(report.eligible),
+        "promoted": sum(int(item.promoted) for item in passes),
+        "preserved": int(report.preserved),
+        "skipped": int(report.skipped),
+        "issues": sum(len(item.issues) for item in passes),
+    }
+
+
+def _action_counts(report, *, reports=()) -> dict[str, Any]:
+    passes = tuple(reports) or (report,)
+    snapshot_fields = (
+        "evidence_rows", "actionable_rows", "actions_unchanged",
         "human_actions_preserved", "unowned_skipped", "ineligible_rows",
     )
+    mutation_fields = (
+        "actions_created", "actions_updated", "actions_reused", "actions_cancelled",
+    )
     return {
-        **{field: int(getattr(report, field)) for field in fields},
-        "issues": len(report.issues),
+        **{field: int(getattr(report, field)) for field in snapshot_fields},
+        **{
+            field: sum(int(getattr(item, field)) for item in passes)
+            for field in mutation_fields
+        },
+        "issues": sum(len(item.issues) for item in passes),
     }
 
 

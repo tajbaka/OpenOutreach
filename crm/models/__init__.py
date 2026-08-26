@@ -16,3 +16,4 @@ from crm.models.meeting_context import (
     MeetingNoteSyncState,
     MeetingParticipant,
 )
+from crm.models.trello import OpportunityPipelineEvent, OpportunityTrelloState

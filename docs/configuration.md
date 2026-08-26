@@ -32,6 +32,11 @@ the same database to avoid split-brain.
 | `GRANOLA_API_KEY` | no | none | Read-only Granola note access; stored Gemini is fallback when unavailable. |
 | `GRANOLA_API_BASE` | no | `https://public-api.granola.ai/v1` | Granola public API base. |
 | `GRANOLA_HTTP_TIMEOUT_SECONDS` | no | `30` | Per-request Granola timeout. |
+| `TRELLO_API_KEY` | for Trello pipeline sync | none | Trello REST API key. |
+| `TRELLO_API_TOKEN` | for Trello pipeline sync | none | User token with access to the dedicated pipeline board. |
+| `TRELLO_BOARD_ID` | for Trello pipeline sync | none | Stable ID of the dedicated pipeline board. |
+| `TRELLO_API_BASE` | no | `https://api.trello.com/1` | Trello REST API base; HTTPS is required. |
+| `TRELLO_HTTP_TIMEOUT_SECONDS` | no | `30` | Per-request Trello timeout. |
 | `ACTIVE_TIMEZONE` | no | `America/Toronto` | Business date used for waiting/due action evaluation. |
 
 Never reuse or replace the Sales Motion ID as `GOOGLE_SHEETS_ID`.
@@ -51,6 +56,21 @@ account admission or action eligibility. Granola is primary meeting context,
 with stored Gemini notes secondary.
 LinkedIn backfill and Calendar/Drive ingestion remain separate prerequisites;
 see [the CRM refresh runbook](crm-refresh-workflow.md).
+
+The Trello credentials are independent of Google/Gmail credentials. Keep the
+key and token in `.env`, never in a command line or URL. The board must be
+dedicated to the curated pipeline: the sync rejects unknown or duplicate open
+lists. `manage.py sync_trello_pipeline` is a strict no-write dry-run;
+`--apply` is required for card/list or DB stage writes, and
+`--bootstrap-lists` is the only path that creates missing canonical lists.
+Only Opportunities with a nonblank `pipeline_stage` receive a card.
+
+Trello Free is sufficient for the list-and-card workflow but does not include
+Custom Fields. OpenOutreach therefore keeps card titles/descriptions
+system-managed and stores durable identity in Postgres plus the card's
+`OpenOutreach Opportunity ID: <UUID>` footer. See
+[the CRM refresh runbook](crm-refresh-workflow.md#curated-trello-pipeline) for
+the exact lists and safe bootstrap procedure.
 
 ## Campaign Settings (Django Model)
 

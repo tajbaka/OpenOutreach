@@ -198,6 +198,65 @@ def test_old_qualifying_conversation_stays_active_without_cluttering_actions():
     assert not decision.reminder.should_create_reminder
 
 
+def test_authoritative_old_primary_relationship_gets_one_low_priority_review():
+    decision = evaluate_account(
+        AccountPolicyFacts(
+            account_key="gmail:old-authoritative",
+            manual_pin=True,
+            gmail=_gmail_inbound(days_ago=45, replied=True),
+        ),
+        today=TODAY,
+    )
+
+    assert decision.admitted
+    assert decision.reminder.state == ReminderState.REVIEW
+    assert decision.reminder.should_create_reminder
+    assert decision.reminder.due_on == TODAY
+    assert decision.priority == Priority.LOW
+
+
+def test_meeting_and_human_gmail_corroborate_an_old_recovery_review():
+    decision = evaluate_account(
+        AccountPolicyFacts(
+            account_key="prescient-like",
+            latest_completed_external_meeting_on=TODAY - timedelta(days=45),
+            gmail=_gmail_inbound(days_ago=45, replied=True),
+            post_meeting_followup_required=True,
+        ),
+        today=TODAY,
+    )
+
+    assert decision.admitted
+    assert decision.reminder.state == ReminderState.REVIEW
+    assert decision.reminder.should_create_reminder
+    assert decision.reminder.due_on == TODAY
+    assert decision.priority == Priority.LOW
+
+
+def test_meeting_only_and_linkedin_only_do_not_create_recovery_work():
+    meeting_only = evaluate_account(
+        AccountPolicyFacts(
+            account_key="cloudflare-like",
+            latest_completed_external_meeting_on=TODAY - timedelta(days=45),
+            post_meeting_followup_required=True,
+        ),
+        today=TODAY,
+    )
+    authoritative_linkedin_only = evaluate_account(
+        AccountPolicyFacts(
+            account_key="linkedin-only",
+            manual_pin=True,
+            linkedin=_linkedin_conversation(days_ago=45, answered=True),
+        ),
+        today=TODAY,
+    )
+
+    assert meeting_only.reminder.state == ReminderState.REVIEW
+    assert not meeting_only.reminder.should_create_reminder
+    assert authoritative_linkedin_only.reminder.state == ReminderState.REVIEW
+    assert not authoritative_linkedin_only.reminder.should_create_reminder
+
+
 @pytest.mark.parametrize(
     "facts",
     [

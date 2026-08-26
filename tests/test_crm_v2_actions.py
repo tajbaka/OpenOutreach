@@ -356,18 +356,46 @@ def test_mixed_account_dno_target_gets_no_delivery_channel():
     assert action.draft == ""
 
 
-def test_unowned_opportunity_does_not_create_sender_work():
+def test_unowned_authoritative_opportunity_publishes_unassigned_triage_work():
     opportunity = _opportunity("Unowned", owner=False)
     facts = AccountPolicyFacts(account_key="unowned", manual_pin=True)
     evidence = _resolved(opportunity, facts)
 
     report = apply_action_reconciliation([evidence], evaluated_at=NOW)
 
+    action = OpportunityAction.objects.get(opportunity=opportunity)
+    assert report.unowned_skipped == 0
+    assert report.actions_created == 1
+    assert action.target_lead is None
+    assert action.channel == ""
+    assert action.draft == ""
+
+
+def test_unowned_linkedin_only_secondary_stays_out_of_actions():
+    opportunity = _opportunity("Unowned LinkedIn", owner=False)
+    inbound_at = NOW - timedelta(hours=1)
+    facts = AccountPolicyFacts(
+        account_key="unowned linkedin",
+        linkedin=ConversationEvidence(
+            human_inbound_count=1,
+            substantive_inbound_count=1,
+            outbound_count=1,
+            latest_human_inbound_on=inbound_at,
+            latest_substantive_inbound_on=inbound_at,
+            latest_outbound_on=NOW - timedelta(days=1),
+        ),
+    )
+    evidence = _resolved(opportunity, facts)
+
+    report = apply_action_reconciliation([evidence], evaluated_at=NOW)
+
+    assert evidence.decision.reminder.should_create_reminder
     assert report.unowned_skipped == 1
-    assert OpportunityAction.objects.filter(opportunity=opportunity).count() == 0
+    assert report.actions_created == 0
+    assert not OpportunityAction.objects.filter(opportunity=opportunity).exists()
 
 
-def test_old_review_state_cancels_only_replaceable_v2_action():
+def test_authoritative_old_review_replaces_v2_work_with_one_recovery_action():
     opportunity = _opportunity("Old review")
     old_at = NOW - timedelta(days=45)
     gmail = ConversationEvidence(
@@ -395,11 +423,67 @@ def test_old_review_state_cancels_only_replaceable_v2_action():
 
     old_action.refresh_from_db()
     assert report.actions_cancelled == 1
+    assert report.actions_created == 1
     assert old_action.status == OpportunityAction.Status.CANCELLED
-    assert OpportunityAction.objects.filter(
+    current = OpportunityAction.objects.get(
         opportunity=opportunity,
         status__in=[OpportunityAction.Status.OPEN, OpportunityAction.Status.WAITING],
-    ).count() == 0
+    )
+    assert current.description == "Review the account context and define the next step"
+    assert current.due_on == NOW.date()
+    assert current.target_lead is None
+    assert current.channel == ""
+    assert current.draft == ""
+    assert current.idempotency_key.endswith(":account:recovery-review")
+
+
+def test_prescient_like_unowned_meeting_and_gmail_get_one_recovery_action():
+    opportunity = _opportunity("Prescient Security", owner=False)
+    old_at = NOW - timedelta(days=45)
+    facts = AccountPolicyFacts(
+        account_key="prescient security",
+        latest_completed_external_meeting_on=old_at.date(),
+        gmail=ConversationEvidence(
+            human_inbound_count=1,
+            substantive_inbound_count=1,
+            outbound_count=1,
+            latest_human_inbound_on=old_at,
+            latest_substantive_inbound_on=old_at,
+            latest_outbound_on=old_at - timedelta(hours=1),
+        ),
+        post_meeting_followup_required=True,
+    )
+    evidence = _resolved(opportunity, facts)
+
+    first = apply_action_reconciliation([evidence], evaluated_at=NOW)
+    second = apply_action_reconciliation([evidence], evaluated_at=NOW)
+
+    action = OpportunityAction.objects.get(opportunity=opportunity)
+    assert evidence.decision.reminder.state == ReminderState.REVIEW
+    assert evidence.decision.reminder.should_create_reminder
+    assert first.actions_created == 1
+    assert second.actions_unchanged == 1
+    assert action.description == "Review the account context and define the next step"
+    assert action.target_lead is None
+    assert action.channel == ""
+    assert action.draft == ""
+
+
+def test_cloudflare_like_unowned_meeting_only_does_not_create_recovery_action():
+    opportunity = _opportunity("Cloudflare", owner=False)
+    facts = AccountPolicyFacts(
+        account_key="cloudflare",
+        latest_completed_external_meeting_on=NOW.date() - timedelta(days=45),
+        post_meeting_followup_required=True,
+    )
+    evidence = _resolved(opportunity, facts)
+
+    report = apply_action_reconciliation([evidence], evaluated_at=NOW)
+
+    assert evidence.decision.reminder.state == ReminderState.REVIEW
+    assert not evidence.decision.reminder.should_create_reminder
+    assert report.actions_created == 0
+    assert not OpportunityAction.objects.filter(opportunity=opportunity).exists()
 
 
 @pytest.mark.parametrize(

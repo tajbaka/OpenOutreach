@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import io
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from django.core.management import call_command
 
 from crm.models import Lead, Meeting, SalesOwner
 from gmail import data_sync
@@ -974,3 +977,144 @@ def test_sync_note_email_leaves_generic_title_unmatched(lead):
 
     assert result.note_emails_unmatched == 1
     assert Meeting.objects.count() == 0
+
+
+def test_note_title_identity_uses_exact_tokens_and_ignores_surname_initial(db):
+    wrong = Lead.objects.create(
+        first_name="John",
+        last_name="S.",
+        company_name="Cloudflare",
+        linkedin_url="https://www.linkedin.com/in/john-s-cloudflare/",
+        email="john.s@cloudflare.example",
+    )
+    correct = Lead.objects.create(
+        first_name="John",
+        last_name="Allison",
+        company_name="Mind Anvil",
+        linkedin_url="https://www.linkedin.com/in/john-allison/",
+        email="john@mindanvil.example",
+    )
+
+    assert data_sync._unique_lead_for_note_title(
+        "John Allison Catchup",
+        [wrong, correct],
+    ) == correct
+    assert data_sync._unique_lead_for_note_title(
+        "John Allison Catchup",
+        [wrong],
+    ) is None
+
+
+def test_sync_note_email_does_not_preserve_identity_invalid_synthetic_match(db):
+    wrong = Lead.objects.create(
+        first_name="John",
+        last_name="S.",
+        company_name="Cloudflare",
+        linkedin_url="https://www.linkedin.com/in/john-s-cloudflare-existing/",
+        email="john.s.existing@cloudflare.example",
+    )
+    correct = Lead.objects.create(
+        first_name="John",
+        last_name="Allison",
+        company_name="Mind Anvil",
+        linkedin_url="https://www.linkedin.com/in/john-allison-existing/",
+        email="john.existing@mindanvil.example",
+    )
+    when = datetime(2026, 7, 15, 16, 0, tzinfo=timezone.utc)
+    bad_meeting = Meeting.objects.create(
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="gmail-note:m1",
+        lead=wrong,
+        start_at=when,
+        title="John Allison Catchup",
+        gemini_notes_raw="previous notes must remain untouched",
+        raw={
+            "source": "gmail_note_email",
+            "message_id": "m1",
+            "subject": "Notes: John Allison Catchup Jul 15, 2026",
+        },
+    )
+    msg = _gmail_note_message(
+        subject="Notes: John Allison Catchup Jul 15, 2026",
+        body="New notes that must not be attached to Cloudflare.",
+        when=when,
+    )
+
+    result = data_sync.sync_gmail_note_emails(
+        client=_Client([msg]),
+        leads=[wrong, correct],
+        since_days=365,
+        dry_run=False,
+    )
+
+    bad_meeting.refresh_from_db()
+    assert result.note_emails_matched == 0
+    assert result.note_emails_unmatched == 1
+    assert Meeting.objects.count() == 1
+    assert bad_meeting.lead == wrong
+    assert bad_meeting.gemini_notes_raw == "previous notes must remain untouched"
+
+
+def test_audit_gmail_note_meetings_reports_only_invalid_rows_and_never_writes(
+    db,
+    tmp_path,
+):
+    wrong = Lead.objects.create(
+        first_name="John",
+        last_name="S.",
+        company_name="Cloudflare",
+        linkedin_url="https://www.linkedin.com/in/john-s-cloudflare-audit/",
+        email="john.s.audit@cloudflare.example",
+    )
+    correct = Lead.objects.create(
+        first_name="John",
+        last_name="Allison",
+        company_name="Mind Anvil",
+        linkedin_url="https://www.linkedin.com/in/john-allison-audit/",
+        email="john.audit@mindanvil.example",
+    )
+    when = datetime(2026, 7, 15, 16, 0, tzinfo=timezone.utc)
+    invalid = Meeting.objects.create(
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="gmail-note:invalid",
+        lead=wrong,
+        start_at=when,
+        title="John Allison Catchup",
+        raw={
+            "source": "gmail_note_email",
+            "subject": "Notes: John Allison Catchup Jul 15, 2026",
+        },
+    )
+    Meeting.objects.create(
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="gmail-note:valid",
+        lead=correct,
+        start_at=when,
+        title="John Allison Catchup",
+        raw={
+            "source": "gmail_note_email",
+            "subject": "Notes: John Allison Catchup Jul 15, 2026",
+        },
+    )
+    before = list(Meeting.objects.order_by("id").values())
+
+    issues = data_sync.audit_gmail_note_meeting_identities()
+    stdout = io.StringIO()
+    private_output = tmp_path / "gmail-note-audit.json"
+    call_command(
+        "audit_gmail_note_meetings",
+        output=str(private_output),
+        stdout=stdout,
+    )
+    payload = json.loads(stdout.getvalue())
+    private_payload = json.loads(private_output.read_text(encoding="utf-8"))
+
+    assert [issue["meeting_id"] for issue in issues] == [invalid.id]
+    assert payload["read_only"] is True
+    assert payload["issue_count"] == 1
+    assert payload["private_output_created"] is True
+    assert "issues" not in payload
+    assert private_payload["issues"][0]["meeting_id"] == invalid.id
+    assert private_payload["issues"][0]["linked_company"] == "Cloudflare"
+    assert private_output.stat().st_mode & 0o777 == 0o600
+    assert list(Meeting.objects.order_by("id").values()) == before

@@ -146,8 +146,22 @@ class FakeWorksheet:
         self.added_cols.append(count)
         self.col_count += count
 
-    def update(self, *, values, range_name):
+    def update(self, *, values, range_name, value_input_option=None):
         self.updates.append({"range": range_name, "values": values})
+        start = range_name.split(":", 1)[0]
+        row_number, column_number = _split_cell(start)
+        for row_offset, values_row in enumerate(values):
+            target_row = row_number + row_offset
+            while len(self.rows) < target_row:
+                self.rows.append([])
+            row = self.rows[target_row - 1]
+            while len(row) < column_number - 1:
+                row.append("")
+            for column_offset, value in enumerate(values_row):
+                index = column_number - 1 + column_offset
+                while len(row) <= index:
+                    row.append("")
+                row[index] = value
         start, _ = range_name.split(":") if ":" in range_name else (range_name, range_name)
         row_number, column_number = _split_cell(start)
         while len(self.rows) < row_number:

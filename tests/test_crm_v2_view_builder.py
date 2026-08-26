@@ -106,6 +106,65 @@ def test_builder_keeps_waiting_account_out_of_actions_and_marks_dno():
     assert row[sheet.COL_OUTREACH] == "Stopped"
 
 
+def test_builder_publishes_unowned_action_as_unassigned():
+    account = Account.objects.create(name="Unowned Primary")
+    opportunity = Opportunity.objects.create(
+        account=account,
+        owner=None,
+        source=Opportunity.Source.MANUAL,
+        manual_pin=True,
+        active_account=True,
+    )
+    facts = AccountPolicyFacts(
+        account_key="unowned primary",
+        manual_pin=True,
+    )
+    action = OpportunityAction.objects.create(
+        opportunity=opportunity,
+        kind=OpportunityAction.Kind.NEXT_STEP,
+        description="Define and schedule the next step",
+        due_on=NOW.date(),
+        idempotency_key=f"v2:{opportunity.id}:account:authoritative-next-step",
+    )
+
+    view = build_crm_v2_database_view([
+        _evidence(opportunity, facts=facts),
+    ])
+
+    assert view.rows.active_accounts[0][sheet.COL_OWNER] == "Unassigned"
+    assert view.rows.active_accounts[0][sheet.COL_ATTENTION] == "Needs contact"
+    assert view.rows.active_accounts[0][sheet.COL_STAGE] == "Radar only"
+    assert view.rows.actions[0][sheet.COL_ACTION_ID] == str(action.id)
+    assert view.rows.actions[0][sheet.COL_OWNER] == "Unassigned"
+    assert view.rows.actions[0][sheet.COL_CHANNEL] == ""
+    assert view.rows.actions[0][sheet.COL_DRAFT] == ""
+
+
+def test_builder_uses_curated_pipeline_stage_not_legacy_evidence_stage():
+    owner = SalesOwner.objects.get(handle="Arian")
+    account = Account.objects.create(name="Curated Pipeline")
+    opportunity = Opportunity.objects.create(
+        account=account,
+        owner=owner,
+        source=Opportunity.Source.MANUAL,
+        manual_pin=True,
+        active_account=True,
+        stage=Opportunity.Stage.EVALUATION,
+        sales_motion_step=5,
+        pipeline_stage=Opportunity.PipelineStage.DISCOVERY,
+    )
+    facts = AccountPolicyFacts(
+        account_key="curated pipeline",
+        manual_pin=True,
+    )
+
+    view = build_crm_v2_database_view([
+        _evidence(opportunity, facts=facts),
+    ])
+
+    assert view.rows.active_accounts[0][sheet.COL_STAGE] == "Discovery"
+
+
 def test_builder_marks_exact_dno_action_stopped_and_hides_delivery_text():
     owner = SalesOwner.objects.get(handle="Arian")
     account = Account.objects.create(name="Mixed Target")

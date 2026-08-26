@@ -3,7 +3,7 @@
 This module is deliberately a task ledger, not an outreach engine.  It never
 sends messages and never generates copy.  It consumes already-resolved
 ``ResolvedAccountEvidence`` after account reconciliation and maintains at most
-one replaceable ``v2:`` current action per active, admitted, owned Opportunity.
+one replaceable ``v2:`` current action per active, admitted Opportunity.
 
 Human work is authoritative.  A current action is replaceable only when its
 idempotency key starts with ``v2:`` *and* it has no human revision.  Every
@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from crm.models import Message, Meeting, Opportunity, OpportunityAction
 from linkedin.crm_v2_evidence import ResolvedAccountEvidence
-from linkedin.crm_v2_policy import ReminderState
+from linkedin.crm_v2_policy import EvidenceTier, ReminderState
 
 
 __all__ = (
@@ -247,14 +247,20 @@ def _reconcile_row(
             )
         return
 
-    if opportunity.owner_id is None:
+    if (
+        opportunity.owner_id is None
+        and row.decision.evidence_tier not in {
+            EvidenceTier.AUTHORITATIVE,
+            EvidenceTier.PRIMARY,
+        }
+    ):
         report.unowned_skipped += 1
         _cancel_current_if_replaceable(
             replaceable_current,
             row=row,
             opportunity=opportunity,
             report=report,
-            detail="unowned_opportunity",
+            detail="unowned_secondary_opportunity",
         )
         if current is not None and replaceable_current is None:
             _preserve_human_action(
@@ -410,7 +416,10 @@ def _proposal_for(
     account_level_allowed = bool(
         target_lead_id is None
         and (
-            recommendation.state == ReminderState.DEFINE_NEXT_STEP
+            recommendation.state in {
+                ReminderState.DEFINE_NEXT_STEP,
+                ReminderState.REVIEW,
+            }
             or (
                 (row.facts.manual_pin or row.facts.sales_motion_active)
                 and row.trigger_message_id is None
@@ -488,7 +497,10 @@ def _proposal_for(
     idempotency_key = f"v2:{opportunity.id}:{basis}"[:255]
     kind, description = _translated_action(recommendation.state)
     channel = ""
-    if not row.reminder_do_not_outreach:
+    if (
+        not row.reminder_do_not_outreach
+        and recommendation.state != ReminderState.REVIEW
+    ):
         reason = recommendation.reason_code.value
         if "gmail" in reason:
             channel = "email"
@@ -569,6 +581,10 @@ def _translated_action(state: ReminderState) -> tuple[str, str]:
             OpportunityAction.Kind.NEXT_STEP,
             "Define and schedule the next step",
         ),
+        ReminderState.REVIEW: (
+            OpportunityAction.Kind.NEXT_STEP,
+            "Review the account context and define the next step",
+        ),
     }
     try:
         return translations[state]
@@ -594,6 +610,8 @@ def _idempotency_basis(
             and current_v2_action.idempotency_key.startswith(expected_prefix)
         ):
             return current_v2_action.idempotency_key[len(f"v2:{opportunity.id}:"):]
+        if row.decision.reminder.state == ReminderState.REVIEW:
+            return "account:recovery-review"
         return (
             "account:authoritative-next-step"
             if row.facts.manual_pin or row.facts.sales_motion_active

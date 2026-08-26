@@ -24,6 +24,7 @@ from linkedin.crm_v2_policy import (
     AccountPolicyDecision,
     AccountPolicyFacts,
     ConversationEvidence,
+    ReminderState,
     evaluate_account,
 )
 
@@ -183,6 +184,7 @@ def collect_account_evidence(
 ) -> list[ResolvedAccountEvidence]:
     """Build one deterministic policy decision per conservative account group."""
     from crm.models import Lead, Meeting, Message, Opportunity, OpportunityAction
+    from gmail.data_sync import gmail_note_meeting_identity_is_valid
 
     current_time = now or timezone.now()
     today = current_time.date()
@@ -346,10 +348,22 @@ def collect_account_evidence(
             messages_by_root[union.find(tokens[0])].append(message)
 
     meetings_by_root: dict[str, dict[int, object]] = defaultdict(dict)
-    meetings = Meeting.objects.prefetch_related("participants", "notes").order_by(
-        "start_at", "id",
+    meetings = (
+        Meeting.objects.select_related("lead")
+        .prefetch_related("participants", "notes")
+        .order_by("start_at", "id")
     )
     for meeting in meetings:
+        raw = meeting.raw if isinstance(meeting.raw, dict) else {}
+        synthetic_gmail_note = (
+            meeting.external_id.startswith("gmail-note:")
+            or raw.get("source") == "gmail_note_email"
+        )
+        if synthetic_gmail_note and not gmail_note_meeting_identity_is_valid(meeting):
+            # Preserve the historical row for private review/repair, but do
+            # not let an identity-invalid note manufacture account admission,
+            # reminders, stages, or Trello cards.
+            continue
         participant_ids = {meeting.lead_id}
         participant_ids.update(meeting.participants.values_list("id", flat=True))
         for lead_id in participant_ids:
@@ -904,6 +918,12 @@ def _reminder_provenance(
             current_action.trigger_message_id,
             current_action.trigger_meeting_id,
         )
+
+    # Recovery is intentionally account-level triage.  Its corroborating
+    # meeting/Gmail evidence establishes that the relationship deserves a
+    # review, but it does not identify a recipient, channel, or outbound task.
+    if decision.reminder.state == ReminderState.REVIEW:
+        return None, None, None
 
     reason = decision.reminder.reason_code.value
     if "gmail" in reason or "linkedin" in reason:

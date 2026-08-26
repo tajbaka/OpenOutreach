@@ -109,6 +109,23 @@ def test_invalid_owner_is_reported_without_partial_changes():
 
 
 @pytest.mark.django_db
+def test_unassigned_owner_label_clears_owner_without_name_inference():
+    opportunity = _opportunity()
+    owner, _created = SalesOwner.objects.get_or_create(handle="Arian")
+    opportunity.owner = owner
+    opportunity.save(update_fields={"owner", "updated_at"})
+
+    report = apply_opportunity_imports(
+        _imports(opportunity, {crm_sheets.COL_OWNER: "Unassigned"}),
+        dry_run=False,
+    )
+
+    opportunity.refresh_from_db()
+    assert report.invalid == []
+    assert opportunity.owner is None
+
+
+@pytest.mark.django_db
 def test_contact_roles_use_stable_lead_ids_not_names():
     opportunity = _opportunity()
     first = Lead.objects.create(

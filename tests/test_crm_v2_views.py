@@ -58,8 +58,22 @@ class FakeWorksheet:
     def add_cols(self, count):
         self.col_count += count
 
-    def update(self, *, values, range_name):
+    def update(self, *, values, range_name, value_input_option=None):
         self.updates.append({"range": range_name, "values": values})
+        start = range_name.split(":", 1)[0]
+        row_number, column_number = _split_cell(start)
+        for row_offset, values_row in enumerate(values):
+            target_row = row_number + row_offset
+            while len(self.rows) < target_row:
+                self.rows.append([])
+            row = self.rows[target_row - 1]
+            while len(row) < column_number - 1:
+                row.append("")
+            for column_offset, value in enumerate(values_row):
+                index = column_number - 1 + column_offset
+                while len(row) <= index:
+                    row.append("")
+                row[index] = value
 
     def batch_update(self, updates, value_input_option=None):
         self.batch_updates.extend(updates)
@@ -232,6 +246,40 @@ def test_active_accounts_three_way_merge_preserves_human_edit_and_unknown_formul
     assert worksheet.rows[1][-1] == "=ROW()"
 
 
+def test_active_accounts_pipeline_stage_is_a_system_projection_not_a_sheet_import():
+    headers = list(v2.ACTIVE_ACCOUNT_HEADERS)
+    worksheet = FakeWorksheet(
+        v2.ACTIVE_ACCOUNTS_TAB,
+        [
+            headers,
+            _row(
+                headers,
+                **{
+                    v2.COL_OPPORTUNITY_ID: "opp-ramp",
+                    v2.COL_ACCOUNT_ID: "acct-ramp",
+                    v2.COL_ACCOUNT: "Ramp",
+                    v2.COL_STAGE: "Discovery",
+                    v2.COL_HUMAN_BASELINE: _baseline(
+                        v2.ACTIVE_ACCOUNT_HUMAN_FIELDS,
+                    ),
+                },
+            ),
+        ],
+    )
+
+    plan = v2.active_accounts_adapter(worksheet).plan([
+        {
+            v2.COL_OPPORTUNITY_ID: "opp-ramp",
+            v2.COL_ACCOUNT_ID: "acct-ramp",
+            v2.COL_ACCOUNT: "Ramp",
+            v2.COL_STAGE: "Potential / Triage",
+        }
+    ])
+
+    assert plan.imports == []
+    assert any(change.column == v2.COL_STAGE for change in plan.changes)
+
+
 def test_missing_active_account_clears_managed_cells_but_not_key_or_formula():
     headers = [*v2.ACTIVE_ACCOUNT_HEADERS, "Operator formula"]
     worksheet = FakeWorksheet(
@@ -265,6 +313,60 @@ def test_missing_active_account_clears_managed_cells_but_not_key_or_formula():
     assert row[headers.index(v2.COL_ACCOUNT)] == ""
     assert row[headers.index(v2.COL_WHY_ACTIVE)] == ""
     assert row[headers.index("Operator formula")] == "=ROW()"
+
+
+def test_new_action_writes_after_hidden_stable_history_instead_of_table_append():
+    headers = list(v2.ACTION_HEADERS)
+    worksheet = FakeWorksheet(
+        v2.ACTIONS_TAB,
+        [
+            headers,
+            _row(
+                headers,
+                **{
+                    v2.COL_ACTION_ID: "action-current",
+                    v2.COL_OPPORTUNITY_ID: "opp-current",
+                    v2.COL_ACCOUNT_ID: "account-current",
+                    v2.COL_ACCOUNT: "Current",
+                },
+            ),
+            _row(
+                headers,
+                **{
+                    v2.COL_ACTION_ID: "action-history",
+                    v2.COL_OPPORTUNITY_ID: "opp-history",
+                    v2.COL_ACCOUNT_ID: "account-history",
+                    v2.COL_ACCOUNT: "Old visible work",
+                },
+            ),
+        ],
+    )
+    adapter = v2.actions_adapter(worksheet)
+    plan = adapter.plan([
+        {
+            v2.COL_ACTION_ID: "action-current",
+            v2.COL_OPPORTUNITY_ID: "opp-current",
+            v2.COL_ACCOUNT_ID: "account-current",
+            v2.COL_ACCOUNT: "Current",
+        },
+        {
+            v2.COL_ACTION_ID: "action-new",
+            v2.COL_OPPORTUNITY_ID: "opp-new",
+            v2.COL_ACCOUNT_ID: "account-new",
+            v2.COL_ACCOUNT: "New work",
+        },
+    ])
+
+    adapter.apply(plan)
+
+    action_id_index = headers.index(v2.COL_ACTION_ID)
+    account_index = headers.index(v2.COL_ACCOUNT)
+    assert worksheet.rows[2][action_id_index] == "action-history"
+    assert worksheet.rows[2][account_index] == ""
+    assert worksheet.rows[3][action_id_index] == "action-new"
+    assert worksheet.rows[3][account_index] == "New work"
+    assert worksheet.appended == []
+    assert worksheet.updates[-1]["range"].startswith("A4:")
 
 
 def test_actions_are_one_filterable_sheet_and_completed_history_does_not_clutter_it():

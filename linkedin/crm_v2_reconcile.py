@@ -25,6 +25,9 @@ from django.utils import timezone
 from crm.models import (
     Account,
     Lead,
+    Meeting,
+    MeetingNote,
+    MeetingParticipant,
     Opportunity,
     OpportunityAction,
     OpportunityContact,
@@ -84,6 +87,8 @@ class ReconciliationReport:
     opportunities_activated: int = 0
     opportunities_deactivated: int = 0
     contacts_linked: int = 0
+    meetings_linked: int = 0
+    meeting_notes_linked: int = 0
     owners_assigned: int = 0
     domains_populated: int = 0
     opportunities_unchanged: int = 0
@@ -307,6 +312,9 @@ def _reconcile_row(
             name=(row.account_name or account.name).strip(),
             source=source,
             owner=evidence_owner,
+            # Evidence admits an account; it never advances a sales stage.
+            stage=Opportunity.Stage.PROSPECTING,
+            sales_motion_step=1,
             manual_pin=row.facts.manual_pin,
             active_account=True,
             admission_reason=row.decision.primary_reason_code.value,
@@ -446,6 +454,136 @@ def _reconcile_row(
             "contact_linked",
             str(lead.id),
         ))
+    _link_verified_meeting_context(
+        row,
+        opportunity=opportunity,
+        report=report,
+    )
+
+
+_VERIFIED_MEETING_MATCH_METHODS = frozenset({
+    MeetingParticipant.MatchMethod.ATTENDEE_EMAIL,
+    MeetingParticipant.MatchMethod.ATTENDEE_IDENTITY,
+    MeetingParticipant.MatchMethod.MANUAL,
+})
+
+
+def _link_verified_meeting_context(
+    row: ResolvedAccountEvidence,
+    *,
+    opportunity: Opportunity,
+    report: ReconciliationReport,
+) -> None:
+    """Backfill opportunity context only from verified exact participants.
+
+    Legacy-primary and account/title matches are deliberately insufficient:
+    those historical matchers can attach a meeting to a namesake.  Existing
+    links are never moved, and a meeting whose known contacts span accounts is
+    left untouched for human review.
+    """
+    row_lead_ids = set(row.lead_ids)
+    if not row_lead_ids:
+        return
+
+    candidate_meeting_ids = set(
+        MeetingParticipant.objects.filter(
+            lead_id__in=row_lead_ids,
+            match_method__in=_VERIFIED_MEETING_MATCH_METHODS,
+        ).values_list("meeting_id", flat=True)
+    )
+    if not candidate_meeting_ids:
+        return
+
+    meetings = list(
+        Meeting.objects.select_for_update()
+        .filter(pk__in=candidate_meeting_ids)
+        .order_by("id")
+    )
+    verified_by_meeting: dict[int, set[int]] = {}
+    for meeting_id, lead_id in MeetingParticipant.objects.filter(
+        meeting_id__in=candidate_meeting_ids,
+        match_method__in=_VERIFIED_MEETING_MATCH_METHODS,
+    ).values_list("meeting_id", "lead_id"):
+        verified_by_meeting.setdefault(meeting_id, set()).add(lead_id)
+
+    context_lead_ids = {
+        lead_id
+        for meeting in meetings
+        for lead_id in (
+            verified_by_meeting.get(meeting.id, set()) | {meeting.lead_id}
+        )
+    }
+    account_ids_by_lead: dict[int, set] = {}
+    for lead_id, account_id in OpportunityContact.objects.filter(
+        lead_id__in=context_lead_ids,
+    ).values_list("lead_id", "opportunity__account_id"):
+        account_ids_by_lead.setdefault(lead_id, set()).add(account_id)
+
+    for meeting in meetings:
+        verified_lead_ids = verified_by_meeting.get(meeting.id, set())
+        if not verified_lead_ids & row_lead_ids:
+            continue
+        if meeting.opportunity_id not in {None, opportunity.id}:
+            _issue(
+                report,
+                row,
+                "meeting_linked_to_other_opportunity",
+                str(meeting.id),
+            )
+            continue
+
+        meeting_lead_ids = verified_lead_ids | {meeting.lead_id}
+        linked_account_ids = {
+            account_id
+            for lead_id in meeting_lead_ids
+            for account_id in account_ids_by_lead.get(lead_id, set())
+        }
+        if linked_account_ids - {opportunity.account_id}:
+            _issue(
+                report,
+                row,
+                "meeting_contacts_span_accounts",
+                str(meeting.id),
+            )
+            continue
+
+        if meeting.opportunity_id is None:
+            meeting.opportunity = opportunity
+            meeting.save(update_fields={"opportunity", "update_date"})
+            report.meetings_linked += 1
+            report.changes.append(ReconciliationChange(
+                row.account_key,
+                "meeting_linked",
+                str(meeting.id),
+            ))
+
+        notes = list(
+            MeetingNote.objects.select_for_update()
+            .filter(
+                meeting=meeting,
+                match_status=MeetingNote.MatchStatus.MATCHED,
+            )
+            .order_by("id")
+        )
+        for note in notes:
+            if note.opportunity_id not in {None, opportunity.id}:
+                _issue(
+                    report,
+                    row,
+                    "meeting_note_linked_to_other_opportunity",
+                    str(note.id),
+                )
+                continue
+            if note.opportunity_id is not None:
+                continue
+            note.opportunity = opportunity
+            note.save(update_fields={"opportunity", "updated_at"})
+            report.meeting_notes_linked += 1
+            report.changes.append(ReconciliationChange(
+                row.account_key,
+                "meeting_note_linked",
+                str(note.id),
+            ))
 
 
 def _explicit_opportunity(row, *, report):

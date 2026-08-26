@@ -255,6 +255,16 @@ SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID = os.getenv(
     "SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID", ""
 ).strip()
 
+# Optional curated Trello pipeline.  Active Accounts remains the broad CRM
+# radar; only Opportunities with a nonblank pipeline_stage are synchronized.
+TRELLO_API_KEY = os.getenv("TRELLO_API_KEY", "").strip()
+TRELLO_API_TOKEN = os.getenv("TRELLO_API_TOKEN", "").strip()
+TRELLO_BOARD_ID = os.getenv("TRELLO_BOARD_ID", "").strip()
+TRELLO_API_BASE = os.getenv(
+    "TRELLO_API_BASE", "https://api.trello.com/1"
+).rstrip("/")
+TRELLO_HTTP_TIMEOUT_SECONDS = int(os.getenv("TRELLO_HTTP_TIMEOUT_SECONDS", "30"))
+
 # Gmail "self" address set is derived at runtime from the connected
 # Gmail account itself (Gmail Profile API + Send-As aliases) rather than
 # from an env-var list. Removes the brittle "remember every alias" config —

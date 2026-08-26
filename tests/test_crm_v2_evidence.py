@@ -380,6 +380,64 @@ def test_completed_external_meeting_counts_without_granola_or_gemini_notes():
     assert row.trigger_meeting_id is not None
 
 
+def test_identity_invalid_synthetic_gmail_note_meeting_is_quarantined():
+    wrong = Lead.objects.create(
+        first_name="John",
+        last_name="S.",
+        company_name="Cloudflare",
+        email="john.s@cloudflare.example",
+    )
+    Meeting.objects.create(
+        lead=wrong,
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="gmail-note:john-allison",
+        start_at=NOW - timedelta(days=3, hours=1),
+        end_at=NOW - timedelta(days=3),
+        title="John Allison Catchup",
+        raw={
+            "source": "gmail_note_email",
+            "subject": "Notes: John Allison Catchup Jul 20, 2026",
+        },
+    )
+
+    row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.account_name == "Cloudflare"
+    )
+
+    assert row.decision.admitted is False
+    assert row.trigger_meeting_id is None
+
+
+def test_identity_valid_synthetic_gmail_note_meeting_remains_evidence():
+    lead = Lead.objects.create(
+        first_name="John",
+        last_name="Allison",
+        company_name="Mind Anvil",
+        email="john@mindanvil.example",
+    )
+    meeting = Meeting.objects.create(
+        lead=lead,
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="gmail-note:john-allison-valid",
+        start_at=NOW - timedelta(days=3, hours=1),
+        end_at=NOW - timedelta(days=3),
+        title="John Allison Catchup",
+        raw={
+            "source": "gmail_note_email",
+            "subject": "Notes: John Allison Catchup Jul 20, 2026",
+        },
+    )
+
+    row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.account_name == "Mind Anvil"
+    )
+
+    assert row.decision.admitted is True
+    assert row.trigger_meeting_id == meeting.id
+
+
 def test_new_inbound_outranks_an_old_replaceable_v2_due_action():
     account = Account.objects.create(name="Retarget Account")
     opportunity = Opportunity.objects.create(

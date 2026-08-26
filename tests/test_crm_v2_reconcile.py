@@ -5,6 +5,9 @@ import pytest
 from crm.models import (
     Account,
     Lead,
+    Meeting,
+    MeetingNote,
+    MeetingParticipant,
     Opportunity,
     OpportunityAction,
     OpportunityContact,
@@ -100,6 +103,8 @@ def test_ramp_sales_motion_dry_run_then_apply_creates_one_active_account():
     assert account.domain == "ramp.com"
     opportunity = Opportunity.objects.get(account=account, motion_key="primary")
     assert opportunity.source == Opportunity.Source.SHEET
+    assert opportunity.stage == Opportunity.Stage.PROSPECTING
+    assert opportunity.sales_motion_step == 1
     assert opportunity.owner == owner
     assert applied.owners_assigned == 1
     assert opportunity.active_account is True
@@ -415,3 +420,135 @@ def test_duplicate_exact_lead_links_still_block_active_or_human_ambiguity(unsafe
         "exact_leads_link_multiple_accounts"
     ]
     assert canonical.admission_evaluated_at is None
+
+
+def test_new_opportunity_links_verified_meeting_and_matched_note_context():
+    lead = Lead.objects.create(
+        first_name="Verified",
+        company_name="Verified Context",
+        email="verified@context.example",
+    )
+    meeting = Meeting.objects.create(
+        lead=lead,
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="verified-context-meeting",
+        start_at=NOW - timedelta(days=2, hours=1),
+        end_at=NOW - timedelta(days=2),
+        title="Verified customer meeting",
+    )
+    MeetingParticipant.objects.create(
+        meeting=meeting,
+        lead=lead,
+        attendee_email=lead.email,
+        match_method=MeetingParticipant.MatchMethod.ATTENDEE_EMAIL,
+        is_primary=True,
+    )
+    note = MeetingNote.objects.create(
+        source=MeetingNote.Source.GEMINI,
+        external_id="verified-context-note",
+        meeting=meeting,
+        title="Verified customer meeting",
+        match_status=MeetingNote.MatchStatus.MATCHED,
+        match_method=MeetingNote.MatchMethod.ATTENDEE_EMAIL,
+    )
+    facts = AccountPolicyFacts(
+        account_key="context.example",
+        latest_completed_external_meeting_on=meeting.start_at.date(),
+    )
+    evidence = _resolved(
+        account_key="context.example",
+        account_name="Verified Context",
+        facts=facts,
+        lead_ids=(lead.id,),
+        last_touch=meeting.start_at,
+    )
+
+    first = apply_reconciliation([evidence], evaluated_at=NOW)
+
+    opportunity = Opportunity.objects.get(account__normalized_name="verified context")
+    meeting.refresh_from_db()
+    note.refresh_from_db()
+    assert first.meetings_linked == 1
+    assert first.meeting_notes_linked == 1
+    assert meeting.opportunity == opportunity
+    assert note.opportunity == opportunity
+    assert opportunity.stage == Opportunity.Stage.PROSPECTING
+
+    recollected = _resolved(
+        account_key="context.example",
+        account_name="Verified Context",
+        facts=facts,
+        lead_ids=(lead.id,),
+        opportunity=opportunity,
+        last_touch=meeting.start_at,
+    )
+    repeated = apply_reconciliation([recollected], evaluated_at=NOW)
+    assert repeated.meetings_linked == 0
+    assert repeated.meeting_notes_linked == 0
+
+
+def test_meeting_context_is_not_stolen_when_verified_contacts_span_accounts():
+    current_lead = Lead.objects.create(
+        first_name="Current",
+        company_name="Current Account",
+        email="current@current.example",
+    )
+    other_lead = Lead.objects.create(
+        first_name="Other",
+        company_name="Other Account",
+        email="other@other.example",
+    )
+    other_opportunity = Opportunity.objects.create(
+        account=Account.objects.create(name="Other Account"),
+        source=Opportunity.Source.MANUAL,
+    )
+    OpportunityContact.objects.create(
+        opportunity=other_opportunity,
+        lead=other_lead,
+    )
+    meeting = Meeting.objects.create(
+        lead=current_lead,
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="cross-account-meeting",
+        start_at=NOW - timedelta(days=2, hours=1),
+        end_at=NOW - timedelta(days=2),
+        title="Cross-account meeting",
+    )
+    for lead in (current_lead, other_lead):
+        MeetingParticipant.objects.create(
+            meeting=meeting,
+            lead=lead,
+            attendee_email=lead.email,
+            match_method=MeetingParticipant.MatchMethod.ATTENDEE_EMAIL,
+            is_primary=lead == current_lead,
+        )
+    note = MeetingNote.objects.create(
+        source=MeetingNote.Source.GRANOLA,
+        external_id="cross-account-note",
+        meeting=meeting,
+        match_status=MeetingNote.MatchStatus.MATCHED,
+        match_method=MeetingNote.MatchMethod.ATTENDEE_EMAIL,
+    )
+    facts = AccountPolicyFacts(
+        account_key="current.example",
+        latest_completed_external_meeting_on=meeting.start_at.date(),
+    )
+    evidence = _resolved(
+        account_key="current.example",
+        account_name="Current Account",
+        facts=facts,
+        lead_ids=(current_lead.id,),
+        last_touch=meeting.start_at,
+    )
+
+    report = apply_reconciliation([evidence], evaluated_at=NOW)
+
+    meeting.refresh_from_db()
+    note.refresh_from_db()
+    assert report.meetings_linked == 0
+    assert report.meeting_notes_linked == 0
+    assert [issue.reason for issue in report.issues] == [
+        "meeting_contacts_span_accounts"
+    ]
+    assert meeting.opportunity is None
+    assert note.opportunity is None
