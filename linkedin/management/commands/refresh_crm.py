@@ -162,6 +162,7 @@ class Command(BaseCommand):
             crm_sheets=crm_sheets,
             stable_keys=stable_keys,
         )
+        _assert_legacy_refresh_not_superseded(before_inventory)
         people_before = _capture_people_preservation_snapshot(
             spreadsheet,
             sheets=sheets,
@@ -2229,6 +2230,21 @@ def _followup_block_summary(
         "publication_imports_remaining": publication_imports_remaining,
         "publication_identity_blockers": publication_identity_blockers,
     }
+
+
+def _assert_legacy_refresh_not_superseded(inventory: dict) -> None:
+    """Refuse to recreate CRM v1 surfaces after the v2 cutover begins."""
+    v2_titles = {"Active Accounts", "Actions"}
+    present = {
+        str(tab.get("title") or "")
+        for tab in inventory.get("tabs", ())
+        if str(tab.get("title") or "") in v2_titles
+    }
+    if present:
+        raise CommandError(
+            "Legacy refresh_crm is disabled because CRM v2 is active; "
+            "run refresh_crm_v2 instead"
+        )
 
 
 def _sum_followup_import_reports(reports) -> dict[str, int]:

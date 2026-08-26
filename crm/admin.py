@@ -69,16 +69,33 @@ class OpportunityAdmin(admin.ModelAdmin):
         "account",
         "owner",
         "stage",
+        "active_account",
+        "admission_reason",
+        "admission_tier",
         "sales_motion_step",
         "last_meaningful_activity_at",
         "updated_at",
     )
-    list_filter = ("stage", "owner", "manual_pin", "source")
+    list_filter = (
+        "active_account",
+        "admission_tier",
+        "stage",
+        "owner",
+        "manual_pin",
+        "source",
+    )
     search_fields = ("name", "account__name", "owner__handle")
     raw_id_fields = ("account", "owner")
     readonly_fields = (
         "id",
         "stage_entered_at",
+        "active_account",
+        "admission_reason",
+        "admission_reasons",
+        "admission_tier",
+        "admission_evaluated_at",
+        "inactive_at",
+        "inactive_reason",
         "human_revision",
         "created_at",
         "updated_at",

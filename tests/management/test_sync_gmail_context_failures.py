@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import io
+import logging
 from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command as django_call_command
+from django.core.management.base import CommandError
 from google.auth.exceptions import TransportError
 from googleapiclient.errors import HttpError
 
 from gmail.client import GmailClient
+from gmail.data_sync import GmailContextSyncResult
 from linkedin.exceptions import EnrichmentError
 from linkedin.management.commands import refresh_crm, sync_gmail_context
 
@@ -75,6 +78,172 @@ def test_sync_command_does_not_hide_programmer_or_payload_errors(monkeypatch):
             stdout=io.StringIO(),
             stderr=io.StringIO(),
         )
+
+
+def test_sync_command_output_is_aggregate_only(monkeypatch):
+    private_mailbox = "arian-private@example.invalid"
+    private_prospect = "buyer-private@example.invalid"
+    private_subject = "Secret acquisition meeting"
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "GmailClient",
+        lambda operator: SimpleNamespace(operator=operator),
+    )
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "self_emails_for_client",
+        lambda _client: {private_mailbox},
+    )
+    monkeypatch.setattr(
+        sync_gmail_context.Command,
+        "_lead_queryset",
+        lambda _self, _options: [],
+    )
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "sync_gmail_threads",
+        lambda **_kwargs: GmailContextSyncResult(
+            discovery_messages_scanned=2,
+            discovery_threads_selected=1,
+            unmapped_external_participants=[{
+                "email": private_prospect,
+                "display_name": "Private Buyer",
+                "domain": "example.invalid",
+                "last_inbound_at": "2026-08-20T15:00:00+00:00",
+                "latest_thread_id": "private-thread-id",
+                "thread_count": 1,
+            }],
+        ),
+    )
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "sync_gmail_note_emails",
+        lambda **_kwargs: GmailContextSyncResult(
+            note_emails_seen=1,
+            note_emails_unmatched=1,
+            unmatched_notes=[{
+                "date": "2026-08-20T15:00:00+00:00",
+                "subject": private_subject,
+                "reason": "no unique CRM lead/meeting match",
+            }],
+        ),
+    )
+    stdout = io.StringIO()
+
+    django_call_command(
+        "sync_gmail_context",
+        operator="Arian",
+        dry_run=True,
+        stdout=stdout,
+        stderr=io.StringIO(),
+    )
+
+    output = stdout.getvalue()
+    assert "mailbox identities resolved: 1" in output
+    assert "bidirectional_unmapped_participants=1" in output
+    assert "no unique CRM lead/meeting match" not in output
+    assert private_mailbox not in output
+    assert private_prospect not in output
+    assert private_subject not in output
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "message"),
+    [
+        ("since_days", 0, "--since-days must be positive"),
+        ("discovery_since_days", -1, "--discovery-since-days must be positive"),
+        ("discovery_max_messages", 0, "--discovery-max-messages must be positive"),
+        ("discovery_max_threads", 0, "--discovery-max-threads must be positive"),
+        ("limit", 0, "--limit must be positive"),
+        ("show_unmatched", -1, "--show-unmatched cannot be negative"),
+    ],
+)
+def test_sync_command_rejects_unsafe_numeric_bounds(option, value, message):
+    with pytest.raises(CommandError, match=message):
+        django_call_command(
+            "sync_gmail_context",
+            **{option: value},
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+
+
+def test_private_gmail_discovery_state_round_trips_with_restricted_mode(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(sync_gmail_context, "GMAIL_DATA_DIR", tmp_path)
+    result = GmailContextSyncResult(
+        gmail_processed_thread_versions={"a" * 64: "b" * 64},
+        unmapped_external_participants=[{
+            "account_key": "arian_boundera",
+            "email": "buyer@example.invalid",
+            "display_name": "Buyer",
+            "domain": "example.invalid",
+            "last_inbound_at": "2026-08-20T15:00:00+00:00",
+            "latest_thread_id": "arian_boundera:thread-id",
+            "thread_count": 1,
+        }],
+    )
+
+    sync_gmail_context.Command._write_gmail_sync_state(
+        "arian_boundera",
+        result,
+    )
+    state = sync_gmail_context.Command._gmail_sync_state("arian_boundera")
+    path = tmp_path / "arian_boundera-context-state.json"
+
+    assert state["gmail_processed_thread_versions"] == {"a" * 64: "b" * 64}
+    assert state["gmail_unmapped_external_participants"][0]["email"] == (
+        "buyer@example.invalid"
+    )
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_sync_command_suppresses_google_api_request_logs(monkeypatch, caplog):
+    private_query = "from:private-buyer@example.invalid"
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "GmailClient",
+        lambda operator: SimpleNamespace(operator=operator),
+    )
+
+    def resolve_self_emails(_client):
+        logging.getLogger("googleapiclient.discovery").debug(private_query)
+        logging.getLogger("googleapiclient.http").warning(private_query)
+        return {"arian@getboundera.com"}
+
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "self_emails_for_client",
+        resolve_self_emails,
+    )
+    monkeypatch.setattr(
+        sync_gmail_context.Command,
+        "_lead_queryset",
+        lambda _self, _options: [],
+    )
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "sync_gmail_threads",
+        lambda **_kwargs: GmailContextSyncResult(),
+    )
+    monkeypatch.setattr(
+        sync_gmail_context,
+        "sync_gmail_note_emails",
+        lambda **_kwargs: GmailContextSyncResult(),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        django_call_command(
+            "sync_gmail_context",
+            operator="Arian",
+            dry_run=True,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+
+    assert private_query not in caplog.text
 
 
 def test_gmail_client_sanitizes_auth_refresh_transport_error(

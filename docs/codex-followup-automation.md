@@ -6,16 +6,23 @@ ownership, context prerequisites, dry-run, backup, and recovery behavior.
 
 ## Safe canonical sequence
 
-Refresh and review the CRM plan:
+Refresh stored context, then review the CRM v2 plan:
 
 ```bash
-.venv/bin/python manage.py refresh_crm
+.venv/bin/python manage.py sync_crm_v2_context --apply
+.venv/bin/python manage.py refresh_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 ```
 
 After approval, apply the CRM refresh:
 
 ```bash
-.venv/bin/python manage.py refresh_crm --apply
+.venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 ```
 
 Export only explicitly owned daily Actions:
@@ -79,7 +86,7 @@ Apply validates the entire file atomically against a freshly serialized queue.
 Unknown/duplicate IDs, changed contacts, and stale fingerprints fail closed.
 Existing nonblank human drafts are preserved. Blank/review-only decisions are
 no-ops. Successful drafts are stored on their canonical Actions and published
-to stable-ID Followups rows; no send API is called.
+to stable-ID rows in the single `Actions` tab; no send API is called.
 
 ## Scopes and publication
 
@@ -100,10 +107,11 @@ Store valid drafts for the next scheduled CRM refresh without publishing now:
   --no-publish
 ```
 
-`--refresh-crm` before export is shorthand for `refresh_crm --apply`. The old
-`--sync-gmail-context` and `--sync-sheets` convenience flags also route through
-the canonical CRM orchestrator in non-legacy mode. Because these are writes,
-the explicit dry-run/apply sequence is preferred.
+`--refresh-crm` before export is a compatibility name for
+`sync_crm_v2_context --apply` followed by `refresh_crm_v2 --apply --routine`.
+The old `--sync-gmail-context` compatibility flag takes the same v2 path;
+`--sync-sheets` runs routine v2 publication. None can fall back to legacy
+`refresh_crm`. Because these are writes, the explicit sequence is preferred.
 
 ## Scheduling
 
@@ -116,8 +124,9 @@ A drafting automation may:
 5. apply the decisions; and
 6. report counts and validation failures.
 
-Never add automatic message sending. `refresh_crm --apply`, not draft
-generation, is the Windows scheduled CRM publisher.
+Never add automatic message sending. The Windows wrapper schedules context
+apply followed by `refresh_crm_v2 --apply --routine`; draft generation is not
+the scheduled publisher.
 
 ## Retired legacy path
 

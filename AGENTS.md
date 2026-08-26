@@ -8,7 +8,7 @@
 - **Docs sync**: When modifying code, update AGENTS.md and ARCHITECTURE.md to reflect changes.
 - **No memory**: Never use the auto-memory system (no MEMORY.md, no memory files). All persistent context belongs in AGENTS.md or ARCHITECTURE.md.
 - **Error handling**: App should crash on unexpected errors. `try/except` only for expected, recoverable errors. Custom exceptions in `exceptions.py`.
-- **No general backward compat**: CRM models are owned by this project, so do not add broad compatibility shims or re-export modules. The only CRM rollout exception is the one-time, conservative legacy Followups migration inside `refresh_crm`: import only positive stable matches, never guess unresolved rows, and preserve every untouched old sender tab under a dated `Legacy` title. All canonical replacements must be prepared and validated before one cohort-wide atomic title swap; unresolved legacy rows stay reported for human review without blocking safe canonical activation. If a Sheet publication succeeds but its enclosing database transaction rolls back, `recover_failed_crm_sheet_titles()` is the title-only recovery primitive: require exact observed source IDs, retain every failed output under a unique title, restore all dated sender archives in one atomic batch, and never delete tabs or edit cells.
+- **No general backward compat**: CRM models are owned by this project, so do not add broad compatibility shims or re-export modules. `refresh_crm_v2` is the canonical publisher. Its one-time cutover may import only exact stable-ID human state from legacy tabs, never guess unresolved rows, stages both v2 surfaces before one atomic title swap, and compensates the title swap if the outer DB transaction rolls back. `refresh_crm` is retired and must fail closed once `Active Accounts` or `Actions` exists; do not route production work back through it.
 
 ## Project Overview
 
@@ -39,15 +39,37 @@ make test / make docker-test
 pytest tests/api/test_voyager.py   # single file
 pytest -k test_name                # single test
 
-# Canonical Google Sheets CRM workflow. The default is an exact live dry-run;
-# --apply imports human edits, recalculates Actions, and publishes all managed
-# views under one lock. Neither mode sends Gmail or LinkedIn messages.
-.venv/bin/python manage.py refresh_crm
-.venv/bin/python manage.py refresh_crm --apply
+# Refresh Gmail/Gemini, validated email-first contacts, and Granola separately
+# from Sheets publication. Both commands default to no-write behavior and never
+# send Gmail or LinkedIn messages.
+.venv/bin/python manage.py sync_crm_v2_context
+.venv/bin/python manage.py sync_crm_v2_context --apply
+
+# Canonical account-first CRM. preview_crm_v2 writes a private review artifact;
+# refresh_crm_v2 dry-run executes the real DB path under rollback and performs
+# zero Sheet writes. First apply requires that reviewed preview. Once cut over,
+# production uses --apply --routine and exposes only Active Accounts + Actions.
+.venv/bin/python manage.py preview_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
+.venv/bin/python manage.py refresh_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
+.venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
+
+# linkedin/crm_v2_reconcile.py is the DB write bridge for resolved evidence.
+# It may create admitted Accounts/primary Opportunities, link exact Lead IDs
+# even when outreach-suppressed, and deactivate weak bootstrap rows without
+# deleting or closing them. It never overwrites human owner/stage fields.
 
 # Narrow People-only publisher. This is not the sales-decision engine and does
-# not rebuild Opportunities, Pipeline, Recovery, or sender Followups. It shares
-# refresh_crm's advisory lock, so the two publishers cannot race People appends.
+# not rebuild Active Accounts or Actions. It shares refresh_crm_v2's advisory
+# lock, so the two publishers cannot race People appends.
 .venv/bin/python manage.py sync_sheets --dry-run
 .venv/bin/python manage.py sync_sheets
 
@@ -181,9 +203,18 @@ pytest -k test_name                # single test
 .venv/bin/python manage.py analyze_lead_qualification --output artifacts/leads/codex-review.json [--campaign 1] [--limit 100]
 .venv/bin/python manage.py analyze_lead_qualification --apply-json artifacts/leads/codex-decisions.json [--campaign 1] [--ready]
 
-# Gmail-backed data-sync context for followup generation. Uses existing
-# data/gmail OAuth tokens/scopes to persist prospect Gmail threads into
-# crm.Message and Gmail-delivered Gemini/Meet notes into crm.Meeting.
+# Gmail-backed relationship/context ingestion. Uses existing data/gmail OAuth
+# tokens/scopes to persist human prospect threads into crm.Message and
+# Gmail-delivered Gemini/Meet notes into crm.Meeting. Every exact email-bearing
+# Lead is eligible regardless of Deal state or Lead.disqualified; those fields
+# suppress outbound automation only. Known addresses are searched in batches,
+# truncated batches split fairly, and no more than 80 Gmail threads are fetched
+# per mailbox/run. Automated replies/newsletters/drafts are excluded; one
+# metadata-only bounded 90-day mailbox
+# pass returns exact bidirectional external participants that have no Lead for
+# review by higher-level CRM discovery (it never auto-creates or sends).
+# Apply runs keep private mode-0600 rotating discovery state under data/gmail/;
+# dry-runs return candidates directly without changing that state.
 # Omit --operator/--account to run both shared mailboxes. Writes WorkflowRun
 # name=data-sync for every operator mapped to the synced mailbox so followup
 # staleness checks see it. Conservative note matching: attach to an existing
@@ -193,6 +224,7 @@ pytest -k test_name                # single test
 .venv/bin/python manage.py sync_gmail_context [--operator Arian] [--campaign 1] [--since-days 365]
 .venv/bin/python manage.py sync_gmail_context --skip-threads   # notes only
 .venv/bin/python manage.py sync_gmail_context --skip-notes     # Gmail threads only
+.venv/bin/python manage.py sync_gmail_context --skip-unmapped-discovery
 
 # Meeting-note lookup uses Granola first. When a search has no Granola match,
 # it automatically falls back to stored crm.Meeting Gemini notes matched by
@@ -204,7 +236,7 @@ pytest -k test_name                # single test
 .venv/bin/python manage.py granola_notes --note-id not_xxxxxxxxxxxxxx --include-transcript
 
 # Canonical Codex drafting workflow. Export reads only persisted, explicitly
-# owned Daily Actions after refresh_crm policy evaluation. Apply validates stable
+# owned current Actions after refresh_crm_v2 policy evaluation. Apply validates stable
 # Action/Opportunity/Lead IDs and fills only blank draft/channel fields; it never
 # sends. The former lead/name rebuild is rollback-only behind explicit --legacy.
 .venv/bin/python manage.py generate_followups --output artifacts/followups/codex-review.json
@@ -250,7 +282,7 @@ CRM Leads, Deals, Messages, connection requests, or other outbound state.
 
 ## Architecture (quick reference)
 
-- **Meeting context**: `linkedin/granola.py` is the read-only bearer-authenticated client; `linkedin/granola_sync.py` batch-refreshes/cache-matches notes once per CRM run with bounded retries, pacing, watermarks, and exact attendee email → exact attendee identity → exact event/account+time+title matching. Loose transcript/body matching is prohibited. Cached Granola is primary and stored Gemini (`MeetingNote` or live `Meeting.gemini_notes_raw`) is secondary. Context never widens action eligibility. `manage.py granola_notes` remains the standalone read-only lookup command; `refresh_crm` owns persistent sync/rematch.
+- **Meeting context**: `linkedin/granola.py` is the read-only bearer-authenticated client; `linkedin/granola_sync.py` batch-refreshes/cache-matches notes with bounded retries, pacing, watermarks, and exact attendee email → exact attendee identity → exact event/account+time+title matching. Loose transcript/body matching is prohibited. Cached Granola is primary and stored Gemini (`MeetingNote` or live `Meeting.gemini_notes_raw`) is secondary. Context never widens action eligibility. `manage.py granola_notes` remains the standalone read-only lookup command; scheduled persistent sync/rematch runs through `sync_crm_v2_context --apply` before publication.
 - **Feed engagement Slack lanes**: High-signal feed alerts render the post date first, the author in a Slack header, the post body, existing analysis context, then `Open post`, `Post context`, `Like`, and `Comment on LinkedIn` in one action row. The existing `/api/slack_enrich` endpoint only merges each feed module's intent registry and delegates to it. `api/slack_feed_context.py` owns the read-only Post context modal: the complete saved post is rendered first across as many Slack-safe blocks as needed, followed by author, analysis, timestamps, sightings, and a modal-only `Generate AI summary` action. Generated post summaries are transient and use the existing Vercel LLM configuration. `api/slack_feed_like.py` owns a compact sender confirmation modal and raw-SQL enqueue for an independent sender-scoped `feed_like` task. The matching main daemon runs the existing live reaction-state checker outside active-hour gating: `no reaction` is clicked, an existing Like succeeds without a click, and another reaction is preserved. Like status has its own pure block renderer and never replaces feed-comment status. `api/slack_feed_comment.py` remains responsible only for sender selection, public-comment AI drafting, raw-SQL enqueue/cancel, and comment modal UI. Queueing a comment closes the modal and edits the original alert in place, retaining every source block while inserting one inline queued status with `Cancel queued comment`. Shared compressed source-block transport lives in `api/slack_feed_common.py`. Comment submit creates a sender-scoped `feed_comment` task and `LinkedInFeedComment` ledger. The matching main daemon runs the exact-post Playwright UI action outside normal active-hour gating, with no Voyager fallback, then replaces the inline status on the original alert with the sent/failed/uncertain outcome and removes the cancel control. `linkedin/feed_slack_status.py` is the pure comment-status renderer; feed engagement status paths never create Slack thread replies. After typing, submit discovery polls six nearby composer ancestors for explicit controls plus text-only `Post`/`Comment` variants; this reaches LinkedIn's deeply nested current Comment submit while excluding post-level controls outside the composer boundary. A submit is verified only when the draft appears inside a rendered LinkedIn comment item, including the current signed-in renderer's `replaceableComment_urn:li:comment` component; composer text never counts as sent. Chuka is displayed as Eddy in Slack but remains canonical in payloads. The ledger is stamped immediately before submit; retries after sent/uncertain or a recovered submit attempt fail closed. Long generated comments retain the shared human typing cadence while deriving the Playwright timeout from text length. `run_feed_comment_once --handle <django-username>` is the bounded live-QA runner: it verifies the authenticated identity and claims exactly one matching feed-comment task without touching other daemon lanes. No new endpoint, Slack app, or env vars are required beyond the existing Vercel Slack/DB/LLM configuration.
 - **Feed comment Slack diagnostics**: Queue, cancel, and daemon outcome states explicitly update the original alert. The interaction `response_url` is preferred and `chat.update` is the fallback; failures are logged without creating a thread reply or blocking approved LinkedIn work.
 - **Feed comment cancellation window**: Newly submitted feed-comment tasks are scheduled 60 seconds in the future so the operator has a real pending-only cancellation window before a daemon can claim the task.
@@ -273,11 +305,11 @@ For detailed module docs, see `ARCHITECTURE.md`.
 - **Config**: `.env` / `.env.example` (the declared project-owned vars in `linkedin/env_spec.py`; `.env.example` should stay in registry order), `conf.py:CAMPAIGN_CONFIG` (timing/ML defaults), `conf.py` browser constants (`BROWSER_*`, `HUMAN_TYPE_*`, `VOYAGER_REQUEST_TIMEOUT_MS`), bounded sweep constants (`ENABLE_INCREMENTAL_CONNECTION_SWEEP`, `CONNECTION_SWEEP_OVERLAP_HOURS`, `CONNECTION_SWEEP_INITIAL_LOOKBACK_DAYS`, `CONNECTION_SWEEP_MAX_SECONDS`, `CONNECTION_SWEEP_MAX_ROUNDS`, `CONNECTION_SWEEP_INCOMPLETE_RETRY_MINUTES`, `CONNECTION_SWEEP_MAX_QUEUE_DELAY_MINUTES`, `TASK_RUNNING_STALE_MINUTES`), `conf.py` schedule constants (`ENABLE_ACTIVE_HOURS` flag, active hours/timezone/rest days), `conf.py` realtime constants (`ENABLE_REALTIME_LISTENER` flag, `LISTENER_CDP_PORT`, `LISTENER_CATCHUP_GAP_MINUTES`, `LISTENER_PUMP_SLICE_SECONDS`, listener-specific active hours/rest days), `conf.py` feed-collection constants (`ENABLE_LINKEDIN_FEED_COLLECTOR`, daily collection time/timezone, retry minutes, max posts, stop-after-seen, scroll pause), `conf.py` enrichment/Gmail cadence constants (`ENABLE_GMAIL_SEQUENCE`, `ENABLE_AUTO_PHONE_ENRICHMENT`, `ENRICHMENT_MAX_DURATION_SECONDS`, `ENRICHMENT_HTTP_TIMEOUT_SECONDS`, `BETTERCONTACT_POLL_INTERVAL_SECONDS`, `BETTERCONTACT_API_KEY`, `LEADMAGIC_API_KEY`, `PROSPEO_API_KEY`), `conf.py` Slack action constants (`MANUAL_REPLY_POLL_SECONDS`), `conf.py` node-monitoring constants (`ENABLE_NODE_MONITOR` flag, `MONITOR_INTERVAL_SECONDS`, `PEER_STALE_MINUTES`, `DEGRADED_REALERT_HOURS`, `TASK_FAILURE_STREAK_THRESHOLD`, `EXPECTED_OUTBOUND_SENDERS`, `SENDER_ACTIVITY_GRACE_MINUTES`, `SENDER_ACTIVITY_STALE_MINUTES`), Vercel function env (`SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN`, `DATABASE_URL`, `LLM_API_KEY`, `AI_MODEL`, optional `LLM_API_BASE` — set on the Vercel project; bot token is needed for reply/context modals and message updates, LLM env is needed for lead/post-context AI summaries and reply/comment drafting), `conf.py` onboarding defaults (`DEFAULT_*_LIMIT`), Campaign/LinkedInProfile models (Django Admin).
 - **Database**: Postgres from `DATABASE_URL` is required for every non-test runtime; tests use in-memory SQLite. Neon is the current managed default, but self-hosted shared Postgres is supported by the same `DATABASE_URL` contract. Daemon machine + dev box MUST share one database URL to avoid split-brain (lesson from 2026-04-26 cutover). Use `docs/self-hosted-postgres.md` + `make selfhost-db-*` to test a local Docker Postgres copy before any cutover. Deps: `dj-database-url`, `psycopg[binary]>=3.1`.
 - **Sheets publishing**: `manage.py sync_sheets` is now the narrow People publisher only. People is durable and non-pruning: existing row order is retained, new Leads append once, and writes target only owned cells. Stable `Lead ID` is authoritative after additive backfill; exact LinkedIn URL remains the legacy bootstrap key. Duplicate/ambiguous IDs or URLs are reported rather than name-matched or silently merged. Unknown operator columns, formulas, formatting, notes, and validations are untouched. The Deal-derived People Stage/Outreach mapping remains a visibility projection, and `Deal.state=COMPLETED` is still automation-finished, never Closed Won. `sync_sheets` performs no LLM synthesis or followup eligibility decisions.
-- **Canonical CRM refresh**: `manage.py refresh_crm` defaults to an exact live dry-run; `--apply` acquires the CRM run lock, refreshes Gmail context, batch-syncs Granola with Gemini fallback, imports three-way-merged human fields, recalculates lifecycle Actions, publishes People/Opportunities/Pipeline/Recovery/stable-ID sender Followups, verifies People preservation, and records `WorkflowRun(name="refresh-crm")`. `crm.Account`, `Opportunity`, `OpportunityContact`, `OpportunityAction`, and stage events are separate from legacy per-Lead/per-Campaign `Deal`. Opportunities are canonical; Pipeline, Recovery, and sender queues are derived. First-run legacy sender tabs are preserved intact under dated `Legacy` titles; unresolved material rows remain review items and are never guessed, while all validated canonical sender replacements activate in one atomic title batch. The Sales Motion workbook is a read-only safety boundary. Full operations and recovery instructions are in `docs/crm-refresh-workflow.md`.
-- **CRM tab ownership**: People and Opportunities are durable/canonical, non-pruning tables. Pipeline, Recovery, and `<Owner> - Followups` are derived views regenerated only from DB-backed Opportunity/Action state. `ICP Goals` and the separate Sales Motion workbook are read-only inputs. Stable IDs are identity; Name and visual Pipeline position are never identity or source of truth.
-- **CRM configuration**: `DATABASE_URL` is required outside tests. Sheets commands fail closed unless `GOOGLE_SHEETS_ID` and `GOOGLE_SHEETS_CREDENTIALS_PATH` are configured. Live `refresh_crm --apply` additionally requires `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` as the separate read-only identity guard; it is never a write target. `GRANOLA_API_KEY` is optional because stored Gemini remains the safe fallback.
+- **Canonical CRM refresh**: `sync_crm_v2_context --apply` refreshes Gmail/Gemini, strictly validated email-first Leads, and Granola without publishing Sheets. `refresh_crm_v2` owns account evidence, DB reconciliation, current Actions, the incremental People prerequisite, human Sheet imports, full private backups, and atomic publication of exactly `Active Accounts` and `Actions`. Default refresh is rollback-only/no-Sheet-write; first apply requires a matching recent private `preview_crm_v2` artifact; routine production applies require the two v2 tabs and no legacy canonical titles. `crm.Account`, `Opportunity`, `OpportunityContact`, `OpportunityAction`, and stage events remain separate from per-Lead/per-Campaign `Deal`. Full operations and recovery instructions are in `docs/crm-refresh-workflow.md`.
+- **CRM tab ownership**: `People` is the durable non-pruning contact ledger. `Active Accounts` is the concise editable account workspace and `Actions` is the one owner-filterable work queue. Pipeline, Recovery, Opportunities, and sender Followups are retired surfaces, not data sources. `ICP Goals` and the separate Sales Motion workbook are read-only inputs. Stable IDs are identity; names and visual placement are never identity or source of truth.
+- **CRM configuration**: `DATABASE_URL` is required outside tests. Sheets commands fail closed unless `GOOGLE_SHEETS_ID` and `GOOGLE_SHEETS_CREDENTIALS_PATH` are configured. `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` is the separate read-only Sales Motion input and must never equal the CRM write target. `GRANOLA_API_KEY` is optional because stored Gemini remains the safe fallback.
 - **Windows output**: `linkedin.management.commands.sync_sheets.Command` sanitizes non-encodable field labels before `stdout.write()`, so People-publisher markers cannot crash under `cp1252`.
-- **Legacy Followup workflow**: the former lead/name tab rebuild is not authoritative or scheduled; it exists only as an explicit `generate_followups --legacy` rollback path. On the one-time canonical rollout, safe stable-ID evidence may import human state, unresolved material rows remain untouched in dated `Legacy` tabs for review, and no name-based inference is allowed. Normal publication comes from canonical Actions through `refresh_crm`.
+- **Legacy Followup workflow**: the former lead/name tab rebuild is not authoritative or scheduled; it exists only behind explicit `generate_followups --legacy` for deliberate recovery. Normal drafting consumes persisted current Actions and publication runs through `refresh_crm_v2 --apply --routine`; the compatibility refresh hooks in `generate_followups` must never call legacy `refresh_crm`.
 - **Codex followup workflow**: default `manage.py generate_followups` serializes only persisted canonical Daily Actions with an explicit Opportunity owner and stable Action/Opportunity/Lead IDs. Eligibility comes from `crm_action_policy`; Granola/Gemini context is attached only after eligibility. Apply validates the complete decision file atomically against exact IDs and the context fingerprint, preserves an existing human draft, and can populate only a blank Action draft/channel. It never sends or changes owner, stage, status, next action, or contact roles. The old lead/name tab rebuild remains rollback-only behind `--legacy`. See `docs/codex-followup-automation.md`.
 - **Legacy synthesis helper**: `linkedin.notifications.synthesis` remains for explicit legacy/manual use, but `sync_sheets` no longer calls it. Email/meeting-intent synthesis therefore cannot silently mutate People or decide canonical sales state during publication.
 - **Message store**: `crm.Message` (FK to Lead, source enum {linkedin/gmail/calendar}, direction {inbound/outbound}, idempotent on `(source, external_id)`). Populated as a side effect of `linkedin.actions.conversations.get_conversation()` — every existing caller (sweep_connections, follow_up, agent) auto-persists threads via `linkedin.db.messages.persist_thread`. LinkedIn direction inference normalizes sender names and strips common honorifics (for example `Dr.`) before comparing to the Lead name, while explicit daemon operator senders still force outbound; LinkedIn outbound echoes that arrive with the lead as sender are also forced outbound when they match stored `sent_note` text, a narrow legacy connect-note pattern, or a self-addressed opener such as `Hey <lead given-name token>,` (so stored middle initials or extra given names do not defeat echo detection). `linkedin.db.deals.stamp_inbound_linkedin_reply` is the shared repair path for inbound LinkedIn replies: it stamps `Deal.last_reply_at`, and promotes `Pending` Deals to `Connected` with `connected_at` set to the reply timestamp so Sheets no longer shows accepted invite replies as Invite Sent. `linkedin.actions.message.send_raw_message` / `send_media_message` persist successful daemon sends via `linkedin.db.chat.save_chat_message`; sequence-aware follow-up sends use `daemon-send:<operator>:<deal_id>:<sequence_name>:step-<index>:<timestamp>`, while older/manual daemon sends may still use `daemon-send:<lead_id>:<timestamp>`. `import_connections` and `discover_inbox_leads` also seed LinkedIn messages outside the daemon path; the inbox importer creates the Lead first, then writes the thread via `persist_thread` with the logged-in sender passed as an explicit outbound sender. Gmail threads land via `linkedin.notifications.gmail_threads.persist_gmail_threads` — either from the older MCP data-sync workflow or from `manage.py sync_gmail_context`, which uses the repo's direct Gmail OAuth client. Direction is inferred against a `self_emails` set resolved from the Gmail account at run start (primary mailbox + Send-As aliases). `gmail/data_sync.py` also reads Gmail-delivered Gemini/Meet note emails and persists matched note text into `crm.Meeting.gemini_notes_raw`; this is Gmail-only, so it does not fetch Calendar attendee metadata or full Drive docs when a note email cannot be safely matched. The same module's `classify_ball_on_court(lead)` reads the merged LinkedIn+Gmail timeline so an email reply correctly flips a LinkedIn-silent lead to "ball on us".

@@ -31,14 +31,17 @@ def run_canonical_followup_command(command, opts) -> None:
             f"{', '.join(incompatible)} is legacy-only; add --legacy or remove it."
         )
 
-    # Old convenience flags route through the one canonical orchestrator so
-    # they cannot reintroduce a second eligibility path.
+    # Compatibility flag names now route only through the canonical v2 path.
+    # Context ingestion is deliberately separate from publication, and the
+    # routine publisher itself fails closed unless the workbook was cut over.
+    if opts.get("refresh_crm") or opts.get("sync_gmail_context"):
+        call_command("sync_crm_v2_context", apply=True)
     if (
         opts.get("refresh_crm")
         or opts.get("sync_gmail_context")
         or opts.get("sync_sheets")
     ):
-        call_command("refresh_crm", apply=True)
+        _publish_crm_v2()
 
     queue = _filter_queue(
         _canonical_queue(),
@@ -68,13 +71,7 @@ def run_canonical_followup_command(command, opts) -> None:
             )
         )
         if result.drafts_applied and not opts.get("no_publish"):
-            call_command(
-                "refresh_crm",
-                apply=True,
-                skip_gmail_context=True,
-                skip_granola=True,
-                skip_people=True,
-            )
+            _publish_crm_v2()
         return
 
     if opts.get("output"):
@@ -92,16 +89,31 @@ def run_canonical_followup_command(command, opts) -> None:
         )
 
 
+def _publish_crm_v2() -> None:
+    """Publish through the post-cutover path; never fall back to legacy CRM."""
+    call_command("refresh_crm_v2", apply=True, routine=True)
+
+
 def _canonical_queue() -> dict[str, object]:
     from crm.models import MeetingNote, MeetingNoteSyncState
-    from linkedin.conf import GOOGLE_SHEETS_ID
+    from linkedin.conf import (
+        GOOGLE_SHEETS_ID,
+        SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID,
+    )
     from linkedin.crm_followup_analysis import serialize_crm_followup_queue
     from linkedin.crm_sheet_import import read_people_dont_send_lead_ids
-    from linkedin.management.commands.refresh_crm import _verify_workbook_identity
+    from linkedin.exceptions import SheetsError
     from linkedin.notifications import sheets
 
     spreadsheet = sheets._gspread_client()
-    _verify_workbook_identity(spreadsheet, configured_id=GOOGLE_SHEETS_ID)
+    live_id = str(getattr(spreadsheet, "id", ""))
+    if not GOOGLE_SHEETS_ID or live_id != GOOGLE_SHEETS_ID:
+        raise SheetsError("opened workbook does not match GOOGLE_SHEETS_ID")
+    if (
+        SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID
+        and live_id == SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID
+    ):
+        raise SheetsError("refusing to use the Sales Motion workbook as the CRM")
     dont_send_ids = read_people_dont_send_lead_ids(spreadsheet)
     state = MeetingNoteSyncState.objects.filter(
         source=MeetingNote.Source.GRANOLA,

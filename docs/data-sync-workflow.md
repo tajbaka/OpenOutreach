@@ -1,37 +1,38 @@
 # Google and meeting-context ingestion workflow
 
 This workflow populates the database context consumed by the canonical CRM. It
-does not assign sales stages, decide followup eligibility, or write directly to
-Google Sheets. `manage.py refresh_crm` remains the only CRM orchestrator and
-publisher.
+does not assign sales stages, decide action eligibility, or write directly to
+Google Sheets. `manage.py sync_crm_v2_context` is the scheduled context phase;
+`manage.py refresh_crm_v2` is the separate canonical reconciler/publisher.
 
 ## Source responsibilities
 
 | Source | Ingestion path | Stored result | CRM role |
 |---|---|---|---|
-| Gmail prospect threads | `sync_gmail_context` / default `refresh_crm` | `crm.Message(source=gmail)` | Communication timeline |
-| Gmail-delivered Gemini/Meet notes | `sync_gmail_context` / default `refresh_crm` | `crm.Meeting.gemini_notes_raw` | Secondary meeting context |
+| Gmail prospect threads | `sync_crm_v2_context` via `sync_gmail_context` | `crm.Message(source=gmail)` | Primary communication evidence |
+| Gmail-delivered Gemini/Meet notes | `sync_crm_v2_context` via `sync_gmail_context` | `crm.Meeting.gemini_notes_raw` | Secondary meeting context |
 | Google Calendar events | Interactive connector workflow | `crm.Meeting` | Real meeting dates/attendees |
 | Drive-only Gemini notes | Interactive connector workflow | `crm.Meeting.gemini_notes_raw` | Secondary meeting context |
-| Granola notes | Default `refresh_crm` batch sync | `crm.MeetingNote` and match state | Primary meeting context |
+| Granola notes | `sync_crm_v2_context` batch sync | `crm.MeetingNote` and match state | Primary meeting context |
 | LinkedIn messages | `backfill_messages` / daemon listeners | `crm.Message(source=linkedin)` | Communication timeline |
 
 Granola is primary when a deterministic match exists. Stored Gemini content is
 the fallback. Meeting context is attached only after an Action is otherwise
 eligible; a note cannot revive an old relationship by itself.
 
-## What `refresh_crm` does and does not refresh
+## What the scheduled context phase does and does not refresh
 
-By default, one CRM refresh:
+By default, one `sync_crm_v2_context --apply`:
 
 1. uses the configured Gmail API accounts to ingest prospect threads and
    Gmail-delivered Gemini/Meet note emails;
 2. batch-fetches incremental Granola notes and rematches cached notes;
-3. imports Sheet human edits, recalculates Actions, and publishes the CRM.
+3. creates only strictly validated corporate email-first Leads from private
+   discovery state and relinks their exact Gmail threads when needed.
 
-It does not log into LinkedIn, query Google Calendar, or search Google Drive.
-A green CRM run proves the stored state was processed safely; it does not prove
-those external sources were freshly ingested.
+It does not publish Sheets, log into LinkedIn, query Google Calendar, or search
+Google Drive. A green context run proves those configured sources were handled
+safely; it does not prove separate LinkedIn/Calendar/Drive inputs are fresh.
 
 Before relying on queue freshness:
 
@@ -39,11 +40,13 @@ Before relying on queue freshness:
 - run the Calendar/Drive connector steps below after important meetings when
   Gmail-delivered notes are insufficient; and
 - inspect Gmail/Granola warnings in the refresh report instead of assuming a
-  fallback is current.
+  fallback is current; and
+- run `refresh_crm_v2` separately to reconcile and publish stored evidence.
 
 ## Direct Gmail ingestion
 
-This command is the Gmail/Gemini portion used by `refresh_crm`:
+This command is the lower-level Gmail/Gemini portion used by
+`sync_crm_v2_context`:
 
 ```bash
 .venv/bin/python manage.py sync_gmail_context --dry-run
@@ -51,9 +54,42 @@ This command is the Gmail/Gemini portion used by `refresh_crm`:
 ```
 
 It resolves each mailbox and its Send-As aliases through the Gmail API, so
-message direction is based on the actual connected account. It upserts by
-stable Gmail message identity and records aggregate `WorkflowRun(name="data-sync")`
-telemetry. It never sends email.
+message direction is based on the actual connected account. Every Lead with an
+exact email address is considered even when it has no Deal or is marked
+`disqualified`: those values suppress automated outreach, not relationship
+history. Known addresses are searched at most 40 at a time. A truncated
+500-hit OR search is recursively split so one noisy address cannot hide the
+others; a still-truncated single-address search is bounded at 2,000 hits and
+reported. Across known and discovery lanes, at most 80 unique threads are
+fetched per mailbox/run. Deferred work rotates on later apply runs using an
+opaque per-thread version checkpoint. From/To/Cc/Bcc headers provide identity
+per message, Draft/Scheduled mail is excluded, and strong automatic-reply and
+list/bulk signals are removed. Gmail category labels alone do not discard an
+exact known human contact.
+
+The default run also performs a newest-first, bounded 90-day scan (at most 500
+message hits and 500 unique thread candidates) for email-first relationships.
+The shared 80-thread fetch cap still applies. Discovery and all dry-runs use
+Gmail metadata rather than decoding message bodies. It returns
+only unknown external participants with both a human inbound and an exact
+outbound recipient match in the same thread. These structured candidates use
+only RFC display name, exact email/domain, timestamps, and opaque thread ID;
+they are review input and do not auto-create a Lead, Deal, Task, or send. The
+company is never inferred from subject/body text. Use
+`--skip-unmapped-discovery` for a known-contact-only diagnostic run.
+Programmatic shadow/review consumers call `sync_gmail_threads(..., dry_run=True)`
+and read `GmailContextSyncResult.unmapped_external_participants`; each item has
+`account_key`, `email`, `display_name`, `domain`, `last_inbound_at`,
+`latest_thread_id`, and `thread_count`. The management command intentionally
+prints only the count. A successful default apply stores the rotating checkpoint
+and still-recent structured candidates atomically in private mode-0600
+`data/gmail/<account>-context-state.json`; dry-runs do not update that state.
+
+The command namespaces mailbox-local Gmail message/thread IDs before upsert,
+resolves outbound owner from the exact Send-As alias, and records aggregate
+`WorkflowRun(name="data-sync")` telemetry. Console output is aggregate-only and
+does not print mailbox addresses, note subjects, or bodies. Google API request
+logging is suppressed because search URLs contain lead emails. It never sends email.
 
 Useful scopes are available for diagnosis:
 
@@ -61,6 +97,7 @@ Useful scopes are available for diagnosis:
 .venv/bin/python manage.py sync_gmail_context --operator Arian --dry-run
 .venv/bin/python manage.py sync_gmail_context --skip-notes --dry-run
 .venv/bin/python manage.py sync_gmail_context --skip-threads --dry-run
+.venv/bin/python manage.py sync_gmail_context --skip-unmapped-discovery --dry-run
 ```
 
 Do not use `--skip-threads` and `--skip-notes` together. A dry-run fetches and
@@ -134,20 +171,28 @@ a human-owned Sheet field.
 
 ### 4. Publish through the canonical CRM
 
-After DB ingestion, preview and apply the one canonical publisher:
+After DB ingestion, preview and apply the canonical publisher with the
+deployment's persistent pins/owner overrides. On an already-cut-over workbook:
 
 ```bash
-.venv/bin/python manage.py refresh_crm --skip-gmail-context
-.venv/bin/python manage.py refresh_crm --apply --skip-gmail-context
+.venv/bin/python manage.py refresh_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
+.venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 ```
 
-Omit `--skip-gmail-context` if the normal Gmail refresh should run as well.
-Granola remains enabled unless `--skip-granola` is explicitly supplied.
+If Gmail/Gemini/Granola also needs refreshing, run
+`sync_crm_v2_context --apply` first. Context is intentionally not hidden inside
+the Sheet publisher.
 
 Do not call `SheetIndex.upsert_row()` to advance People status/stage or compose
-AI Notes. Human sales fields belong on Opportunities and are imported by
-stable ID. System meeting context is published from the DB. Pipeline and queue
-placement are derived by the shared policy.
+AI Notes. Human sales fields belong on `Active Accounts`/`Actions` and are
+imported by stable ID. System meeting context is published from the DB; account
+admission and queue placement come from the v2 evidence/action policy.
 
 ## LinkedIn prerequisite
 
@@ -172,17 +217,16 @@ queue omit a new inbound or propose an obsolete next action.
 - Store provider external IDs so re-ingestion remains idempotent.
 - Report ambiguous matches; never resolve them by Name or loose transcript
   search.
-- Granola/Gmail outages are recoverable warnings during CRM refresh. Calendar
-  and Drive staleness must be made explicit because those connectors are not
-  called by the scheduled command.
+- Granola/Gmail availability is reported by `sync_crm_v2_context`. Calendar and
+  Drive staleness must be explicit because those connectors are not called by
+  the scheduled command.
 - No ingestion path in this document authorizes outbound Gmail or LinkedIn
   sends.
 
 ## Out of scope
 
-- Sales-stage decisions and action eligibility: `refresh_crm`.
-- People/Opportunities/Pipeline/Followups/Recovery publication:
-  `refresh_crm`.
+- Sales-stage decisions and action eligibility: `refresh_crm_v2`.
+- People/Active Accounts/Actions publication: `refresh_crm_v2`.
 - Draft generation: `generate_followups` and
   `docs/followup-generation-workflow.md`.
 - Message sending: always an operator action outside this workflow.

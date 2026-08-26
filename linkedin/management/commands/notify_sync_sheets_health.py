@@ -1,4 +1,4 @@
-"""Post a daily Slack health rollup for the Windows CRM refresh task."""
+"""Post a daily Slack health rollup for the Windows CRM v2 refresh task."""
 from __future__ import annotations
 
 import json
@@ -13,12 +13,24 @@ from django.core.management.base import BaseCommand
 
 
 # Preserve the existing Windows Task Scheduler identity during the in-place
-# migration. Its unchanged script action now launches refresh_crm.
+# migration. Its unchanged script action now launches the CRM v2 workflow.
 TASK_NAME = "OpenOutreach Sync Sheets"
-DEFAULT_LOG_PATH = Path("data") / "logs" / "refresh_crm_task.log"
+DEFAULT_LOG_PATH = Path("data") / "logs" / "crm_v2_task.log"
 LOCAL_TZ = ZoneInfo("America/Toronto")
-FINISHED_RE = re.compile(r"finished refresh_crm exit_code=(?P<code>-?\d+)")
-FAILED_RE = re.compile(r"refresh_crm failed:", re.IGNORECASE)
+RUN_STARTED_RE = re.compile(r"starting crm_v2_workflow run_id=(?P<run_id>[0-9a-f]+)")
+FINISHED_RE = re.compile(
+    r"finished crm_v2_workflow run_id=(?P<run_id>[0-9a-f]+) "
+    r"exit_code=(?P<code>-?\d+)"
+)
+FAILED_RE = re.compile(r"crm_v2_workflow failed run_id=", re.IGNORECASE)
+CONTEXT_FINISHED_RE = re.compile(
+    r"finished sync_crm_v2_context run_id=(?P<run_id>[0-9a-f]+) "
+    r"exit_code=(?P<code>-?\d+)"
+)
+REFRESH_FINISHED_RE = re.compile(
+    r"finished refresh_crm_v2 run_id=(?P<run_id>[0-9a-f]+) "
+    r"exit_code=(?P<code>-?\d+)"
+)
 
 
 @dataclass(frozen=True)
@@ -33,7 +45,7 @@ class HealthResult:
 
 class Command(BaseCommand):
     help = (
-        "Post a daily Slack health summary for the Windows CRM refresh task "
+        "Post a daily Slack health summary for the Windows CRM v2 task "
         "(the existing Scheduled Task may retain its Sync Sheets name)."
     )
 
@@ -61,26 +73,27 @@ class Command(BaseCommand):
             "failed": ":rotating_light:",
         }.get(result.status, ":grey_question:")
         payload = {
-            "text": f"{emoji} OpenOutreach CRM refresh health: {result.status}",
+            "text": f"{emoji} OpenOutreach CRM v2 health: {result.status}",
             "blocks": [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"{emoji} *OpenOutreach CRM refresh health: {result.status.upper()}*",
+                        "text": f"{emoji} *OpenOutreach CRM v2 health: {result.status.upper()}*",
                     },
                 },
                 {"type": "section", "text": {"type": "mrkdwn", "text": slack_escape(message)}},
             ],
         }
-        _post_to_slack(SLACK_WEBHOOK_URL, payload, "crm-refresh-health")
+        _post_to_slack(SLACK_WEBHOOK_URL, payload, "crm-v2-refresh-health")
 
 
 def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
     task = _scheduled_task(task_name)
     task_info = _scheduled_task_info(task_name) if task else {}
-    last_log_lines = _tail_log(log_path, max_lines=16)
-    latest_exit_code = _latest_exit_code(last_log_lines)
+    last_log_lines = _tail_log(log_path, max_lines=128)
+    latest_run_lines = _latest_run_lines(last_log_lines)
+    latest_exit_code = _latest_exit_code(latest_run_lines)
 
     status = "healthy"
     reasons: list[str] = []
@@ -114,18 +127,35 @@ def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
     if not last_log_lines:
         status = _worse(status, "warning")
         reasons.append(f"Log file is missing or empty: {log_path}")
-    elif any(FAILED_RE.search(line) for line in last_log_lines[-8:]):
+    elif not latest_run_lines:
+        if any(FAILED_RE.search(line) for line in last_log_lines[-8:]):
+            status = _worse(status, "failed")
+            reasons.append("The recent CRM v2 log ends with a workflow failure.")
+        else:
+            status = _worse(status, "warning")
+            reasons.append("Could not find a CRM v2 workflow start marker in the log.")
+    elif any(FAILED_RE.search(line) for line in latest_run_lines):
         status = _worse(status, "failed")
-        reasons.append("Recent log lines include a refresh_crm failure.")
+        reasons.append("The latest CRM v2 workflow logged a failure.")
     elif latest_exit_code is None:
-        status = _worse(status, "warning")
-        reasons.append("Could not find a recent finished refresh_crm exit code in the log.")
+        run_state = str(task.get("State") or "") if task else ""
+        status = _worse(status, "warning" if run_state == "Running" else "failed")
+        reasons.append("The latest CRM v2 workflow has no finished marker.")
     elif latest_exit_code != 0:
         status = _worse(status, "failed")
-        reasons.append(f"Latest logged refresh_crm exit code is {latest_exit_code}.")
+        reasons.append(f"Latest logged CRM v2 workflow exit code is {latest_exit_code}.")
+    else:
+        phase_codes = _latest_phase_exit_codes(latest_run_lines)
+        if phase_codes != {"context": 0, "refresh": 0}:
+            status = _worse(status, "failed")
+            reasons.append(
+                "The latest CRM v2 workflow did not complete both required phases successfully."
+            )
 
     if not reasons:
-        reasons.append("Task is present and latest logged CRM refresh finished successfully.")
+        reasons.append(
+            "Task is present and the latest context and CRM v2 refresh phases finished successfully."
+        )
 
     return HealthResult(
         status=status,
@@ -206,6 +236,34 @@ def _latest_exit_code(lines: list[str]) -> int | None:
         if match:
             return int(match.group("code"))
     return None
+
+
+def _latest_run_lines(lines: list[str]) -> list[str]:
+    """Return only the newest wrapper run so stale results cannot mask failure."""
+    for index in range(len(lines) - 1, -1, -1):
+        if RUN_STARTED_RE.search(lines[index]):
+            return lines[index:]
+    return []
+
+
+def _latest_phase_exit_codes(lines: list[str]) -> dict[str, int]:
+    if not lines:
+        return {}
+    started = RUN_STARTED_RE.search(lines[0])
+    if not started:
+        return {}
+    run_id = started.group("run_id")
+    codes: dict[str, int] = {}
+    for key, pattern in (
+        ("context", CONTEXT_FINISHED_RE),
+        ("refresh", REFRESH_FINISHED_RE),
+    ):
+        for line in reversed(lines):
+            match = pattern.search(line)
+            if match and match.group("run_id") == run_id:
+                codes[key] = int(match.group("code"))
+                break
+    return codes
 
 
 def _parse_dt(value: object) -> datetime | None:

@@ -31,12 +31,18 @@ class Command(BaseCommand):
         parser.add_argument(
             "--sync-gmail-context",
             action="store_true",
-            help="Run sync_gmail_context before exporting candidates.",
+            help=(
+                "Compatibility name: refresh CRM v2 context and publish the "
+                "routine v2 views before export."
+            ),
         )
         parser.add_argument(
             "--sync-sheets",
             action="store_true",
-            help="Run sync_sheets before exporting candidates.",
+            help=(
+                "Compatibility name: publish the routine CRM v2 views before "
+                "export without refreshing context."
+            ),
         )
         parser.add_argument("--output", help="Write Codex review queue JSON to this path.")
         parser.add_argument("--apply-json", help="Apply Codex followup rows JSON from this path.")
@@ -53,12 +59,15 @@ class Command(BaseCommand):
         parser.add_argument(
             "--refresh-crm",
             action="store_true",
-            help="Run refresh_crm --apply before building the canonical queue.",
+            help=(
+                "Refresh CRM v2 context and publish the routine Active "
+                "Accounts/Actions views before building the canonical queue."
+            ),
         )
         parser.add_argument(
             "--no-publish",
             action="store_true",
-            help="After apply, leave DB drafts for the next refresh_crm publish.",
+            help="After apply, leave DB drafts for the next CRM v2 publication.",
         )
         parser.add_argument(
             "--legacy",

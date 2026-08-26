@@ -1671,14 +1671,19 @@ def _followup_section_key(row: dict, *, preserved_sent: bool = False) -> str | N
     return None
 
 
-def _gspread_client():
-    """Return an authorized gspread client + opened spreadsheet."""
-    sheet_id, creds_path, _ = _require_config()
+def _gspread_authorized_client():
+    """Return the authorized API client without choosing a workbook."""
+    _sheet_id, creds_path, _ = _require_config()
     creds = Credentials.from_service_account_file(
         creds_path, scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    gc = gspread.authorize(creds)
-    return gc.open_by_key(sheet_id)
+    return gspread.authorize(creds)
+
+
+def _gspread_client():
+    """Return the configured CRM spreadsheet."""
+    sheet_id, _creds_path, _ = _require_config()
+    return _gspread_authorized_client().open_by_key(sheet_id)
 
 
 _SENT_TRUE_VALUES = {"YES", "Y", "TRUE", "✓", "X"}

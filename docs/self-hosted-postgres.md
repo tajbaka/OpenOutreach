@@ -74,7 +74,7 @@ ENABLE_FOLLOW_UP=false \
 ENABLE_GMAIL_SEQUENCE=false \
 ENABLE_REALTIME_LISTENER=false \
 ENABLE_NODE_MONITOR=false \
-.venv/bin/python manage.py refresh_crm --skip-gmail-context --skip-granola
+.venv/bin/python manage.py refresh_crm_v2 --skip-sales-motion
 ```
 
 This still reads the configured live CRM workbook but performs no persistent

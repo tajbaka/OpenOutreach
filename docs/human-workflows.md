@@ -1,70 +1,75 @@
 # Human-in-the-loop CRM workflows
 
-OpenOutreach separates deterministic CRM policy from human sales judgment.
-Scheduled code gathers context, imports explicit edits, and publishes stable-ID
-views. Operators decide what an Opportunity means, review drafts, and send
-messages themselves.
+OpenOutreach gathers evidence and publishes a concise work surface. Humans own
+sales judgment, account stage, relationship roles, message review, and sending.
 
 ## The three workflows
 
 | Workflow | Purpose | Persistent writes |
 |---|---|---|
-| `refresh_crm` | Import edits, recalculate Actions, publish CRM views | DB and Sheets only with `--apply` |
-| `data-sync-workflow.md` | Ingest Calendar/Drive context not covered by the scheduled command | DB context only |
-| `generate_followups` | Export canonical Actions and validate draft decisions | Action drafts; never sends |
+| `sync_crm_v2_context` | Refresh Gmail/Gemini, validated email-first contacts, and Granola | DB/context only with `--apply` |
+| `refresh_crm_v2` | Reconcile evidence/actions and publish `Active Accounts` + `Actions` | DB and Sheets only with `--apply` |
+| `generate_followups` | Export current Actions and validate draft decisions | Action drafts; never sends |
 
-## 1. Operate the CRM in Sheets
+## 1. Work from the two CRM tabs
 
-Use `Opportunities` as the editable account/opportunity table. Human-owned
-fields include owner, stage/step, contact roles, next action/due date, waiting,
-manual pin, commercial values, and won/lost outcome. The next apply imports
-valid changes by stable Opportunity ID before publishing system fields.
+Use `Active Accounts` to understand and manage legitimate opportunities. It
+shows one account row with owner, stage, attention, admission reason, last
+meaningful touch, who owes, next action, due date, and key contacts. Human-owned
+fields are imported by stable Opportunity ID; names are display text, not row
+identity.
 
-Use `<Owner> - Followups` for due-now work. An operator may edit Draft, Channel,
-Handled, Disposition, Waiting until, and Manual pin. Those fields are imported
-by stable Action ID before the derived queue is regenerated.
+Use the single `Actions` tab for work. Filter it by Owner rather than switching
+between sender tabs. Edit only the human-owned fields such as Draft, Channel,
+Handled, Disposition, Waiting until, or explicit next-step state. The next
+routine apply imports valid edits by stable Action ID.
 
-Do not edit Pipeline cards as a way to change stage. `Pipeline` and `Recovery`
-are derived views. Do not manually clear, reorder, or deduplicate People; it is
-the durable contact ledger.
+`People` remains the complete contact/prospecting ledger. Do not clear, reorder,
+or deduplicate it manually. One-sided outbound and weak LinkedIn activity
+belong there without appearing in Active Accounts.
 
-Preview any change set first:
+`Opportunities`, `Pipeline`, `Recovery`, and sender Followups are retired. Do
+not recreate or operate from them.
+
+Preview current DB/Sheet effects with the deployment's persistent inputs:
 
 ```bash
-.venv/bin/python manage.py refresh_crm
+.venv/bin/python manage.py refresh_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 ```
 
-Then apply and verify idempotence:
+After cutover, publish through routine mode:
 
 ```bash
-.venv/bin/python manage.py refresh_crm --apply
-.venv/bin/python manage.py refresh_crm
+.venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 ```
 
-Conflicts and invalid edits are review items, not prompts for the system to
-guess.
-
-During the one-time sender-tab rollout, unresolved material rows from the old
-Followups tabs are also review items. The refresh does not infer their identity
-or discard them: it keeps the original rows in dated `Legacy` tabs and activates
-all affected validated replacements in one atomic title swap. Work from
-canonical tabs after the swap; use Legacy only for deliberate review or
-recovery.
+Conflicts, invalid edits, ambiguous identities, missing owners, and missing
+targets are review items—not permission for the system to guess.
 
 ## 2. Refresh external context
 
-The scheduled CRM refresh directly ingests configured Gmail threads,
-Gmail-delivered Gemini/Meet notes, and Granola. Granola is primary meeting
-context; stored Gemini is secondary.
+The scheduled context phase directly ingests configured Gmail threads,
+Gmail-delivered Gemini/Meet notes, strictly validated email-first contacts, and
+Granola. Granola is primary meeting context; stored Gemini is secondary.
+
+```bash
+.venv/bin/python manage.py sync_crm_v2_context --apply
+```
 
 Two prerequisites remain separate:
 
-- `backfill_messages` keeps post-accept LinkedIn conversations fresh.
-- Google Calendar and Drive-only Gemini notes require the interactive
-  `docs/data-sync-workflow.md` path.
+- `backfill_messages` keeps later LinkedIn conversations fresh.
+- Google Calendar and Drive-only Gemini notes use
+  [`data-sync-workflow.md`](data-sync-workflow.md).
 
-Context only enriches canonical state. It does not advance a stage, widen
-eligibility, or overwrite human-owned fields by itself.
+Context can admit an account only under the v2 evidence rules. It never advances
+a human stage, overwrites human fields, or sends a message.
 
 ## 3. Draft followups
 
@@ -76,40 +81,43 @@ Export the current canonical queue:
 ```
 
 The drafting agent copies the stable Action/Opportunity/Lead IDs and context
-fingerprint exactly, supplies at most one channel draft, and flags ambiguity for
-human review. Apply the validated decision file:
+fingerprint exactly, supplies at most one channel draft, and flags ambiguity.
+Apply the validated decision file:
 
 ```bash
 .venv/bin/python manage.py generate_followups \
   --apply-json artifacts/followups/codex-decisions.json
 ```
 
-The command stores/publishes drafts but never sends them. The operator reviews
-the row, opens the correct conversation, sends manually, and records the human
-state in Sheets.
+Valid drafts persist and are republished through routine CRM v2 unless
+`--no-publish` is supplied. No send API is called. The operator filters Actions,
+opens the exact conversation, reviews/sends manually, then records handled,
+disposition, or waiting state.
 
-The old name-based tab rebuild is retired. It is available only with explicit
-`generate_followups --legacy` and must not be scheduled or used against the
-canonical workbook as a normal workflow.
+The old name-based rebuild exists only behind explicit
+`generate_followups --legacy` for deliberate recovery. It is not a production
+or scheduled workflow.
 
 ## Dependency flow
 
 ```text
 LinkedIn backfill ─┐
-Gmail context ─────┼─> crm.Message / crm.Meeting ─┐
+Gmail/Gemini ──────┼─> crm.Message / crm.Meeting ─┐
 Calendar + Drive ──┤                              │
 Granola ───────────┘                              v
-                                           refresh_crm
-Sheet human edits ────────────────────────────────┤
-                                                  ├─> Opportunities
-                                                  ├─> Pipeline / Recovery
-                                                  └─> owner Followups
-                                                           |
-                                                           v
-                                                  generate_followups
-                                                           |
-                                                           v
-                                                  operator review/send
+                                      sync_crm_v2_context
+                                                   |
+Sheet human edits ─────────────────────────────────v
+                                          refresh_crm_v2
+                                                   ├─> People
+                                                   ├─> Active Accounts
+                                                   └─> Actions
+                                                          |
+                                                          v
+                                                generate_followups
+                                                          |
+                                                          v
+                                                operator review/send
 ```
 
 ## What none of these workflows do
@@ -118,8 +126,8 @@ Sheet human edits ────────────────────�
 - Treat `Deal.state=COMPLETED` as Closed Won.
 - Use Name as identity or silently merge same-name contacts.
 - Auto-close a polite decline as Lost.
-- Treat meeting-note text alone as a reason to contact someone.
+- Treat note text alone as permission to contact someone.
 - Write to the separate Sales Motion workbook.
 
-See `docs/crm-refresh-workflow.md` for field ownership, stage mapping, backup,
-recovery, and runner deployment details.
+See [`crm-refresh-workflow.md`](crm-refresh-workflow.md) for first-cutover,
+scheduling, backup, and recovery details.

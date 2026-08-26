@@ -19,6 +19,7 @@ from linkedin.exceptions import SheetsError
 from linkedin.management.commands.refresh_crm import (
     Command,
     _action_counts_for_run,
+    _assert_legacy_refresh_not_superseded,
     _assert_people_dnc_headers,
     _blocked_followup_owners,
     _build_granola_client,
@@ -98,6 +99,14 @@ def test_workbook_identity_rejects_mismatch_and_sales_motion_id(monkeypatch):
             SimpleNamespace(id="configured-crm-workbook"),
             configured_id="configured-crm-workbook",
         )
+
+
+@pytest.mark.parametrize("title", ["Active Accounts", "Actions"])
+def test_legacy_refresh_refuses_to_recreate_v1_after_v2_cutover(title):
+    with pytest.raises(CommandError, match="CRM v2 is active"):
+        _assert_legacy_refresh_not_superseded({"tabs": [{"title": title}]})
+
+    _assert_legacy_refresh_not_superseded({"tabs": [{"title": "People"}]})
 
 
 def test_live_apply_identity_check_requires_sales_motion_guard(monkeypatch):
