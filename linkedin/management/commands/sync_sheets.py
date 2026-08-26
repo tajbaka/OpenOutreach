@@ -1,9 +1,9 @@
-"""Mirror Deal state into the Google Sheets People tab.
+"""Incrementally publish the durable Lead ledger to the People tab.
 
-Steady-state sync (replaces sync_airtable). Iterates in-funnel deals,
-groups by company to compute the aggregate Stage, then upserts one row
-per lead into the People tab. Don't-downgrade preserves manual sheet
-edits — see sheets.should_patch_outreach_status / should_patch_stage.
+Every Lead is eligible, including contacts with no Deal and contacts whose
+automation Deal is inactive, failed, or otherwise historical. Deals only
+supply optional status/stage rollups. Existing People rows are never removed,
+rebuilt, or reordered.
 
 Idempotent. Safe to run from cron. Decoupled from the daemon — failures
 here never block outreach.
@@ -17,14 +17,15 @@ from __future__ import annotations
 
 import sys
 from collections import defaultdict
+from contextlib import nullcontext
 
-from django.core.management.base import BaseCommand
-from django.db.models import Exists, Max, OuterRef
+from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
 
 
 class Command(BaseCommand):
-    help = "Mirror Deal state to the Google Sheets People tab."
+    help = "Incrementally publish the complete Lead ledger to People."
 
     def add_arguments(self, parser):
         parser.add_argument("--campaign", type=int, default=None,
@@ -37,50 +38,61 @@ class Command(BaseCommand):
         return message.encode(encoding, errors="replace").decode(encoding)
 
     def handle(self, *args, **options):
-        from crm.models import Deal, Meeting
+        """Serialize every standalone People publication with refresh_crm."""
+        from linkedin.crm_lock import (
+            CrmRefreshAlreadyRunning,
+            crm_refresh_lock,
+        )
+
+        lock_held = bool(options.pop("_crm_refresh_lock_held", False))
+        lock_context = nullcontext() if lock_held else crm_refresh_lock()
+        try:
+            with lock_context:
+                return self._handle_locked(*args, **options)
+        except CrmRefreshAlreadyRunning as exc:
+            raise CommandError(str(exc)) from exc
+
+    def _handle_locked(self, *args, **options):
+        from crm.models import Deal, Lead, Meeting
 
         from linkedin.conf import GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEETS_ID
-        from linkedin.enums import ProfileState
         from linkedin.exceptions import SheetsError
         from linkedin.notifications import sheets
 
         dry_run: bool = options["dry_run"]
         campaign_pk: int | None = options["campaign"]
+        self.result = {
+            "status": "planned" if dry_run else "published",
+            "source_leads": 0,
+            "source_deals": 0,
+            "companies": 0,
+            "rows_before": 0,
+            "rows_after": 0,
+            "appended": 0,
+            "updated": 0,
+            "updated_cells": 0,
+            "unchanged": 0,
+            "skipped": 0,
+            "errored": 0,
+            "ambiguous_existing": 0,
+            "header_additions": 0,
+            "duplicate_keys": 0,
+            "duplicate_lead_ids": 0,
+            "duplicate_linkedin_urls": 0,
+        }
 
-        if not dry_run and (
-            not GOOGLE_SHEETS_ID or not GOOGLE_SHEETS_CREDENTIALS_PATH
-        ):
-            self.stderr.write(
+        if not GOOGLE_SHEETS_ID or not GOOGLE_SHEETS_CREDENTIALS_PATH:
+            raise CommandError(
                 "GOOGLE_SHEETS_ID and GOOGLE_SHEETS_CREDENTIALS_PATH must "
-                "be set in .env. Sync disabled."
+                "be set in .env. Exact dry-runs also read the live sheet."
             )
-            sys.exit(1)
 
-        in_funnel = (
-            ProfileState.PENDING,
-            ProfileState.CONNECTED,
-            ProfileState.COMPLETED,
-            ProfileState.FAILED,
-        )
+        # People is a contact ledger, not a view of one automation state. Load
+        # every Lead and prefetch every relevant per-campaign Deal. A campaign
+        # filter narrows the source for the standalone diagnostic command but
+        # still never removes rows already present in People.
         deals_qs = (
-            Deal.objects.filter(
-                state__in=in_funnel,
-                lead_id__isnull=False,
-                lead__disqualified=False,
-            )
-            .select_related("lead", "campaign")
-            .defer(
-                "lead__embedding",
-                "lead__description",
-                "lead__phones",
-                "lead__phone_providers_tried",
-                "lead__email_providers_tried",
-                "campaign__model_blob",
-                "campaign__product_docs",
-                "campaign__campaign_objective",
-                "campaign__seed_public_ids",
-            )
-            .annotate(latest_message_at=Max("lead__messages__sent_at"))
+            Deal.objects.filter(lead_id__isnull=False)
             .annotate(
                 has_meeting=Exists(
                     Meeting.objects.filter(lead_id=OuterRef("lead_id"))
@@ -90,176 +102,240 @@ class Command(BaseCommand):
         )
         if campaign_pk is not None:
             deals_qs = deals_qs.filter(campaign_id=campaign_pk)
-        deals = list(deals_qs)
-        if not deals:
-            self.stdout.write("No in-funnel deals — nothing to sync.")
-            return
+        leads_qs = (
+            Lead.objects.defer(
+                "embedding",
+                "description",
+                "phones",
+                "phone_providers_tried",
+                "email_providers_tried",
+            )
+            .order_by("id")
+        )
+        if campaign_pk is not None:
+            leads_qs = leads_qs.filter(deal__campaign_id=campaign_pk).distinct()
+        leads = list(
+            leads_qs.prefetch_related(
+                Prefetch("deal_set", queryset=deals_qs, to_attr="people_deals")
+            )
+        )
 
-        # Group by company. Skip leads with no company_name — they can't be
-        # represented in a per-company-aggregate Stage and the People row
-        # would be missing the natural anchor for grouping.
-        groups: dict[str, list] = defaultdict(list)
-        skipped = 0
-        for deal in deals:
-            cname = (deal.lead.company_name or "").strip()
-            if not cname:
-                self.stdout.write(
-                    f"  - skip {deal.lead.first_name} {deal.lead.last_name}: "
-                    f"no company_name"
-                )
-                skipped += 1
+        company_deals: dict[str, list] = defaultdict(list)
+        companies: set[str] = set()
+        source_deals = 0
+        for lead in leads:
+            company = (lead.company_name or "").strip()
+            company_key = company.casefold() if company else f"__lead__:{lead.pk}"
+            if company:
+                companies.add(company.casefold())
+            lead_deals = list(lead.people_deals)
+            source_deals += len(lead_deals)
+            company_deals[company_key].extend(lead_deals)
+
+        self.result.update({
+            "source_leads": len(leads),
+            "source_deals": source_deals,
+            "companies": len(companies),
+        })
+
+        try:
+            idx = sheets.SheetIndex.load(apply_schema=not dry_run)
+        except SheetsError as e:
+            raise CommandError(f"failed loading People tab: {e}") from e
+        rows_before = idx.material_row_count
+        self.result["rows_before"] = rows_before
+        last_synced = timezone.localdate().isoformat()
+
+        skipped = errored = ambiguous_existing = unchanged = 0
+        for lead in leads:
+            full = f"{lead.first_name} {lead.last_name}".strip()
+            company = (lead.company_name or "").strip()
+            company_key = company.casefold() if company else f"__lead__:{lead.pk}"
+            lead_deals = list(lead.people_deals)
+
+            try:
+                existing = idx.get_row(
+                    lead.linkedin_url,
+                    lead_id=lead.pk,
+                ) or {}
+            except SheetsError as e:
+                self.stderr.write(f"  ! identity {full or 'unnamed lead'}: {e}")
+                if idx.is_identity_represented(
+                    lead.linkedin_url,
+                    lead_id=lead.pk,
+                ):
+                    ambiguous_existing += 1
+                else:
+                    errored += 1
                 continue
-            groups[cname].append(deal)
+
+            if lead.disqualified:
+                target_status = sheets.STATUS_DONT_SEND
+            elif lead_deals:
+                target_status = sheets.aggregate_person_outreach_status(
+                    sheets.deal_to_outreach_status(deal) for deal in lead_deals
+                )
+            else:
+                target_status = existing.get(sheets.COL_OUTREACH_STATUS, "") or ""
+
+            if company_deals[company_key]:
+                target_stage = sheets.aggregate_company_stage(
+                    [
+                        sheets.deal_to_stage(deal)
+                        for deal in company_deals[company_key]
+                    ]
+                )
+            else:
+                target_stage = existing.get(sheets.COL_STAGE, "") or ""
+
+            # Preserve the email-list union. Matching is case-insensitive but
+            # the operator's existing spelling/order wins.
+            existing_emails = [
+                value.strip()
+                for value in (existing.get(sheets.COL_EMAILS, "") or "").split("\n")
+                if value.strip()
+            ]
+            merged_emails = list(existing_emails)
+            seen_emails = {value.casefold() for value in existing_emails}
+            if lead.email and lead.email.casefold() not in seen_emails:
+                merged_emails.append(lead.email)
+
+            payload = sheets.build_row_payload(
+                lead=lead,
+                title=existing.get(sheets.COL_TITLE, "") or "",
+                emails=merged_emails,
+                outreach_status=target_status,
+                stage=target_stage,
+                priority=existing.get(sheets.COL_PRIORITY, "") or "",
+                primary_location=existing.get(sheets.COL_PRIMARY_LOCATION, "") or "",
+                notes=existing.get(sheets.COL_NOTES, "") or "",
+                ai_notes=existing.get(sheets.COL_AI_NOTES, "") or "",
+                last_synced=last_synced,
+            )
+
+            try:
+                was_new, changed = idx.upsert_row(payload)
+            except SheetsError as e:
+                self.stderr.write(f"  ! upsert {full or 'unnamed lead'}: {e}")
+                if idx.is_identity_represented(
+                    lead.linkedin_url,
+                    lead_id=lead.pk,
+                ):
+                    ambiguous_existing += 1
+                else:
+                    errored += 1
+                continue
+
+            if was_new:
+                self.stdout.write(
+                    self._console_text(
+                        f"  + {(full or 'Unnamed lead'):35s} "
+                        f"status={target_status} stage={target_stage}"
+                    )
+                )
+            elif changed:
+                self.stdout.write(
+                    self._console_text(
+                        f"  ~ {(full or 'Unnamed lead'):35s} {', '.join(changed)}"
+                    )
+                )
+            else:
+                unchanged += 1
 
         self.stdout.write(
-            f"Syncing {len(deals)} deal(s) across {len(groups)} "
-            f"compan{'ies' if len(groups) != 1 else 'y'}"
+            f"Publishing {len(leads)} contact(s) with {source_deals} Deal signal(s)"
             f"{' (dry-run)' if dry_run else ''}..."
         )
 
         if dry_run:
-            self._plan(groups, sheets)
+            plan = idx.plan()
+            counts = idx.flush(dry_run=True)
+            duplicate_lead_ids = sum(
+                duplicate.column == sheets.COL_LEAD_ID
+                for duplicate in plan.duplicate_keys
+            )
+            duplicate_linkedin_urls = sum(
+                duplicate.column == sheets.COL_LINKEDIN_URL
+                for duplicate in plan.duplicate_keys
+            )
+            self.result.update({
+                "appended": counts["appended"],
+                "updated": counts["updated"],
+                "updated_cells": plan.updated_cells,
+                "unchanged": unchanged,
+                "skipped": skipped,
+                "errored": errored,
+                "ambiguous_existing": ambiguous_existing,
+                "rows_after": rows_before + counts["appended"],
+                "header_additions": len(plan.header_additions),
+                "duplicate_keys": len(plan.duplicate_keys),
+                "duplicate_lead_ids": duplicate_lead_ids,
+                "duplicate_linkedin_urls": duplicate_linkedin_urls,
+            })
+            self.stdout.write(
+                "Exact People plan — "
+                f"headers:{len(plan.header_additions)} "
+                f"appended:{counts['appended']} "
+                f"updated:{counts['updated']} "
+                f"cells:{plan.updated_cells}"
+            )
+            if plan.header_additions:
+                self.stdout.write(
+                    "  headers to append: " + ", ".join(plan.header_additions)
+                )
+            for duplicate in plan.duplicate_keys:
+                # Never print stable IDs or LinkedIn URLs in routine output.
+                self.stderr.write(
+                    f"  ! duplicate {duplicate.column}: rows "
+                    + ", ".join(str(row) for row in duplicate.row_numbers)
+                )
+            self.stdout.write(
+                f"No writes — unchanged:{unchanged} skipped:{skipped} "
+                f"errored:{errored}"
+            )
             return
 
-        idx = sheets.SheetIndex.load()
-        last_synced = timezone.localdate().isoformat()
-
-        appended = updated = unchanged = errored = 0
-        synth_ok = synth_err = 0
-
-        for company_name, group in groups.items():
-            target_stage = sheets.aggregate_company_stage(
-                [sheets.deal_to_stage(d) for d in group]
-            )
-            for deal_in_group in group:
-                lead = deal_in_group.lead
-                full = f"{lead.first_name} {lead.last_name}".strip()
-                target_status = sheets.deal_to_outreach_status(deal_in_group)
-
-                if not lead.linkedin_url:
-                    self.stdout.write(self.style.WARNING(
-                        f"  - skip {full}: no linkedin_url"
-                    ))
-                    skipped += 1
-                    continue
-
-                # Look up existing row first so the synthesis pass can read
-                # the live status from the sheet (don't-downgrade lookup).
-                existing = idx.get_row(lead.linkedin_url) or {}
-                current_status_in_sheet = existing.get(
-                    sheets.COL_OUTREACH_STATUS, "",
-                )
-
-                # ---- Phase D synthesis: D1 email extract + D2 Wants Meeting.
-                # Runs before payload assembly so D2 status changes feed into
-                # the same row write below. Notes column is human-only — we
-                # never write synthesis-derived text there.
-                synth_status_override = ""
-                latest_message_at = deal_in_group.latest_message_at
-                needs_synthesis = latest_message_at is not None and (
-                    deal_in_group.last_synthesized_at is None
-                    or deal_in_group.last_synthesized_at < latest_message_at
-                )
-                if needs_synthesis:
-                    try:
-                        from linkedin.notifications.synthesis import synthesize_for_deal
-                        synth_result = synthesize_for_deal(
-                            deal_in_group,
-                            current_outreach_status=current_status_in_sheet,
-                        )
-                        if synth_result and synth_result.wants_meeting_now:
-                            synth_status_override = sheets.STATUS_WANTS_MEETING
-                        synth_ok += 1
-                    except Exception as e:
-                        self.stdout.write(self.style.WARNING(
-                            f"    ! synthesis failed for {full}: {e}"
-                        ))
-                        synth_err += 1
-
-                effective_status = synth_status_override or target_status
-
-                # Build the row payload. Title / Notes / AI Notes / Priority
-                # come from the existing row when present (sheet is the
-                # source of truth post-backfill). Synth notes get prepended
-                # to existing Notes if the LLM detected meeting intent.
-                emails = [lead.email] if lead.email else []
-                # Preserve the email-list union — existing sheet emails win
-                # except for new ones.
-                existing_emails = [
-                    e.strip() for e in (existing.get(sheets.COL_EMAILS, "") or "").split("\n")
-                    if e.strip()
-                ]
-                merged_emails = list(existing_emails)
-                for e in emails:
-                    if e not in merged_emails:
-                        merged_emails.append(e)
-
-                # Notes is human-only — preserve whatever's already in the sheet.
-                notes = existing.get(sheets.COL_NOTES, "") or ""
-
-                payload = sheets.build_row_payload(
-                    lead=lead,
-                    title=existing.get(sheets.COL_TITLE, "") or "",
-                    emails=merged_emails,
-                    outreach_status=effective_status,
-                    stage=target_stage,
-                    priority=existing.get(sheets.COL_PRIORITY, "") or "",
-                    primary_location=existing.get(sheets.COL_PRIMARY_LOCATION, "") or "",
-                    notes=notes,
-                    ai_notes=existing.get(sheets.COL_AI_NOTES, "") or "",
-                    last_synced=last_synced,
-                )
-
-                try:
-                    was_new, changed = idx.upsert_row(payload)
-                except SheetsError as e:
-                    self.stderr.write(f"  ! upsert {full}: {e}")
-                    errored += 1
-                    continue
-
-                if was_new:
-                    appended += 1
-                    self.stdout.write(
-                        self._console_text(
-                            f"  + {full:35s} status={effective_status} "
-                            f"stage={target_stage}"
-                        )
-                    )
-                elif changed:
-                    updated += 1
-                    self.stdout.write(
-                        self._console_text(
-                            f"  ~ {full:35s} {', '.join(changed)}"
-                        )
-                    )
-                else:
-                    unchanged += 1
-
+        plan = idx.plan()
+        duplicate_lead_ids = sum(
+            duplicate.column == sheets.COL_LEAD_ID
+            for duplicate in plan.duplicate_keys
+        )
+        duplicate_linkedin_urls = sum(
+            duplicate.column == sheets.COL_LINKEDIN_URL
+            for duplicate in plan.duplicate_keys
+        )
         try:
             counts = idx.flush()
         except SheetsError as e:
-            self.stderr.write(f"  ! flush failed: {e}")
-            sys.exit(1)
+            raise CommandError(f"People flush failed: {e}") from e
+
+        self.result.update({
+            "appended": counts["appended"],
+            "updated": counts["updated"],
+            "updated_cells": plan.updated_cells,
+            "unchanged": unchanged,
+            "skipped": skipped,
+            "errored": errored,
+            "ambiguous_existing": ambiguous_existing,
+            "rows_after": rows_before + counts["appended"],
+            "header_additions": len(plan.header_additions),
+            "duplicate_keys": len(plan.duplicate_keys),
+            "duplicate_lead_ids": duplicate_lead_ids,
+            "duplicate_linkedin_urls": duplicate_linkedin_urls,
+        })
 
         self.stdout.write(self.style.SUCCESS(
             f"Done — appended:{counts['appended']} updated:{counts['updated']} "
-            f"unchanged:{unchanged} synth_ok:{synth_ok} synth_err:{synth_err} "
-            f"skipped:{skipped} errored:{errored}"
+            f"unchanged:{unchanged} skipped:{skipped} errored:{errored}"
         ))
 
-    def _plan(self, groups, sheets):
-        """Dry-run output."""
-        for company_name, group in groups.items():
-            stage = sheets.aggregate_company_stage(
-                [sheets.deal_to_stage(d) for d in group]
-            )
-            self.stdout.write(
-                f"company: {company_name:30s} stage={stage} ({len(group)} lead(s))"
-            )
-            for d in group:
-                lead = d.lead
-                full = f"{lead.first_name} {lead.last_name}".strip()
-                status = sheets.deal_to_outreach_status(d)
-                self.stdout.write(
-                    f"  - {full:30s} status={status}"
-                )
+
+def run_people_sync(*, dry_run: bool, stdout, stderr, lock_held: bool = False) -> dict:
+    """Run People publishing; callers may declare the shared lock already held."""
+    command = Command(stdout=stdout, stderr=stderr)
+    command.handle(
+        dry_run=dry_run,
+        campaign=None,
+        _crm_refresh_lock_held=lock_held,
+    )
+    return dict(command.result)

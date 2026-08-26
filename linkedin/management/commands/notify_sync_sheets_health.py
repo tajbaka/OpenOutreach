@@ -1,4 +1,4 @@
-"""Post a daily Slack health rollup for the Windows sync_sheets task."""
+"""Post a daily Slack health rollup for the Windows CRM refresh task."""
 from __future__ import annotations
 
 import json
@@ -12,11 +12,13 @@ from zoneinfo import ZoneInfo
 from django.core.management.base import BaseCommand
 
 
+# Preserve the existing Windows Task Scheduler identity during the in-place
+# migration. Its unchanged script action now launches refresh_crm.
 TASK_NAME = "OpenOutreach Sync Sheets"
-DEFAULT_LOG_PATH = Path("data") / "logs" / "sync_sheets_task.log"
+DEFAULT_LOG_PATH = Path("data") / "logs" / "refresh_crm_task.log"
 LOCAL_TZ = ZoneInfo("America/Toronto")
-FINISHED_RE = re.compile(r"finished sync_sheets exit_code=(?P<code>-?\d+)")
-FAILED_RE = re.compile(r"sync_sheets failed:", re.IGNORECASE)
+FINISHED_RE = re.compile(r"finished refresh_crm exit_code=(?P<code>-?\d+)")
+FAILED_RE = re.compile(r"refresh_crm failed:", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -30,7 +32,10 @@ class HealthResult:
 
 
 class Command(BaseCommand):
-    help = "Post a daily Slack health summary for the Windows sync_sheets Scheduled Task."
+    help = (
+        "Post a daily Slack health summary for the Windows CRM refresh task "
+        "(the existing Scheduled Task may retain its Sync Sheets name)."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument("--task-name", default=TASK_NAME)
@@ -56,19 +61,19 @@ class Command(BaseCommand):
             "failed": ":rotating_light:",
         }.get(result.status, ":grey_question:")
         payload = {
-            "text": f"{emoji} OpenOutreach sync_sheets daily health: {result.status}",
+            "text": f"{emoji} OpenOutreach CRM refresh health: {result.status}",
             "blocks": [
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": f"{emoji} *OpenOutreach sync_sheets daily health: {result.status.upper()}*",
+                        "text": f"{emoji} *OpenOutreach CRM refresh health: {result.status.upper()}*",
                     },
                 },
                 {"type": "section", "text": {"type": "mrkdwn", "text": slack_escape(message)}},
             ],
         }
-        _post_to_slack(SLACK_WEBHOOK_URL, payload, "sync-sheets-health")
+        _post_to_slack(SLACK_WEBHOOK_URL, payload, "crm-refresh-health")
 
 
 def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
@@ -99,7 +104,9 @@ def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
     if now >= expected_first_run:
         if last_run is None or last_run < expected_first_run:
             status = _worse(status, "warning")
-            reasons.append("Task has not recorded a run since today's sync window opened.")
+            reasons.append(
+                "Task has not recorded a run since today's refresh window opened."
+            )
         elif last_result not in (0, None):
             status = _worse(status, "failed")
             reasons.append(f"Task Scheduler last result is {last_result}.")
@@ -109,16 +116,16 @@ def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
         reasons.append(f"Log file is missing or empty: {log_path}")
     elif any(FAILED_RE.search(line) for line in last_log_lines[-8:]):
         status = _worse(status, "failed")
-        reasons.append("Recent log lines include a sync_sheets failure.")
+        reasons.append("Recent log lines include a refresh_crm failure.")
     elif latest_exit_code is None:
         status = _worse(status, "warning")
-        reasons.append("Could not find a recent finished sync_sheets exit code in the log.")
+        reasons.append("Could not find a recent finished refresh_crm exit code in the log.")
     elif latest_exit_code != 0:
         status = _worse(status, "failed")
-        reasons.append(f"Latest logged sync_sheets exit code is {latest_exit_code}.")
+        reasons.append(f"Latest logged refresh_crm exit code is {latest_exit_code}.")
 
     if not reasons:
-        reasons.append("Task is present and latest logged sync_sheets run finished successfully.")
+        reasons.append("Task is present and latest logged CRM refresh finished successfully.")
 
     return HealthResult(
         status=status,

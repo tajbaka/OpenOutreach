@@ -234,13 +234,26 @@ FEDRAMP_MARKETPLACE_FETCH_TIMEOUT_SECONDS = int(
     os.getenv("FEDRAMP_MARKETPLACE_FETCH_TIMEOUT_SECONDS", "45")
 )
 
-# Google Sheets CRM sync. GOOGLE_SHEETS_ID is the spreadsheet id from the
-# URL (https://docs.google.com/spreadsheets/d/<id>/edit). CREDENTIALS_PATH
-# points at a service-account JSON key file with Editor access shared on
-# the sheet. Empty either disables the sync (safe no-op).
+# Read-only Granola API access for meeting-note lookup. The key's note scopes
+# are configured in Granola; this project never expands them or writes notes.
+GRANOLA_API_KEY = os.getenv("GRANOLA_API_KEY", "").strip()
+GRANOLA_API_BASE = os.getenv(
+    "GRANOLA_API_BASE", "https://public-api.granola.ai/v1"
+).rstrip("/")
+GRANOLA_HTTP_TIMEOUT_SECONDS = int(os.getenv("GRANOLA_HTTP_TIMEOUT_SECONDS", "30"))
+
+# Google Sheets CRM publishing. GOOGLE_SHEETS_ID is the CRM spreadsheet id
+# from the URL (https://docs.google.com/spreadsheets/d/<id>/edit), and the
+# credentials path names a service-account JSON key with Editor access.
+# Sheets commands validate both and fail closed when either is blank.
 GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID", "").strip()
 GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "").strip()
 GOOGLE_SHEETS_TAB_NAME = os.getenv("GOOGLE_SHEETS_TAB_NAME", "People").strip()
+# Optional second-workbook identity guard. refresh_crm may read this value only
+# to prove it is not about to publish into the separate Sales Motion workbook.
+SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID = os.getenv(
+    "SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID", ""
+).strip()
 
 # Gmail "self" address set is derived at runtime from the connected
 # Gmail account itself (Gmail Profile API + Send-As aliases) rather than

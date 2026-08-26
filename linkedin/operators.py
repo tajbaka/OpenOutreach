@@ -56,6 +56,8 @@ _OPERATOR_ALIASES: dict[str, str] = {
     "athena@getboundera.com": "Athena",
 }
 
+CANONICAL_OPERATOR_HANDLES = frozenset({"Arian", "Athena", "Chuka", "Leili"})
+
 
 def resolve_operator(value: str | None) -> str:
     """Map any known representation of an operator to their canonical handle.
@@ -73,3 +75,14 @@ def resolve_operator(value: str | None) -> str:
     if not key:
         return ""
     return _OPERATOR_ALIASES.get(key, value.strip())
+
+
+def resolve_sales_owner_handle(value: str | None) -> str:
+    """Resolve only known active CRM-owner handles.
+
+    ``resolve_operator`` intentionally preserves unknown strings for telemetry.
+    A Sheet owner cell must fail closed instead: a typo cannot silently become
+    a new owner or route an action to the wrong sender.
+    """
+    resolved = resolve_operator(value)
+    return resolved if resolved in CANONICAL_OPERATOR_HANDLES else ""

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from google.auth.exceptions import GoogleAuthError
+from googleapiclient.errors import HttpError
+from httplib2 import HttpLib2Error
 from django.core.management.base import BaseCommand, CommandError
 
 from gmail.auth import GMAIL_ACCOUNTS, GMAIL_OPERATOR_MAPPING
@@ -11,6 +14,7 @@ from gmail.data_sync import (
     sync_gmail_note_emails,
     sync_gmail_threads,
 )
+from linkedin.exceptions import EnrichmentError
 from linkedin.models import WorkflowRun
 
 
@@ -18,6 +22,17 @@ DEFAULT_OPERATOR_FOR_ACCOUNT = {
     "arian_boundera": "Arian",
     "eddy_boundera": "Athena",
 }
+
+
+_RECOVERABLE_GMAIL_SYNC_ERRORS = (
+    EnrichmentError,
+    GoogleAuthError,
+    HttpError,
+    HttpLib2Error,
+    TimeoutError,
+    ConnectionError,
+)
+_SAFE_SYNC_ERROR = "Gmail context sync is temporarily unavailable."
 
 
 class Command(BaseCommand):
@@ -77,6 +92,15 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        try:
+            return self._sync_context(options)
+        except _RECOVERABLE_GMAIL_SYNC_ERRORS:
+            # Gmail API errors can contain request URLs, mailbox search terms,
+            # or credential-provider detail.  Give refresh_crm the typed,
+            # sanitized signal it already treats as a stored-context fallback.
+            raise EnrichmentError(_SAFE_SYNC_ERROR) from None
+
+    def _sync_context(self, options):
         if options["skip_threads"] and options["skip_notes"]:
             raise CommandError("Nothing to do: both --skip-threads and --skip-notes were set.")
 

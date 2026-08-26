@@ -1,6 +1,8 @@
 ![OpenOutreach Logo](docs/logo.png)
 
-> Self-hosted LinkedIn outreach automation with first-class Google Sheets CRM sync. Send connection requests, capture replies, mirror state to a Sheets People tab, and use companion Claude workflows for follow-up drafting and post-meeting enrichment.
+> Self-hosted LinkedIn outreach automation with a Postgres-backed, Google
+> Sheets-operated sales CRM. Capture conversations, maintain durable People and
+> Opportunities, publish stage/action views, and draft human-reviewed followups.
 
 <div align="center">
 
@@ -18,17 +20,24 @@
 
 ## What this is
 
-A long-running daemon that runs LinkedIn outreach inside a stealth Playwright browser, plus a Postgres-backed CRM that mirrors deal state to a Google Sheets People tab. Built on top of the upstream `eracle/OpenOutreach` ML pipeline (Bayesian active learning for lead qualification), with the surface area extended for real B2B sales workflows: multi-account outreach, message-thread persistence, hourly Sheets sync with don't-clobber stage logic, LLM-driven email extraction and meeting-intent detection, and Claude-driven runbooks for human-in-the-loop follow-up drafting.
+A long-running daemon that runs LinkedIn outreach inside a stealth Playwright
+browser, plus a Postgres-backed canonical sales CRM operated through Google
+Sheets. The CRM separates per-Lead outreach automation Deals from durable
+account Opportunities, explicit owners/stakeholders, and due Actions.
 
 **Core loop:**
 
 1. **Daemon** connects to qualified leads (Voyager API + Playwright)
 2. **Sweep** runs every 6h, detects accepted invites in bulk, captures the first DM reply
 3. **`crm.Message`** persists every LinkedIn DM thread (idempotent on `external_id`)
-4. **`sync_sheets`** (cron'd hourly) mirrors Deals → Google Sheets People tab, with stage and outreach-status patching that won't downgrade manual changes
-5. **Synthesis pass** (inside `sync_sheets`) extracts email addresses from inbound messages and runs a cheap LLM to flag "wants meeting" intent
-6. **Backfill** (`backfill_messages` on cron) keeps `crm.Message` fresh after the daemon stops watching threads
-7. **Companion Claude workflows** (interactive, MCP-driven) generate follow-up drafts (output to per-operator Followups tabs) and enrich the Sheets People tab with cross-source meeting context
+4. **Backfill** (`backfill_messages` on its own schedule) keeps later LinkedIn
+   replies fresh
+5. **`refresh_crm`** refreshes Gmail/meeting context, imports human Sheet edits,
+   recalculates canonical Actions, and safely publishes all CRM views
+6. **`sync_sheets`** remains a narrow incremental People publisher, not a sales
+   decision engine
+7. **`generate_followups`** exports stable-ID due Actions and applies validated
+   drafts without sending messages
 
 The Bayesian ML qualifier is still there for autonomous lead discovery, but most teams running this will already have a lead list — the bulk of value is now in the Sheets sync, message store, and human workflows.
 
@@ -40,8 +49,8 @@ The Bayesian ML qualifier is still there for autonomous lead discovery, but most
 |---|------|---------|
 | 1 | LinkedIn account(s) | Primary outreach account; optional separate "backfill" account for CSV imports |
 | 2 | LLM API key | Used for qualification + synthesis (cheap models work for synthesis, e.g., `gemini-2.5-flash`) |
-| 3 | Postgres | Neon recommended; SQLite fallback works for dev |
-| 4 | (Optional) Google Sheets ID + service-account JSON | Required if you want CRM sync |
+| 3 | Postgres | Required shared `DATABASE_URL`; no runtime SQLite fallback |
+| 4 | CRM Sheet ID + service-account JSON | Required for `sync_sheets` or `refresh_crm`; live CRM apply also requires the separate Sales Motion Sheet ID as an identity guard |
 | 5 | (Optional) Slack webhook | For accepted-invite notifications |
 
 ---
@@ -80,7 +89,7 @@ make setup
 make run
 
 # Browse the CRM (Django Admin)
-python manage.py createsuperuser
+.venv/bin/python manage.py createsuperuser
 make admin
 # → http://localhost:8000/admin/
 ```
@@ -112,36 +121,50 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 | **`check_pending`** | Legacy task type, retained for migration compatibility. New deployments should use `sweep_connections`. |
 
 **Storage:**
-- **Postgres** (Neon recommended) when `DATABASE_URL` is set; SQLite fallback for offline dev. Daemon and dev box must share the same `DATABASE_URL` to avoid split-brain.
+- **Postgres** is required through `DATABASE_URL`. Every daemon, runner, and dev
+  box must use the intended shared database; there is no runtime SQLite
+  fallback.
 - **`crm.Message`** is the canonical DM history store (FK to Lead, source enum {linkedin, gmail, calendar}, direction {inbound, outbound}, idempotent on `(source, external_id)`).
 - **`LinkedInDiscoveryLead`** is the separate discovery collection table. Each globally deduplicated profile stores its structured profile JSON, first storing sender/account, and potential ICP.
 - Per-campaign GP models live in `Campaign.model_blob` (binary BLOB, not files).
 
-**Sheets sync** (`linkedin/notifications/sheets.py`):
-- Standalone command: `manage.py sync_sheets` (gspread + service-account auth, not MCP).
-- Iterates Deals at `state >= PENDING` and `disqualified=False`, groups by `company_name`, writes one row per Lead into the People tab keyed by LinkedIn URL.
-- Stage hierarchy: `Prospecting → Qualification → Meeting → Closing → Won` (Lost terminates). Stage = company-level aggregate denormalized onto each row.
-- Outreach status hierarchy: `Invite Sent → Connected → Waiting → Replied → Wants Meeting → Meeting Booked → Had Meeting → Manual followup → Prospecting to close → Won → Don't send` (Lost separately overridable).
-- `should_patch_stage` and `should_patch_outreach_status` block downgrades, so manual sheet edits are never clobbered.
-- Decoupled from the daemon — sheet failures don't affect outreach.
+**Canonical CRM refresh** (`manage.py refresh_crm`):
 
-**Synthesis pass** (`linkedin/notifications/synthesis.py`, runs inside `sync_sheets`):
-- **D1 email extract:** regex over inbound `crm.Message` rows, mirrored into `Lead.email`. `sync_sheets` then folds the union of `Lead.email` ∪ existing sheet emails into the People tab Email addresses cell.
-- **D2 wants-meeting LLM:** cheap LLM (configured via `AI_MODEL`) reads the thread; if meeting intent detected, returns a `SynthResult` that `sync_sheets` folds into the row's Outreach status (advances to `Wants Meeting`). Notes column is human-only — synthesis never writes there.
-- Gated by `Deal.wants_meeting_detected_at` (lock-in) and `Deal.last_synthesized_at` vs latest message timestamp (skip when no new signal).
+- `People` is durable and growing: update in place, append once, never
+  clear/reorder/prune, and preserve operator columns/formulas/formatting.
+- `Opportunities` is the editable canonical account table with stable IDs,
+  explicit owner, 15-step stage, contact roles, next action, and commercial
+  outcome.
+- `Pipeline`, `Recovery`, and `<Owner> - Followups` are DB-derived views.
+- Granola is primary meeting context; stored Gemini notes are secondary.
+- Human fields round-trip through a conservative three-way merge. Invalid or
+  conflicting edits fail closed instead of being guessed.
+- On the one-time sender-tab rollout, every old Followups tab is retained under
+  a dated `Legacy` title. Unresolved material rows are reported and left
+  untouched rather than guessed; all affected validated replacements activate
+  together in one atomic title swap.
+- Omit `--apply` for an exact no-persistent-write plan. The command never sends
+  Gmail or LinkedIn messages.
+
+**Narrow People publisher** (`manage.py sync_sheets`):
+
+- Plans/publishes only the durable People ledger.
+- Performs no LLM synthesis, opportunity-stage decisions, or followup
+  eligibility.
 
 ---
 
-## Companion Claude workflows
+## Human-in-the-loop workflows
 
-Two interactive runbooks driven by Claude that sit on top of the data the automation produces. See [`docs/human-workflows.md`](docs/human-workflows.md) for the full picture.
+See [`docs/human-workflows.md`](docs/human-workflows.md) for the full picture.
 
 | Workflow | Purpose |
 |---|---|
-| [`docs/followup-generation-workflow.md`](docs/followup-generation-workflow.md) | Generate per-prospect follow-up drafts from `crm.Message` + Gmail + Calendar + Drive. Output goes to `Arian - Followups` and `Chuka - Followups` tabs in Google Sheets. Ball-on-court classifier supports daily runs. |
-| [`docs/sheets-meeting-sync-workflow.md`](docs/sheets-meeting-sync-workflow.md) | Enrich the Sheets People tab with cross-source meeting context (calendar + Gmail + Drive Gemini notes), update Outreach status and Stage, compose AI Notes. Preview-first; you approve before any sheet write. |
+| [`docs/followup-generation-workflow.md`](docs/followup-generation-workflow.md) | Export explicitly owned due Actions and apply schema-validated drafts by stable ID. |
+| [`docs/data-sync-workflow.md`](docs/data-sync-workflow.md) | Ingest Calendar/Drive context not directly fetched by the scheduled CRM refresh. |
 
-These don't run on cron. You run them in conversation with Claude when you need them.
+Drafting and connector ingestion remain human-reviewed. The canonical CRM
+publisher may run on a schedule.
 
 ---
 
@@ -161,9 +184,11 @@ make test / make docker-test
 pytest tests/api/test_voyager.py   # single file
 pytest -k test_name                # single test
 
-# Sheets CRM sync (mirrors Deal state to the People tab in Google Sheets)
-.venv/bin/python manage.py sync_sheets --campaign 1
-.venv/bin/python manage.py sync_sheets
+# Canonical CRM: dry-run first, then apply
+.venv/bin/python manage.py refresh_crm
+.venv/bin/python manage.py refresh_crm --apply
+
+# Narrow People publisher diagnostics
 .venv/bin/python manage.py sync_sheets --dry-run
 
 # Resync crm.Message from LinkedIn DM threads (run on cron)
@@ -177,7 +202,6 @@ pytest -k test_name                # single test
 # Bulk-import existing connections from CSV via a separate "backfill" account
 .venv/bin/python manage.py import_connections \
   --csv leads/linkedin-batch4-messages.csv \
-  --handle backfill-account@example.com \
   --since-days 90 \
   [--dry-run]
 ```
@@ -194,14 +218,16 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 |---|---|---|
 | `ENABLE_SWEEP_CONNECTIONS` | `true` | Bulk accept-detection task |
 | `ENABLE_FOLLOW_UP` | `true` | Auto-DM after accept (set `false` if you want to write follow-ups by hand) |
-| `ENABLE_ACTIVE_HOURS` | `false` | Restrict daemon to a daily window |
-| `ENABLE_AUTO_DISCOVERY` | `false` | Autonomous lead-search via the ML pipeline |
+| `ENABLE_ACTIVE_HOURS` | `true` | Restrict daemon to a daily window |
+| `ENABLE_AUTO_DISCOVERY` | `true` | Autonomous lead-search via the legacy ML pipeline |
 | `ENABLE_PROFILE_DISCOVERY` | `false` | Separate bounded profile collection after outbound hours/rest days |
 | `DISCOVERY_VISIT_SCORE_THRESHOLD` | `70` | Minimum discovery ICP-fit score before opening a recommended profile |
 | `CONNECTION_SWEEP_INTERVAL_HOURS` | `2` | How often the sweep task fires |
-| `AI_MODEL` | `gpt-4o` | Used for both qualification and synthesis (cheap models work fine for synthesis) |
-| `DATABASE_URL` | (unset → SQLite) | Postgres connection string |
-| `GOOGLE_SHEETS_ID` + `GOOGLE_SHEETS_CREDENTIALS_PATH` | (unset → no sync) | Required for Sheets mirroring |
+| `AI_MODEL` | `gpt-4o` | Qualification/drafting model identifier |
+| `DATABASE_URL` | required | Shared Postgres connection string; no runtime SQLite fallback |
+| `GOOGLE_SHEETS_ID` + `GOOGLE_SHEETS_CREDENTIALS_PATH` | required by Sheets commands | Missing configuration makes `sync_sheets` and `refresh_crm` fail closed |
+| `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | required by `refresh_crm --apply` | Separate read-only workbook ID used as the live-write safety guard |
+| `GRANOLA_API_KEY` | unset | Optional read-only primary meeting-note source |
 | `SLACK_WEBHOOK_URL` | (unset → no Slack) | Notifications when sweep detects accepts |
 
 ---
@@ -212,9 +238,10 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 ├── docs/
 │   ├── configuration.md                # Configuration reference
 │   ├── system-flow.txt                 # Operational state of your deployment
-│   ├── human-workflows.md              # Overview of the two Claude runbooks
-│   ├── followup-generation-workflow.md # Drafts: replied / connected-no-reply / met cohorts
-│   ├── sheets-meeting-sync-workflow.md # Sheets enrichment from calendar + Gmail + Drive
+│   ├── human-workflows.md              # Human-operated CRM and outreach workflows
+│   ├── crm-refresh-workflow.md          # Canonical CRM deployment/safety runbook
+│   ├── followup-generation-workflow.md # Stable-ID Action drafting workflow
+│   ├── data-sync-workflow.md            # Calendar/Drive context ingestion
 │   ├── docker.md                       # Docker setup
 │   ├── templating.md                   # Follow-up message templating
 │   ├── template-variables.md           # Available template variables
@@ -228,8 +255,8 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── daemon.py                       # Task queue worker loop
 │   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
 │   ├── discovery/                      # ICP config, dynamic gating, search cards, screening, persistence
-│   ├── django_settings.py              # Django settings (Postgres or SQLite)
-│   ├── management/commands/            # backfill_messages, sync_sheets, import_connections, ...
+│   ├── django_settings.py              # Runtime Postgres settings; pytest alone uses in-memory SQLite
+│   ├── management/commands/            # refresh_crm, sync_sheets, generate_followups, ...
 │   ├── ml/                             # Bayesian qualifier (GPR), embeddings
 │   ├── models.py                       # Campaign, LinkedInProfile, Task, etc.
 │   ├── notifications/                  # sheets.py, slack.py, synthesis.py
@@ -250,10 +277,11 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 
 - [Module-level architecture (CLAUDE.md)](CLAUDE.md)
 - [Configuration](docs/configuration.md)
+- [Canonical CRM refresh](docs/crm-refresh-workflow.md)
 - [System flow (operational)](docs/system-flow.txt)
 - [Human-in-the-loop workflows](docs/human-workflows.md)
 - [Follow-up generation runbook](docs/followup-generation-workflow.md)
-- [Sheets meeting sync runbook](docs/sheets-meeting-sync-workflow.md)
+- [Google/meeting context ingestion](docs/data-sync-workflow.md)
 - [Docker installation](docs/docker.md)
 - [Follow-up templating](docs/templating.md)
 - [Template variables](docs/template-variables.md)

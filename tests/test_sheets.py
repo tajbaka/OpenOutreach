@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from linkedin.notifications import sheets
+from linkedin.notifications import crm_sheets, sheets
 
 
 # ---------------------------------------------------------------------------
@@ -96,13 +96,28 @@ def test_headers_match_expected_schema():
         "Name", "First name", "Last name", "Company", "Title",
         "LinkedIn URL", "Email addresses", "Outreach status", "Stage",
         "Priority", "Primary location", "AI Notes", "Notes",
-        "Created at", "Last synced",
+        "Created at", "Last synced", "Lead ID",
     ]
 
 
 def test_linkedin_url_is_natural_key_column():
     """If column position changes, SheetIndex's URL lookup breaks."""
     assert sheets.HEADERS.index(sheets.COL_LINKEDIN_URL) == sheets.LINKEDIN_URL_COL_0
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "https://www.linkedin.com/in/Jane-Doe/",
+        "http://linkedin.com/in/jane-doe",
+        "https://ca.linkedin.com/in/JANE-DOE/?trk=people-guest#profile",
+        "www.linkedin.com/in/jane-doe/details/contact-info/",
+    ],
+)
+def test_canonical_linkedin_url_collapses_profile_variants(variant):
+    assert sheets.canonical_linkedin_url(variant) == (
+        "https://www.linkedin.com/in/jane-doe/"
+    )
 
 
 def test_col_letter_handles_aa_overflow():
@@ -364,6 +379,7 @@ def test_is_sent_rejects_no_and_blank():
 
 def _make_lead(**kw):
     defaults = dict(
+        pk=123,
         first_name="Jane",
         last_name="Doe",
         company_name="Acme Inc",
@@ -391,14 +407,14 @@ def test_build_row_payload_dedupes_emails_and_joins_with_newline():
     assert payload[sheets.COL_EMAILS] == "a@x.com\nb@y.com"
 
 
-def test_build_row_payload_defaults_empty_priority_to_low():
+def test_build_row_payload_preserves_empty_human_priority():
     payload = sheets.build_row_payload(
         lead=_make_lead(),
         title="", emails=[], outreach_status="", stage="",
         priority="", primary_location="", notes="", ai_notes="",
         last_synced="",
     )
-    assert payload[sheets.COL_PRIORITY] == sheets.PRIORITY_LOW
+    assert payload[sheets.COL_PRIORITY] == ""
 
 
 def test_build_row_payload_preserves_explicit_priority():
@@ -409,6 +425,20 @@ def test_build_row_payload_preserves_explicit_priority():
         last_synced="",
     )
     assert payload[sheets.COL_PRIORITY] == sheets.PRIORITY_HIGH
+
+
+def test_build_row_payload_preserves_human_text_exactly():
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="  CTO  ", emails=[], outreach_status="", stage="",
+        priority="", primary_location=" Toronto ", notes="  note\n",
+        ai_notes="  ai note  ", last_synced="",
+    )
+
+    assert payload[sheets.COL_TITLE] == "  CTO  "
+    assert payload[sheets.COL_PRIMARY_LOCATION] == " Toronto "
+    assert payload[sheets.COL_NOTES] == "  note\n"
+    assert payload[sheets.COL_AI_NOTES] == "  ai note  "
 
 
 def test_build_row_payload_serializes_created_at_as_iso_date():
@@ -456,12 +486,55 @@ class _FakeWorksheet:
         self.cleared = False
         self.updated_values = None
         self.rows: list[list[str]] = []
+        self.col_count = len(sheets.HEADERS)
+        self.added_cols = 0
+        self.formats: list[tuple[str, dict]] = []
+        self.get_all_values_options: list[dict] = []
+        self.batch_get_options: list[dict] = []
 
     def append_rows(self, rows, value_input_option=None, table_range=None):
         self.appended_batches.append(list(rows))
 
     def batch_update(self, updates, value_input_option=None):
         self.batch_updates.append(list(updates))
+
+    def batch_get(self, ranges, value_render_option=None):
+        self.batch_get_options.append({
+            "ranges": list(ranges),
+            "value_render_option": value_render_option,
+        })
+        values = []
+        for cell_range in ranges:
+            start, end = str(cell_range).split(":", 1)
+            start = start.replace("$", "")
+            end = end.replace("$", "")
+            letters = "".join(
+                character for character in start if character.isalpha()
+            )
+            digits = "".join(
+                character for character in start if character.isdigit()
+            )
+            column = 0
+            for character in letters.upper():
+                column = column * 26 + ord(character) - ord("A") + 1
+            start_row = int(digits)
+            end_digits = "".join(
+                character for character in end if character.isdigit()
+            )
+            end_row = int(end_digits) if end_digits else len(self.rows)
+            column_values = []
+            for row in range(start_row, end_row + 1):
+                value = ""
+                if (
+                    0 < row <= len(self.rows)
+                    and 0 < column <= len(self.rows[row - 1])
+                ):
+                    value = self.rows[row - 1][column - 1]
+                column_values.append([value] if value != "" else [])
+            while column_values and not column_values[-1]:
+                column_values.pop()
+            values.append(column_values)
+        return values
 
     def clear(self):
         self.cleared = True
@@ -474,8 +547,19 @@ class _FakeWorksheet:
         }
         self.rows = list(values or [])
 
-    def get_all_values(self):
+    def get_all_values(self, **kwargs):
+        self.get_all_values_options.append(kwargs)
         return self.rows
+
+    def row_values(self, row):
+        return list(self.rows[row - 1]) if len(self.rows) >= row else []
+
+    def add_cols(self, count):
+        self.added_cols += count
+        self.col_count += count
+
+    def format(self, cell_range, rule):
+        self.formats.append((cell_range, rule))
 
 
 class _FakeSpreadsheet:
@@ -505,14 +589,41 @@ def _index_with_existing_row(**overrides):
         sheets.COL_OUTREACH_STATUS: sheets.STATUS_HAD_MEETING,
         sheets.COL_STAGE: sheets.STAGE_MEETING,
         sheets.COL_PRIORITY: sheets.PRIORITY_LOW,
+        sheets.COL_LEAD_ID: "123",
     })
     fields.update(overrides)
     rows = [list(sheets.HEADERS), [fields[h] for h in sheets.HEADERS]]
-    return sheets.SheetIndex(_FakeWorksheet(), rows)
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(row) for row in rows]
+    return sheets.SheetIndex(worksheet, rows)
+
+
+def _index_matching_people_payload(*, outreach_status=sheets.STATUS_CONNECTED):
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="",
+        emails=[],
+        outreach_status=outreach_status,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    )
+    rows = [
+        list(sheets.HEADERS),
+        [payload.get(header, "") for header in sheets.HEADERS],
+    ]
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(row) for row in rows]
+    return sheets.SheetIndex(worksheet, rows), payload
 
 
 def test_upsert_row_appends_new_row():
-    idx = sheets.SheetIndex(_FakeWorksheet(), [list(sheets.HEADERS)])
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(sheets.HEADERS)]
+    idx = sheets.SheetIndex(worksheet, [list(sheets.HEADERS)])
     payload = sheets.build_row_payload(
         lead=_make_lead(),
         title="CTO", emails=["a@x.com"], outreach_status=sheets.STATUS_REPLIED,
@@ -529,6 +640,578 @@ def test_upsert_row_appends_new_row():
     appended_row = idx.ws.appended_batches[0][0]
     assert appended_row[sheets.HEADER_INDEX_0[sheets.COL_LINKEDIN_URL]] == \
         "https://www.linkedin.com/in/janedoe/"
+    assert appended_row[sheets.HEADER_INDEX_0[sheets.COL_LEAD_ID]] == "123"
+
+
+@pytest.mark.parametrize(
+    ("concurrent_lead_id", "concurrent_url", "conflict_column"),
+    [
+        (
+            "123",
+            "https://www.linkedin.com/in/someone-else/",
+            sheets.COL_LEAD_ID,
+        ),
+        (
+            "999",
+            "https://ca.linkedin.com/in/JANEDOE/?trk=concurrent",
+            sheets.COL_LINKEDIN_URL,
+        ),
+    ],
+)
+def test_flush_rejects_pending_append_identity_that_appeared_concurrently(
+    concurrent_lead_id,
+    concurrent_url,
+    conflict_column,
+):
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(sheets.HEADERS)]
+    idx = sheets.SheetIndex(worksheet, [list(sheets.HEADERS)])
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="",
+        emails=[],
+        outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    )
+    assert idx.upsert_row(payload)[0] is True
+
+    concurrent = ["" for _header in sheets.HEADERS]
+    concurrent[sheets.HEADER_INDEX_0[sheets.COL_NAME]] = "Different Person"
+    concurrent[sheets.HEADER_INDEX_0[sheets.COL_LEAD_ID]] = concurrent_lead_id
+    concurrent[sheets.HEADER_INDEX_0[sheets.COL_LINKEDIN_URL]] = concurrent_url
+    worksheet.rows.append(concurrent)
+
+    with pytest.raises(
+        sheets.SheetsError,
+        match=(
+            "pending People append conflicts with live row 2, column "
+            + repr(conflict_column)
+        ),
+    ):
+        idx.flush()
+
+    assert worksheet.batch_get_options == [{
+        "ranges": ["P1:P", "F1:F"],
+        "value_render_option": sheets.ValueRenderOption.unformatted,
+    }]
+    assert worksheet.appended_batches == []
+    assert worksheet.batch_updates == []
+
+
+def test_pending_append_identity_preflight_api_failure_prevents_all_writes():
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(sheets.HEADERS)]
+    idx = sheets.SheetIndex(worksheet, [list(sheets.HEADERS)])
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="",
+        emails=[],
+        outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    )
+    idx.upsert_row(payload)
+    response = SimpleNamespace(
+        json=lambda: {
+            "error": {
+                "code": 503,
+                "message": "service unavailable",
+                "status": "UNAVAILABLE",
+            },
+        },
+        text="service unavailable",
+    )
+
+    def fail_preflight(*_args, **_kwargs):
+        raise sheets.APIError(response)
+
+    worksheet.batch_get = fail_preflight
+
+    with pytest.raises(sheets.SheetsError, match="People appends"):
+        idx.flush()
+
+    assert worksheet.appended_batches == []
+    assert worksheet.batch_updates == []
+
+
+def test_pending_append_identity_preflight_does_not_match_by_name():
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(sheets.HEADERS)]
+    idx = sheets.SheetIndex(worksheet, [list(sheets.HEADERS)])
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="",
+        emails=[],
+        outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    )
+    idx.upsert_row(payload)
+
+    concurrent = ["" for _header in sheets.HEADERS]
+    concurrent[sheets.HEADER_INDEX_0[sheets.COL_NAME]] = "Jane Doe"
+    concurrent[sheets.HEADER_INDEX_0[sheets.COL_LEAD_ID]] = "999"
+    concurrent[sheets.HEADER_INDEX_0[sheets.COL_LINKEDIN_URL]] = (
+        "https://www.linkedin.com/in/a-different-jane/"
+    )
+    worksheet.rows.append(concurrent)
+
+    assert idx.flush() == {"appended": 1, "updated": 0}
+    assert worksheet.batch_get_options == [{
+        "ranges": ["P1:P", "F1:F"],
+        "value_render_option": sheets.ValueRenderOption.unformatted,
+    }]
+    assert len(worksheet.appended_batches) == 1
+
+
+def test_pending_append_fails_closed_if_identity_header_moved():
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(sheets.HEADERS)]
+    idx = sheets.SheetIndex(worksheet, [list(sheets.HEADERS)])
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="",
+        emails=[],
+        outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    )
+    idx.upsert_row(payload)
+    worksheet.rows[0][sheets.HEADER_INDEX_0[sheets.COL_LEAD_ID]] = "Moved"
+
+    with pytest.raises(
+        sheets.SheetsError,
+        match="People identity columns changed after planning",
+    ):
+        idx.flush()
+
+    assert worksheet.appended_batches == []
+    assert worksheet.batch_updates == []
+
+
+def test_pending_append_is_indexed_and_deduped_within_same_run():
+    idx = sheets.SheetIndex(_FakeWorksheet(), [list(sheets.HEADERS)])
+    first = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="Engineer", emails=[], outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING, priority="", primary_location="",
+        notes="", ai_notes="", last_synced="2026-08-26",
+    )
+    second = dict(first)
+    second[sheets.COL_TITLE] = "CTO"
+
+    assert idx.upsert_row(first)[0] is True
+    was_new, changed = idx.upsert_row(second)
+
+    assert was_new is False
+    assert changed == [sheets.COL_TITLE]
+    assert idx.plan().appended_rows == 1
+    assert idx.plan().updated_rows == 0
+    assert idx._pending_appends[0][idx.actual_index_0[sheets.COL_TITLE]] == "CTO"
+
+
+def test_sheet_index_normalizes_numeric_live_cells_before_planning():
+    headers = list(sheets.HEADERS)
+    row = ["" for _ in headers]
+    row[headers.index(sheets.COL_LINKEDIN_URL)] = (
+        "https://www.linkedin.com/in/numeric/"
+    )
+    row[headers.index(sheets.COL_LEAD_ID)] = 123
+    row[headers.index(sheets.COL_OUTREACH_STATUS)] = 7
+    idx = sheets.SheetIndex(
+        _FakeWorksheet(),
+        [headers, row],
+        actual_headers=headers,
+    )
+
+    stored = idx.get_row(
+        "https://www.linkedin.com/in/numeric/",
+        lead_id=123,
+    )
+    assert stored[sheets.COL_LEAD_ID] == "123"
+    assert stored[sheets.COL_OUTREACH_STATUS] == "7"
+
+    idx.upsert_row(
+        {
+            sheets.COL_LINKEDIN_URL: "https://www.linkedin.com/in/numeric/",
+            sheets.COL_LEAD_ID: "123",
+            sheets.COL_OUTREACH_STATUS: sheets.STATUS_REPLIED,
+        }
+    )
+    assert idx.plan().updated_cells == 1
+
+
+def test_url_variant_fallback_backfills_stable_id_without_append():
+    fields = {header: "" for header in sheets.HEADERS}
+    fields.update({
+        sheets.COL_LINKEDIN_URL: (
+            "https://ca.linkedin.com/in/JANE-DOE/?trk=legacy"
+        ),
+        sheets.COL_NAME: "Jane Doe",
+    })
+    rows = [
+        list(sheets.HEADERS),
+        [fields[header] for header in sheets.HEADERS],
+    ]
+    idx = sheets.SheetIndex(_FakeWorksheet(), rows)
+    payload = sheets.build_row_payload(
+        lead=_make_lead(linkedin_url="http://linkedin.com/in/jane-doe"),
+        title="", emails=[], outreach_status="", stage="", priority="",
+        primary_location="", notes="", ai_notes="", last_synced="",
+    )
+
+    was_new, changed = idx.upsert_row(payload)
+
+    assert was_new is False
+    assert sheets.COL_LEAD_ID in changed
+    assert idx.plan().appended_rows == 0
+    assert idx.get_row(payload[sheets.COL_LINKEDIN_URL], lead_id=123)[
+        sheets.COL_LEAD_ID
+    ] == "123"
+
+
+def test_url_variants_are_reported_as_one_duplicate_identity():
+    fields = {header: "" for header in sheets.HEADERS}
+    first = dict(fields)
+    first[sheets.COL_LINKEDIN_URL] = "https://linkedin.com/in/Jane-Doe"
+    second = dict(fields)
+    second[sheets.COL_LINKEDIN_URL] = (
+        "https://www.linkedin.com/in/jane-doe/?trk=duplicate"
+    )
+    idx = sheets.SheetIndex(
+        _FakeWorksheet(),
+        [
+            list(sheets.HEADERS),
+            [first[header] for header in sheets.HEADERS],
+            [second[header] for header in sheets.HEADERS],
+        ],
+    )
+
+    assert idx.duplicate_keys == (
+        sheets.DuplicateSheetKey(
+            sheets.COL_LINKEDIN_URL,
+            "https://www.linkedin.com/in/jane-doe/",
+            (2, 3),
+        ),
+    )
+
+
+def test_duplicate_existing_url_is_reported_and_never_last_row_wins():
+    fields = {header: "" for header in sheets.HEADERS}
+    fields[sheets.COL_LINKEDIN_URL] = "https://www.linkedin.com/in/duplicate/"
+    rows = [
+        list(sheets.HEADERS),
+        [fields[header] for header in sheets.HEADERS],
+        [fields[header] for header in sheets.HEADERS],
+    ]
+    idx = sheets.SheetIndex(_FakeWorksheet(), rows)
+
+    assert idx.duplicate_keys == (
+        sheets.DuplicateSheetKey(
+            sheets.COL_LINKEDIN_URL,
+            "https://www.linkedin.com/in/duplicate/",
+            (2, 3),
+        ),
+    )
+    with pytest.raises(sheets.SheetsError, match="duplicate LinkedIn URL"):
+        idx.get_row(
+            "https://www.linkedin.com/in/duplicate/",
+            lead_id=123,
+        )
+
+
+def test_stable_lead_id_can_resolve_one_row_inside_legacy_url_duplicates():
+    fields = {header: "" for header in sheets.HEADERS}
+    fields[sheets.COL_LINKEDIN_URL] = "https://www.linkedin.com/in/duplicate/"
+    canonical = dict(fields)
+    canonical[sheets.COL_LEAD_ID] = "123"
+    rows = [
+        list(sheets.HEADERS),
+        [fields[header] for header in sheets.HEADERS],
+        [canonical[header] for header in sheets.HEADERS],
+    ]
+    idx = sheets.SheetIndex(_FakeWorksheet(), rows)
+
+    row = idx.get_row(
+        "https://www.linkedin.com/in/duplicate/",
+        lead_id=123,
+    )
+
+    assert row[sheets.COL_LEAD_ID] == "123"
+
+
+def test_load_read_only_plans_additive_lead_id_header(monkeypatch):
+    ws = _FakeWorksheet()
+    ws.rows = [list(sheets.HEADERS[:-1])]
+    monkeypatch.setattr(sheets, "get_worksheet", lambda *, apply_schema=True: ws)
+
+    idx = sheets.SheetIndex.load(apply_schema=False)
+
+    assert idx.plan().header_additions == (sheets.COL_LEAD_ID,)
+    assert ws.updated_values is None
+    assert ws.get_all_values_options == [
+        {"value_render_option": sheets.ValueRenderOption.formula}
+    ]
+
+
+def test_get_worksheet_dry_run_authorizes_read_only_and_does_not_cache(monkeypatch):
+    ws = _FakeWorksheet()
+    ws.rows = [list(sheets.HEADERS)]
+    spreadsheet = SimpleNamespace(worksheet=lambda _title: ws)
+    client = SimpleNamespace(open_by_key=lambda _sheet_id: spreadsheet)
+    captured = {}
+
+    def fake_credentials(_path, *, scopes):
+        captured["scopes"] = scopes
+        return object()
+
+    monkeypatch.setattr(sheets, "GOOGLE_SHEETS_ID", "sheet-id")
+    monkeypatch.setattr(sheets, "GOOGLE_SHEETS_CREDENTIALS_PATH", "creds.json")
+    monkeypatch.setattr(sheets.Credentials, "from_service_account_file", fake_credentials)
+    monkeypatch.setattr(sheets.gspread, "authorize", lambda _creds: client)
+    sheets.reset_client_cache()
+
+    assert sheets.get_worksheet(apply_schema=False) is ws
+    assert captured["scopes"] == [
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+    ]
+    assert sheets._WORKSHEET is None
+
+
+def test_get_worksheet_preserves_all_existing_column_formatting(monkeypatch):
+    operator_position = 5
+    headers = [
+        *sheets.HEADERS[:operator_position],
+        "Operator formula",
+        *sheets.HEADERS[operator_position:],
+    ]
+    ws = _FakeWorksheet()
+    ws.rows = [headers]
+    ws.col_count = len(headers)
+    spreadsheet = SimpleNamespace(worksheet=lambda _title: ws)
+    client = SimpleNamespace(open_by_key=lambda _sheet_id: spreadsheet)
+
+    monkeypatch.setattr(sheets, "GOOGLE_SHEETS_ID", "sheet-id")
+    monkeypatch.setattr(sheets, "GOOGLE_SHEETS_CREDENTIALS_PATH", "creds.json")
+    monkeypatch.setattr(
+        sheets.Credentials,
+        "from_service_account_file",
+        lambda _path, *, scopes: object(),
+    )
+    monkeypatch.setattr(sheets.gspread, "authorize", lambda _creds: client)
+    sheets.reset_client_cache()
+    try:
+        assert sheets.get_worksheet(apply_schema=True) is ws
+    finally:
+        sheets.reset_client_cache()
+
+    assert ws.formats == []
+
+
+def test_sheet_index_rejects_duplicate_headers_before_resolving_rows():
+    duplicate_headers = [*sheets.HEADERS, sheets.COL_LEAD_ID]
+
+    with pytest.raises(sheets.SheetsError, match="duplicate headers"):
+        sheets.SheetIndex(
+            _FakeWorksheet(),
+            [duplicate_headers],
+            actual_headers=duplicate_headers,
+        )
+
+
+def test_flush_dry_run_returns_exact_counts_without_sheet_writes():
+    idx = sheets.SheetIndex(_FakeWorksheet(), [list(sheets.HEADERS)])
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="CTO", emails=[], outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING, priority="", primary_location="",
+        notes="", ai_notes="", last_synced="2026-08-26",
+    )
+    idx.upsert_row(payload)
+
+    assert idx.flush(dry_run=True) == {"appended": 1, "updated": 0}
+    assert idx.ws.appended_batches == []
+    assert idx.ws.batch_updates == []
+
+
+@pytest.mark.parametrize(
+    "concurrent_value",
+    [
+        sheets.STATUS_DONT_SEND,
+        '=IF(A2="Jane Doe","Don\'t send","")',
+    ],
+)
+def test_flush_rejects_concurrent_dnc_or_formula_before_any_write(
+    concurrent_value,
+):
+    idx, payload = _index_matching_people_payload()
+    changed_payload = dict(payload)
+    changed_payload[sheets.COL_OUTREACH_STATUS] = sheets.STATUS_REPLIED
+    assert idx.upsert_row(changed_payload) == (
+        False,
+        [sheets.COL_OUTREACH_STATUS],
+    )
+
+    appended_payload = sheets.build_row_payload(
+        lead=_make_lead(
+            pk=456,
+            first_name="New",
+            last_name="Person",
+            linkedin_url="https://www.linkedin.com/in/new-person/",
+        ),
+        title="",
+        emails=[],
+        outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    )
+    assert idx.upsert_row(appended_payload)[0] is True
+
+    status_column = idx.actual_index_0[sheets.COL_OUTREACH_STATUS]
+    idx.ws.rows[1][status_column] = concurrent_value
+
+    with pytest.raises(
+        sheets.SheetsError,
+        match="People row 2, column 'Outreach status' changed after planning",
+    ):
+        idx.flush()
+
+    assert idx.ws.get_all_values_options[-1] == {
+        "value_render_option": sheets.ValueRenderOption.formula,
+    }
+    assert idx.ws.batch_get_options == []
+    assert idx.ws.appended_batches == []
+    assert idx.ws.batch_updates == []
+
+
+def test_flush_api_preflight_failure_prevents_appends_and_updates():
+    idx, payload = _index_matching_people_payload()
+    changed_payload = dict(payload)
+    changed_payload[sheets.COL_OUTREACH_STATUS] = sheets.STATUS_REPLIED
+    idx.upsert_row(changed_payload)
+    idx.upsert_row(sheets.build_row_payload(
+        lead=_make_lead(
+            pk=456,
+            linkedin_url="https://www.linkedin.com/in/new-person/",
+        ),
+        title="",
+        emails=[],
+        outreach_status=sheets.STATUS_CONNECTED,
+        stage=sheets.STAGE_PROSPECTING,
+        priority="",
+        primary_location="",
+        notes="",
+        ai_notes="",
+        last_synced="2026-08-26",
+    ))
+    response = SimpleNamespace(
+        json=lambda: {
+            "error": {
+                "code": 503,
+                "message": "service unavailable",
+                "status": "UNAVAILABLE",
+            },
+        },
+        text="service unavailable",
+    )
+
+    def fail_preflight(*_args, **_kwargs):
+        raise sheets.APIError(response)
+
+    idx.ws.get_all_values = fail_preflight
+
+    with pytest.raises(sheets.SheetsError, match="failed optimistic preflight"):
+        idx.flush()
+
+    assert idx.ws.appended_batches == []
+    assert idx.ws.batch_updates == []
+
+
+def test_same_run_coalescing_keeps_original_live_preflight_expectation():
+    idx, payload = _index_matching_people_payload()
+    first = dict(payload)
+    first[sheets.COL_OUTREACH_STATUS] = sheets.STATUS_REPLIED
+    second = dict(payload)
+    second[sheets.COL_OUTREACH_STATUS] = sheets.STATUS_WANTS_MEETING
+
+    assert idx.upsert_row(first) == (False, [sheets.COL_OUTREACH_STATUS])
+    assert idx.upsert_row(second) == (False, [sheets.COL_OUTREACH_STATUS])
+
+    counts = idx.flush()
+
+    assert counts == {"appended": 0, "updated": 1}
+    assert idx.ws.get_all_values_options[-1] == {
+        "value_render_option": sheets.ValueRenderOption.formula,
+    }
+    assert idx.ws.batch_get_options == []
+    assert idx.ws.batch_updates == [[{
+        "range": "H2:H2",
+        "values": [[sheets.STATUS_WANTS_MEETING]],
+    }]]
+
+
+def test_people_optimistic_preflight_uses_one_snapshot_for_large_update_sets():
+    fields_by_row = []
+    for lead_id in range(1, 202):
+        fields = {header: "" for header in sheets.HEADERS}
+        fields.update({
+            sheets.COL_NAME: f"Person {lead_id}",
+            sheets.COL_LINKEDIN_URL: (
+                f"https://www.linkedin.com/in/person-{lead_id}/"
+            ),
+            sheets.COL_OUTREACH_STATUS: sheets.STATUS_CONNECTED,
+            sheets.COL_STAGE: sheets.STAGE_PROSPECTING,
+            sheets.COL_LEAD_ID: str(lead_id),
+        })
+        fields_by_row.append(fields)
+
+    rows = [
+        list(sheets.HEADERS),
+        *[
+            [fields[header] for header in sheets.HEADERS]
+            for fields in fields_by_row
+        ],
+    ]
+    worksheet = _FakeWorksheet()
+    worksheet.rows = [list(row) for row in rows]
+    idx = sheets.SheetIndex(worksheet, rows)
+
+    for fields in fields_by_row:
+        changed = dict(fields)
+        changed[sheets.COL_OUTREACH_STATUS] = sheets.STATUS_REPLIED
+        assert idx.upsert_row(changed) == (
+            False,
+            [sheets.COL_OUTREACH_STATUS],
+        )
+
+    assert idx.flush() == {"appended": 0, "updated": 201}
+    assert worksheet.get_all_values_options == [{
+        "value_render_option": sheets.ValueRenderOption.formula,
+    }]
+    assert worksheet.batch_get_options == []
+    assert len(worksheet.batch_updates) == 1
+    assert len(worksheet.batch_updates[0]) == 201
 
 
 def test_upsert_row_blocks_outreach_status_downgrade():
@@ -543,11 +1226,10 @@ def test_upsert_row_blocks_outreach_status_downgrade():
     was_new, changed = idx.upsert_row(payload)
     assert was_new is False
     assert sheets.COL_OUTREACH_STATUS not in changed
-    # The status cell in the staged update should be preserved as Had Meeting.
-    if idx._pending_updates:
-        new_row = idx._pending_updates[0]["values"][0]
-        assert new_row[sheets.HEADER_INDEX_0[sheets.COL_OUTREACH_STATUS]] == \
-            sheets.STATUS_HAD_MEETING
+    assert all(
+        not update["range"].startswith("H2")
+        for update in idx._pending_updates
+    )
 
 
 def test_upsert_row_blocks_stage_downgrade_from_meeting_to_qualification():
@@ -563,8 +1245,8 @@ def test_upsert_row_blocks_stage_downgrade_from_meeting_to_qualification():
     assert sheets.COL_STAGE not in changed
 
 
-def test_upsert_row_overwrites_notes_field():
-    """Notes is sheet-wins on subsequent syncs but a fresh payload still writes."""
+def test_upsert_row_preserves_human_owned_notes_field():
+    """An existing operator note cannot be replaced by publisher input."""
     idx = _index_with_existing_row(**{sheets.COL_NOTES: "old notes"})
     payload = sheets.build_row_payload(
         lead=_make_lead(),
@@ -575,9 +1257,12 @@ def test_upsert_row_overwrites_notes_field():
     )
     was_new, changed = idx.upsert_row(payload)
     assert was_new is False
-    assert sheets.COL_NOTES in changed
-    new_row = idx._pending_updates[0]["values"][0]
-    assert new_row[sheets.HEADER_INDEX_0[sheets.COL_NOTES]] == "new notes from attio"
+    assert sheets.COL_NOTES not in changed
+    notes_col = sheets._col_letter(sheets.HEADER_INDEX_0[sheets.COL_NOTES] + 1)
+    assert all(
+        update["range"] != f"{notes_col}2:{notes_col}2"
+        for update in idx._pending_updates
+    )
 
 
 def test_upsert_row_no_op_when_payload_matches_existing():
@@ -618,10 +1303,12 @@ def test_upsert_row_preserves_operator_added_columns():
         sheets.COL_LINKEDIN_URL: "https://www.linkedin.com/in/janedoe/",
         sheets.COL_OUTREACH_STATUS: sheets.STATUS_CONNECTED,
         sheets.COL_STAGE: sheets.STAGE_PROSPECTING,
+        sheets.COL_LEAD_ID: "123",
     })
     existing_row = []
+    operator_formula = '=IF(A2="Jane Doe","jane@apollo.example","")'
     for h in actual_headers:
-        existing_row.append("jane@apollo.example" if h == "Apollo Email" else fields[h])
+        existing_row.append(operator_formula if h == "Apollo Email" else fields[h])
     rows = [list(actual_headers), existing_row]
     idx = sheets.SheetIndex(_FakeWorksheet(), rows, actual_headers=actual_headers)
 
@@ -635,15 +1322,15 @@ def test_upsert_row_preserves_operator_added_columns():
     assert was_new is False
     assert sheets.COL_OUTREACH_STATUS in changed
 
-    new_row = idx._pending_updates[0]["values"][0]
-    apollo_col_0 = actual_headers.index("Apollo Email")
-    assert new_row[apollo_col_0] == "jane@apollo.example"
-    # Update range must span the full live width, not just managed cols.
-    expected_last = sheets._col_letter(len(actual_headers))
-    assert idx._pending_updates[0]["range"] == f"A2:{expected_last}2"
+    apollo_letter = sheets._col_letter(actual_headers.index("Apollo Email") + 1)
+    assert all(
+        update["range"] != f"{apollo_letter}2:{apollo_letter}2"
+        for update in idx._pending_updates
+    )
+    assert idx.rows[1][actual_headers.index("Apollo Email")] == operator_formula
 
 
-def test_upsert_row_raises_when_linkedin_url_missing():
+def test_upsert_row_accepts_id_only_contact_without_linkedin_url():
     idx = sheets.SheetIndex(_FakeWorksheet(), [list(sheets.HEADERS)])
     payload = sheets.build_row_payload(
         lead=_make_lead(linkedin_url=""),
@@ -651,5 +1338,153 @@ def test_upsert_row_raises_when_linkedin_url_missing():
         priority="", primary_location="", notes="", ai_notes="",
         last_synced="",
     )
-    with pytest.raises(sheets.SheetsError):
-        idx.upsert_row(payload)
+    was_new, _changed = idx.upsert_row(payload)
+
+    assert was_new is True
+    assert idx._pending_appends[0][idx.actual_index_0[sheets.COL_LEAD_ID]] == "123"
+    assert idx._pending_appends[0][idx.actual_index_0[sheets.COL_LINKEDIN_URL]] == ""
+
+
+def test_existing_formulas_are_never_overwritten_even_in_managed_columns():
+    formula = '=IF(A2="Jane Doe","Human title","")'
+    idx = _index_with_existing_row(**{sheets.COL_TITLE: formula})
+    payload = sheets.build_row_payload(
+        lead=_make_lead(),
+        title="Publisher title", emails=[], outreach_status=sheets.STATUS_REPLIED,
+        stage=sheets.STAGE_QUALIFICATION, priority="", primary_location="",
+        notes="", ai_notes="", last_synced="2026-08-26",
+    )
+
+    idx.upsert_row(payload)
+
+    title_letter = sheets._col_letter(idx.actual_index_0[sheets.COL_TITLE] + 1)
+    assert idx.rows[1][idx.actual_index_0[sheets.COL_TITLE]] == formula
+    assert all(
+        update["range"] != f"{title_letter}2:{title_letter}2"
+        for update in idx._pending_updates
+    )
+
+
+def test_people_preservation_snapshot_retries_quota_read(monkeypatch):
+    calls = []
+    sleeps = []
+    response = SimpleNamespace(
+        status_code=429,
+        json=lambda: {
+            "error": {
+                "code": 429,
+                "message": "private People detail",
+                "status": "RESOURCE_EXHAUSTED",
+            },
+        },
+        text="private People detail",
+    )
+
+    class Worksheet:
+        def get_all_values(self, **_kwargs):
+            calls.append(True)
+            if len(calls) <= 2:
+                raise sheets.APIError(response)
+            return [list(sheets.HEADERS)]
+
+    monkeypatch.setattr(crm_sheets.time, "sleep", sleeps.append)
+
+    snapshot = sheets.capture_people_preservation_snapshot(Worksheet())
+
+    assert snapshot.headers == tuple(sheets.HEADERS)
+    assert sleeps == [5, 10]
+
+
+def test_people_preservation_snapshot_verifies_order_human_operator_and_formula():
+    headers = [*sheets.HEADERS, "Apollo Email", "Operator Formula"]
+    first = {header: "" for header in headers}
+    first.update({
+        sheets.COL_LEAD_ID: "10",
+        sheets.COL_LINKEDIN_URL: "https://linkedin.com/in/Jane-Doe?trk=old",
+        sheets.COL_NOTES: "  exact human note\n",
+        "Apollo Email": "jane@operator.example",
+        "Operator Formula": '=IF(A2="Jane Doe","yes","")',
+    })
+    second = {header: "" for header in headers}
+    second.update({
+        sheets.COL_LEAD_ID: "11",
+        sheets.COL_LINKEDIN_URL: "https://www.linkedin.com/in/john-doe/",
+        sheets.COL_PRIORITY: "High",
+        "Apollo Email": "john@operator.example",
+    })
+    before_values = [
+        headers,
+        [first[header] for header in headers],
+        [second[header] for header in headers],
+    ]
+    after_values = [
+        [*headers, "Lead Source"],
+        [first[header] for header in headers] + [""],
+        [second[header] for header in headers] + [""],
+        ["New Person"] + [""] * len(headers),
+    ]
+
+    before = sheets.capture_people_preservation_snapshot(values=before_values)
+    after = sheets.capture_people_preservation_snapshot(values=after_values)
+    result = sheets.verify_people_preserved(before, after)
+
+    assert before.row_order == ("lead:10", "lead:11")
+    assert before.url_multiplicity == (
+        ("https://www.linkedin.com/in/jane-doe/", 1),
+        ("https://www.linkedin.com/in/john-doe/", 1),
+    )
+    assert result.rows_preserved == 2
+    assert result.protected_cells_preserved == 14
+    assert result.formulas_preserved == 1
+
+
+@pytest.mark.parametrize(
+    ("mutate", "error"),
+    [
+        (lambda rows: rows.__setitem__(1, rows[2]), "Lead ID changed"),
+        (
+            lambda rows: rows[1].__setitem__(
+                sheets.HEADERS.index(sheets.COL_NOTES), "changed"
+            ),
+            "protected cell changed",
+        ),
+        (
+            lambda rows: rows[1].__setitem__(
+                sheets.HEADERS.index(sheets.COL_NAME), "=CHANGED()"
+            ),
+            "formula changed",
+        ),
+    ],
+)
+def test_people_preservation_snapshot_rejects_reorder_or_owned_cell_change(
+    mutate,
+    error,
+):
+    headers = [*sheets.HEADERS, "Operator Formula"]
+    rows = [
+        headers,
+        [""] * len(headers),
+        [""] * len(headers),
+    ]
+    rows[1][headers.index(sheets.COL_LEAD_ID)] = "1"
+    rows[1][headers.index(sheets.COL_LINKEDIN_URL)] = (
+        "https://www.linkedin.com/in/one/"
+    )
+    rows[1][headers.index(sheets.COL_NOTES)] = "human"
+    rows[1][headers.index(sheets.COL_NAME)] = "=ORIGINAL_NAME()"
+    rows[1][-1] = "=ORIGINAL()"
+    rows[2][headers.index(sheets.COL_LEAD_ID)] = "2"
+    rows[2][headers.index(sheets.COL_LINKEDIN_URL)] = (
+        "https://www.linkedin.com/in/two/"
+    )
+    before = sheets.capture_people_preservation_snapshot(
+        values=[list(row) for row in rows]
+    )
+    after_rows = [list(row) for row in rows]
+    mutate(after_rows)
+
+    with pytest.raises(sheets.SheetsError, match=error):
+        sheets.verify_people_preserved(
+            before,
+            sheets.capture_people_preservation_snapshot(values=after_rows),
+        )

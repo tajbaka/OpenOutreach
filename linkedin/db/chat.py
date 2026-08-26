@@ -41,7 +41,8 @@ def save_chat_message(
 ):
     """Persist an outbound LinkedIn message to `crm.Message`. Never raises."""
     try:
-        from crm.models import Lead, Message
+        from crm.models import Lead, Message, SalesOwner
+        from linkedin.operators import resolve_sales_owner_handle
 
         clean_url = public_id_to_url(public_identifier)
         lead = Lead.objects.filter(linkedin_url=clean_url).first()
@@ -62,6 +63,12 @@ def save_chat_message(
         # Sequence-aware callers provide the extra fields. Older callers keep
         # the historical shape so existing ad-hoc sends do not change format.
         send_operator = operator or sender
+        owner_handle = resolve_sales_owner_handle(send_operator)
+        message_owner = (
+            SalesOwner.objects.filter(handle=owner_handle).first()
+            if owner_handle
+            else None
+        )
         if external_id_kind == "manual-reply":
             external_id = f"manual-reply:{send_operator}:{lead.pk}:{int(now.timestamp())}"
         elif deal_id is not None and sequence_name and step_index is not None:
@@ -77,6 +84,7 @@ def save_chat_message(
             external_id=external_id,
             defaults={
                 "lead": lead,
+                "operator": message_owner,
                 "direction": Message.Direction.OUTBOUND,
                 "sender": sender,
                 "body": content,

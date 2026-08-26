@@ -1,4 +1,4 @@
-"""Export/apply Codex-drafted followup sheet rows."""
+"""Export/apply Codex drafts for canonical CRM follow-up Actions."""
 from __future__ import annotations
 
 import json
@@ -10,9 +10,8 @@ from django.core.management.base import BaseCommand, CommandError
 
 class Command(BaseCommand):
     help = (
-        "Export followup candidates for Codex drafting, or apply a "
-        "Codex-produced followup rows JSON file to the operator Followups tabs. "
-        "This command does not call an LLM."
+        "Export explicitly owned canonical Daily Actions for Codex drafting, "
+        "or validate/apply drafts by stable Action UUID. Never sends messages."
     )
 
     def add_arguments(self, parser):
@@ -51,8 +50,32 @@ class Command(BaseCommand):
             action="store_true",
             help="Export every eligible candidate instead of only changed context.",
         )
+        parser.add_argument(
+            "--refresh-crm",
+            action="store_true",
+            help="Run refresh_crm --apply before building the canonical queue.",
+        )
+        parser.add_argument(
+            "--no-publish",
+            action="store_true",
+            help="After apply, leave DB drafts for the next refresh_crm publish.",
+        )
+        parser.add_argument(
+            "--legacy",
+            action="store_true",
+            help="Explicitly use the retired lead/name-based tab rebuild workflow.",
+        )
 
     def handle(self, *args, **opts):
+        if not opts.get("legacy"):
+            from linkedin.canonical_followup_command import (
+                run_canonical_followup_command,
+            )
+
+            return run_canonical_followup_command(self, opts)
+
+        if opts.get("refresh_crm") or opts.get("no_publish"):
+            raise CommandError("--refresh-crm/--no-publish are canonical-only.")
         from linkedin.followup_analysis import (
             apply_followup_decisions,
             load_followup_decisions,

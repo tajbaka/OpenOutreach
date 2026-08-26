@@ -63,7 +63,7 @@ def test_persist_creates_messages_with_direction_inferred(lead):
         ],
     }]
     created = gmail_threads.persist_gmail_threads(
-        lead=lead, threads=threads, self_emails=[HOST],
+        lead=lead, threads=threads, self_emails=[HOST], operator="Chuka",
     )
     assert created == 2
 
@@ -73,7 +73,9 @@ def test_persist_creates_messages_with_direction_inferred(lead):
     assert msgs[0].external_id == "msg-out-1"
     assert msgs[0].thread_external_id == "thread-1"
     assert msgs[0].sender == HOST
+    assert msgs[0].operator.handle == "Chuka"
     assert msgs[1].direction == Message.Direction.INBOUND
+    assert msgs[1].operator is None
     assert "slides this week" in msgs[1].body
 
 
