@@ -1,7 +1,7 @@
 # Follow-up generation workflow
 
 This is the manual-drafting workflow for canonical CRM Actions. Eligibility,
-owner routing, aging, and queue placement come from `refresh_crm`; the drafter
+owner routing, and queue placement come from `refresh_crm_v2`; the drafter
 does not independently scan every Lead or decide who should be contacted.
 
 The workflow writes drafts and review metadata only. It never sends Gmail or
@@ -12,16 +12,23 @@ LinkedIn messages.
 Keep the stored context fresh:
 
 - `backfill_messages` is the separate LinkedIn ingestion prerequisite.
-- `refresh_crm` refreshes Gmail/Gmail-delivered Gemini context and Granola by
-  default.
-- Google Calendar and Drive are not queried by `refresh_crm`; run
+- `sync_crm_v2_context` refreshes Gmail/Gmail-delivered Gemini context,
+  validated email-first contacts, and Granola.
+- Google Calendar and Drive are not queried by that command; run
   `docs/data-sync-workflow.md` when their stored context may be stale.
 
 Run and review the default no-write CRM plan, then apply it:
 
 ```bash
-.venv/bin/python manage.py refresh_crm
-.venv/bin/python manage.py refresh_crm --apply
+.venv/bin/python manage.py sync_crm_v2_context --apply
+.venv/bin/python manage.py refresh_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
+.venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 ```
 
 Do not draft from a queue whose refresh reported conflicts, invalid human
@@ -30,22 +37,20 @@ message.
 
 ## What appears in the daily queue
 
-Each `<Owner> - Followups` row has stable Action, Opportunity, and Lead IDs. A
+Each row in the owner-filterable `Actions` tab has stable Action, Opportunity,
+and target Lead IDs. A
 row appears only for a genuine current action, such as:
 
 - new inbound / Needs Response;
 - overdue or due-today next action;
 - preparation for a real upcoming meeting;
 - unresolved post-meeting commitment;
-- missing next action on an otherwise active Opportunity; or
-- an explicit due action, fresh trigger, upcoming meeting, or manual pin that
-  overrides normal age limits.
+- an explicit human next step.
 
-Ordinary activity ages from daily at 0-21 days, to Recovery at 22-60 days, to
-archive/nurture after 60 days. Future Waiting rows disappear until due. Closed,
-Don't Send, disqualified, non-actionable failed, and polite-decline records do
-not enter daily sender tabs. Granola/Gemini context can enrich a row but cannot
-create its eligibility.
+Future Waiting rows do not become current work until due. Closed and ineligible
+records do not enter the current queue. An exact target marked Don't send may
+remain sales-relevant but is shown as outreach stopped with no send channel or
+draft. Granola/Gemini context can enrich a row but cannot create eligibility.
 
 ## Export the canonical queue
 
@@ -63,9 +68,10 @@ Useful safe scopes:
   --output artifacts/followups/codex-review.json
 ```
 
-`--refresh-crm` is a convenience that runs `refresh_crm --apply` before
-export. It is a write operation, so prefer the explicit dry-run/apply sequence
-when reviewing a migration or changed policy.
+`--refresh-crm` is a compatibility name for running
+`sync_crm_v2_context --apply` followed by `refresh_crm_v2 --apply --routine`
+before export. It fails closed before the v2 cutover. Because it writes, prefer
+the explicit sequence when reviewing changed policy.
 
 The queue contains one candidate per canonical Action, with:
 
@@ -111,8 +117,8 @@ Drafting rules:
 - Answer a fresh inbound before introducing a new ask.
 - Use a post-meeting commitment or promised deliverable when the Action says
   that is what is owed.
-- Do not write as though an old thread is warm. Recovery/archive work needs a
-  current reason to reopen.
+- Do not write as though an old thread is warm. An account needs current
+  qualifying evidence or an explicit human next step.
 - Ground feature claims in the current FedRampGPT product source or supplied
   product context. If a claim cannot be verified, remove it.
 - Keep LinkedIn drafts concise; populate email only when email is the intended
@@ -137,8 +143,8 @@ artifacts/followups/codex-decisions.json
 Apply validates the complete file atomically against a newly serialized queue.
 Unknown or duplicate IDs, changed `lead_ids`, or stale fingerprints fail
 closed. Existing nonblank human drafts are preserved. Valid drafts are stored
-on canonical Actions and published to the corresponding stable-ID Followups
-rows through a context-skipping CRM refresh. Blank decisions are no-ops.
+on canonical Actions and published to the corresponding stable-ID `Actions`
+rows through routine CRM v2. Blank decisions are no-ops.
 
 To store valid drafts for the next scheduled refresh without publishing now:
 
@@ -150,8 +156,8 @@ To store valid drafts for the next scheduled refresh without publishing now:
 
 After publication, the operator reviews the draft, sends it manually, and
 records `Handled`, `Disposition`, `Waiting until`, or other human state in the
-Followups row. The next `refresh_crm --apply` imports those fields before
-regenerating the queue.
+Actions row. The next `refresh_crm_v2 --apply --routine` imports those fields
+before regenerating the queue.
 
 ## Retired legacy workflow
 
@@ -179,7 +185,8 @@ require `--legacy`.
 
 ## Scheduling
 
-Schedule `refresh_crm --apply`, not legacy followup generation. A separate
+Schedule the two-phase `sync_crm_v2_context --apply` then
+`refresh_crm_v2 --apply --routine` wrapper, not legacy followup generation. A separate
 Codex drafting job may export, draft, and apply canonical decisions, but it must
 stop on validation failures and must never send messages automatically.
 

@@ -28,22 +28,27 @@ the same database to avoid split-brain.
 | `GOOGLE_SHEETS_ID` | for either Sheets command | none | CRM workbook ID from `/spreadsheets/d/<id>/`. |
 | `GOOGLE_SHEETS_CREDENTIALS_PATH` | for either Sheets command | none | Local service-account JSON with Editor access to the CRM workbook. |
 | `GOOGLE_SHEETS_TAB_NAME` | no | `People` | Durable People worksheet name. |
-| `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | for `refresh_crm --apply` | none | Separate read-only Sales Motion workbook ID required as the live-write safety guard. |
+| `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | for Sales Motion admission | none | Separate read-only workbook whose non-template account tabs are authoritative CRM v2 pins. |
 | `GRANOLA_API_KEY` | no | none | Read-only Granola note access; stored Gemini is fallback when unavailable. |
 | `GRANOLA_API_BASE` | no | `https://public-api.granola.ai/v1` | Granola public API base. |
 | `GRANOLA_HTTP_TIMEOUT_SECONDS` | no | `30` | Per-request Granola timeout. |
 | `ACTIVE_TIMEZONE` | no | `America/Toronto` | Business date used for waiting/due action evaluation. |
 
-Never reuse or replace the Sales Motion ID as `GOOGLE_SHEETS_ID`. A dry-run can
-inventory the CRM without the guard, but `refresh_crm --apply` requires it. The
-refresh checks the opened workbook identity and refuses to operate when the IDs
-match.
+Never reuse or replace the Sales Motion ID as `GOOGLE_SHEETS_ID`.
+`preview_crm_v2` and `refresh_crm_v2` read its non-template account tabs when it
+is configured; `--skip-sales-motion` is an explicit diagnostic escape hatch.
+The publisher checks the opened CRM workbook identity and refuses an unexpected
+write target.
 Do not commit the service-account JSON, API keys, backup exports, or CRM data.
 
-`manage.py refresh_crm` is the orchestrator; omit `--apply` for an exact
-no-persistent-write plan. `manage.py sync_sheets` is only the narrow People
-publisher and does not decide Opportunity stage or followup eligibility.
-Granola is primary meeting context, with stored Gemini notes secondary.
+`manage.py sync_crm_v2_context` is the no-write-by-default Gmail/Gemini,
+email-first, and Granola ingestion phase. `manage.py refresh_crm_v2` is the
+canonical reconciler/publisher; omit `--apply` for a rollback-only DB plan with
+zero Sheet writes. First cutover requires a recent matching `preview_crm_v2`
+artifact, while post-cutover production uses `--apply --routine`.
+`manage.py sync_sheets` is only the narrow People publisher and does not decide
+account admission or action eligibility. Granola is primary meeting context,
+with stored Gemini notes secondary.
 LinkedIn backfill and Calendar/Drive ingestion remain separate prerequisites;
 see [the CRM refresh runbook](crm-refresh-workflow.md).
 

@@ -1,8 +1,9 @@
 ![OpenOutreach Logo](docs/logo.png)
 
 > Self-hosted LinkedIn outreach automation with a Postgres-backed, Google
-> Sheets-operated sales CRM. Capture conversations, maintain durable People and
-> Opportunities, publish stage/action views, and draft human-reviewed followups.
+> Sheets-operated sales CRM. Capture conversations, maintain a durable People
+> ledger, operate concise Active Accounts and Actions views, and draft
+> human-reviewed followups.
 
 <div align="center">
 
@@ -23,7 +24,8 @@
 A long-running daemon that runs LinkedIn outreach inside a stealth Playwright
 browser, plus a Postgres-backed canonical sales CRM operated through Google
 Sheets. The CRM separates per-Lead outreach automation Deals from durable
-account Opportunities, explicit owners/stakeholders, and due Actions.
+account Opportunities, then publishes only meaningful Active Accounts and
+current Actions.
 
 **Core loop:**
 
@@ -32,11 +34,13 @@ account Opportunities, explicit owners/stakeholders, and due Actions.
 3. **`crm.Message`** persists every LinkedIn DM thread (idempotent on `external_id`)
 4. **Backfill** (`backfill_messages` on its own schedule) keeps later LinkedIn
    replies fresh
-5. **`refresh_crm`** refreshes Gmail/meeting context, imports human Sheet edits,
-   recalculates canonical Actions, and safely publishes all CRM views
-6. **`sync_sheets`** remains a narrow incremental People publisher, not a sales
+5. **`sync_crm_v2_context`** refreshes Gmail/Gemini, validated email-first
+   contacts, and Granola without publishing Sheets
+6. **`refresh_crm_v2`** reconciles account evidence and atomically publishes
+   `Active Accounts` plus one owner-filterable `Actions` queue
+7. **`sync_sheets`** remains a narrow incremental People publisher, not a sales
    decision engine
-7. **`generate_followups`** exports stable-ID due Actions and applies validated
+8. **`generate_followups`** exports stable-ID current Actions and applies validated
    drafts without sending messages
 
 The Bayesian ML qualifier is still there for autonomous lead discovery, but most teams running this will already have a lead list — the bulk of value is now in the Sheets sync, message store, and human workflows.
@@ -50,7 +54,7 @@ The Bayesian ML qualifier is still there for autonomous lead discovery, but most
 | 1 | LinkedIn account(s) | Primary outreach account; optional separate "backfill" account for CSV imports |
 | 2 | LLM API key | Used for qualification + synthesis (cheap models work for synthesis, e.g., `gemini-2.5-flash`) |
 | 3 | Postgres | Required shared `DATABASE_URL`; no runtime SQLite fallback |
-| 4 | CRM Sheet ID + service-account JSON | Required for `sync_sheets` or `refresh_crm`; live CRM apply also requires the separate Sales Motion Sheet ID as an identity guard |
+| 4 | CRM Sheet ID + service-account JSON | Required for Sheets commands; configure the separate Sales Motion Sheet ID as a read-only account input |
 | 5 | (Optional) Slack webhook | For accepted-invite notifications |
 
 ---
@@ -128,23 +132,32 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 - **`LinkedInDiscoveryLead`** is the separate discovery collection table. Each globally deduplicated profile stores its structured profile JSON, first storing sender/account, and potential ICP.
 - Per-campaign GP models live in `Campaign.model_blob` (binary BLOB, not files).
 
-**Canonical CRM refresh** (`manage.py refresh_crm`):
+**Canonical CRM v2 refresh** (`manage.py refresh_crm_v2`):
 
 - `People` is durable and growing: update in place, append once, never
   clear/reorder/prune, and preserve operator columns/formulas/formatting.
-- `Opportunities` is the editable canonical account table with stable IDs,
-  explicit owner, 15-step stage, contact roles, next action, and commercial
-  outcome.
-- `Pipeline`, `Recovery`, and `<Owner> - Followups` are DB-derived views.
+- `Active Accounts` is the concise account workspace: one row per admitted
+  account/opportunity with explicit owner, stage, attention, evidence, next
+  action, due date, and key contacts.
+- `Actions` is one owner-filterable current-work queue. There are no separate
+  Pipeline, Recovery, or sender Followups surfaces.
 - Granola is primary meeting context; stored Gemini notes are secondary.
 - Human fields round-trip through a conservative three-way merge. Invalid or
   conflicting edits fail closed instead of being guessed.
-- On the one-time sender-tab rollout, every old Followups tab is retained under
-  a dated `Legacy` title. Unresolved material rows are reported and left
-  untouched rather than guessed; all affected validated replacements activate
-  together in one atomic title swap.
-- Omit `--apply` for an exact no-persistent-write plan. The command never sends
-  Gmail or LinkedIn messages.
+- Admission prioritizes explicit human/Sales Motion state, real meetings, and
+  human Gmail; LinkedIn qualifies only when the exchange is substantive and
+  bidirectional. One-sided outbound remains in People.
+- Don't send suppresses outreach to that exact contact without erasing account
+  relevance.
+- Omit `--apply` for an exact rollback-only DB plan with zero Sheet writes.
+  First cutover requires a reviewed private preview; scheduled runs use
+  `--apply --routine`. The command never sends Gmail or LinkedIn messages.
+
+**Context refresh** (`manage.py sync_crm_v2_context`):
+
+- Refreshes Gmail/Gmail-delivered Gemini, strictly validated email-first Leads,
+  and Granola before publication.
+- Defaults to no-write; `--apply` persists context but never sends messages.
 
 **Narrow People publisher** (`manage.py sync_sheets`):
 
@@ -184,9 +197,18 @@ make test / make docker-test
 pytest tests/api/test_voyager.py   # single file
 pytest -k test_name                # single test
 
-# Canonical CRM: dry-run first, then apply
-.venv/bin/python manage.py refresh_crm
-.venv/bin/python manage.py refresh_crm --apply
+# Refresh stored context, then inspect the canonical CRM plan
+.venv/bin/python manage.py sync_crm_v2_context --apply
+.venv/bin/python manage.py refresh_crm_v2 \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
+
+# Post-cutover routine publication
+.venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+  --manual-pin StackArmor \
+  --owner-override Ramp=Arian \
+  --owner-override StackArmor=Arian
 
 # Narrow People publisher diagnostics
 .venv/bin/python manage.py sync_sheets --dry-run
@@ -225,8 +247,8 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 | `CONNECTION_SWEEP_INTERVAL_HOURS` | `2` | How often the sweep task fires |
 | `AI_MODEL` | `gpt-4o` | Qualification/drafting model identifier |
 | `DATABASE_URL` | required | Shared Postgres connection string; no runtime SQLite fallback |
-| `GOOGLE_SHEETS_ID` + `GOOGLE_SHEETS_CREDENTIALS_PATH` | required by Sheets commands | Missing configuration makes `sync_sheets` and `refresh_crm` fail closed |
-| `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | required by `refresh_crm --apply` | Separate read-only workbook ID used as the live-write safety guard |
+| `GOOGLE_SHEETS_ID` + `GOOGLE_SHEETS_CREDENTIALS_PATH` | required by Sheets commands | Missing configuration makes `sync_sheets` and `refresh_crm_v2` fail closed |
+| `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | recommended CRM v2 input | Separate read-only workbook whose account tabs are authoritative admission evidence |
 | `GRANOLA_API_KEY` | unset | Optional read-only primary meeting-note source |
 | `SLACK_WEBHOOK_URL` | (unset → no Slack) | Notifications when sweep detects accepts |
 
@@ -256,7 +278,7 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   ├── db/                             # CRM CRUD (leads, deals, messages, enrichment)
 │   ├── discovery/                      # ICP config, dynamic gating, search cards, screening, persistence
 │   ├── django_settings.py              # Runtime Postgres settings; pytest alone uses in-memory SQLite
-│   ├── management/commands/            # refresh_crm, sync_sheets, generate_followups, ...
+│   ├── management/commands/            # sync_crm_v2_context, refresh_crm_v2, sync_sheets, ...
 │   ├── ml/                             # Bayesian qualifier (GPR), embeddings
 │   ├── models.py                       # Campaign, LinkedInProfile, Task, etc.
 │   ├── notifications/                  # sheets.py, slack.py, synthesis.py

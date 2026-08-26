@@ -8,11 +8,21 @@ class Lead(models.Model):
     class Meta:
         verbose_name = _("Lead")
         verbose_name_plural = _("Leads")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["linkedin_url"],
+                condition=~models.Q(linkedin_url=""),
+                name="unique_nonblank_lead_linkedin_url",
+            ),
+        ]
 
     first_name = models.CharField(max_length=100, blank=True, default="")
     last_name = models.CharField(max_length=100, blank=True, default="")
     company_name = models.CharField(max_length=200, blank=True, default="")
-    linkedin_url = models.URLField(max_length=200, blank=True, default="", unique=True)
+    # CRM contacts may originate in Gmail or a meeting before LinkedIn is
+    # known.  Only real LinkedIn identities are unique; many email-first
+    # contacts legitimately carry the empty value.
+    linkedin_url = models.URLField(max_length=200, blank=True, default="", db_index=True)
     email = models.EmailField(max_length=200, blank=True, default="", db_index=True)
     # Phone enrichment — a lead can carry multiple numbers, one per provider
     # that returned a hit. Each entry: {"number", "provider", "found_at"}.

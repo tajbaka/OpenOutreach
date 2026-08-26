@@ -1,18 +1,18 @@
 ================================================================================
 OPENOUTREACH SYSTEM FLOW
 ================================================================================
-Architecture snapshot: 2026-08-26
+Architecture snapshot: 2026-08-26 (CRM v2)
 
-Runtime flags still come from .env. Do not copy secret values into this file.
-Every non-test process requires the same Postgres DATABASE_URL; there is no
-runtime SQLite fallback.
+Runtime flags come from .env. Do not copy secret values into this file. Every
+non-test process uses the same Postgres DATABASE_URL; there is no runtime
+SQLite fallback.
 
 
 ================================================================================
 1. LINKEDIN DAEMON  (manage.py with no arguments)
 ================================================================================
-The long-running daemon owns browser-backed LinkedIn task execution. Active
-hours, rest days, feature flags, and per-profile limits gate its work.
+The long-running daemon owns browser-backed LinkedIn work. Active hours, rest
+days, feature flags, and per-profile limits gate its work.
 
 CONNECT
   - Sends a connection request/note when enabled.
@@ -25,36 +25,39 @@ SWEEP_CONNECTIONS
 
 FOLLOW_UP / GMAIL SEQUENCE
   - Outbound automation lanes remain separately feature-gated.
-  - They are not invoked by refresh_crm, sync_sheets, generate_followups, or
-    any data-ingestion runbook.
+  - They are not invoked by CRM v2 context, publication, drafting, or connector
+    workflows.
 
-Deal is an outreach-delivery state machine. Deal.state=COMPLETED means the
-automation lane finished; it never means the account Opportunity is Closed Won.
+Deal is an outreach-delivery state machine. Deal.state=COMPLETED means that
+automation lane finished; it never means Closed Won.
 
 
 ================================================================================
-2. CONTEXT INGESTION
+2. CONTEXT INGESTION  (manage.py sync_crm_v2_context)
 ================================================================================
-crm.Message is the canonical stored LinkedIn/Gmail communication timeline.
-crm.Meeting and crm.MeetingNote store meeting facts and note context.
+crm.Message is the stored LinkedIn/Gmail communication timeline. crm.Meeting
+and crm.MeetingNote store meeting facts and note context.
 
-Populated by:
-  - daemon/realtime/sweep paths for LinkedIn events;
-  - manage.py backfill_messages for later LinkedIn thread activity;
-  - manage.py sync_gmail_context for Gmail threads and Gmail-delivered
-    Gemini/Meet notes;
-  - the connector workflow in docs/data-sync-workflow.md for Calendar and
-    Drive-only Gemini context; and
-  - refresh_crm's incremental Granola batch sync.
+Apply mode:
 
-Important freshness boundary:
-  - refresh_crm does not log into LinkedIn;
-  - refresh_crm does not query Google Calendar or Drive directly;
-  - a successful refresh processes stored context safely but cannot certify
-    those separate inputs are fresh.
+  .venv/bin/python manage.py sync_crm_v2_context --apply
 
-Keep backfill_messages scheduled and run Calendar/Drive ingestion after
-important meetings when those sources are needed.
+It:
+  - refreshes configured Gmail human threads;
+  - persists Gmail-delivered Gemini/Meet notes;
+  - creates only strictly validated corporate email-first Leads from private
+    discovery state and relinks their exact threads when needed; and
+  - incrementally syncs/rematches Granola.
+
+It never publishes Sheets or sends messages. Default invocation is no-write.
+
+Separate prerequisites:
+  - daemon/realtime/sweep paths capture LinkedIn events;
+  - manage.py backfill_messages keeps later LinkedIn replies fresh;
+  - docs/data-sync-workflow.md covers Calendar and Drive-only Gemini context.
+
+Granola is primary meeting-note context when deterministically matched; stored
+Gemini is secondary. Context alone cannot make stale work eligible.
 
 
 ================================================================================
@@ -62,126 +65,102 @@ important meetings when those sources are needed.
 ================================================================================
 Lead / Deal remain contact and outreach-automation records.
 
-The sales operating model is separate:
+The account-first sales domain is separate:
   Account
-    -> Opportunity (owner, stage, 15-step motion, commercial state)
+    -> Opportunity (owner, stage, 15-step motion, commercial state, admission)
       -> OpportunityContact (champion / decision maker / stakeholder / other)
       -> OpportunityAction (one current open/waiting Action)
       -> OpportunityStageEvent (audit history)
       -> OpportunitySheetState (three-way merge baseline)
 
-Macro-stage mapping:
-  Prospecting 1
-  Discovery 2
-  Demo Planning 3-4
-  Evaluation 5-6
-  Sandbox/Pilot 7-10
-  Commercial 11
-  Procurement/Legal 12-14
-  Closed Won
-  Expansion 15
-  Closed Lost
+Admission priority:
+  1. human pin / Sales Motion / human-managed opportunity;
+  2. real upcoming or completed meeting;
+  3. human Gmail inbound/bidirectional thread;
+  4. substantive bidirectional LinkedIn conversation.
 
-Explicit Opportunity owner is authoritative. Sender inference is fallback-only
-and must be unambiguous.
+One-sided outbound remains People-only. Don't send stops outreach to the exact
+target but does not erase account relevance. Owner, stage, close state, and
+human actions remain authoritative.
 
 
 ================================================================================
-4. CANONICAL CRM REFRESH  (manage.py refresh_crm)
+4. CANONICAL CRM PUBLICATION  (manage.py refresh_crm_v2)
 ================================================================================
-Default invocation is an exact no-persistent-write dry-run:
+Default invocation runs the exact DB reconciliation/action path under rollback
+and performs zero Sheet writes:
 
-  .venv/bin/python manage.py refresh_crm
+  .venv/bin/python manage.py refresh_crm_v2 \
+    --manual-pin StackArmor \
+    --owner-override Ramp=Arian \
+    --owner-override StackArmor=Arian
 
-Apply only after reviewing the report:
+After the reviewed first cutover, scheduled publication is:
 
-  .venv/bin/python manage.py refresh_crm --apply
+  .venv/bin/python manage.py refresh_crm_v2 --apply --routine \
+    --manual-pin StackArmor \
+    --owner-override Ramp=Arian \
+    --owner-override StackArmor=Arian
 
 One run:
   1. acquires the nonblocking CRM lock;
-  2. verifies/inventories GOOGLE_SHEETS_ID and rejects the separate Sales
-     Motion workbook;
-  3. refreshes Gmail/Gemini context and batch-syncs Granola unless skipped;
-  4. reads human-owned Sheet edits and imports valid changes by stable ID;
-  5. bootstraps conservative Opportunities and recalculates Actions through
-     the shared time-aware policy;
-  6. incrementally publishes People and asserts preservation invariants;
-  7. incrementally publishes Opportunities;
-  8. regenerates managed Pipeline, Recovery, and owner Followups ranges; and
-  9. records exact WorkflowRun telemetry.
+  2. opens and inventories exactly GOOGLE_SHEETS_ID;
+  3. publishes the durable People prerequisite with preservation checks;
+  4. reads exact People Don't send Lead IDs;
+  5. resolves account evidence and reconciles DB state;
+  6. imports valid human edits by stable ID;
+  7. reconciles at most one current Action per opportunity;
+  8. stages and verifies Active Accounts plus Actions; and
+  9. swaps both live tabs atomically and commits baselines.
 
-One-time legacy Followups migration:
-  - imports human state only when stable evidence identifies one canonical row;
-  - never guesses an unresolved material row;
-  - preserves every untouched old sender tab under a dated Legacy title;
-  - reports unresolved rows for human review without blocking otherwise-safe
-    canonical activation; and
-  - prepares and validates all affected sender replacements before one atomic
-    title batch activates them. A pre-swap failure leaves all old canonical
-    titles active.
+Routine mode requires both canonical v2 tabs and no exact legacy canonical
+titles. First cutover requires a recent matching private preview_crm_v2
+artifact, makes a full private workbook backup, imports legacy human state only
+through exact stable IDs, and removes obsolete canonical tabs after DB commit.
 
-Granola is primary meeting context; stored Gemini is secondary. Context cannot
-create eligibility.
-
-Action aging:
-  - 0-21 days: daily only when work is genuinely required;
-  - 22-60 days: Recovery, absent an explicit current-action exception;
-  - over 60 days: archive/nurture, under the same exceptions.
-
-Future Waiting Actions disappear until due. Closed, Don't Send, disqualified,
-non-actionable failed, and polite-decline records stay out of daily queues.
+refresh_crm is retired. Once either v2 tab exists it fails closed and must not
+be scheduled or used as a fallback.
 
 
 ================================================================================
 5. GOOGLE SHEETS SURFACES
 ================================================================================
 People
-  - Durable growing contact ledger.
+  - Complete durable contact/prospecting ledger.
   - Updated in place/appended; never clear/rebuild/reorder/prune.
-  - Stable Lead ID plus canonical LinkedIn URL.
-  - Human/unknown cells, formulas, comments, and formatting are preserved.
+  - One-sided LinkedIn/outbound prospects stay here without cluttering sales.
 
-Opportunities
-  - Durable editable canonical table.
-  - Human fields merge Sheet -> DB before system fields publish DB -> Sheet.
-  - Conflicts/invalid edits fail closed rather than being guessed.
+Active Accounts
+  - One row per currently relevant account/opportunity.
+  - Shows owner, stage, attention, why active, last meaningful touch, who owes,
+    next action, due date, and key contacts.
 
-Pipeline
-  - Derived from Opportunity.stage only.
-  - Visual card position is never imported as stage.
-
-<Owner> - Followups
-  - Derived due-now Actions keyed by Action, Opportunity, and Lead IDs.
-  - Imports Handled, Disposition, Draft, Channel, Waiting, and Manual pin before
-    regeneration.
-  - One Action appears under at most one explicit owner.
-  - Dated Legacy tabs are frozen first-run evidence/recovery copies, not queues
-    to merge by name or schedule for sending.
-
-Recovery
-  - Derived older-inactive/unassigned review surface, separate from daily work.
+Actions
+  - One owner-filterable current work queue plus retained handled history.
+  - Requires deterministic owner, opportunity, and target contact.
+  - Outreach-stopped rows expose state without a send channel/draft.
 
 ICP Goals / separate Sales Motion workbook
-  - Read-only inputs to this workflow.
+  - Read-only inputs.
+
+Retired
+  - Opportunities, Pipeline, Recovery, and <Owner> - Followups are not routine
+    data sources or production views.
 
 
 ================================================================================
-6. NARROW PUBLISHER AND MANUAL DRAFTING
+6. MANUAL DRAFTING
 ================================================================================
-manage.py sync_sheets
-  - Narrow People planner/publisher only.
-  - Does not run LLM synthesis, assign opportunity stages, choose followups,
-    publish Pipeline, or rebuild sender tabs.
-
 manage.py generate_followups
-  - Exports explicitly owned canonical daily Actions for draft generation.
-  - Validates draft decisions by stable IDs and context fingerprint.
-  - Stores/publishes drafts but never sends them.
+  - Exports explicitly owned current Actions for draft generation.
+  - Validates decisions by Action/Opportunity/Lead IDs plus context fingerprint.
+  - Stores and republishes drafts through routine CRM v2; never sends.
+  - --refresh-crm refreshes v2 context then runs routine v2 publication.
   - The retired name-based rebuild requires explicit --legacy and is never a
     scheduled production path.
 
-Operators review and send messages manually, then record human action state in
-the stable-ID Followups row.
+Operators filter Actions by owner, review the exact conversation, send
+manually, then record handled/disposition/waiting state in the stable-ID row.
 
 
 ================================================================================
@@ -191,16 +170,20 @@ The existing Task Scheduler action still targets:
 
   scripts\run_sync_sheets.ps1
 
-The wrapper now runs:
+The wrapper runs, in order:
 
-  .venv\Scripts\python.exe manage.py refresh_crm --apply
+  .venv\Scripts\python.exe manage.py sync_crm_v2_context --apply
+  .venv\Scripts\python.exe manage.py refresh_crm_v2 --apply --routine \
+    --manual-pin StackArmor \
+    --owner-override Ramp=Arian \
+    --owner-override StackArmor=Arian
 
-and logs to:
+and logs run/phase markers to:
 
-  data\logs\refresh_crm_task.log
+  data\logs\crm_v2_task.log
 
-See docs/crm-refresh-workflow.md for exact fetch/switch/install/migrate/dry-run/
-apply/restart/verify and backup/recovery steps.
+notify_sync_sheets_health retains the deployed task name but considers only the
+newest run and requires both phases to finish successfully.
 
 
 ================================================================================
@@ -210,5 +193,5 @@ apply/restart/verify and backup/recovery steps.
 
 The command uses BACKFILL_LINKEDIN_USERNAME/PASSWORD, imports only matched
 accepted connections, persists message history, and never writes Sheets
-directly. The next CRM refresh appends eligible contacts to People and
-conservatively evaluates whether an Opportunity should exist.
+directly. The next context/publication cycle appends eligible contacts to
+People and evaluates account admission conservatively.

@@ -1,4 +1,5 @@
 from io import StringIO
+from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
@@ -49,3 +50,68 @@ def test_filter_queue_limit_recomputes_owner_counts():
 
     assert filtered["candidate_count"] == 1
     assert filtered["counts_by_owner"] == {"Arian": 1}
+
+
+def test_refresh_convenience_uses_context_then_routine_crm_v2(monkeypatch):
+    calls = []
+    monkeypatch.setattr(canonical_followup_command, "_canonical_queue", _queue)
+    monkeypatch.setattr(
+        canonical_followup_command,
+        "call_command",
+        lambda name, **options: calls.append((name, options)),
+    )
+
+    call_command("generate_followups", refresh_crm=True, stdout=StringIO())
+
+    assert calls == [
+        ("sync_crm_v2_context", {"apply": True}),
+        ("refresh_crm_v2", {"apply": True, "routine": True}),
+    ]
+    assert all(name != "refresh_crm" for name, _options in calls)
+
+
+def test_sync_sheets_compatibility_flag_publishes_v2_without_context(monkeypatch):
+    calls = []
+    monkeypatch.setattr(canonical_followup_command, "_canonical_queue", _queue)
+    monkeypatch.setattr(
+        canonical_followup_command,
+        "call_command",
+        lambda name, **options: calls.append((name, options)),
+    )
+
+    call_command("generate_followups", sync_sheets=True, stdout=StringIO())
+
+    assert calls == [("refresh_crm_v2", {"apply": True, "routine": True})]
+
+
+def test_applied_drafts_republish_through_routine_crm_v2(monkeypatch):
+    from linkedin import crm_followup_decisions
+
+    publications = []
+    monkeypatch.setattr(canonical_followup_command, "_canonical_queue", _queue)
+    monkeypatch.setattr(
+        canonical_followup_command,
+        "_publish_crm_v2",
+        lambda: publications.append("v2"),
+    )
+    monkeypatch.setattr(
+        crm_followup_decisions,
+        "load_crm_followup_decisions",
+        lambda _path: [object()],
+    )
+    monkeypatch.setattr(
+        crm_followup_decisions,
+        "apply_crm_followup_decisions",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            drafts_applied=1,
+            counts=lambda: {"drafts_applied": 1},
+        ),
+    )
+
+    call_command(
+        "generate_followups",
+        apply_json="decisions.json",
+        stdout=StringIO(),
+    )
+
+    assert publications == ["v2"]

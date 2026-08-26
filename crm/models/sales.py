@@ -114,6 +114,13 @@ class Opportunity(models.Model):
         BOOTSTRAP = "bootstrap", "Bootstrap"
         SYSTEM = "system", "System"
 
+    class AdmissionTier(models.TextChoices):
+        AUTHORITATIVE = "authoritative", "Authoritative"
+        PRIMARY = "primary", "Primary"
+        SECONDARY = "secondary", "Secondary"
+        WEAK = "weak", "Weak"
+        NONE = "none", "None"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(
         "crm.Account",
@@ -157,6 +164,21 @@ class Opportunity(models.Model):
     closed_lost_at = models.DateTimeField(null=True, blank=True)
     closed_lost_reason = models.TextField(blank=True, default="")
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
+    # CRM v2 admission is deliberately independent from outreach Deal state.
+    # Existing rows remain visible until the first explicit reconciliation;
+    # weak bootstrap rows are then deactivated rather than deleted or closed.
+    active_account = models.BooleanField(default=True, db_index=True)
+    admission_reason = models.CharField(max_length=64, blank=True, default="")
+    admission_reasons = models.JSONField(blank=True, default=list)
+    admission_tier = models.CharField(
+        max_length=16,
+        choices=AdmissionTier.choices,
+        default=AdmissionTier.NONE,
+        db_index=True,
+    )
+    admission_evaluated_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    inactive_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    inactive_reason = models.CharField(max_length=64, blank=True, default="")
     human_revision = models.PositiveBigIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -216,6 +238,10 @@ class Opportunity(models.Model):
         ]
         indexes = [
             models.Index(fields=["owner", "stage"], name="crm_opp_owner_stage_idx"),
+            models.Index(
+                fields=["active_account", "admission_tier"],
+                name="crm_opp_active_tier_idx",
+            ),
             models.Index(
                 fields=["stage", "last_meaningful_activity_at"],
                 name="crm_opp_stage_activity_idx",
