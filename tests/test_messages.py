@@ -217,6 +217,7 @@ def test_persist_thread_creates_messages(db):
     msgs = list(lead.messages.order_by("sent_at"))
     assert len(msgs) == 2
     assert msgs[0].direction == Message.Direction.OUTBOUND
+    assert msgs[0].operator.handle == "Arian"
     assert msgs[0].external_id == "urn:li:msg:m1"
     assert msgs[1].direction == Message.Direction.INBOUND
     assert msgs[1].thread_external_id == "urn:li:conv:c1"

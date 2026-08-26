@@ -52,14 +52,31 @@ def _enqueue_next_step(task, *, delay_hours: float) -> None:
     )
 
 
-def _persist_outbound(*, lead, external_id: str, sender: str, body: str, thread_id: str = ""):
-    from crm.models import Message
+def _persist_outbound(
+    *,
+    lead,
+    external_id: str,
+    sender: str,
+    body: str,
+    thread_id: str = "",
+    operator: str = "",
+):
+    from crm.models import Message, SalesOwner
+    from linkedin.operators import resolve_sales_owner_handle
+
+    owner_handle = resolve_sales_owner_handle(operator)
+    message_owner = (
+        SalesOwner.objects.filter(handle=owner_handle).first()
+        if owner_handle
+        else None
+    )
 
     return Message.objects.get_or_create(
         source=Message.Source.GMAIL,
         external_id=external_id,
         defaults={
             "lead": lead,
+            "operator": message_owner,
             "direction": Message.Direction.OUTBOUND,
             "sender": sender,
             "body": body,
@@ -94,6 +111,7 @@ def _sync_gmail_for_lead(*, lead, client: GmailClient) -> int:
         lead=lead,
         threads=threads,
         self_emails=client.send_as_aliases().keys(),
+        operator=client.operator,
     )
 
 
@@ -194,6 +212,7 @@ def handle_gmail_follow_up(task) -> None:
         sender=client.send_as,
         body=rendered.body,
         thread_id=gmail_id,
+        operator=operator,
     )
 
     next_step_index = step_index + 1

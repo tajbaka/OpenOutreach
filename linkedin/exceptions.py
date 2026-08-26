@@ -54,6 +54,51 @@ class MarketplaceListenerError(Exception):
     pass
 
 
+class GranolaError(Exception):
+    """Granola API authentication, transport, or response validation failed."""
+
+    pass
+
+
+class GranolaAuthenticationError(GranolaError):
+    """Granola rejected the configured credentials or their scopes."""
+
+
+class GranolaNotFoundError(GranolaError):
+    """A previously known Granola resource is no longer accessible."""
+
+
+class GranolaPayloadTooLargeError(GranolaError):
+    """Granola could not return the requested payload inline."""
+
+
+class GranolaRequestError(GranolaError):
+    """Granola rejected a non-retryable request other than authentication."""
+
+    def __init__(self, message: str, *, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class GranolaResponseError(GranolaError):
+    """Granola returned a response that violates the documented schema."""
+
+
+class GranolaTransientError(GranolaError):
+    """A retryable Granola transport, rate-limit, or server failure persisted."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after_seconds: float | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
+
 class DiscoveryConfigurationError(Exception):
     """Discovery configuration is missing or malformed."""
 

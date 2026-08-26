@@ -1,128 +1,125 @@
-# Human-in-the-Loop Workflows
+# Human-in-the-loop CRM workflows
 
-Two interactive runbooks that sit on top of OpenOutreach's automation tier. Each one is driven by Claude in conversation, with the human reviewing/approving before anything writes to the outside world.
+OpenOutreach separates deterministic CRM policy from human sales judgment.
+Scheduled code gathers context, imports explicit edits, and publishes stable-ID
+views. Operators decide what an Opportunity means, review drafts, and send
+messages themselves.
 
-If you want the automation tier (daemon, `sync_sheets`, `backfill_messages`), see `system-flow.txt`. This doc is about what happens *on top* of that data.
+## The three workflows
 
----
-
-## Why these are separate from the automation
-
-| | Automation (daemon + crons) | Human workflows (these) |
+| Workflow | Purpose | Persistent writes |
 |---|---|---|
-| Who runs it | A scheduler / long-running process | A human in conversation with Claude |
-| Output | Database rows + Sheets writes | Drafts in the Sheet, or Sheets/CRM writes you approve |
-| Failure mode | Silent — keeps going on next tick | Visible — Claude waits for your nod |
-| Frequency | Continuous / cron | Daily to bi-weekly |
-| Input | Live LinkedIn API + Gmail | Already-persisted DB + MCP-fetched threads |
+| `refresh_crm` | Import edits, recalculate Actions, publish CRM views | DB and Sheets only with `--apply` |
+| `data-sync-workflow.md` | Ingest Calendar/Drive context not covered by the scheduled command | DB context only |
+| `generate_followups` | Export canonical Actions and validate draft decisions | Action drafts; never sends |
 
-The automation gathers raw signal. The human workflows turn that signal into outbound drafts (or Sheets enrichments) that match the sender's voice and judgment. The split exists because tone, prioritization, and "should I send this today" decisions don't automate well.
+## 1. Operate the CRM in Sheets
 
----
+Use `Opportunities` as the editable account/opportunity table. Human-owned
+fields include owner, stage/step, contact roles, next action/due date, waiting,
+manual pin, commercial values, and won/lost outcome. The next apply imports
+valid changes by stable Opportunity ID before publishing system fields.
 
-## The two workflows
+Use `<Owner> - Followups` for due-now work. An operator may edit Draft, Channel,
+Handled, Disposition, Waiting until, and Manual pin. Those fields are imported
+by stable Action ID before the derived queue is regenerated.
 
-### 1. `followup-generation-workflow.md` — produce drafts to send
+Do not edit Pipeline cards as a way to change stage. `Pipeline` and `Recovery`
+are derived views. Do not manually clear, reorder, or deduplicate People; it is
+the durable contact ledger.
 
-**Purpose:** generate per-prospect follow-up drafts you can copy/paste into LinkedIn or Gmail.
+Preview any change set first:
 
-**Output:** Two Google Sheets tabs — `Arian - Followups` and `Chuka - Followups` — each divided into five sections (Met / Scheduling / Replied / Active in-flight / Sent history). One row per Lead with the draft + ROLE + PRIORITY + MEDIUM + CONVO + a `Sent?` checkbox the operator ticks after dispatching. The bottom `Sent` section preserves prior sent rows as history, but `Sent` is no longer a Cohort value.
-
-**Cohorts (set by the ball-on-court classifier in Phase 1):**
-- **Ball on us** — they replied, we owe an answer (most time-sensitive)
-- **Cold thread** — they replied once and we've been silent ≥ 5 days
-- **Active in-flight** — we sent something < 5 days ago, ball on them (visibility-only, no draft)
-- **No reply yet** — accepted invite, never replied (different angle than original)
-- **Met / Scheduling are sections, not Cohort values** — those rows are grouped by People-tab `Outreach status`, while the `Cohort` cell stays focused on outbound state (`Ball on us`, `Cold thread`, `Active in-flight`)
-
-**Freshness posture:** Phase 1 also stamps each row with `conversation_freshness` and `draft_posture`. Cohort answers whose ball it is; freshness answers whether the draft should continue the thread, lightly follow up, reopen an old conversation, or hold the row until there is a fresh reason to write. Stale/cold threads must not be drafted as if the last exchange happened recently.
-
-**When to run:** safe to run daily. Ball-on-court classifier prevents drafting on top of fresh outbound.
-
-**Reads from:** `crm.Message` (LinkedIn DMs + Gmail + Calendar — already ingested by data-sync, no MCP calls of its own), existing `Sent? = TRUE` rows in the Followups tabs (to skip already-handled leads), People-tab Outreach status to identify Met / Scheduling cohorts.
-
-**Writes to:** the two Followups tabs in Google Sheets via `linkedin.notifications.sheets.write_followups()`. Optionally a `followups/YYYY-MM-DD/raw.json` archive for history.
-
-### 2. `data-sync-workflow.md` — ingest Google data + enrich Sheets
-
-**Purpose:** single owner of MCP-based ingestion for Google data. Pulls calendar events, Gmail threads, and Drive Gemini meeting notes; persists them to DB (`crm.Message` for Gmail, `crm.Meeting` for Calendar + Gemini); writes the synthesized AI Note + Outreach status updates to the People tab.
-
-**Output:**
-- `crm.Message` rows with `source=gmail` (raw thread data)
-- `crm.Meeting` rows with calendar event facts + raw Gemini notes (one row per attended meeting)
-- People tab updates: AI Notes column, Outreach status (Replied → Wants Meeting → Had Meeting → ...), Stage (Prospecting → Qualification → Meeting → Closing → Won)
-- Preview-then-apply gate — Claude shows you the planned diff, you approve before any write fires
-
-**When to run:** weekly/biweekly, or after a batch of meetings (e.g., end of a busy demo week). The followup workflow's Phase 0.5 staleness check flags when this hasn't run recently and recommends running it first.
-
-**Reads from:** the People tab (current state), Gmail (MCP), Calendar (MCP), Drive (MCP), `crm.Message` (CRM).
-
-**Writes to:**
-- `crm.Message` (Gmail rows) and `crm.Meeting` (Calendar + Gemini rows) via DB upserts (idempotent on `(source, external_id)`).
-- The People tab (with approval) via `sheets.SheetIndex.upsert_row()`.
-
----
-
-## How they relate
-
-```
-        DATA-PRODUCING AUTOMATION TIER
-        (covered in system-flow.txt)
-        ────────────────────────────────────
-              ↓ produces crm.Message rows
-              ↓ produces Sheets People-tab state
-
-        HUMAN-IN-THE-LOOP WORKFLOWS TIER  ← this doc
-        ────────────────────────────────────
-        followup-generation-workflow.md
-          • Reads crm.Message + Gmail + Cal + Drive +
-            existing Sent? rows in Followups tabs
-          • Writes drafts to Arian/Chuka Followups tabs
-          • You copy the Draft cell into LinkedIn / Gmail
-
-        data-sync-workflow.md
-          • Reads People tab + Gmail + Cal + Drive + crm.Message
-          • Writes to People tab (preview-then-apply)
-          • Updates Outreach status, Stage,
-            per-row AI Notes
+```bash
+.venv/bin/python manage.py refresh_crm
 ```
 
-Neither workflow feeds back into the automation tier. They're consumers, not producers. That's intentional — it means they can't break the daemon or corrupt outreach state.
+Then apply and verify idempotence:
 
----
+```bash
+.venv/bin/python manage.py refresh_crm --apply
+.venv/bin/python manage.py refresh_crm
+```
 
-## Shared data dependency: `crm.Message` freshness
+Conflicts and invalid edits are review items, not prompts for the system to
+guess.
 
-Both workflows read `crm.Message` to reason about thread state. The daemon only persists messages **once per lead, at the moment of invite-acceptance** (sweep_connections snapshot). Anything a prospect sends after that is invisible to `crm.Message` unless something else fetches it.
+During the one-time sender-tab rollout, unresolved material rows from the old
+Followups tabs are also review items. The refresh does not infer their identity
+or discard them: it keeps the original rows in dated `Legacy` tabs and activates
+all affected validated replacements in one atomic title swap. Work from
+canonical tabs after the swap; use Legacy only for deliberate review or
+recovery.
 
-That something else is `manage.py backfill_messages` — see `system-flow.txt`. **If `backfill_messages` isn't on cron, both human workflows produce stale results:**
-- Follow-up generation misses recent replies (drafts re-engage when the ball is actually on us with a new inbound)
-- Sheets meeting sync misses post-meeting Gmail / DM context (under-attributes the conversation depth)
+## 2. Refresh external context
 
-Verify with `crontab -l` on whichever box runs `backfill_messages` before trusting either workflow's output.
+The scheduled CRM refresh directly ingests configured Gmail threads,
+Gmail-delivered Gemini/Meet notes, and Granola. Granola is primary meeting
+context; stored Gemini is secondary.
 
----
+Two prerequisites remain separate:
 
-## When to run which
+- `backfill_messages` keeps post-accept LinkedIn conversations fresh.
+- Google Calendar and Drive-only Gemini notes require the interactive
+  `docs/data-sync-workflow.md` path.
 
-| Situation | Workflow |
-|---|---|
-| It's Monday morning, want to know who to message this week | `followup-generation-workflow.md` |
-| Just had a heavy demo week, want the Sheets People tab to reflect reality | `data-sync-workflow.md` |
-| New batch of cold-acceptances landed, want to re-engage them | `followup-generation-workflow.md` (connected-no-reply cohort) |
-| A meeting happened but the prospect isn't in our DB yet | `data-sync-workflow.md` (it surfaces them; you add via `import_connections` or manual creation) |
-| Daily cadence sanity check ("anything blow up overnight?") | `followup-generation-workflow.md` (ball-on-us bucket surfaces same-day inbound) |
+Context only enriches canonical state. It does not advance a stage, widen
+eligibility, or overwrite human-owned fields by itself.
 
-You can run both in the same session if you want a full sweep — they don't share state, so order doesn't matter, but doing the meeting sync first means the followup generator reads cleaner sheet "already met" exclusions.
+## 3. Draft followups
 
----
+Export the current canonical queue:
 
-## What they explicitly do NOT do
+```bash
+.venv/bin/python manage.py generate_followups \
+  --output artifacts/followups/codex-review.json
+```
 
-- Send messages on your behalf (followup) — drafts only, you paste
-- Mark leads as disqualified — they recommend it, you run a one-liner manually
-- Modify `crm.Message` rows — read-only there
-- Fire LinkedIn API calls outside what the existing daemon flows already do
-- Run on a schedule — both are interactive sessions
+The drafting agent copies the stable Action/Opportunity/Lead IDs and context
+fingerprint exactly, supplies at most one channel draft, and flags ambiguity for
+human review. Apply the validated decision file:
 
-If you want any of the above to be automated, that's a different conversation (and probably a different workflow file).
+```bash
+.venv/bin/python manage.py generate_followups \
+  --apply-json artifacts/followups/codex-decisions.json
+```
+
+The command stores/publishes drafts but never sends them. The operator reviews
+the row, opens the correct conversation, sends manually, and records the human
+state in Sheets.
+
+The old name-based tab rebuild is retired. It is available only with explicit
+`generate_followups --legacy` and must not be scheduled or used against the
+canonical workbook as a normal workflow.
+
+## Dependency flow
+
+```text
+LinkedIn backfill ─┐
+Gmail context ─────┼─> crm.Message / crm.Meeting ─┐
+Calendar + Drive ──┤                              │
+Granola ───────────┘                              v
+                                           refresh_crm
+Sheet human edits ────────────────────────────────┤
+                                                  ├─> Opportunities
+                                                  ├─> Pipeline / Recovery
+                                                  └─> owner Followups
+                                                           |
+                                                           v
+                                                  generate_followups
+                                                           |
+                                                           v
+                                                  operator review/send
+```
+
+## What none of these workflows do
+
+- Send Gmail or LinkedIn messages automatically.
+- Treat `Deal.state=COMPLETED` as Closed Won.
+- Use Name as identity or silently merge same-name contacts.
+- Auto-close a polite decline as Lost.
+- Treat meeting-note text alone as a reason to contact someone.
+- Write to the separate Sales Motion workbook.
+
+See `docs/crm-refresh-workflow.md` for field ownership, stage mapping, backup,
+recovery, and runner deployment details.

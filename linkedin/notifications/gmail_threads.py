@@ -56,6 +56,7 @@ def persist_gmail_threads(
     lead,
     threads: list[dict],
     self_emails: Iterable[str],
+    operator: str = "",
 ) -> int:
     """Upsert all messages in the supplied Gmail thread payloads.
 
@@ -87,6 +88,15 @@ def persist_gmail_threads(
             "aliases of the connected account)."
         )
 
+    from crm.models import SalesOwner
+    from linkedin.operators import resolve_sales_owner_handle
+
+    owner_handle = resolve_sales_owner_handle(operator)
+    message_owner = (
+        SalesOwner.objects.filter(handle=owner_handle).first()
+        if owner_handle
+        else None
+    )
     created = 0
     with transaction.atomic():
         for thread in threads or []:
@@ -106,11 +116,16 @@ def persist_gmail_threads(
                 body = _extract_body(raw_msg)
                 sender = from_addr or _extract_sender_display(raw_msg)
 
-                _, was_created = Message.objects.get_or_create(
+                stored, was_created = Message.objects.get_or_create(
                     source=Message.Source.GMAIL,
                     external_id=external_id,
                     defaults={
                         "lead": lead,
+                        "operator": (
+                            message_owner
+                            if direction == Message.Direction.OUTBOUND
+                            else None
+                        ),
                         "direction": direction,
                         "sender": sender,
                         "body": body,
@@ -119,6 +134,14 @@ def persist_gmail_threads(
                         "raw": _stripped_raw(raw_msg),
                     },
                 )
+                if (
+                    not was_created
+                    and direction == Message.Direction.OUTBOUND
+                    and stored.operator_id is None
+                    and message_owner is not None
+                ):
+                    stored.operator = message_owner
+                    stored.save(update_fields={"operator"})
                 if was_created:
                     created += 1
     return created

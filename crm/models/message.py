@@ -25,6 +25,13 @@ class Message(models.Model):
     lead = models.ForeignKey(
         "crm.Lead", on_delete=models.CASCADE, related_name="messages",
     )
+    operator = models.ForeignKey(
+        "crm.SalesOwner",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="messages",
+    )
     source = models.CharField(max_length=16, choices=Source.choices)
     external_id = models.CharField(max_length=200)
     direction = models.CharField(max_length=16, choices=Direction.choices)
@@ -37,7 +44,10 @@ class Message(models.Model):
 
     class Meta:
         unique_together = ("source", "external_id")
-        indexes = [models.Index(fields=["lead", "sent_at"])]
+        indexes = [
+            models.Index(fields=["lead", "sent_at"]),
+            models.Index(fields=["lead", "operator", "sent_at"]),
+        ]
         ordering = ["sent_at"]
 
     def __str__(self):

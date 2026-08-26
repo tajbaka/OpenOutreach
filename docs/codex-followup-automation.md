@@ -1,202 +1,144 @@
-# Codex Followup Automation
+# Codex followup automation
 
-This is the single runbook for producing the operator Followups tabs with Codex.
-It replaces the old Claude followup workflow for the parts now implemented in
-this repo.
+This runbook generates drafts for canonical CRM Actions. It never sends Gmail
+or LinkedIn messages. Read `docs/crm-refresh-workflow.md` first for workbook
+ownership, context prerequisites, dry-run, backup, and recovery behavior.
 
-## Goal
+## Safe canonical sequence
 
-Refresh context, draft manual followups, and write:
+Refresh and review the CRM plan:
 
-- `Arian - Followups`
-- `Leili - Followups`
-- `Athena - Followups`
-- `Chuka - Followups`
+```bash
+.venv/bin/python manage.py refresh_crm
+```
 
-The workflow never sends messages. Operators still review, copy, send, and flip
-the Sent toggles in Google Sheets.
+After approval, apply the CRM refresh:
 
-## Full Run
+```bash
+.venv/bin/python manage.py refresh_crm --apply
+```
 
-From `/Users/admin/Desktop/Projects/OpenOutreach`:
+Export only explicitly owned daily Actions:
 
 ```bash
 .venv/bin/python manage.py generate_followups \
-  --sync-gmail-context \
-  --sync-sheets \
   --output artifacts/followups/codex-review.json
 ```
 
-Then Codex reads:
-
-```text
-artifacts/followups/codex-review.json
-```
-
-Codex writes:
+Codex reads that file and writes:
 
 ```text
 artifacts/followups/codex-decisions.json
 ```
 
-Then apply:
+Then validate and apply drafts:
 
 ```bash
 .venv/bin/python manage.py generate_followups \
   --apply-json artifacts/followups/codex-decisions.json
 ```
 
-## What Export Does
+The artifacts contain CRM context and must remain gitignored/local.
 
-`generate_followups --sync-gmail-context --sync-sheets --output ...` runs:
+## Decision contract
 
-1. `sync_gmail_context`
-   - Pulls prospect Gmail threads into `crm.Message`.
-   - Pulls Gmail-delivered Gemini/Meet note emails into `crm.Meeting`.
-   - Writes `WorkflowRun(name="data-sync")`.
-
-2. `sync_sheets`
-   - Updates the main `People` tab from DB state/context.
-
-3. Followup queue export
-   - Reads `crm.Message`, including LinkedIn and Gmail.
-   - Reads `crm.Meeting.gemini_notes_raw`.
-   - Reads People-tab Outreach status.
-   - Reads existing Followups tabs to preserve already-sent rows.
-   - Reads `ICP Goals`.
-   - Exports only leads whose conversation, meeting, CRM, Sheet status,
-     eligibility bucket, or ICP goal changed since the last successful apply.
-   - Retains the last applied Codex decision for unchanged leads.
-   - Writes `artifacts/followups/codex-review.json`.
-
-The review JSON includes `maintenance_required`. When `candidates` is empty
-but `maintenance_required` is true, write `{ "rows": [] }` and run the apply
-command so sent, disqualified, or otherwise ineligible rows are removed. When
-both are empty/false, stop successfully without applying.
-
-`--full-review` is an operator escape hatch that exports every eligible lead.
-Normal daily automation must remain incremental.
-
-## Codex Drafting Instructions
-
-Read the review JSON and produce only valid JSON at
-`artifacts/followups/codex-decisions.json`.
-
-Output shape:
+Return JSON only in the `schema` embedded in the queue:
 
 ```json
 {
-  "rows": [
+  "decisions": [
     {
-      "lead_id": 123,
-      "operator": "Arian",
-      "status": "Replied",
-      "state": "Ball on us",
-      "role": "CSP",
-      "priority": "HIGH",
-      "convo": "One or two sentence relationship summary.",
+      "action_id": "copied UUID",
+      "opportunity_id": "copied UUID",
+      "lead_ids": [123],
+      "context_fingerprint": "copied SHA-256",
+      "recommended_next_step": "one short recommendation",
+      "relationship_summary": "one or two grounded sentences",
       "draft_email": "",
-      "draft_linkedin": "Short LinkedIn draft here."
+      "draft_linkedin": "short draft or blank",
+      "needs_human_review": false,
+      "review_reason": ""
     }
   ]
 }
 ```
 
-Allowed `state` values:
+Rules:
 
-- `Ball on us`
-- `Cold thread`
-- `Ball on them`
+- Copy `action_id`, `opportunity_id`, ordered `lead_ids`, and
+  `context_fingerprint` exactly. Never key by Name.
+- Supply at most one of `draft_email` and `draft_linkedin`.
+- Do not alter owner, stage, action status/description, contact roles, or due
+  dates in the decision file.
+- Flag ambiguity, missing context, contact uncertainty, or a polite decline for
+  human review rather than guessing.
+- Ground every product claim in supplied/current product context.
+- Do not write operator instructions inside the draft body.
 
-Allowed `priority` values:
+Apply validates the entire file atomically against a freshly serialized queue.
+Unknown/duplicate IDs, changed contacts, and stale fingerprints fail closed.
+Existing nonblank human drafts are preserved. Blank/review-only decisions are
+no-ops. Successful drafts are stored on their canonical Actions and published
+to stable-ID Followups rows; no send API is called.
 
-- `HIGH`
-- `MEDIUM-HIGH`
-- `MEDIUM`
-- `LOW`
-- `HOLD`
+## Scopes and publication
 
-Use the `sheet_row` object in each candidate as the starting point, but write
-the fields above in snake_case.
-
-## Drafting Rules
-
-- Do not draft active-in-flight rows. Leave both draft fields blank and use
-  `state: "Ball on them"`.
-- No apology openers: no “sorry for the delay”, “my fault”, or “apologies”.
-- No em dashes.
-- Keep LinkedIn drafts short, usually 3-5 sentences.
-- Email drafts can be slightly longer, but only populate `draft_email` when the
-  candidate has real Gmail engagement.
-- For post-meeting rows, use `meeting.gemini_notes`. If meeting context is empty,
-  write a conservative draft or set priority `HOLD`.
-- For stale/archive posture, do not pretend the thread is warm. Reopen naturally
-  or leave blank with `HOLD`.
-- Use `icp_goal.goal` as strategic direction, not verbatim copy.
-- Do not mention features that are not supported by the product context in the
-  review JSON.
-- Never include instructions to the operator inside the draft body.
-
-## Apply Behavior
-
-Apply mode validates the Codex JSON and calls `write_followups()`.
-
-It:
-
-- rebuilds only operator tabs represented in the decisions JSON,
-- preserves rows where either Sent toggle was already `Yes`,
-- writes dropdowns/sections/links through the existing Sheets helper,
-- records `WorkflowRun(name="followup")`,
-- does not send LinkedIn or Gmail messages.
-
-## Useful Variants
-
-Run for one operator:
+Export one operator or a small diagnostic batch:
 
 ```bash
 .venv/bin/python manage.py generate_followups \
   --operator Arian \
-  --sync-gmail-context \
-  --sync-sheets \
-  --output artifacts/followups/codex-review.json
-```
-
-Debug small export:
-
-```bash
-.venv/bin/python manage.py generate_followups \
   --limit 10 \
   --output artifacts/followups/codex-review.json
 ```
 
-Export without visibility-only active rows:
-
-```bash
-.venv/bin/python manage.py generate_followups \
-  --no-active \
-  --output artifacts/followups/codex-review.json
-```
-
-Apply without recording a WorkflowRun:
+Store valid drafts for the next scheduled CRM refresh without publishing now:
 
 ```bash
 .venv/bin/python manage.py generate_followups \
   --apply-json artifacts/followups/codex-decisions.json \
-  --no-record-workflow
+  --no-publish
 ```
 
-## Scheduling Notes
+`--refresh-crm` before export is shorthand for `refresh_crm --apply`. The old
+`--sync-gmail-context` and `--sync-sheets` convenience flags also route through
+the canonical CRM orchestrator in non-legacy mode. Because these are writes,
+the explicit dry-run/apply sequence is preferred.
 
-A scheduled Codex automation should run this sequence:
+## Scheduling
 
-1. Run the export command.
-2. Read `artifacts/followups/codex-review.json`.
-3. Generate `artifacts/followups/codex-decisions.json`.
-4. Run the apply command.
-5. Report counts and any warnings from the review JSON.
+A drafting automation may:
 
-Recommended cadence: daily on business mornings, or hourly only if operators
-need very fast Gmail/LinkedIn reply triage. Hourly is safe because message and
-meeting persistence is idempotent, but it may consume more Gmail API quota.
+1. run a no-write CRM dry-run and stop on safety warnings;
+2. apply the CRM refresh only under the deployment's approved policy;
+3. export the canonical queue;
+4. write a schema-valid decision file;
+5. apply the decisions; and
+6. report counts and validation failures.
 
-Do not schedule automatic message sending from this workflow.
+Never add automatic message sending. `refresh_crm --apply`, not draft
+generation, is the Windows scheduled CRM publisher.
+
+## Retired legacy path
+
+The former Lead/name-based workflow rebuilt sender tabs and inferred routing
+outside the canonical Action policy. It is a destructive rollback-only path and
+must never be scheduled.
+
+Every invocation requires explicit `--legacy`:
+
+```bash
+.venv/bin/python manage.py generate_followups \
+  --legacy \
+  --sync-gmail-context \
+  --sync-sheets \
+  --output artifacts/followups/legacy-review.json
+
+.venv/bin/python manage.py generate_followups \
+  --legacy \
+  --apply-json artifacts/followups/legacy-decisions.json
+```
+
+Options `--campaign`, `--no-active`, `--no-sheet-read`, and `--full-review` are
+legacy-only. Do not use legacy apply against the canonical workbook without a
+current backup and a deliberate recovery reason.

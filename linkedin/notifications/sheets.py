@@ -1,17 +1,18 @@
 """Google Sheets CRM sync via the Sheets API (gspread).
 
-Mirrors Deal state into a single People tab. Each Lead with an active Deal
-becomes one row, keyed by LinkedIn URL. Per-row payload includes everything
-that lives in Attio People + the Lead/Deal-derived rollups (Stage, Outreach
-status), in one row write — no separate calls for notes, emails, status etc.
+Publishes the durable Lead ledger into a single People tab. Every Lead is
+eligible regardless of its current automation Deal state; Deals merely supply
+optional status/stage signals. Existing rows are never rebuilt or removed.
 
 Why a single tab instead of Companies/People/Deals like Airtable? Sheets has
 no first-class linked records — multi-tab joins would just be VLOOKUPs. The
 operator's actual workflow is "scan a People list and triage" so we
 denormalize Company name + aggregate Stage onto each Person row.
 
-Idempotent: rows are upserted by `LinkedIn URL` (column F). The model needs
-no per-row pointer — we load the whole sheet once per sync and dict-by-URL.
+Idempotent: rows are upserted by stable ``Lead ID`` first, with a canonicalized
+``LinkedIn URL`` fallback for legacy rows. The whole sheet is loaded once per
+sync and all new rows are indexed immediately, preventing one Lead with two
+Deals from being appended twice in a single run.
 
 Don't-downgrade rules from Airtable carry over for Outreach status + Stage:
 human edits in the sheet survive the next auto-sync. Notes, AI Notes,
@@ -28,11 +29,15 @@ decide whether to skip-and-continue or abort.
 from __future__ import annotations
 
 import logging
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from typing import Any, Iterable
+from urllib.parse import quote, unquote, urlsplit
 
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread.exceptions import APIError, SpreadsheetNotFound, WorksheetNotFound
+from gspread.utils import ValueRenderOption
 
 from linkedin.conf import (
     GOOGLE_SHEETS_CREDENTIALS_PATH,
@@ -40,6 +45,7 @@ from linkedin.conf import (
     GOOGLE_SHEETS_TAB_NAME,
 )
 from linkedin.exceptions import SheetsError
+from linkedin.notifications.crm_sheets import retry_sheet_read
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +206,25 @@ OUTREACH_RANK = {
 }
 
 
+def aggregate_person_outreach_status(statuses: Iterable[str]) -> str:
+    """Return the most advanced factual Deal-derived status for one Lead.
+
+    A Lead may have one automation Deal per campaign. Choosing the status of
+    whichever Deal happens to be iterated last makes the People row unstable.
+    Active progress wins over ``Lost``; ``Lost`` is used only when every
+    supplied Deal is failed. Human-only values are not produced here.
+    """
+    values = [value for value in statuses if value]
+    if not values:
+        return ""
+    active = [value for value in values if value in OUTREACH_RANK]
+    if active:
+        return max(active, key=lambda value: OUTREACH_RANK[value])
+    if STATUS_LOST in values:
+        return STATUS_LOST
+    return ""
+
+
 def should_patch_outreach_status(current: str, target: str) -> bool:
     if current == target:
         return False
@@ -243,6 +268,7 @@ COL_NOTES = "Notes"
 COL_AI_NOTES = "AI Notes"
 COL_CREATED_AT = "Created at"
 COL_LAST_SYNCED = "Last synced"
+COL_LEAD_ID = "Lead ID"
 
 HEADERS = [
     COL_NAME,
@@ -260,11 +286,71 @@ HEADERS = [
     COL_NOTES,
     COL_CREATED_AT,
     COL_LAST_SYNCED,
+    # Added at the end so the live People schema evolves additively.  Never
+    # insert managed columns into an operator's existing layout.
+    COL_LEAD_ID,
 ]
+
+# These columns are owned by the operator after a row is first created. The
+# publisher may read them to carry values forward, but it never overwrites a
+# non-new row. Outreach status and Stage are deliberately not listed: they
+# are hybrid fields whose explicit advances are protected by the rank rules.
+PEOPLE_HUMAN_OWNED_COLUMNS = frozenset({
+    COL_TITLE,
+    COL_PRIORITY,
+    COL_PRIMARY_LOCATION,
+    COL_AI_NOTES,
+    COL_NOTES,
+})
 
 # Column index in the sheet (1-based for A1 notation, 0-based for list indexing).
 HEADER_INDEX_0 = {h: i for i, h in enumerate(HEADERS)}
 LINKEDIN_URL_COL_0 = HEADER_INDEX_0[COL_LINKEDIN_URL]
+
+
+def canonical_linkedin_url(value: str) -> str:
+    """Return a stable URL representation for People identity fallback.
+
+    Profile URLs commonly arrive with tracking query strings, locale/mobile
+    hosts, mixed-case public identifiers, or without a trailing slash. Those
+    variants must resolve to the same legacy People row. Non-LinkedIn values
+    are left trimmed rather than being guessed into a new identity.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    candidate = raw
+    if "://" not in candidate and (
+        candidate.casefold().startswith("linkedin.com/")
+        or candidate.casefold().startswith("www.linkedin.com/")
+        or ".linkedin.com/" in candidate.casefold()
+    ):
+        candidate = f"https://{candidate}"
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return raw
+
+    host = (parsed.hostname or "").strip(".").casefold()
+    if not (host == "linkedin.com" or host.endswith(".linkedin.com")):
+        return raw
+
+    segments = [unquote(part).strip() for part in parsed.path.split("/") if part]
+    if len(segments) >= 2 and segments[0].casefold() == "in":
+        public_id = quote(segments[1].casefold(), safe="-._~")
+        return f"https://www.linkedin.com/in/{public_id}/"
+
+    # Sales Navigator and older LinkedIn URL forms can contain identifiers
+    # whose case should not be altered. We still canonicalize the host,
+    # scheme, duplicate slashes, query string, and fragment.
+    path = "/".join(quote(part, safe="-._~,:@()") for part in segments)
+    return f"https://www.linkedin.com/{path}/" if path else "https://www.linkedin.com/"
+
+
+def linkedin_identity_key(value: str) -> str:
+    """Canonical, case-stable identity key used only for URL matching."""
+    canonical = canonical_linkedin_url(value)
+    return canonical.casefold() if canonical else ""
 
 
 # ----------------------------------------------------------------------
@@ -281,63 +367,99 @@ def _require_config() -> tuple[str, str, str]:
     return GOOGLE_SHEETS_ID, GOOGLE_SHEETS_CREDENTIALS_PATH, GOOGLE_SHEETS_TAB_NAME
 
 
-def get_worksheet() -> gspread.Worksheet:
-    """Lazy-initialize the gspread worksheet. Auto-creates the tab + headers if missing."""
-    global _WORKSHEET
-    if _WORKSHEET is not None:
-        return _WORKSHEET
-
-    sheet_id, creds_path, tab_name = _require_config()
+def _read_header_row(ws: gspread.Worksheet) -> list[str]:
     try:
-        creds = Credentials.from_service_account_file(
-            creds_path,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(sheet_id)
-    except FileNotFoundError as e:
-        raise SheetsError(f"service account JSON not found at {creds_path}") from e
-    except SpreadsheetNotFound as e:
-        raise SheetsError(
-            f"sheet {sheet_id} not found or not shared with the service account"
-        ) from e
-    except APIError as e:
-        raise SheetsError(f"sheets API error opening {sheet_id}: {e}") from e
-
-    try:
-        ws = sh.worksheet(tab_name)
-    except WorksheetNotFound:
-        ws = sh.add_worksheet(title=tab_name, rows=1000, cols=len(HEADERS))
-
-    # Ensure headers row exists and matches expected schema.
-    try:
-        first_row = ws.row_values(1)
+        return list(ws.row_values(1))
     except APIError as e:
         raise SheetsError(f"failed reading header row: {e}") from e
 
-    if not first_row:
-        ws.update(values=[HEADERS], range_name="A1")
-        first_row = list(HEADERS)
-    else:
-        # Subset check — every managed column must appear somewhere in the
-        # sheet header. Position is irrelevant; operator-added columns
-        # (e.g. "Apollo Email") are passthrough and live in between.
-        missing = [h for h in HEADERS if h not in first_row]
-        if missing:
+
+def _append_missing_headers(
+    ws: gspread.Worksheet,
+    current: list[str],
+    missing: list[str],
+) -> list[str]:
+    """Append managed headers without moving or rewriting existing columns."""
+    if not missing:
+        return list(current)
+
+    start_col = len(current) + 1
+    required_width = len(current) + len(missing)
+    current_width = int(getattr(ws, "col_count", len(current)) or len(current))
+    if current_width < required_width:
+        try:
+            ws.add_cols(required_width - current_width)
+        except APIError as e:
             raise SheetsError(
-                f"missing managed columns in tab '{tab_name}': {missing}. "
-                f"Got: {first_row}. Add them or recreate the tab."
-            )
+                f"failed extending People tab for managed headers {missing}: {e}"
+            ) from e
 
-    # Truncate overflow at the column edge instead of bleeding into adjacent
-    # cells. Idempotent — Sheets stores it as the cell's wrap strategy.
-    last_col = _col_letter(max(len(first_row), len(HEADERS)))
+    start = _col_letter(start_col)
+    end = _col_letter(required_width)
     try:
-        ws.format(f"A:{last_col}", {"wrapStrategy": "CLIP"})
+        ws.update(values=[missing], range_name=f"{start}1:{end}1")
     except APIError as e:
-        logger.warning("failed applying CLIP wrap strategy: %s", e)
+        raise SheetsError(f"failed appending People headers {missing}: {e}") from e
+    return [*current, *missing]
 
-    _WORKSHEET = ws
+
+def get_worksheet(*, apply_schema: bool = True) -> gspread.Worksheet:
+    """Return the People worksheet and optionally apply additive schema changes.
+
+    ``apply_schema=False`` is the read-only planning path: it never creates a
+    tab, writes headers, or changes formatting.
+    """
+    global _WORKSHEET
+    if _WORKSHEET is None:
+        sheet_id, creds_path, tab_name = _require_config()
+        scope = (
+            "https://www.googleapis.com/auth/spreadsheets"
+            if apply_schema
+            else "https://www.googleapis.com/auth/spreadsheets.readonly"
+        )
+        try:
+            creds = Credentials.from_service_account_file(
+                creds_path,
+                scopes=[scope],
+            )
+            gc = gspread.authorize(creds)
+            sh = gc.open_by_key(sheet_id)
+        except FileNotFoundError as e:
+            raise SheetsError(f"service account JSON not found at {creds_path}") from e
+        except SpreadsheetNotFound as e:
+            raise SheetsError(
+                f"sheet {sheet_id} not found or not shared with the service account"
+            ) from e
+        except APIError as e:
+            raise SheetsError(f"sheets API error opening {sheet_id}: {e}") from e
+
+        try:
+            ws = sh.worksheet(tab_name)
+        except WorksheetNotFound as e:
+            if not apply_schema:
+                raise SheetsError(
+                    f"People tab '{tab_name}' does not exist; dry-run would create it"
+                ) from e
+            ws = sh.add_worksheet(title=tab_name, rows=1000, cols=len(HEADERS))
+        # Do not cache the read-only dry-run client as the process-wide write
+        # client. A later explicit apply in the same process must reauthorize
+        # with the write scope.
+        if apply_schema:
+            _WORKSHEET = ws
+    else:
+        ws = _WORKSHEET
+    first_row = _read_header_row(ws)
+    missing = [h for h in HEADERS if h not in first_row]
+    if apply_schema:
+        if not first_row:
+            try:
+                ws.update(values=[HEADERS], range_name="A1")
+            except APIError as e:
+                raise SheetsError(f"failed writing People headers: {e}") from e
+            first_row = list(HEADERS)
+        else:
+            first_row = _append_missing_headers(ws, first_row, missing)
+
     return ws
 
 
@@ -352,12 +474,303 @@ def reset_client_cache() -> None:
 # ----------------------------------------------------------------------
 
 
-class SheetIndex:
-    """In-memory snapshot of the sheet, indexed by LinkedIn URL.
+@dataclass(frozen=True)
+class DuplicateSheetKey:
+    column: str
+    value: str
+    row_numbers: tuple[int, ...]
 
-    Loaded once per sync (one API call), then reused for don't-downgrade
-    lookups + row-id resolution. Any writes through `upsert_row` schedule
-    an update — call `flush()` to push them in a single batch_update.
+
+@dataclass(frozen=True)
+class PeopleLedgerRowSnapshot:
+    """Preservation evidence for one preexisting material People row."""
+
+    row_number: int
+    lead_id: str
+    linkedin_url: str
+    identity: str
+    protected_cells: tuple[tuple[str, str], ...]
+    formula_cells: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class PeopleLedgerSnapshot:
+    """Strong, non-destructive People before/after preservation snapshot."""
+
+    headers: tuple[str, ...]
+    row_count: int
+    rows: tuple[PeopleLedgerRowSnapshot, ...]
+    row_order: tuple[str, ...]
+    lead_ids: tuple[str, ...]
+    linkedin_urls: tuple[str, ...]
+    url_multiplicity: tuple[tuple[str, int], ...]
+    operator_headers: tuple[str, ...]
+    duplicate_keys: tuple[DuplicateSheetKey, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return aggregate evidence without leaking contact identifiers."""
+        return {
+            "row_count": self.row_count,
+            "headers": list(self.headers),
+            "operator_headers": list(self.operator_headers),
+            "lead_ids": len(self.lead_ids),
+            "linkedin_urls": len(self.linkedin_urls),
+            "duplicate_keys": len(self.duplicate_keys),
+            "protected_cells": sum(len(row.protected_cells) for row in self.rows),
+            "formula_cells": sum(len(row.formula_cells) for row in self.rows),
+        }
+
+
+@dataclass(frozen=True)
+class PeoplePreservationVerification:
+    rows_before: int
+    rows_after: int
+    rows_preserved: int
+    headers_preserved: int
+    protected_cells_preserved: int
+    formulas_preserved: int
+
+    def as_dict(self) -> dict[str, int | bool]:
+        return {
+            "verified": True,
+            "rows_before": self.rows_before,
+            "rows_after": self.rows_after,
+            "rows_preserved": self.rows_preserved,
+            "headers_preserved": self.headers_preserved,
+            "protected_cells_preserved": self.protected_cells_preserved,
+            "formulas_preserved": self.formulas_preserved,
+        }
+
+
+def _snapshot_duplicate_keys(
+    rows: Iterable[PeopleLedgerRowSnapshot],
+) -> tuple[DuplicateSheetKey, ...]:
+    indexes: dict[str, dict[str, list[int]]] = {
+        COL_LEAD_ID: defaultdict(list),
+        COL_LINKEDIN_URL: defaultdict(list),
+    }
+    for row in rows:
+        if row.lead_id:
+            indexes[COL_LEAD_ID][row.lead_id].append(row.row_number)
+        if row.linkedin_url:
+            indexes[COL_LINKEDIN_URL][row.linkedin_url].append(row.row_number)
+    duplicates = [
+        DuplicateSheetKey(column, value, tuple(row_numbers))
+        for column, values in indexes.items()
+        for value, row_numbers in values.items()
+        if len(row_numbers) > 1
+    ]
+    return tuple(sorted(duplicates, key=lambda item: (item.column, item.row_numbers)))
+
+
+def capture_people_preservation_snapshot(
+    ws: gspread.Worksheet | None = None,
+    *,
+    values: list[list[Any]] | None = None,
+) -> PeopleLedgerSnapshot:
+    """Capture row order, stable keys, formulas, and operator-owned values.
+
+    Formula rendering is requested explicitly because the default Sheets API
+    response contains calculated display values. Comments and formatting are
+    not value-grid data; the publisher preserves them structurally by issuing
+    only owned-cell value writes and never clearing or rewriting a row.
+
+    ``values`` is an injection point for tests and offline backup verification.
+    """
+    worksheet = ws
+    if values is None:
+        worksheet = worksheet or get_worksheet(apply_schema=False)
+        values = retry_sheet_read(
+            lambda: worksheet.get_all_values(
+                value_render_option=ValueRenderOption.formula,
+            ),
+            context="failed reading People preservation snapshot",
+        )
+
+    rows = [list(row) for row in (values or [])]
+    headers = tuple(str(value) for value in (rows[0] if rows else []))
+    duplicates = [
+        header
+        for header, count in Counter(header for header in headers if header).items()
+        if count > 1
+    ]
+    if duplicates:
+        raise SheetsError(f"People has duplicate headers: {duplicates}")
+    header_index = {header: index for index, header in enumerate(headers)}
+    if COL_LINKEDIN_URL not in header_index and COL_LEAD_ID not in header_index:
+        raise SheetsError(
+            f"People must contain {COL_LEAD_ID} or {COL_LINKEDIN_URL}"
+        )
+
+    operator_headers = tuple(header for header in headers if header not in HEADERS)
+    protected_headers = tuple(
+        header
+        for header in headers
+        if header in PEOPLE_HUMAN_OWNED_COLUMNS or header in operator_headers
+    )
+    snapshots: list[PeopleLedgerRowSnapshot] = []
+    for row_number, raw_row in enumerate(rows[1:], start=2):
+        row = [str(value) if value is not None else "" for value in raw_row]
+        if not any(value.strip() for value in row):
+            continue
+
+        def cell(column: str) -> str:
+            index = header_index.get(column)
+            return row[index] if index is not None and index < len(row) else ""
+
+        lead_id = cell(COL_LEAD_ID).strip()
+        linkedin_url = linkedin_identity_key(cell(COL_LINKEDIN_URL))
+        identity = (
+            f"lead:{lead_id}"
+            if lead_id
+            else f"url:{linkedin_url}"
+            if linkedin_url
+            else f"row:{row_number}"
+        )
+        protected_cells = tuple(
+            (header, cell(header))
+            for header in protected_headers
+        )
+        formula_cells = tuple(
+            (header, row[index])
+            for index, header in enumerate(headers)
+            if index < len(row) and row[index].startswith("=")
+        )
+        snapshots.append(
+            PeopleLedgerRowSnapshot(
+                row_number=row_number,
+                lead_id=lead_id,
+                linkedin_url=linkedin_url,
+                identity=identity,
+                protected_cells=protected_cells,
+                formula_cells=formula_cells,
+            )
+        )
+
+    snapshot_rows = tuple(snapshots)
+    url_counts = Counter(row.linkedin_url for row in snapshot_rows if row.linkedin_url)
+    return PeopleLedgerSnapshot(
+        headers=headers,
+        row_count=len(snapshot_rows),
+        rows=snapshot_rows,
+        row_order=tuple(row.identity for row in snapshot_rows),
+        lead_ids=tuple(row.lead_id for row in snapshot_rows if row.lead_id),
+        linkedin_urls=tuple(
+            row.linkedin_url for row in snapshot_rows if row.linkedin_url
+        ),
+        url_multiplicity=tuple(sorted(url_counts.items())),
+        operator_headers=operator_headers,
+        duplicate_keys=_snapshot_duplicate_keys(snapshot_rows),
+    )
+
+
+def verify_people_preserved(
+    before: PeopleLedgerSnapshot,
+    after: PeopleLedgerSnapshot,
+) -> PeoplePreservationVerification:
+    """Fail closed unless every preexisting People row/cell stayed in place."""
+    if after.row_count < before.row_count:
+        raise SheetsError("People row count decreased")
+    if after.headers[:len(before.headers)] != before.headers:
+        raise SheetsError("People columns disappeared or were reordered")
+
+    after_by_number = {row.row_number: row for row in after.rows}
+    protected_count = formula_count = 0
+    for expected in before.rows:
+        actual = after_by_number.get(expected.row_number)
+        if actual is None:
+            raise SheetsError(
+                f"People row {expected.row_number} disappeared or moved"
+            )
+        if expected.lead_id and actual.lead_id != expected.lead_id:
+            raise SheetsError(
+                f"People Lead ID changed at row {expected.row_number}"
+            )
+        if expected.linkedin_url and actual.linkedin_url != expected.linkedin_url:
+            raise SheetsError(
+                f"People LinkedIn URL identity changed at row {expected.row_number}"
+            )
+
+        actual_protected = dict(actual.protected_cells)
+        for column, value in expected.protected_cells:
+            if actual_protected.get(column) != value:
+                raise SheetsError(
+                    f"People protected cell changed at row {expected.row_number}, "
+                    f"column {column}"
+                )
+            protected_count += 1
+
+        actual_formulas = dict(actual.formula_cells)
+        for column, value in expected.formula_cells:
+            if actual_formulas.get(column) != value:
+                raise SheetsError(
+                    f"People formula changed at row {expected.row_number}, "
+                    f"column {column}"
+                )
+            formula_count += 1
+
+    before_ids = Counter(before.lead_ids)
+    after_ids = Counter(after.lead_ids)
+    if any(after_ids[value] < count for value, count in before_ids.items()):
+        raise SheetsError("one or more preexisting People Lead IDs disappeared")
+    before_urls = dict(before.url_multiplicity)
+    after_urls = dict(after.url_multiplicity)
+    if any(after_urls.get(value, 0) < count for value, count in before_urls.items()):
+        raise SheetsError("one or more preexisting People URLs disappeared")
+
+    return PeoplePreservationVerification(
+        rows_before=before.row_count,
+        rows_after=after.row_count,
+        rows_preserved=before.row_count,
+        headers_preserved=len(before.headers),
+        protected_cells_preserved=protected_count,
+        formulas_preserved=formula_count,
+    )
+
+
+@dataclass(frozen=True)
+class PeopleSheetPlan:
+    header_additions: tuple[str, ...]
+    duplicate_keys: tuple[DuplicateSheetKey, ...]
+    appended_rows: int
+    updated_rows: int
+    updated_cells: int
+    changed_columns: tuple[tuple[str, int], ...]
+
+    def as_dict(self, *, include_key_values: bool = False) -> dict[str, Any]:
+        """Return a console/JSON-safe dry-run summary.
+
+        Key values are omitted by default so routine telemetry does not print
+        LinkedIn URLs. Row numbers are enough to resolve live duplicates.
+        """
+        duplicates = []
+        for duplicate in self.duplicate_keys:
+            item: dict[str, Any] = {
+                "column": duplicate.column,
+                "rows": list(duplicate.row_numbers),
+            }
+            if include_key_values:
+                item["value"] = duplicate.value
+            duplicates.append(item)
+        return {
+            "header_additions": list(self.header_additions),
+            "duplicate_keys": duplicates,
+            "appended": self.appended_rows,
+            "updated": self.updated_rows,
+            "updated_cells": self.updated_cells,
+            "changed_columns": dict(self.changed_columns),
+        }
+
+
+class SheetIndex:
+    """In-memory People snapshot with duplicate-safe stable identity.
+
+    Existing rows resolve by ``Lead ID`` first and canonical LinkedIn URL as a
+    bootstrap fallback. Pending appends are indexed immediately, so two Deals
+    for one Lead in the same run update one staged row rather than append two.
+    Existing-row writes are cell-owned: only managed cells that changed are
+    sent to Sheets, preserving operator columns, formulas, validation, notes,
+    and formatting elsewhere in the row.
     """
 
     def __init__(
@@ -365,168 +778,571 @@ class SheetIndex:
         ws: gspread.Worksheet,
         rows: list[list[str]],
         actual_headers: list[str] | None = None,
+        *,
+        header_additions: Iterable[str] = (),
     ):
         self.ws = ws
-        # rows[0] is the header row; data rows are rows[1:].
-        self.rows = rows
-        # Live sheet headers (may contain operator-added columns like
-        # "Apollo Email"). Defaults to rows[0] for back-compat with tests
-        # that hand-build a SheetIndex from `[HEADERS, ...]`.
         if actual_headers is not None:
-            self.actual_headers = list(actual_headers)
+            self.actual_headers = [str(value) for value in actual_headers]
         elif rows:
             self.actual_headers = list(rows[0])
         else:
             self.actual_headers = list(HEADERS)
-        self.actual_index_0: dict[str, int] = {
-            h: i for i, h in enumerate(self.actual_headers)
-        }
-        # Sanity: every managed column must be addressable.
+        duplicate_headers = [
+            header
+            for header, count in Counter(h for h in self.actual_headers if h).items()
+            if count > 1
+        ]
+        if duplicate_headers:
+            raise SheetsError(f"sheet has duplicate headers: {duplicate_headers}")
+        self.actual_index_0 = {h: i for i, h in enumerate(self.actual_headers)}
         missing = [h for h in HEADERS if h not in self.actual_index_0]
         if missing:
             raise SheetsError(f"sheet header missing managed columns: {missing}")
-        self.url_col_0 = self.actual_index_0[COL_LINKEDIN_URL]
 
+        self.rows = (
+            [
+                ["" if value is None else str(value) for value in row]
+                for row in rows
+            ]
+            if rows
+            else [list(self.actual_headers)]
+        )
+        self.rows[0] = list(self.actual_headers)
+        self.url_col_0 = self.actual_index_0[COL_LINKEDIN_URL]
+        self.lead_id_col_0 = self.actual_index_0[COL_LEAD_ID]
+        self.header_additions = tuple(header_additions)
+
+        self.url_to_row_indices: dict[str, list[int]] = defaultdict(list)
+        self.lead_id_to_row_indices: dict[str, list[int]] = defaultdict(list)
+        for row_idx, row in enumerate(self.rows[1:], start=2):
+            self._index_identity(row_idx, row)
+        # Legacy convenience mapping remains available, but only for keys that
+        # are unambiguous. Duplicate keys are never silently last-row-wins.
         self.url_to_row_idx: dict[str, int] = {}
-        for i, row in enumerate(rows[1:], start=2):  # 1-based, skip header
-            url = (row[self.url_col_0] if len(row) > self.url_col_0 else "").strip()
-            if url:
-                self.url_to_row_idx[url] = i
-        self._pending_updates: list[dict[str, Any]] = []
+        self._refresh_unique_url_index()
+
         self._pending_appends: list[list[str]] = []
+        self._pending_append_index_by_row: dict[int, int] = {}
+        self._pending_update_by_cell: dict[tuple[int, str], dict[str, Any]] = {}
+        # Keep the first formula-rendered live value seen for each existing
+        # cell. Multiple source rows can coalesce into one People update during
+        # a run; replacing this expectation with an intermediate staged value
+        # would make the final optimistic preflight reject our own plan.
+        self._pending_expected_by_cell: dict[tuple[int, str], str] = {}
+        self._pending_update_rows: set[int] = set()
+        self._changed_columns: Counter[str] = Counter()
 
     @classmethod
-    def load(cls) -> "SheetIndex":
-        ws = get_worksheet()
+    def load(cls, *, apply_schema: bool = True) -> "SheetIndex":
+        ws = get_worksheet(apply_schema=apply_schema)
         try:
-            values = ws.get_all_values()
+            # Preserve formulas as formulas. Cell-owned writes then leave
+            # every existing formula byte-for-byte intact.
+            values = ws.get_all_values(
+                value_render_option=ValueRenderOption.formula,
+            )
         except APIError as e:
             raise SheetsError(f"failed loading sheet: {e}") from e
-        if not values:
-            values = [list(HEADERS)]
-        return cls(ws, values, actual_headers=list(values[0]))
 
-    def get_row(self, linkedin_url: str) -> dict[str, str] | None:
-        """Return the row's managed-column → value map, or None if not present."""
-        idx = self.url_to_row_idx.get(linkedin_url)
+        live_headers = list(values[0]) if values else []
+        additions = [h for h in HEADERS if h not in live_headers]
+        effective_headers = [*live_headers, *additions]
+        if not effective_headers:
+            effective_headers = list(HEADERS)
+            additions = list(HEADERS)
+        effective_rows = [effective_headers]
+        if values:
+            effective_rows.extend(values[1:])
+        return cls(
+            ws,
+            effective_rows,
+            actual_headers=effective_headers,
+            header_additions=additions if not apply_schema else (),
+        )
+
+    @property
+    def _pending_updates(self) -> list[dict[str, Any]]:
+        """Compatibility/debug view of the cell-owned pending writes."""
+        return list(self._pending_update_by_cell.values())
+
+    @property
+    def material_row_count(self) -> int:
+        """Count non-empty data rows without treating planned appends as deletes."""
+        return sum(
+            1
+            for row in self.rows[1:]
+            if any(str(value).strip() for value in row)
+        )
+
+    @property
+    def duplicate_keys(self) -> tuple[DuplicateSheetKey, ...]:
+        out: list[DuplicateSheetKey] = []
+        for column, mapping in (
+            (COL_LEAD_ID, self.lead_id_to_row_indices),
+            (COL_LINKEDIN_URL, self.url_to_row_indices),
+        ):
+            for value, row_numbers in mapping.items():
+                if len(row_numbers) > 1:
+                    out.append(
+                        DuplicateSheetKey(column, value, tuple(sorted(row_numbers)))
+                    )
+        return tuple(sorted(out, key=lambda item: (item.column, item.row_numbers)))
+
+    def plan(self) -> PeopleSheetPlan:
+        return PeopleSheetPlan(
+            header_additions=self.header_additions,
+            duplicate_keys=self.duplicate_keys,
+            appended_rows=len(self._pending_appends),
+            updated_rows=len(self._pending_update_rows),
+            updated_cells=len(self._pending_update_by_cell),
+            changed_columns=tuple(sorted(self._changed_columns.items())),
+        )
+
+    def _cell(self, row: list[str], column_0: int) -> str:
+        value = row[column_0] if column_0 < len(row) else ""
+        return ("" if value is None else str(value)).strip()
+
+    def _index_identity(self, row_idx: int, row: list[str]) -> None:
+        url = linkedin_identity_key(self._cell(row, self.url_col_0))
+        lead_id = self._cell(row, self.lead_id_col_0)
+        if url:
+            self.url_to_row_indices[url].append(row_idx)
+        if lead_id:
+            self.lead_id_to_row_indices[lead_id].append(row_idx)
+
+    def _unindex_identity(self, row_idx: int, row: list[str]) -> None:
+        for mapping, value in (
+            (
+                self.url_to_row_indices,
+                linkedin_identity_key(self._cell(row, self.url_col_0)),
+            ),
+            (self.lead_id_to_row_indices, self._cell(row, self.lead_id_col_0)),
+        ):
+            if not value:
+                continue
+            remaining = [idx for idx in mapping.get(value, []) if idx != row_idx]
+            if remaining:
+                mapping[value] = remaining
+            else:
+                mapping.pop(value, None)
+
+    def _refresh_unique_url_index(self) -> None:
+        self.url_to_row_idx = {
+            value: row_numbers[0]
+            for value, row_numbers in self.url_to_row_indices.items()
+            if len(row_numbers) == 1
+        }
+
+    def _resolve_row_idx(self, linkedin_url: str, lead_id: str = "") -> int | None:
+        url = linkedin_identity_key(linkedin_url)
+        stable_id = (lead_id or "").strip()
+        url_rows = list(self.url_to_row_indices.get(url, [])) if url else []
+        id_rows = list(self.lead_id_to_row_indices.get(stable_id, [])) if stable_id else []
+
+        if len(id_rows) > 1:
+            raise SheetsError(
+                f"duplicate {COL_LEAD_ID} in People rows {sorted(id_rows)}"
+            )
+        if id_rows:
+            resolved = id_rows[0]
+            if len(url_rows) == 1 and url_rows[0] != resolved:
+                raise SheetsError(
+                    f"People identity conflict: {COL_LEAD_ID} row {resolved} "
+                    f"but {COL_LINKEDIN_URL} row {url_rows[0]}"
+                )
+            # A duplicated legacy URL is still safe when exactly one row has
+            # this stable Lead ID; the stable ID is authoritative.
+            return resolved
+
+        if len(url_rows) > 1:
+            raise SheetsError(
+                f"duplicate {COL_LINKEDIN_URL} in People rows {sorted(url_rows)}"
+            )
+        if not url_rows:
+            return None
+
+        resolved = url_rows[0]
+        row = self.rows[resolved - 1]
+        existing_id = self._cell(row, self.lead_id_col_0)
+        if stable_id and existing_id and existing_id != stable_id:
+            raise SheetsError(
+                f"People identity conflict at row {resolved}: existing "
+                f"{COL_LEAD_ID} does not match payload"
+            )
+        return resolved
+
+    def get_row(
+        self,
+        linkedin_url: str,
+        *,
+        lead_id: str | int | None = None,
+    ) -> dict[str, str] | None:
+        """Return one unambiguous managed row, preferring stable Lead ID."""
+        idx = self._resolve_row_idx(linkedin_url, str(lead_id or ""))
         if idx is None:
             return None
         row = self.rows[idx - 1]
-        out: dict[str, str] = {}
-        for h in HEADERS:
-            pos = self.actual_index_0[h]
-            out[h] = row[pos] if pos < len(row) else ""
-        return out
+        return {
+            header: row[pos] if pos < len(row) else ""
+            for header, pos in self.actual_index_0.items()
+            if header in HEADERS
+        }
+
+    def identity_candidate_rows(
+        self,
+        linkedin_url: str = "",
+        *,
+        lead_id: str | int | None = None,
+    ) -> tuple[int, ...]:
+        """Return structural row candidates without resolving ambiguity.
+
+        This is reporting-only: callers can distinguish an already represented
+        ambiguous legacy identity from a genuinely omitted Lead without ever
+        choosing or mutating one of the candidate rows.
+        """
+        stable_id = str(lead_id or "").strip()
+        url = linkedin_identity_key(linkedin_url)
+        rows = set(self.lead_id_to_row_indices.get(stable_id, ())) if stable_id else set()
+        if url:
+            rows.update(self.url_to_row_indices.get(url, ()))
+        return tuple(sorted(rows))
+
+    def is_identity_represented(
+        self,
+        linkedin_url: str = "",
+        *,
+        lead_id: str | int | None = None,
+    ) -> bool:
+        """Return true only for an exact ID or unclaimed legacy URL rows."""
+        stable_id = str(lead_id or "").strip()
+        rows = self.identity_candidate_rows(
+            linkedin_url,
+            lead_id=stable_id,
+        )
+        if not rows:
+            return False
+        existing_ids = {
+            self._cell(self.rows[row_number - 1], self.lead_id_col_0)
+            for row_number in rows
+        }
+        if stable_id and stable_id in existing_ids:
+            return True
+        # Before Lead IDs were introduced, duplicate canonical URLs could
+        # represent one known Lead without a safe row to choose. A row already
+        # claimed by another stable ID is a conflict, not representation.
+        return bool(stable_id and existing_ids == {""})
+
+    def _schedule_cell_update(
+        self,
+        *,
+        row_idx: int,
+        column: str,
+        value: str,
+        expected_value: str,
+    ) -> None:
+        col_0 = self.actual_index_0[column]
+        letter = _col_letter(col_0 + 1)
+        key = (row_idx, column)
+        self._pending_expected_by_cell.setdefault(key, expected_value)
+        self._pending_update_by_cell[key] = {
+            "range": f"{letter}{row_idx}:{letter}{row_idx}",
+            "values": [[value]],
+        }
+        self._pending_update_rows.add(row_idx)
 
     def upsert_row(self, payload: dict[str, str]) -> tuple[bool, list[str]]:
-        """Upsert a row by LinkedIn URL. Returns (was_new, changed_columns).
+        """Stage an append or cell-owned update for one People identity."""
+        url = canonical_linkedin_url(payload.get(COL_LINKEDIN_URL) or "")
+        lead_id = (payload.get(COL_LEAD_ID) or "").strip()
+        if not lead_id and not url:
+            raise SheetsError(
+                f"row payload missing both {COL_LEAD_ID} and {COL_LINKEDIN_URL}"
+            )
+        if COL_LINKEDIN_URL in payload:
+            payload = dict(payload)
+            payload[COL_LINKEDIN_URL] = url
 
-        Don't-downgrade rules apply for Outreach status and Stage. Other
-        managed columns are overwritten with the payload value. Columns
-        present in the live sheet but absent from HEADERS (operator-added,
-        e.g. "Apollo Email") are preserved verbatim. The actual write is
-        deferred — call flush() to commit the batch.
-        """
-        url = (payload.get(COL_LINKEDIN_URL) or "").strip()
-        if not url:
-            raise SheetsError(f"row payload missing LinkedIn URL: {payload}")
-
-        existing = self.get_row(url)
-        new_row: list[str] = ["" for _ in self.actual_headers]
-        changed: list[str] = []
-
-        if existing is None:
-            # Brand-new row — fill in only managed columns from payload.
-            # Operator-added columns stay blank; the operator fills them.
-            for col, val in payload.items():
-                if col not in self.actual_index_0:
+        row_idx = self._resolve_row_idx(url, lead_id)
+        if row_idx is None:
+            if not lead_id:
+                raise SheetsError(f"new People row missing stable {COL_LEAD_ID}")
+            new_row = ["" for _ in self.actual_headers]
+            changed = []
+            for column in HEADERS:
+                if column not in payload:
                     continue
-                new_row[self.actual_index_0[col]] = val or ""
+                new_row[self.actual_index_0[column]] = payload.get(column) or ""
+                changed.append(column)
+            self.rows.append(new_row)
+            row_idx = len(self.rows)
+            self._pending_append_index_by_row[row_idx] = len(self._pending_appends)
             self._pending_appends.append(new_row)
-            return True, list(payload.keys())
+            self._index_identity(row_idx, new_row)
+            self._refresh_unique_url_index()
+            self._changed_columns.update(changed)
+            return True, changed
 
-        # Existing row — start from the live row so unknown columns
-        # (Apollo Email etc.) pass through untouched, then apply rules
-        # per managed column.
-        row_idx = self.url_to_row_idx[url]
         existing_row = self.rows[row_idx - 1]
-        for i in range(len(self.actual_headers)):
-            new_row[i] = existing_row[i] if i < len(existing_row) else ""
+        new_row = [
+            existing_row[i] if i < len(existing_row) else ""
+            for i in range(len(self.actual_headers))
+        ]
+        existing = {
+            header: new_row[pos]
+            for header, pos in self.actual_index_0.items()
+            if header in HEADERS
+        }
+        changed: list[str] = []
+        is_pending_append = row_idx in self._pending_append_index_by_row
 
-        # Last synced is metadata about a substantive row sync. It must not
-        # make an otherwise identical row dirty every time the date changes.
-        for col in (h for h in HEADERS if h != COL_LAST_SYNCED):
-            pos = self.actual_index_0[col]
-            current = existing.get(col, "") or ""
-            target = payload.get(col, current) or ""
-
-            if col == COL_OUTREACH_STATUS:
-                if should_patch_outreach_status(current, target):
-                    new_row[pos] = target
-                    changed.append(col)
-            elif col == COL_STAGE:
-                if should_patch_stage(current, target):
-                    new_row[pos] = target
-                    changed.append(col)
-            else:
-                if col in payload and target != current:
-                    new_row[pos] = target
-                    changed.append(col)
+        for column in (header for header in HEADERS if header != COL_LAST_SYNCED):
+            pos = self.actual_index_0[column]
+            current = existing.get(column, "") or ""
+            target = payload.get(column, current) or ""
+            should_write = False
+            if current.startswith("="):
+                # Google formula rendering is used when loading the index, so
+                # this protects formulas even inside otherwise managed cells.
+                should_write = False
+            elif column in PEOPLE_HUMAN_OWNED_COLUMNS:
+                # A row staged during this run has never been operator-owned;
+                # coalesce duplicate inputs before the one append. Once a row
+                # preexists in Sheets these cells are immutable to publishing.
+                should_write = is_pending_append and target != current
+            elif column == COL_OUTREACH_STATUS:
+                should_write = should_patch_outreach_status(current, target)
+            elif column == COL_STAGE:
+                should_write = should_patch_stage(current, target)
+            elif column in payload:
+                should_write = target != current
+            if should_write:
+                new_row[pos] = target
+                changed.append(column)
 
         if not changed:
             return False, []
 
+        write_columns = list(changed)
         if COL_LAST_SYNCED in payload:
             pos = self.actual_index_0[COL_LAST_SYNCED]
             target = payload.get(COL_LAST_SYNCED, "") or ""
-            if target != (existing.get(COL_LAST_SYNCED, "") or ""):
+            current = existing.get(COL_LAST_SYNCED, "") or ""
+            if not current.startswith("=") and target != current:
                 new_row[pos] = target
+                write_columns.append(COL_LAST_SYNCED)
 
-        # Schedule a row-level update — span the full live width so we
-        # don't shift columns or truncate the operator-managed tail.
-        last_col_letter = _col_letter(len(self.actual_headers))
-        self._pending_updates.append({
-            "range": f"A{row_idx}:{last_col_letter}{row_idx}",
-            "values": [new_row],
-        })
-        # Reflect locally so subsequent get_row sees the new values.
+        self._unindex_identity(row_idx, existing_row)
         self.rows[row_idx - 1] = new_row
+        self._index_identity(row_idx, new_row)
+        self._refresh_unique_url_index()
+        self._changed_columns.update(write_columns)
+
+        pending_append_idx = self._pending_append_index_by_row.get(row_idx)
+        if pending_append_idx is not None:
+            self._pending_appends[pending_append_idx] = new_row
+        else:
+            for column in write_columns:
+                self._schedule_cell_update(
+                    row_idx=row_idx,
+                    column=column,
+                    value=new_row[self.actual_index_0[column]],
+                    expected_value=existing.get(column, "") or "",
+                )
         return False, changed
 
-    def flush(self) -> dict[str, int]:
-        """Commit all pending appends + updates. Returns counts."""
-        ws = self.ws
-        n_appended = 0
-        n_updated = 0
+    @staticmethod
+    def _preflight_cell_value(values: Any) -> str:
+        """Return the exact formula-rendered value for one batch-get range."""
+        if not values or not isinstance(values, (list, tuple)):
+            return ""
+        first_row = values[0]
+        if not first_row or not isinstance(first_row, (list, tuple)):
+            return ""
+        value = first_row[0]
+        return str(value) if value is not None else ""
+
+    def _preflight_pending_updates(self) -> None:
+        """Fail closed if any existing People cell changed after planning."""
+        if not self._pending_update_by_cell:
+            return
+
+        # A first migration may update tens of thousands of cells. Supplying
+        # each cell as a batchGet range creates dozens of requests and can hit
+        # Sheets read quotas before any write. One formula-rendered snapshot is
+        # both bounded and stronger: every expectation is checked against the
+        # same live revision before publication begins.
+        try:
+            live_rows = self.ws.get_all_values(
+                value_render_option=ValueRenderOption.formula,
+            )
+        except (APIError, TypeError) as exc:
+            raise SheetsError(
+                "failed optimistic preflight for People updates; "
+                "no writes attempted"
+            ) from exc
+        if not isinstance(live_rows, (list, tuple)) or not live_rows:
+            raise SheetsError(
+                "People optimistic preflight returned an incomplete response; "
+                "no writes attempted"
+            )
+
+        live_headers = live_rows[0]
+        for (row_idx, column), _update in sorted(
+            self._pending_update_by_cell.items(),
+            key=lambda item: (
+                item[0][0],
+                self.actual_index_0[item[0][1]],
+            ),
+        ):
+            column_0 = self.actual_index_0[column]
+            if (
+                column_0 >= len(live_headers)
+                or str(live_headers[column_0]) != column
+            ):
+                raise SheetsError(
+                    "People columns changed after planning; no writes attempted"
+                )
+            current = ""
+            if row_idx - 1 < len(live_rows):
+                live_row = live_rows[row_idx - 1]
+                if isinstance(live_row, (list, tuple)) and column_0 < len(live_row):
+                    value = live_row[column_0]
+                    current = "" if value is None else str(value)
+            expected = self._pending_expected_by_cell[(row_idx, column)]
+            if current != expected:
+                # Report only structural location, never either cell value.
+                raise SheetsError(
+                    f"People row {row_idx}, column {column!r} changed after "
+                    "planning; no writes attempted"
+                )
+
+    def _preflight_pending_appends(self) -> None:
+        """Fail closed if a staged append's stable identity is now live.
+
+        A second publisher can append a People row after this index was loaded
+        but before ``flush``. Re-reading only the two identity columns keeps
+        the request bounded while preventing a duplicate append by either
+        stable Lead ID or canonical LinkedIn URL. The header cells are part of
+        the same read so a concurrent column move cannot turn this check into
+        a read of the wrong data.
+        """
+        if not self._pending_appends:
+            return
+
+        pending_lead_ids = {
+            self._cell(row, self.lead_id_col_0)
+            for row in self._pending_appends
+            if self._cell(row, self.lead_id_col_0)
+        }
+        pending_urls = {
+            linkedin_identity_key(self._cell(row, self.url_col_0))
+            for row in self._pending_appends
+            if linkedin_identity_key(self._cell(row, self.url_col_0))
+        }
+        identity_columns = (
+            (COL_LEAD_ID, self.lead_id_col_0, pending_lead_ids),
+            (COL_LINKEDIN_URL, self.url_col_0, pending_urls),
+        )
+        ranges = [
+            f"{_col_letter(column_0 + 1)}1:{_col_letter(column_0 + 1)}"
+            for _column, column_0, _pending in identity_columns
+        ]
+        try:
+            live_columns = self.ws.batch_get(
+                ranges,
+                # Identity is semantic here: an identity produced by a Sheet
+                # formula must collide just like a literal value. Existing
+                # cell-write preflights separately use formula mode so the
+                # publisher still preserves formula text byte-for-byte.
+                value_render_option=ValueRenderOption.unformatted,
+            )
+        except (APIError, TypeError) as exc:
+            raise SheetsError(
+                "failed optimistic preflight for People appends; "
+                "no writes attempted"
+            ) from exc
+        if (
+            not isinstance(live_columns, (list, tuple))
+            or len(live_columns) != len(identity_columns)
+        ):
+            raise SheetsError(
+                "People append preflight returned an incomplete response; "
+                "no writes attempted"
+            )
+
+        for (column, _column_0, pending), values in zip(
+            identity_columns,
+            live_columns,
+        ):
+            if not isinstance(values, (list, tuple)) or not values:
+                raise SheetsError(
+                    "People identity columns changed after planning; "
+                    "no writes attempted"
+                )
+            header = self._preflight_cell_value(values[:1])
+            if header != column:
+                raise SheetsError(
+                    "People identity columns changed after planning; "
+                    "no writes attempted"
+                )
+
+            for row_idx, row_values in enumerate(values[1:], start=2):
+                value = self._preflight_cell_value([row_values])
+                if not value:
+                    continue
+                identity = (
+                    linkedin_identity_key(value)
+                    if column == COL_LINKEDIN_URL
+                    else value.strip()
+                )
+                if identity and identity in pending:
+                    # Report only structural location, never the identifier.
+                    raise SheetsError(
+                        f"pending People append conflicts with live row "
+                        f"{row_idx}, column {column!r}; no writes attempted"
+                    )
+
+    def flush(self, *, dry_run: bool = False) -> dict[str, int]:
+        """Commit staged changes or return the exact no-write row counts."""
+        counts = {
+            "appended": len(self._pending_appends),
+            "updated": len(self._pending_update_rows),
+        }
+        if dry_run:
+            return counts
+
+        # Both checks must precede appends as well as updates. Otherwise a stale
+        # cell plan or a concurrently-created identity could fail only after a
+        # partial People publication.
+        self._preflight_pending_updates()
+        self._preflight_pending_appends()
 
         if self._pending_appends:
             try:
-                ws.append_rows(
+                self.ws.append_rows(
                     self._pending_appends,
                     value_input_option="RAW",
                     table_range="A1",
                 )
             except APIError as e:
-                raise SheetsError(f"failed appending {len(self._pending_appends)} rows: {e}") from e
-            n_appended = len(self._pending_appends)
-            # Refresh local index — appended rows now occupy row N+1, N+2, ...
-            base = len(self.rows)
-            for i, row in enumerate(self._pending_appends):
-                self.rows.append(row)
-                url = (row[self.url_col_0] if len(row) > self.url_col_0 else "").strip()
-                if url:
-                    self.url_to_row_idx[url] = base + i + 1
+                raise SheetsError(
+                    f"failed appending {len(self._pending_appends)} rows: {e}"
+                ) from e
             self._pending_appends = []
+            self._pending_append_index_by_row = {}
 
-        if self._pending_updates:
+        updates = self._pending_updates
+        if updates:
             try:
-                ws.batch_update(self._pending_updates, value_input_option="RAW")
+                self.ws.batch_update(updates, value_input_option="RAW")
             except APIError as e:
                 raise SheetsError(f"failed batch_update: {e}") from e
-            n_updated = len(self._pending_updates)
-            self._pending_updates = []
-
-        return {"appended": n_appended, "updated": n_updated}
+            self._pending_update_by_cell = {}
+            self._pending_expected_by_cell = {}
+            self._pending_update_rows = set()
+        self._changed_columns = Counter()
+        return counts
 
 
 # ----------------------------------------------------------------------
@@ -549,9 +1365,9 @@ def build_row_payload(
 ) -> dict[str, str]:
     """Assemble the full per-row payload from the supplied data.
 
-    All formatting (newline-joined emails, default Priority, ISO dates) is
-    applied here so the caller sites stay simple. Empty Priority defaults
-    to "Low" so the column never has blanks.
+    System formatting (newline-joined emails and ISO dates) is applied here.
+    Human-owned values are passed through byte-for-byte, including blanks and
+    intentional leading/trailing whitespace.
     """
     cleaned_emails: list[str] = []
     seen: set[str] = set()
@@ -563,24 +1379,25 @@ def build_row_payload(
 
     full_name = f"{lead.first_name} {lead.last_name}".strip()
     created_at = lead.creation_date.date().isoformat() if lead.creation_date else ""
-    final_priority = (priority or "").strip() or PRIORITY_DEFAULT
-
     return {
         COL_NAME: full_name,
         COL_FIRST_NAME: lead.first_name or "",
         COL_LAST_NAME: lead.last_name or "",
         COL_COMPANY: lead.company_name or "",
-        COL_TITLE: (title or "").strip(),
-        COL_LINKEDIN_URL: lead.linkedin_url or "",
+        COL_TITLE: title or "",
+        COL_LINKEDIN_URL: canonical_linkedin_url(lead.linkedin_url or ""),
         COL_EMAILS: "\n".join(cleaned_emails),
         COL_OUTREACH_STATUS: outreach_status or "",
         COL_STAGE: stage or "",
-        COL_PRIORITY: final_priority,
-        COL_PRIMARY_LOCATION: (primary_location or "").strip(),
-        COL_NOTES: (notes or "").strip(),
-        COL_AI_NOTES: (ai_notes or "").strip(),
+        COL_PRIORITY: priority or "",
+        COL_PRIMARY_LOCATION: primary_location or "",
+        COL_NOTES: notes or "",
+        COL_AI_NOTES: ai_notes or "",
         COL_CREATED_AT: created_at,
         COL_LAST_SYNCED: last_synced,
+        COL_LEAD_ID: str(
+            getattr(lead, "pk", None) or getattr(lead, "id", None) or ""
+        ),
     }
 
 

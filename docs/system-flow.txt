@@ -1,164 +1,214 @@
 ================================================================================
 OPENOUTREACH SYSTEM FLOW
 ================================================================================
-Snapshot: 2026-04-29
-Reflects current .env feature flags. Update when flags change.
+Architecture snapshot: 2026-08-26
 
-Active flags (.env):
-  ENABLE_FOLLOW_UP=false               ← daemon does NOT auto-DM after accept
-  ENABLE_SWEEP_CONNECTIONS=true
-  CONNECTION_SWEEP_INTERVAL_HOURS=6    ← sweep every 6h
-  ENABLE_ACTIVE_HOURS=true
-  ACTIVE_START_HOUR=9, ACTIVE_END_HOUR=21, ACTIVE_TIMEZONE=America/Toronto
-  ENABLE_FREEMIUM_CAMPAIGN=false
-  ENABLE_AUTO_DISCOVERY=false
-  AI_MODEL=gemini-2.5-flash
-  FOLLOW_UP_DAILY_LIMIT=30             ← unused while FOLLOW_UP=false
+Runtime flags still come from .env. Do not copy secret values into this file.
+Every non-test process requires the same Postgres DATABASE_URL; there is no
+runtime SQLite fallback.
 
 
 ================================================================================
-1. DAEMON  (manage.py with no args)
+1. LINKEDIN DAEMON  (manage.py with no arguments)
 ================================================================================
-Long-running process. Runs only during ACTIVE_START_HOUR..ACTIVE_END_HOUR
-in ACTIVE_TIMEZONE.
+The long-running daemon owns browser-backed LinkedIn task execution. Active
+hours, rest days, feature flags, and per-profile limits gate its work.
 
-On startup:
-  • ENABLE_FOLLOW_UP=false  → cancels all pending follow_up tasks
-                              (daemon.py:268-275)
-  • ENABLE_SWEEP_CONNECTIONS=true  → schedules sweep tasks
+CONNECT
+  - Sends a connection request/note when enabled.
+  - Persists successful outbound activity to crm.Message.
 
-Active task types:
+SWEEP_CONNECTIONS
+  - Detects accepted invitations in bulk.
+  - Advances per-Lead/per-Campaign Deal automation state.
+  - Captures the conversation snapshot and persists crm.Message rows.
 
-  CONNECT  (linkedin/tasks/connect.py)
-    - Sends LinkedIn connection request + initial note.
-    - Persists outbound note to crm.Message.
-    - At end: enqueue_follow_up() puts a task in queue. Daemon's next
-      loop iteration cancels it because ENABLE_FOLLOW_UP=false.
-    - Net: connection invite goes out. That's it.
+FOLLOW_UP / GMAIL SEQUENCE
+  - Outbound automation lanes remain separately feature-gated.
+  - They are not invoked by refresh_crm, sync_sheets, generate_followups, or
+    any data-ingestion runbook.
 
-  SWEEP_CONNECTIONS  (linkedin/tasks/sweep_connections.py, every 6h)
-    - Visits LinkedIn connections page in bulk.
-    - Cross-references PENDING deals → newly accepted invites flip to
-      CONNECTED.
-    - For each newly-accepted lead:
-        → calls get_conversation()
-        → persist_thread() writes inbound + outbound to crm.Message
-        → captures Deal.last_reply_at if they replied with the accept
-        → posts Slack notification (if SLACK_WEBHOOK_URL set)
-        → tries to enqueue_follow_up() — gets cancelled at next loop
-    - Self-reschedules every CONNECTION_SWEEP_INTERVAL_HOURS.
-
-BLIND SPOT
-  Once a Lead is CONNECTED, the daemon never visits that thread again.
-  Sweep only iterates PENDING deals. So with FOLLOW_UP=false:
-    • ONE message-history snapshot when the invite is accepted
-      (whatever they said in the accept reply).
-    • Anything they send AFTER that is invisible to the system unless
-      backfill_messages runs.
+Deal is an outreach-delivery state machine. Deal.state=COMPLETED means the
+automation lane finished; it never means the account Opportunity is Closed Won.
 
 
 ================================================================================
-2. crm.Message  (the database table)
+2. CONTEXT INGESTION
 ================================================================================
-Single source of truth for LinkedIn DM history.
+crm.Message is the canonical stored LinkedIn/Gmail communication timeline.
+crm.Meeting and crm.MeetingNote store meeting facts and note context.
 
 Populated by:
-  • Daemon's sweep_connections — once per lead, at acceptance.
-  • backfill_messages — must run on cron to keep things fresh.
-  • import_connections — for CSV-imported leads (outbound from CSV +
-    inbound via the get_conversation hook).
-  • Manual debugging (rare).
+  - daemon/realtime/sweep paths for LinkedIn events;
+  - manage.py backfill_messages for later LinkedIn thread activity;
+  - manage.py sync_gmail_context for Gmail threads and Gmail-delivered
+    Gemini/Meet notes;
+  - the connector workflow in docs/data-sync-workflow.md for Calendar and
+    Drive-only Gemini context; and
+  - refresh_crm's incremental Granola batch sync.
 
-Idempotent on (source, external_id). Source is "linkedin", "gmail", or
-"calendar". Direction is "inbound" or "outbound".
+Important freshness boundary:
+  - refresh_crm does not log into LinkedIn;
+  - refresh_crm does not query Google Calendar or Drive directly;
+  - a successful refresh processes stored context safely but cannot certify
+    those separate inputs are fresh.
 
-
-
-
-================================================================================
-3. EXTERNAL / MANUAL COMMANDS  (no scheduler in repo but need to run this once a day or so)
-================================================================================
-
-  manage.py backfill_messages
-    THIS is what keeps message history fresh after the first accept.
-    Without it on cron, every reply that arrives more than a few minutes
-    after the invite-accept never makes it to crm.Message — and that
-    starves sync_sheets's Stage D synthesis.
-      - Logs in via StandaloneLinkedInSession (cookies cached at
-        data/<label>_cookies.json — separate from daemon cookies).
-      - Pulls all DM threads for env-configured account(s):
-          LINKEDIN_USERNAME + LINKEDIN_PASSWORD            (primary)
-          BACKFILL_LINKEDIN_USERNAME + ...PASSWORD          (backfill)
-      - Persists new messages to crm.Message.
-      - Stamps Deal.last_reply_at from the newest inbound (drives
-        Prospecting → Qualification stage transition).
-      - Runs once per env-configured account.
-      - Args: --campaign N, --limit N, --dry-run
-
-================================================================================
-4. SHEETS SYNC  (manage.py sync_sheets — no scheduler in repo)
-================================================================================
-Run externally on cron / manually. CLAUDE.md mentions hourly cadence.
-
-For each Deal at state >= PENDING and lead.disqualified=False, group by
-company. Per group:
-
-  STAGE A/B/C — mirror to Google Sheets People tab
-    • Compute company-level aggregate Stage from per-lead deal states
-    • Per Lead, build a row payload (Name, Company, Title, Status, Stage,
-      Priority, Email addresses, etc.) keyed by LinkedIn URL
-    • SheetIndex.upsert_row applies don't-downgrade rules per cell:
-      Stage:
-        Prospecting → Qualification → Meeting → Closing → Won
-        (Lost terminates)
-      Outreach status:
-        Invite Sent → Connected → Waiting → Replied → Wants Meeting →
-        Meeting Booked → Had Meeting → Manual followup →
-        Prospecting to close → Won → Don't send
-        (Lost separately overridable)
-    • should_patch_stage / should_patch_outreach_status block downgrades
-      — manual sheet edits are never clobbered.
-    • Single batch_update at end: one Sheets API write per sync run.
-
-  STAGE D — synthesis pass
-    (linkedin/notifications/synthesis.py, per-Deal, best-effort)
-
-    D1: extract_email_from_messages
-      - Regex over inbound crm.Message bodies.
-      - Writes email to Lead.email; sync_sheets folds the union of
-        Lead.email + existing sheet emails into the People-tab Email
-        addresses cell on the same row write.
-      - Idempotent (skipped if Lead.email already set).
-
-    D2: detect_wants_meeting
-      - Cheap LLM (gemini-2.5-flash) over the unified thread with
-        Pydantic-structured output.
-      - If meeting intent: returns SynthResult(wants_meeting_now=True).
-        sync_sheets advances the Outreach status to "Wants Meeting" via
-        the don't-downgrade upsert. Notes column is human-only —
-        synthesis NEVER writes there.
-      - Gates: Deal.wants_meeting_detected_at lock-in,
-               Deal.last_synthesized_at vs latest Message.sent_at,
-               skip when current sheet status already past Wants Meeting.
-
-  Failures in Stage D are logged but never block Stage A/B/C.
-
-DATA DEPENDENCY
-  Stage D reads only crm.Message — not LinkedIn directly. So D1 (email
-  extract) and D2 (wants-meeting LLM) are only as good as the last
-  backfill_messages run. If backfill isn't on cron, sheets's email/status
-  signals lag.
-
-
+Keep backfill_messages scheduled and run Calendar/Drive ingestion after
+important meetings when those sources are needed.
 
 
 ================================================================================
-  ONE OFF COMMAND IF SOMEONE ISN"T USING DAEMON
-================================================================================  
-    manage.py import_connections --csv <file> --handle <profile>
-    CSV-based bulk import via "backfill" account. Reads
-    LinkedIn URL,First Name,Message; creates Lead+Deal at state=CONNECTED
-    for each URL also present in the scraped Connections page.
-    Outbound msgs from CSV → crm.Message. Inbound msgs flow through the
-    get_conversation hook. Skips URLs already in non-backfill campaigns
-    so daemon outreach state is never disturbed.
+3. CANONICAL SALES CRM IN POSTGRES
+================================================================================
+Lead / Deal remain contact and outreach-automation records.
+
+The sales operating model is separate:
+  Account
+    -> Opportunity (owner, stage, 15-step motion, commercial state)
+      -> OpportunityContact (champion / decision maker / stakeholder / other)
+      -> OpportunityAction (one current open/waiting Action)
+      -> OpportunityStageEvent (audit history)
+      -> OpportunitySheetState (three-way merge baseline)
+
+Macro-stage mapping:
+  Prospecting 1
+  Discovery 2
+  Demo Planning 3-4
+  Evaluation 5-6
+  Sandbox/Pilot 7-10
+  Commercial 11
+  Procurement/Legal 12-14
+  Closed Won
+  Expansion 15
+  Closed Lost
+
+Explicit Opportunity owner is authoritative. Sender inference is fallback-only
+and must be unambiguous.
+
+
+================================================================================
+4. CANONICAL CRM REFRESH  (manage.py refresh_crm)
+================================================================================
+Default invocation is an exact no-persistent-write dry-run:
+
+  .venv/bin/python manage.py refresh_crm
+
+Apply only after reviewing the report:
+
+  .venv/bin/python manage.py refresh_crm --apply
+
+One run:
+  1. acquires the nonblocking CRM lock;
+  2. verifies/inventories GOOGLE_SHEETS_ID and rejects the separate Sales
+     Motion workbook;
+  3. refreshes Gmail/Gemini context and batch-syncs Granola unless skipped;
+  4. reads human-owned Sheet edits and imports valid changes by stable ID;
+  5. bootstraps conservative Opportunities and recalculates Actions through
+     the shared time-aware policy;
+  6. incrementally publishes People and asserts preservation invariants;
+  7. incrementally publishes Opportunities;
+  8. regenerates managed Pipeline, Recovery, and owner Followups ranges; and
+  9. records exact WorkflowRun telemetry.
+
+One-time legacy Followups migration:
+  - imports human state only when stable evidence identifies one canonical row;
+  - never guesses an unresolved material row;
+  - preserves every untouched old sender tab under a dated Legacy title;
+  - reports unresolved rows for human review without blocking otherwise-safe
+    canonical activation; and
+  - prepares and validates all affected sender replacements before one atomic
+    title batch activates them. A pre-swap failure leaves all old canonical
+    titles active.
+
+Granola is primary meeting context; stored Gemini is secondary. Context cannot
+create eligibility.
+
+Action aging:
+  - 0-21 days: daily only when work is genuinely required;
+  - 22-60 days: Recovery, absent an explicit current-action exception;
+  - over 60 days: archive/nurture, under the same exceptions.
+
+Future Waiting Actions disappear until due. Closed, Don't Send, disqualified,
+non-actionable failed, and polite-decline records stay out of daily queues.
+
+
+================================================================================
+5. GOOGLE SHEETS SURFACES
+================================================================================
+People
+  - Durable growing contact ledger.
+  - Updated in place/appended; never clear/rebuild/reorder/prune.
+  - Stable Lead ID plus canonical LinkedIn URL.
+  - Human/unknown cells, formulas, comments, and formatting are preserved.
+
+Opportunities
+  - Durable editable canonical table.
+  - Human fields merge Sheet -> DB before system fields publish DB -> Sheet.
+  - Conflicts/invalid edits fail closed rather than being guessed.
+
+Pipeline
+  - Derived from Opportunity.stage only.
+  - Visual card position is never imported as stage.
+
+<Owner> - Followups
+  - Derived due-now Actions keyed by Action, Opportunity, and Lead IDs.
+  - Imports Handled, Disposition, Draft, Channel, Waiting, and Manual pin before
+    regeneration.
+  - One Action appears under at most one explicit owner.
+  - Dated Legacy tabs are frozen first-run evidence/recovery copies, not queues
+    to merge by name or schedule for sending.
+
+Recovery
+  - Derived older-inactive/unassigned review surface, separate from daily work.
+
+ICP Goals / separate Sales Motion workbook
+  - Read-only inputs to this workflow.
+
+
+================================================================================
+6. NARROW PUBLISHER AND MANUAL DRAFTING
+================================================================================
+manage.py sync_sheets
+  - Narrow People planner/publisher only.
+  - Does not run LLM synthesis, assign opportunity stages, choose followups,
+    publish Pipeline, or rebuild sender tabs.
+
+manage.py generate_followups
+  - Exports explicitly owned canonical daily Actions for draft generation.
+  - Validates draft decisions by stable IDs and context fingerprint.
+  - Stores/publishes drafts but never sends them.
+  - The retired name-based rebuild requires explicit --legacy and is never a
+    scheduled production path.
+
+Operators review and send messages manually, then record human action state in
+the stable-ID Followups row.
+
+
+================================================================================
+7. WINDOWS SCHEDULED RUNNER
+================================================================================
+The existing Task Scheduler action still targets:
+
+  scripts\run_sync_sheets.ps1
+
+The wrapper now runs:
+
+  .venv\Scripts\python.exe manage.py refresh_crm --apply
+
+and logs to:
+
+  data\logs\refresh_crm_task.log
+
+See docs/crm-refresh-workflow.md for exact fetch/switch/install/migrate/dry-run/
+apply/restart/verify and backup/recovery steps.
+
+
+================================================================================
+8. ONE-OFF CONNECTION IMPORT
+================================================================================
+  .venv/bin/python manage.py import_connections --csv <file> [--campaign N]
+
+The command uses BACKFILL_LINKEDIN_USERNAME/PASSWORD, imports only matched
+accepted connections, persists message history, and never writes Sheets
+directly. The next CRM refresh appends eligible contacts to People and
+conservatively evaluates whether an Opportunity should exist.

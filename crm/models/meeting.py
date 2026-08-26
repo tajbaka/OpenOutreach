@@ -24,12 +24,26 @@ from django.db import models
 class Meeting(models.Model):
     class Source(models.TextChoices):
         GOOGLE_CALENDAR = "google_calendar", "Google Calendar"
+        GRANOLA = "granola", "Granola"
 
     source = models.CharField(max_length=32, choices=Source.choices)
     external_id = models.CharField(max_length=255)
 
     lead = models.ForeignKey(
         "crm.Lead", on_delete=models.CASCADE, related_name="meetings",
+    )
+    opportunity = models.ForeignKey(
+        "crm.Opportunity",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="meetings",
+    )
+    participants = models.ManyToManyField(
+        "crm.Lead",
+        through="crm.MeetingParticipant",
+        related_name="participating_meetings",
+        blank=True,
     )
 
     # ── Calendar event facts ─────────────────────────────────────────────

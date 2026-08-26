@@ -115,6 +115,7 @@ def sync_gmail_threads(
                 lead=lead,
                 threads=threads,
                 self_emails=self_emails,
+                operator=client.operator,
             )
     return result
 

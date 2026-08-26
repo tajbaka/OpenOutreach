@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from crm.models import Message
+from linkedin.operators import CANONICAL_OPERATOR_HANDLES
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +163,17 @@ def persist_thread(
     lead is from us. This avoids needing to know our own display name (which
     LinkedInProfile doesn't store reliably).
     """
-    from linkedin.operators import resolve_operator
+    from crm.models import SalesOwner
+    from linkedin.operators import resolve_operator, resolve_sales_owner_handle
 
     outbound_handles = {
         resolve_operator(sender)
         for sender in (outbound_senders or set())
         if sender and resolve_operator(sender)
+    }
+    owners_by_handle = {
+        owner.handle: owner
+        for owner in SalesOwner.objects.filter(handle__in=CANONICAL_OPERATOR_HANDLES)
     }
     known_connect_notes = {
         note.strip()
@@ -212,11 +218,17 @@ def persist_thread(
 
             sent_at = _parse_timestamp(m.get("timestamp") or "")
 
-            _, was_created = Message.objects.get_or_create(
+            message_owner = None
+            if direction == Message.Direction.OUTBOUND:
+                message_owner = owners_by_handle.get(
+                    resolve_sales_owner_handle(sender)
+                )
+            stored, was_created = Message.objects.get_or_create(
                 source=source,
                 external_id=entity_urn,
                 defaults={
                     "lead": lead,
+                    "operator": message_owner,
                     "direction": direction,
                     "sender": sender,
                     "body": m.get("text") or "",
@@ -225,6 +237,9 @@ def persist_thread(
                     "raw": m,
                 },
             )
+            if not was_created and stored.operator_id is None and message_owner is not None:
+                stored.operator = message_owner
+                stored.save(update_fields={"operator"})
             if was_created:
                 created += 1
     return created

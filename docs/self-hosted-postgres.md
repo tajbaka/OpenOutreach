@@ -4,6 +4,11 @@ This is the low-cost shared database path for OpenOutreach. It keeps the
 existing Postgres contract (`DATABASE_URL`) and avoids the unsafe SQLite split
 brain pattern.
 
+`DATABASE_URL` is mandatory for every non-test `manage.py` invocation. The
+runtime has no SQLite fallback. Install runner dependencies from
+`requirements/production.txt` (or `requirements/local.txt` for development),
+not a nonexistent root `requirements.txt`.
+
 ## Local Test Target
 
 The local test target runs Postgres 17 in Docker on `127.0.0.1:55432` with SSL
@@ -69,8 +74,12 @@ ENABLE_FOLLOW_UP=false \
 ENABLE_GMAIL_SEQUENCE=false \
 ENABLE_REALTIME_LISTENER=false \
 ENABLE_NODE_MONITOR=false \
-.venv/bin/python manage.py sync_sheets --dry-run
+.venv/bin/python manage.py refresh_crm --skip-gmail-context --skip-granola
 ```
+
+This still reads the configured live CRM workbook but performs no persistent
+DB or Sheet writes. Confirm the test database and workbook combination is the
+one you intend before running it.
 
 ## Real Host Shape
 

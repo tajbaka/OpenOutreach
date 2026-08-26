@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 from email.message import EmailMessage
 
+from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -32,7 +33,12 @@ class GmailClient:
             )
         self._creds = Credentials.from_authorized_user_file(str(path), SCOPES)
         if self._creds.expired and self._creds.refresh_token:
-            self._creds.refresh(Request())
+            try:
+                self._creds.refresh(Request())
+            except GoogleAuthError:
+                raise EnrichmentError(
+                    "Gmail authentication refresh is temporarily unavailable."
+                ) from None
             path.write_text(self._creds.to_json())
         if not self._creds.valid:
             raise EnrichmentError(f"Gmail token invalid for {self.account_key}")
