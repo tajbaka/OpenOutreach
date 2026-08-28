@@ -9,6 +9,7 @@
 - **No memory**: Never use the auto-memory system (no MEMORY.md, no memory files). All persistent context belongs in AGENTS.md or ARCHITECTURE.md.
 - **Error handling**: App should crash on unexpected errors. `try/except` only for expected, recoverable errors. Custom exceptions in `exceptions.py`.
 - **No general backward compat**: CRM models are owned by this project, so do not add broad compatibility shims or re-export modules. `refresh_crm_v2` is the canonical publisher. Its one-time cutover may import only exact stable-ID human state from legacy tabs, never guess unresolved rows, stages both v2 surfaces before one atomic title swap, and compensates the title swap if the outer DB transaction rolls back. `refresh_crm` is retired and must fail closed once `Active Accounts` or `Actions` exists; do not route production work back through it.
+- **Sales conversation reference**: Before preparing a call, discovery questions, stakeholder strategy, deal inspection, or next-step recommendation, read `docs/sales-motion-summary.md`, identify the opportunity's current step from evidence, and ask only questions appropriate to that step. Do not conflate champion, end user, evaluator, sponsor, approver, and authorized signatory or pull later-stage approval questions into an early demo.
 
 ## Project Overview
 
