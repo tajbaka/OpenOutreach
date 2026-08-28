@@ -4,6 +4,12 @@ This is the canonical conversation-level reference for Boundera's 15-step sales 
 
 The source describes 14 numbered steps while calling the process closer to 15. This reference treats expansion immediately after signature as step 15.
 
+Related references:
+
+- [Detailed 15-step framework](sales-motion-framework.md): all 85 stable task IDs and the separate operating-guidance bullets.
+- [Timestamped video transcript reconstruction](sales-motion-video-transcript.md): a detailed, source-linked paraphrase covering the full episode.
+- [Portable sales-motion skill](../skills/boundera-sales-motion/SKILL.md): the safe account-tab creation, update, and verification workflow.
+
 ## How to use this reference
 
 1. Identify the opportunity's current step from actual evidence; do not infer progress from a positive tone.
