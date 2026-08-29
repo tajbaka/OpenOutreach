@@ -34,7 +34,7 @@ Implementation branch and worktree:
 
 - branch: `codex/drip-campaigns`;
 - clean sibling worktree: `/Users/admin/Desktop/Projects/OpenOutreach-drip-campaigns`;
-- current plan commit before this revision: `4bf949c`;
+- current plan commit before this revision: `2f504e8`;
 - mainline base: `cbbf2da`;
 - retained CRM prerequisites: `f8a6619` and `2733157`;
 - the dirty `temp` worktree remains out of scope and must not be stashed, reset, switched, or committed as part of drip work.
@@ -45,7 +45,7 @@ Verified gaps to fix before drip sending:
 
 - the stop predicate requires a `Deal` instead of a `Lead`;
 - Gmail tasks without `deal_id` skip the shared reply check;
-- current LinkedIn follow-up does not refresh the exact live conversation immediately before its send check;
+- LinkedIn reply protection depends on the realtime listener and periodic backfill being enabled, healthy, and able to resolve the exact Lead;
 - some enqueue/recovery paths can still create Tasks for a replied Lead, even though the handler later no-ops;
 - inbound persistence does not centrally stop active enrollments and retire their pending Tasks;
 - cross-channel correctness depends on the latest reply having been persisted;
@@ -387,7 +387,7 @@ LinkedIn inbound attribution must use the exact other participant/thread identit
 
 Gmail inbound attribution must require the exact normalized Lead email and correct operator mailbox. A third party in a broad or multi-participant matched thread must not be recorded as that Lead's reply. Automated mail, drafts, bounces, and provider notices are not human replies; bounce/invalid-address handling affects the Gmail lane according to its own policy.
 
-The strict LinkedIn refresh path must preserve participant/member URNs and return a typed outcome that distinguishes `refreshed`, `no_thread`, and `unavailable`. The current best-effort conversation hook may remain for non-send callers, but a send preflight may not treat a swallowed persistence/fetch failure as proof that no reply exists. `unavailable` delays LinkedIn only.
+LinkedIn reply ingestion uses the existing account-wide realtime listener and periodic backfill. Both paths must preserve conversation/member URNs and exact Lead attribution. LinkedIn send handlers consult the resulting persisted state and do not fetch the conversation at send time.
 
 The strict Gmail refresh path must reuse the exact RFC participant and automated-message filtering in `gmail/data_sync.py`. Refresh failure delays Gmail only; it does not change LinkedIn lane state.
 
@@ -398,12 +398,12 @@ The same stop service is called:
 1. before current post-connection enqueue/handoff/recovery;
 2. before drip reconciliation materializes a Task;
 3. at the start of every current and drip message handler;
-4. after refreshing the executor's own exact channel conversation;
+4. after the exact Gmail refresh in Gmail handlers;
 5. immediately before every external send boundary.
 
 Required current-flow hardening:
 
-- current LinkedIn follow-up refreshes and persists the exact LinkedIn conversation, then rechecks before sending;
+- current and drip LinkedIn handlers rely on listener/backfill-persisted Messages and do not add a live conversation-fetch dependency;
 - current Gmail follow-up refreshes exact Gmail state and rechecks even for an email-first Lead with no `Deal` or `deal_id`;
 - current enqueue and daemon-heal paths do not create new messaging Tasks after a known stop.
 
@@ -424,11 +424,13 @@ The periodic reconciler repeats this check, so correctness does not depend solel
 
 ### 7.4 Accepted cross-channel synchronization gap
 
-Each executor refreshes its own channel and consults the latest persisted state from both channels. Channel-sync freshness is recorded and visible, but one channel's health is never a prerequisite for the other channel to send.
+Gmail handlers refresh exact Gmail state. LinkedIn handlers consult the latest LinkedIn state persisted by the realtime listener or periodic backfill. Both consult the latest persisted union of both channels. Listener, backfill, and Gmail-sync freshness is recorded and visible, but one channel's health is never a prerequisite for the other channel to send.
 
-Therefore, if LinkedIn is unavailable and a new LinkedIn reply has not yet been ingested, Gmail may send one otherwise eligible message. Gmail must not wait for or fail because LinkedIn could not be refreshed. As soon as the LinkedIn listener, sweep, or backfill persists that reply, all remaining current and drip automation stops.
+Therefore, if the listener misses a LinkedIn reply and backfill has not yet ingested it, either channel may send one otherwise eligible message. Gmail must not wait for listener or backfill freshness. As soon as the LinkedIn listener or backfill persists that reply, all remaining current and drip automation stops.
 
 This availability-first bounded gap is explicitly accepted. The system must expose it honestly rather than claiming atomic knowledge across two external providers.
+
+LinkedIn drip activation requires the existing realtime listener to be enabled and supervised for every participating account, with periodic `backfill_messages` scheduled. These are operational ingestion prerequisites, not new feature flags or per-send dependencies.
 
 ## 8. Periodic reconciliation and Task materialization
 
@@ -517,15 +519,15 @@ The deployment supervisor and Docker/service entrypoints must start this standal
 2. Lock enrollment, lane, rendition, delivery, and attempt.
 3. Recheck campaign/enrollment/lane state, ownership, predecessor, timing, stop policy, and idempotency.
 4. Resolve the exact Lead and sender-owned LinkedIn identity.
-5. Fetch and persist the exact live LinkedIn conversation.
-6. Require the strict refresh result; `unavailable` delays LinkedIn and cannot be interpreted as no reply.
-7. Re-run the global stop policy.
-8. Verify live first-degree connection under that exact sender browser.
-9. Recheck the send boundary and stamp `submit_attempted_at`.
-10. Call the existing low-level LinkedIn message primitive with drip-specific deterministic persistence metadata.
-11. Persist CRM Message, attempt, delivery, rendition, and lane state without changing `Deal.state`.
+5. Re-run the global stop policy against the latest listener/backfill-persisted state.
+6. Verify live first-degree connection under that exact sender browser.
+7. Recheck the send boundary and stamp `submit_attempted_at`.
+8. Call the existing low-level LinkedIn message primitive with drip-specific deterministic persistence metadata.
+9. Persist CRM Message, attempt, delivery, rendition, and lane state without changing `Deal.state`.
 
 If not connected, return the lane to `waiting_connection`; do not fail Gmail or the enrollment. Provider failure/retry/uncertainty affects only LinkedIn.
+
+The handler does not fetch or refresh the LinkedIn conversation at send time.
 
 ### 10.2 `drip_gmail`
 
@@ -643,16 +645,21 @@ Work:
 
 - introduce the Lead-level stop service;
 - retain a narrow Deal wrapper only for current callers during migration;
-- enforce it in current enqueue, heal, handler-start, refresh, and pre-send paths;
-- refresh the exact LinkedIn conversation before current LinkedIn sends;
+- enforce it in current enqueue, heal, handler-start, Gmail-refresh, and pre-send paths;
+- treat the existing realtime listener plus periodic backfill as the LinkedIn reply-ingestion foundation;
+- preserve exact conversation/member attribution in both LinkedIn ingestion paths;
+- verify the listener is enabled and supervised and backfill is scheduled for every participating LinkedIn account;
 - enforce exact Gmail refresh and stop checks for Gmail Leads with or without a Deal;
 - add inbound-persistence stop hooks and Task cleanup;
-- expose channel-sync freshness.
+- expose listener, backfill, and Gmail-sync freshness.
 
 Exit gate:
 
 - persisted reply on either channel blocks both current post-connection channels;
-- latest same-channel reply is found by pre-send refresh;
+- realtime LinkedIn events persist replies and block later current/drip sends;
+- periodic backfill persists missed LinkedIn replies and blocks later current/drip sends;
+- the accepted listener/backfill missed-window behavior is explicit and tested;
+- latest Gmail reply is found by exact pre-send refresh;
 - no-Deal Gmail is protected;
 - exact reply attribution tests pass;
 - all current-flow regression tests pass.
@@ -732,7 +739,7 @@ Exit gate:
 Work:
 
 - add `drip_linkedin` operator scoping, routing, priority, and stale recovery;
-- implement live thread refresh, reply stop, and first-degree verification;
+- integrate persisted listener/backfill reply stops and live first-degree verification;
 - add deterministic persistence, action accounting, and uncertain-send recovery;
 - pilot reviewed already-connected Leads under the exact owner account.
 
@@ -783,7 +790,8 @@ After runtime behavior is proven, design a dedicated Drip Campaigns Sheet/skill 
 - Gmail inbound blocks current LinkedIn follow-up;
 - LinkedIn inbound blocks current Gmail follow-up;
 - no-Deal/email-first Gmail task is blocked by inbound;
-- current LinkedIn pre-send refresh catches a new LinkedIn reply;
+- realtime listener-persisted LinkedIn reply blocks current and drip LinkedIn sends;
+- backfilled LinkedIn reply blocks subsequent current and drip sends;
 - current Gmail pre-send refresh catches a new Gmail reply;
 - enqueue and healing do not recreate messaging work after a known reply;
 - exact Lead address/participant attribution excludes unrelated participants.
@@ -859,7 +867,7 @@ Most implementation belongs under `drip/`. Shared edits are limited to the prove
 
 - `linkedin/django_settings.py`: install the drip app;
 - `linkedin/tasks/stop_checks.py`: Lead-level canonical stop service;
-- current LinkedIn/Gmail enqueue, heal, refresh, and pre-send guards;
+- current LinkedIn/Gmail enqueue, heal, and pre-send guards, plus Gmail-only exact refresh;
 - LinkedIn and Gmail inbound persistence: exact attribution and idempotent stop notification;
 - `gmail/client.py`: correct typed send/thread API;
 - `gmail/tasks/follow_up.py`: current sequence thread continuation and Lead-level stop checks;
