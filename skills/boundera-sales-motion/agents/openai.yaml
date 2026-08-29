@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boundera Sales Motion"
+  short_description: "Create consistent account sales-motion trackers"
+  default_prompt: "Use $boundera-sales-motion to create a sales-motion tab for this account."

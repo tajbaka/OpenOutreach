@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boundera ICP Messages"
+  short_description: "Author Chuka ICP campaign copy in Google Sheets"
+  default_prompt: "Use $boundera-icp-messages to create or revise Chuka's campaign copy in the ICP Messages Google Sheet."
