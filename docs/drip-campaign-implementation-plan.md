@@ -1,104 +1,166 @@
-# Independent Multichannel Drip Campaigns — Implementation Plan
+# Independent Multichannel Drip Campaigns — Revised Implementation Plan
 
-Status: proposed implementation plan
+Status: agreed implementation plan
 
 Date: 2026-08-29
 
-Scope: new intent/theme-based LinkedIn + Gmail drip subsystem that coexists safely with the existing outbound connection and legacy follow-up flows
+Scope: an intent/theme-based LinkedIn + Gmail drip subsystem in the existing OpenOutreach repository that remains isolated from the current outbound connection and post-connection flows wherever possible.
 
-## 1. Decision summary
+This revision replaces the earlier enrollment-calendar, delivery-window, always-on coordinator, and feature-flag design. It incorporates the agreed same-channel ordering, existing-flow handoff, Gmail threading, periodic task materialization, and cross-channel reply-stop rules.
 
-Build drip campaigns as a separate Django app and runtime subsystem. A drip campaign is a versioned narrative made of beats. Each beat expresses one communication intent and may contain an independently scheduled LinkedIn rendition, Gmail rendition, or both.
+## 1. Final architecture decisions
 
-The two channel lanes advance independently:
+1. Drip stays in this repository. It is not a new repository or standalone product.
+2. Drip is a separate Django app with its own models, migrations, services, commands, tests, and section in the existing Django Admin.
+3. The existing connection campaigns continue to own discovery, qualification, connection requests, invitation notes, acceptance detection, and their current post-connection sequences.
+4. An enrollment may be created while those current sequences are still running, but each drip channel waits for its own current-channel predecessor gate before it takes automation ownership.
+5. One campaign definition contains the ordered themes and both channel renditions. LinkedIn and Gmail are not maintained in unrelated JSON files.
+6. LinkedIn and Gmail progress independently. A prerequisite or failure in one channel never blocks the other channel.
+7. Dependencies are same-channel only. A Gmail message never requires a LinkedIn message, and a LinkedIn message never requires a Gmail message.
+8. Later drips have no campaign-calendar due date. Drip 2 begins after Drip 1 completes in that same channel, even when Drip 1 completed late.
+9. `sent_at` timing applies only between multiple messages inside the same drip rendition.
+10. Any exactly attributable inbound reply on LinkedIn or Gmail stops all remaining automated messages for that Lead and hands control to a human.
+11. The periodic `reconcile_drips` command decides what is eligible and materializes Tasks. It does not send and is not a continuously running coordinator.
+12. New `drip_linkedin` Tasks are consumed by the existing sender-scoped LinkedIn daemon, preserving one browser executor, current pacing, and anti-bot controls per LinkedIn account.
+13. New `drip_gmail` Tasks are consumed by the shared Gmail worker. That worker must be independently supervised rather than living inside the LinkedIn daemon, so Gmail continues if the browser process fails.
+14. Drip uses new task types and handlers. It reuses safe low-level send primitives, but it does not route its lifecycle through the current `FOLLOW_UP` or `GMAIL_FOLLOW_UP` handlers.
+15. No new drip, materialization, channel, or Gmail-threading environment flags are added. Database state and explicit commands are the controls.
+16. Gmail threading is always implemented correctly for both the current Gmail sequence and drip Gmail; it is not an optional mode.
+17. Drip never changes `Deal.state`.
 
-- LinkedIn delivery requires positive operator-specific connection evidence and a final live first-degree check.
-- Gmail delivery never depends on LinkedIn connection, LinkedIn delivery, or the LinkedIn daemon being healthy.
-- A failure or unavailable prerequisite affects only that channel lane.
-- Any qualifying inbound reply on either channel stops the entire enrollment and hands control to a human.
-- No drip lifecycle state mutates `Deal.state`.
-- Existing connection campaigns continue to own discovery, qualification, connection requests, invitation notes, acceptance sweeps, and their current legacy follow-ups unless an explicit drip enrollment takes automation ownership for that Lead.
+## 2. Repository baseline and current gaps
 
-The existing shared `Task` table remains transport plumbing, but drip receives new task types and keeps all authoritative state in drip-owned tables. The existing `FOLLOW_UP` and `GMAIL_FOLLOW_UP` handlers are not reused as drip sequencers.
+Implementation branch and worktree:
 
-## 2. Verified repository baseline
+- branch: `codex/drip-campaigns`;
+- clean sibling worktree: `/Users/admin/Desktop/Projects/OpenOutreach-drip-campaigns`;
+- current plan commit before this revision: `4bf949c`;
+- mainline base: `cbbf2da`;
+- retained CRM prerequisites: `f8a6619` and `2733157`;
+- the dirty `temp` worktree remains out of scope and must not be stashed, reset, switched, or committed as part of drip work.
 
-The repository was fetched and checked against `origin/main` on 2026-08-29. The reviewed reusable sales-copy, sales-motion, calendar-link, and related test work is committed and pushed as `cbbf2da` (`Add Boundera sales copy and motion tooling`), which is the exact mainline base for this plan.
+The repository already has the core of a cross-channel stop check: `automation_stop_reason(deal)` queries persisted inbound LinkedIn and Gmail `Message` rows. The current LinkedIn and Deal-backed Gmail post-connection handlers consult it. That is useful but not yet the universal guarantee required here.
 
-Current implementation baseline:
+Verified gaps to fix before drip sending:
 
-- Branch: `codex/drip-campaigns`
-- Worktree: clean sibling worktree dedicated to drip work
-- Mainline base and merge base: `cbbf2da` (`origin/main` and local `main`)
-- Rebased prerequisite 1: `f8a6619` (`Add canonical CRM refresh workflow`, replayed from `c9d7c2e`)
-- Rebased prerequisite 2: `2733157` (`Replace CRM with account-first active views`, replayed from `77926da`)
-- Drip scope on top of those prerequisites: this plan only; no runtime drip implementation yet
+- the stop predicate requires a `Deal` instead of a `Lead`;
+- Gmail tasks without `deal_id` skip the shared reply check;
+- current LinkedIn follow-up does not refresh the exact live conversation immediately before its send check;
+- some enqueue/recovery paths can still create Tasks for a replied Lead, even though the handler later no-ops;
+- inbound persistence does not centrally stop active enrollments and retire their pending Tasks;
+- cross-channel correctness depends on the latest reply having been persisted;
+- current Gmail steps call a fresh-send API and do not explicitly continue the same Gmail thread;
+- current Gmail persistence can confuse Gmail message IDs and thread IDs;
+- broad Gmail thread search and non-exact participant attribution are too permissive for a send gate;
+- `GmailWorker` currently runs inside the LinkedIn daemon and uses a non-atomic read-then-mark claim.
 
-Only those two pre-mainline commits were retained as drip prerequisites:
+Phase 0 fixes these shared safety seams first, with regression tests for the current flow, before any drip Task can send.
 
-- `f8a6619` provides canonical CRM state, strict `Message.operator` provenance, and the Gmail/message-persistence foundation needed for sender ownership, reply attribution, and deduplication.
-- `2733157` provides email-first Lead identity, allowing valid Leads without LinkedIn URLs. This is required for email-only and not-yet-connected enrollments.
+## 3. Product model: ordered themes with independent channel lanes
 
-The old `1567e27` Trello/pipeline commit was deliberately not replayed: it is not a hard drip dependency, and the retained CRM migration chain is complete through `0020`. The old `2cd3e7b` and `f5fdec0` sales-motion commits were also not replayed because `cbbf2da` contains the reviewed mainline versions of the reusable work. This keeps the drip branch free of unrelated history while preserving its actual data-model prerequisites.
-
-The separate `temp` worktree remains dirty and must not be used for implementation commits:
-
-- staged `.codex-work/**` research and Gmail audit utilities;
-- unstaged Boundera sales-skill and documentation changes;
-- untracked calendar-link and ICP Messages skill work.
-
-No uncommitted `temp` changes currently touch the principal runtime seams (`linkedin/models.py`, `linkedin/daemon.py`, `gmail/worker.py`, `gmail/handoff.py`, `linkedin/tasks/follow_up.py`, or `linkedin/tasks/sweep_connections.py`). Implementation must continue only in the clean `codex/drip-campaigns` sibling worktree. Do not stash, reset, switch, or commit the mixed `temp` worktree as part of drip work.
-
-## 3. Existing behavior that must remain unchanged
-
-When every drip feature flag is false and no active drip enrollment exists, the following must be behaviorally identical to the pre-drip baseline:
-
-- connect candidate selection and qualification;
-- LinkedIn connection-request sends and invitation notes;
-- `Deal` transitions through `READY_TO_CONNECT`, `PENDING`, and `CONNECTED`;
-- connection acceptance sweeping and Slack acceptance alerts;
-- current `FOLLOW_UP` task scheduling, operator ownership, pacing, and sends;
-- current `GMAIL_FOLLOW_UP` handoff and sends;
-- manual replies, feed engagement, discovery, status summaries, enrichment, and task priority;
-- existing LinkedIn and Gmail reply persistence;
-- CRM publication and Actions policy.
-
-No initial drip implementation should add a required call, transaction, or external dependency to the connect or sweep send path. Acceptance and invitation evidence will initially be observed by the drip coordinator from existing database state.
-
-## 4. Product model: narrative beats and independent renditions
-
-A campaign is not defined as two unrelated channel sequences. It is a sequence of narrative beats:
+A campaign is an ordered sequence of thematic drips. Each drip states the point the campaign needs to communicate and supplies independently understandable LinkedIn and Gmail versions.
 
 ```text
-Beat 1 — Name the problem
-  LinkedIn rendition: eligible during one window, requires connection
-  Gmail rendition: eligible on its own schedule
+Drip 1 — Name the problem
+  LinkedIn rendition: one or more LinkedIn messages
+  Gmail rendition: one or more emails
 
-Beat 2 — Explain the point of view
-  LinkedIn rendition: independent LinkedIn copy
-  Gmail rendition: independent email copy
+Drip 2 — Explain the point of view
+  LinkedIn rendition: one or more LinkedIn messages
+  Gmail rendition: one or more emails
 
-Beat 3 — Provide proof
-  LinkedIn rendition: independent LinkedIn copy
-  Gmail rendition: independent email copy
+Drip 3 — Provide proof
+  LinkedIn rendition: one or more LinkedIn messages
+  Gmail rendition: one or more emails
 
-Any qualifying reply — stop both lanes and hand off
+Any qualifying reply on either channel -> stop both lanes -> human takeover
 ```
 
-Rules:
+The theme pairing keeps the campaign coherent without forcing the channels to remain synchronized. It is expected and valid for Gmail to be on Drip 3 while LinkedIn is still waiting to begin Drip 1 because the connection request has not been accepted.
 
-1. Cross-channel delivery dependencies are prohibited in version 1.
-2. A rendition may depend only on an earlier rendition in the same channel.
-3. Copy should be semantically related across channels but independently understandable.
-4. LinkedIn waiting, failure, expiry, or unavailability never blocks Gmail.
-5. Gmail missing-email, bounce, auth failure, or send failure never blocks LinkedIn.
-6. Expired LinkedIn beats are skipped. Late acceptance releases at most the currently relevant beat and never dumps a backlog.
-7. Each campaign version specifies whether a previous same-channel rendition must be `sent` or merely terminal (`sent`, `skipped`, or `expired`) before a later rendition becomes eligible.
-8. Version 1 supports the `all_available` delivery policy: both eligible renditions may send. `first_available` and fallback policies should be reserved for a later schema version rather than implemented prematurely.
+### 3.1 Same-channel dependency rule
 
-## 5. Configuration contract
+For each channel independently:
 
-Create a separate namespace that neither reads nor rewrites legacy campaign copy:
+- the first configured drip rendition waits for that channel's current post-connection sequence gate;
+- a later rendition waits for the nearest earlier configured rendition in the same channel to be completed;
+- a rendition is completed only when all of its configured messages were successfully sent;
+- failed or uncertain delivery does not count as completion and pauses that channel for retry or review;
+- a drip that omits a channel is not a dependency in that channel's chain.
+
+There are no cross-channel predecessor fields or policies.
+
+### 3.2 Timing rule
+
+The first message of a newly eligible drip rendition has no offset from the previous drip. It becomes eligible when the predecessor rendition completes and is materialized on the next `reconcile_drips --apply` run.
+
+Only message 2 or later inside the same rendition has a delay:
+
+```text
+eligible_at(message N) = sent_at(message N - 1) + delay_after_previous_sent_hours
+```
+
+Consequences:
+
+- Drip 2 never looks at Drip 1's final `sent_at` to construct a new campaign date;
+- there is no original Drip 2 due date to miss;
+- if Drip 1 completes late, Drip 2 simply becomes eligible then;
+- there are no delivery windows, expiry dates, calendar shifts, or catch-up bursts;
+- the materializer creates at most the next eligible message for each channel lane.
+
+The initial production schedule may run reconciliation daily. Increasing that cadence later changes delivery latency, not campaign semantics.
+
+## 4. Handoff from the current outbound flow
+
+Drip is separate from the current outbound system, but the first drip must not overlap messages already owned by that system. Handoff is per Lead, operator, and channel.
+
+An enrollment may exist in a waiting state before either handoff completes. It does not retire pending or running current-sequence work.
+
+### 4.1 First LinkedIn drip gate
+
+The first LinkedIn drip rendition requires all of the following:
+
+1. The Lead-level global stop predicate is clear.
+2. The exact LinkedIn sender/operator is known.
+3. The current LinkedIn connection/post-connection sequence for that Lead and sender is completed, or a reviewed enrollment explicitly records it as not applicable.
+4. There is no pending or running current `follow_up` Task for that Lead and sender.
+5. The Lead has a canonical LinkedIn identity and positive sender-ownership evidence.
+6. The Lead is connected; the LinkedIn handler verifies live first-degree status immediately before sending.
+
+Do not infer completion merely from the absence of a Task or from `Deal.state` alone. Use current sequence Message evidence, Task state, sender ownership, and a recorded handoff decision.
+
+If the connection request remains pending or fails, the LinkedIn lane keeps waiting. Gmail continues independently.
+
+### 4.2 First Gmail drip gate
+
+The first Gmail drip rendition requires:
+
+1. The Lead-level global stop predicate is clear.
+2. The exact Gmail operator mailbox and Lead email are known.
+3. Any current Gmail post-connection sequence that actually started is completed.
+4. There is no pending or running current `gmail_follow_up` Task for the Lead and operator.
+5. If no current Gmail sequence was started, the enrollment records an explicit `not_applicable` gate rather than treating missing Tasks as proof of completion.
+
+Gmail never waits for LinkedIn acceptance, LinkedIn sequence completion, LinkedIn delivery, or LinkedIn health.
+
+This means a Lead whose connection request is never accepted can still enter the Gmail drip lane. Once that lane takes ownership, a later LinkedIn acceptance must not cause the current Gmail handoff to start a competing Gmail sequence.
+
+### 4.3 Per-channel ownership transfer
+
+When a channel's first-drip gate is satisfied, one transaction:
+
+1. records the current-sequence evidence or explicit not-applicable decision;
+2. stamps `DripLane.automation_owned_at`;
+3. makes the first drip rendition eligible;
+4. prevents future current-sequence enqueue, recovery, or handoff for that Lead/operator/channel.
+
+Before that timestamp, the current sequence remains authoritative for the channel. After it, the drip lane is authoritative. Version 1 does not support force-taking over a pending or running current sequence.
+
+Pausing drip after ownership transfer does not silently return the channel to the current flow. Handback requires an explicit reviewed release.
+
+## 5. Campaign JSON contract
+
+Definitions live in a separate namespace and never rewrite current campaign copy:
 
 ```text
 drip/
@@ -108,7 +170,7 @@ drip/
         manifest.json
 ```
 
-One manifest contains the narrative structure and paired sender/ICP renditions so publication is atomic:
+One manifest contains the ordered intents and paired channel copy:
 
 ```json
 {
@@ -116,187 +178,289 @@ One manifest contains the narrative structure and paired sender/ICP renditions s
   "campaign_key": "fedramp-core",
   "version": 1,
   "name": "FedRAMP core multichannel narrative",
-  "beats": [
+  "drips": [
     {
       "key": "readiness_problem",
-      "intent": "Explain the recurring burden of point-in-time readiness.",
-      "channels": {
-        "linkedin": {
-          "offset_hours": 24,
-          "valid_for_hours": 72,
-          "requires_connection": true,
-          "predecessor_policy": "terminal"
-        },
-        "gmail": {
-          "offset_hours": 48,
-          "valid_for_hours": 72,
-          "predecessor_policy": "sent"
-        }
-      }
+      "intent": "Explain the recurring burden of point-in-time readiness."
+    },
+    {
+      "key": "persistent_evidence",
+      "intent": "Explain the value of continuously maintained evidence."
     }
   ],
   "audiences": {
     "Arian": {
       "CSPs": {
-        "readiness_problem": {
-          "variants": [
-            {
-              "key": "a",
-              "linkedin": {
-                "body": "Hi {first_name}, ..."
+        "variants": [
+          {
+            "key": "a",
+            "gmail_thread_subject": "A question about readiness at {company_name}",
+            "drips": {
+              "readiness_problem": {
+                "linkedin": {
+                  "messages": [
+                    {
+                      "key": "opening",
+                      "body": "Hi {first_name}, ..."
+                    },
+                    {
+                      "key": "nudge",
+                      "delay_after_previous_sent_hours": 72,
+                      "body": "One other thought, ..."
+                    }
+                  ]
+                },
+                "gmail": {
+                  "messages": [
+                    {
+                      "key": "opening",
+                      "body": "Hi {first_name}, ..."
+                    }
+                  ]
+                }
               },
-              "gmail": {
-                "subject": "A question about readiness at {company_name}",
-                "body": "Hi {first_name}, ..."
+              "persistent_evidence": {
+                "linkedin": {
+                  "messages": [
+                    {
+                      "key": "opening",
+                      "body": "The reason I mention it is ..."
+                    }
+                  ]
+                },
+                "gmail": {
+                  "messages": [
+                    {
+                      "key": "opening",
+                      "body": "The reason I mention it is ..."
+                    }
+                  ]
+                }
               }
             }
-          ]
-        }
+          }
+        ]
       }
     }
   }
 }
 ```
 
-Publication requirements:
+Contract rules:
 
 - strict schema validation;
-- unique campaign, beat, and variant keys;
+- unique campaign, drip, variant, and message keys;
+- manifest order is the drip order;
 - known canonical senders and ICPs only;
-- channel-specific required fields;
-- finite nonnegative timings and valid delivery windows;
+- one or both channel renditions may exist for a drip;
+- the first message in a rendition has no predecessor delay;
+- every later message requires a finite nonnegative delay from the previous successful send;
+- no enrollment offsets, due days, valid-for windows, expiry, or cross-channel dependency fields;
 - allowlisted placeholders only;
-- no cross-channel dependencies;
-- deterministic paired-variant selection from enrollment ID and beat key;
-- complete copy coverage for every enabled sender/ICP/channel;
+- deterministic paired-variant selection from enrollment ID and drip key;
+- complete copy coverage for every published sender/ICP/channel combination;
+- `gmail_thread_subject` is the subject for a newly opened Gmail thread; an exact inherited current-sequence thread keeps its existing subject;
 - canonical serialization and SHA-256 digest;
-- immutable published versions: the same campaign/version with a different digest is rejected.
+- a campaign/version digest is immutable after publication.
 
-Runtime must never reread mutable files for an active enrollment. A reviewed `publish_drip_campaign` command validates the file and stores the immutable definition in the database. Enrollment freezes the campaign version, ICP, sender, selected variants, and rendered delivery content.
+Runtime never rereads mutable JSON for an active enrollment. Publication stores an immutable definition snapshot. Enrollment freezes campaign version, ICP, sender, selected variant, subject, and rendered message bodies.
 
-The first implementation does not modify `linkedin/icp_messages.json`, `gmail/icp_emails.json`, or the in-progress ICP Messages Sheet workflow. A dedicated drip authoring workflow can be added only after runtime behavior is proven.
+## 6. Separate Django app and data model
 
-## 6. Separate Django app and persistence
-
-Create a top-level `drip` Django app with its own migrations, admin, services, task handlers, worker, commands, and tests.
+Create a top-level `drip` Django app. It appears as a separate section in the existing Django Admin; no custom frontend is required for version 1.
 
 ### 6.1 `DripCampaign`
 
-- stable campaign key;
-- human-readable name;
-- enabled flag;
-- optional active published version;
+- stable campaign key and human-readable name;
+- status: `draft`, `active`, `paused`, `archived`;
+- active published version;
 - created/updated timestamps.
+
+Campaign status is the operational control. There is no drip environment enable flag.
 
 ### 6.2 `DripCampaignVersion`
 
-- campaign FK;
-- numeric version;
+- campaign FK and numeric version;
 - schema version;
-- canonical full definition snapshot;
+- canonical immutable definition snapshot;
 - SHA-256 digest;
 - publication timestamp and publisher metadata.
 
-Constraint: unique campaign + version. Published rows are immutable through service and admin policy.
+Constraint: unique campaign + version. Published versions are read-only in services and Admin.
 
 ### 6.3 `DripEnrollment`
 
 - UUID primary key;
-- campaign version FK;
-- Lead FK;
-- SalesOwner/operator FK;
-- snapshotted operator handle and ICP;
+- campaign version and Lead FKs;
+- SalesOwner/operator and snapshotted canonical handle;
+- frozen ICP and variant mapping;
 - optional source Deal/Campaign attribution;
-- trigger kind and anchor timestamp;
-- status: `active`, `paused`, `handed_off`, `stopped`, `completed`, `cancelled`, `review_required`;
-- automation-ownership timestamp and explicit release timestamp;
-- stop/handoff reason code and detail;
-- optional triggering inbound Message or Meeting;
-- created/updated/completed timestamps.
+- trigger kind;
+- status: `active`, `paused`, `stopped`, `completed`;
+- optional reviewed `reply_baseline_at` for deliberate re-engagement;
+- stop/handoff reason, detail, and triggering Message/Meeting;
+- created, updated, stopped, and completed timestamps.
 
-Default constraint: at most one unreleased automation-owning enrollment per Lead globally. This prevents two operators or campaigns from automating the same person concurrently. A future explicit policy can weaken this only with evidence.
-
-Once any drip delivery has sent, disabling the feature pauses the enrollment but does not silently return ownership to legacy automation. Returning to legacy requires an explicit reviewed release command, preventing rollback from double-sending.
+Default constraint: at most one nonterminal drip enrollment per Lead. Multiple operators or drip campaigns may not automate the same person concurrently.
 
 ### 6.4 `DripLane`
 
 One row per enrollment/channel:
 
 - channel: `linkedin` or `gmail`;
-- status: `waiting`, `active`, `degraded`, `unavailable`, `review_required`, `completed`, `stopped`;
-- channel-specific failure/stop code;
-- last activity timestamps.
+- status: `waiting_current_sequence`, `waiting_prerequisite`, `waiting_connection`, `active`, `paused`, `stopped`, `completed`;
+- current-sequence gate: `pending`, `completed`, `not_applicable`;
+- evidence and decision metadata for that gate;
+- `automation_owned_at` and optional reviewed release timestamp;
+- latest successful channel-sync timestamp and sync error for observability;
+- channel-specific failure/review reason;
+- Gmail-owned thread metadata where applicable.
 
-A lane state change never directly changes the sibling lane.
+A lane state change never directly advances, pauses, or fails its sibling. Only a global stop changes both.
 
-### 6.5 `DripDelivery`
+### 6.5 `DripRendition`
 
-One row per enrollment + beat + channel rendition:
+One row per enrollment + drip + configured channel:
+
+- drip key and ordered position;
+- channel and previous same-channel rendition FK;
+- frozen intent and variant key;
+- status: `waiting_predecessor`, `ready`, `active`, `paused`, `stopped`, `completed`;
+- started/completed timestamps.
+
+Constraint: unique enrollment + drip key + channel.
+
+### 6.6 `DripDelivery`
+
+One row per rendered message inside a rendition:
 
 - UUID primary key;
-- lane FK;
-- beat key and channel ordinal;
-- frozen variant key, subject, and body;
-- `not_before` and `expires_at`;
-- optional same-channel predecessor FK;
-- predecessor policy;
-- status: `waiting_prerequisite`, `scheduled`, `queued`, `sending`, `retry_wait`, `sent`, `skipped`, `failed`, `uncertain`, `stopped`;
+- rendition FK and message key/index;
+- frozen subject where applicable and body;
+- previous-message FK inside the same rendition;
+- delay after previous successful send;
+- computed `eligible_at` only for within-rendition messages;
+- status: `waiting`, `eligible`, `queued`, `sending`, `retry_wait`, `sent`, `failed`, `uncertain`, `stopped`;
 - retry counters and next-attempt timestamp;
 - send-started and sent timestamps;
-- provider/external IDs;
-- optional persisted CRM Message FK;
-- last error code and sanitized detail.
+- provider message/thread IDs and persisted CRM Message FK;
+- sanitized error category/detail.
 
-Constraint: unique enrollment + beat key + channel.
+Constraint: unique rendition + message key. Only one nonterminal executable Task may exist for a delivery.
 
-### 6.6 `DripDeliveryAttempt`
+### 6.7 `DripDeliveryAttempt`
 
 Append-only attempt ledger:
 
 - delivery FK and attempt number;
 - stable idempotency key;
 - optional shared Task FK;
-- status and error category;
-- `submit_attempted_at` stamped immediately before external mutation;
+- attempt status and error category;
+- `submit_attempted_at` immediately before the external mutation;
 - started/finished timestamps;
-- provider ID and reconciliation metadata.
+- provider IDs and reconciliation metadata.
 
-Constraint: unique delivery + attempt number and unique idempotency key.
+Task rows are execution leases. Drip tables are the source of truth.
 
-Task rows are execution leases, not the source of truth.
+## 7. Canonical Lead-level stop and human-handoff policy
 
-## 7. Timing and channel state machines
-
-The campaign clock anchors to enrollment by default:
+Replace the Deal-only API with one canonical Lead-level service, conceptually:
 
 ```text
-not_before = enrollment.anchor_at + offset_hours
-expires_at = not_before + valid_for_hours
+lead_automation_stop_reason(lead, reply_baseline_at=None)
 ```
 
-Coordinator behavior:
+It evaluates:
 
-- before `not_before`: keep delivery scheduled;
-- after `expires_at` without send: mark skipped/expired;
-- Gmail due with a satisfied same-channel predecessor: queue regardless of LinkedIn state;
-- LinkedIn due without positive connection evidence: remain `waiting_prerequisite` with no executable LinkedIn Task;
-- LinkedIn becomes connected inside the window: queue that delivery;
-- LinkedIn becomes connected after older windows: expire old deliveries, select at most the latest currently valid beat, preserve future beats;
-- retryable channel failure: retry only that delivery/lane;
-- permanent channel unavailability: stop or skip only that lane according to policy.
+- exactly attributable inbound LinkedIn `Message`;
+- exactly attributable inbound Gmail `Message`;
+- Meeting for the Lead;
+- Lead disqualification or global suppression;
+- explicit human takeover;
+- optionally, non-automation human outbound after enrollment.
 
-Connection acceptance should not reset the full campaign clock in version 1; otherwise late LinkedIn acceptance would semantically rewind the story after Gmail had advanced. A future schema may support a connection-anchored sub-sequence if a separate campaign truly needs it.
+Current post-connection flows call it without a reply baseline, so any historical inbound reply blocks more automation. Automatic drip admission also refuses historical inbound by default. A deliberate, reviewed re-engagement may record a baseline; only inbound after that baseline stops the new enrollment.
 
-## 8. Execution topology
+### 7.1 Exact reply attribution
 
-### 8.1 Shared transport types
+LinkedIn inbound attribution must use the exact other participant/thread identity and preserve known connection-note echo protections.
 
-Add two new `Task` values, both within the existing 20-character field:
+Gmail inbound attribution must require the exact normalized Lead email and correct operator mailbox. A third party in a broad or multi-participant matched thread must not be recorded as that Lead's reply. Automated mail, drafts, bounces, and provider notices are not human replies; bounce/invalid-address handling affects the Gmail lane according to its own policy.
 
-- `drip_linkedin`
-- `drip_gmail`
+The strict LinkedIn refresh path must preserve participant/member URNs and return a typed outcome that distinguishes `refreshed`, `no_thread`, and `unavailable`. The current best-effort conversation hook may remain for non-send callers, but a send preflight may not treat a swallowed persistence/fetch failure as proof that no reply exists. `unavailable` delays LinkedIn only.
 
-Payloads remain minimal:
+The strict Gmail refresh path must reuse the exact RFC participant and automated-message filtering in `gmail/data_sync.py`. Refresh failure delays Gmail only; it does not change LinkedIn lane state.
+
+### 7.2 Enforcement points
+
+The same stop service is called:
+
+1. before current post-connection enqueue/handoff/recovery;
+2. before drip reconciliation materializes a Task;
+3. at the start of every current and drip message handler;
+4. after refreshing the executor's own exact channel conversation;
+5. immediately before every external send boundary.
+
+Required current-flow hardening:
+
+- current LinkedIn follow-up refreshes and persists the exact LinkedIn conversation, then rechecks before sending;
+- current Gmail follow-up refreshes exact Gmail state and rechecks even for an email-first Lead with no `Deal` or `deal_id`;
+- current enqueue and daemon-heal paths do not create new messaging Tasks after a known stop.
+
+### 7.3 Reply-driven shutdown
+
+New inbound persistence on either channel invokes an idempotent stop service after commit:
+
+1. lock the active enrollment;
+2. mark it stopped with the triggering Message;
+3. stop both lanes, all nonterminal renditions, and all nonterminal deliveries;
+4. retire pending `drip_linkedin` and `drip_gmail` Tasks as completed/no-op with audit context;
+5. retire matching pending current LinkedIn/Gmail messaging Tasks when they can be resolved exactly;
+6. ensure suppression cleanup includes current Gmail plus both drip task types, not only current LinkedIn follow-up;
+7. prevent future current or drip enqueue/materialization;
+8. let any already-running handler make the same final pre-send check.
+
+The periodic reconciler repeats this check, so correctness does not depend solely on callbacks. Send-time checks remain authoritative for races.
+
+### 7.4 Accepted cross-channel synchronization gap
+
+Each executor refreshes its own channel and consults the latest persisted state from both channels. Channel-sync freshness is recorded and visible, but one channel's health is never a prerequisite for the other channel to send.
+
+Therefore, if LinkedIn is unavailable and a new LinkedIn reply has not yet been ingested, Gmail may send one otherwise eligible message. Gmail must not wait for or fail because LinkedIn could not be refreshed. As soon as the LinkedIn listener, sweep, or backfill persists that reply, all remaining current and drip automation stops.
+
+This availability-first bounded gap is explicitly accepted. The system must expose it honestly rather than claiming atomic knowledge across two external providers.
+
+## 8. Periodic reconciliation and Task materialization
+
+Add `manage.py reconcile_drips`:
+
+- dry-run by default;
+- `--apply` performs database mutations and Task creation;
+- safe and idempotent under repeated or concurrent execution;
+- suitable for a daily scheduler initially;
+- never sends an external message.
+
+For each active campaign/enrollment it:
+
+1. applies the global stop policy;
+2. evaluates each lane independently;
+3. resolves the first-drip current-sequence gate or the later same-channel rendition predecessor;
+4. checks within-rendition `sent_at` timing;
+5. checks channel-specific eligibility such as valid email or stored connection evidence;
+6. locks the delivery and confirms no executable Task already exists;
+7. creates at most the next eligible Task per lane;
+8. reports waiting, blocked, stopped, and materialized decisions with reason codes.
+
+The reconciler does not self-loop, sleep, maintain browser sessions, or own provider clients. Scheduled invocation is the materialization switch; campaign/enrollment status is the product switch. There is no `ENABLE_DRIP_MATERIALIZATION` setting.
+
+## 9. Shared queue, separate task types, and process topology
+
+Add two `Task.TaskType` values:
+
+- `drip_linkedin`;
+- `drip_gmail`.
+
+Payloads stay minimal:
 
 ```json
 {
@@ -305,445 +469,420 @@ Payloads remain minimal:
 }
 ```
 
-All lifecycle, timing, copy, identity, and deduplication data come from locked drip rows.
+Handlers load every lifecycle, timing, copy, identity, and deduplication field from locked drip rows.
 
-### 8.2 Dedicated drip process
+### 9.1 Why not reuse current task types
 
-Add `manage.py run_drip_worker` as a separate process/service. It performs:
+The current `FOLLOW_UP` handler correctly enforces the current sequence's assumptions: it requires its campaign-scoped Deal state, uses current sequence metadata/timing, and updates `Deal.state`. The current `GMAIL_FOLLOW_UP` handler likewise owns current sequence rendering and self-enqueue behavior.
 
-- periodic enrollment and stop reconciliation;
-- delivery-window evaluation;
-- idempotent task materialization;
-- atomic, operator-aware claiming of `drip_gmail` tasks;
-- Gmail preflight, sending, persistence, and recovery.
+Those are correct for their existing jobs but not for drip lifecycle. New task types prevent either handler from accidentally mutating current campaign state or applying the wrong predecessor/timing rules. The same machines and safe low-level provider functions are reused.
 
-This process must remain alive even if a LinkedIn daemon/browser crashes. Running Gmail drip inside the existing LinkedIn daemon would defeat the required fallback independence.
+### 9.2 LinkedIn execution
 
-The existing `GmailWorker` remains unchanged. Its current plain-read claim and global running-task reclaim behavior must not be inherited by drip.
+The existing sender-specific LinkedIn daemon claims `drip_linkedin` alongside current browser work.
 
-### 8.3 LinkedIn browser bridge
+Required narrow routing changes:
 
-The existing sender-specific LinkedIn daemon claims `drip_linkedin`. Required shared changes are explicit and narrow:
+- operator-scope `drip_linkedin` exactly like other sender-owned browser Tasks;
+- exclude it from account-agnostic claiming;
+- add handler dispatch, `Task.clean()` payload validation, stale recovery, and wake-time support;
+- place it after current connection/follow-up delivery in deliberate priority;
+- share the existing Follow Up action cap and add a conservative drip sub-cap;
+- preserve single-threaded browser execution so drip and current outreach never operate LinkedIn simultaneously for the same account.
 
-1. Add the enum value and payload validation.
-2. Add `drip_linkedin` to `_linked_operator_scope_q()`.
-3. Add it to `linked_account_scoped_task_types()`.
-4. Add it to daemon account-wide task handling so it does not require a legacy campaign payload.
-5. Add a handler entry to `_HANDLERS`.
-6. Add deliberate queue priority below manual/reply-critical work and without starving existing delivery tasks.
-7. Add it to stale-task recovery and `seconds_to_next()` ownership tests.
-8. Add `drip_gmail` to `non_linkedin_outbound_task_types()` so a browser daemon can never claim it.
+`ActionLog.campaign` must become nullable for drip attribution, and the existing current callers must continue passing their Campaign. Drip records the same Follow Up action type with `campaign=None`, so current global/daily limits count both systems.
 
-Omitting operator scoping would make the new task account-agnostic and recreate the project’s prior wrong-sender failure class. This is a release-blocking test requirement.
+### 9.3 Gmail execution
 
-### 8.4 LinkedIn rate accounting
+Turn the current Gmail worker into an independently supervised process, for example `manage.py run_gmail_worker --operator Arian`.
 
-Drip LinkedIn sends must count against the existing Follow Up daily/global action caps. For true campaign independence, make `ActionLog.campaign` nullable and allow `LinkedInProfile.record_action(..., campaign=None)` for drip only. Existing outbound callers continue passing their Campaign unchanged. The `DripDeliveryAttempt` remains the detailed drip attribution ledger.
+Before adding drip Gmail it must:
 
-Also add a conservative drip-specific daily sub-cap so enabling drip cannot consume the entire existing follow-up budget. Initial queue priority remains below legacy follow-up/connect delivery.
+- atomically claim Tasks instead of read-then-mark;
+- process current `gmail_follow_up` Tasks exactly as today;
+- be removed from the LinkedIn daemon's in-process lifecycle;
+- use existing Gmail account mappings/credentials;
+- recover only genuinely stale, age-qualified work owned by its task type/operator rather than resetting every running Gmail Task at startup;
+- keep running when the LinkedIn daemon/browser exits.
 
-## 9. Channel eligibility and send handlers
+Then extend its explicit handler map to claim `drip_gmail`. One operator-scoped worker processes both current and drip Gmail Tasks, preventing competing Gmail executors for that mailbox.
 
-### 9.1 LinkedIn eligibility
+The deployment supervisor and Docker/service entrypoints must start this standalone worker. The in-daemon worker and standalone worker may not overlap during cutover; atomic claims are defense in depth, not permission to run two mailbox executors indefinitely.
 
-Do not reuse exact legacy assumptions that `Deal.state == CONNECTED` and an existing outbound Message must exist. Legacy follow-up can mark a still-valid connection `COMPLETED`.
+## 10. Drip send handlers
 
-The drip eligibility service requires:
+### 10.1 `drip_linkedin`
 
-- Lead has a canonical LinkedIn identity;
-- enrollment operator has positive ownership evidence (matching project-sent invitation, existing operator-owned thread, or reviewed manual enrollment);
-- stored connection evidence such as `connected_at` or inbound LinkedIn activity;
-- final live first-degree status under the exact sender browser immediately before send.
+1. Atomically claim the sender-scoped Task.
+2. Lock enrollment, lane, rendition, delivery, and attempt.
+3. Recheck campaign/enrollment/lane state, ownership, predecessor, timing, stop policy, and idempotency.
+4. Resolve the exact Lead and sender-owned LinkedIn identity.
+5. Fetch and persist the exact live LinkedIn conversation.
+6. Require the strict refresh result; `unavailable` delays LinkedIn and cannot be interpreted as no reply.
+7. Re-run the global stop policy.
+8. Verify live first-degree connection under that exact sender browser.
+9. Recheck the send boundary and stamp `submit_attempted_at`.
+10. Call the existing low-level LinkedIn message primitive with drip-specific deterministic persistence metadata.
+11. Persist CRM Message, attempt, delivery, rendition, and lane state without changing `Deal.state`.
 
-A LinkedIn delivery with no connection remains waiting or expires. It does not fail the enrollment or affect Gmail.
+If not connected, return the lane to `waiting_connection`; do not fail Gmail or the enrollment. Provider failure/retry/uncertainty affects only LinkedIn.
 
-The drip LinkedIn handler:
+### 10.2 `drip_gmail`
 
-1. Locks enrollment, lane, delivery, and current attempt.
-2. Rechecks ownership, active status, window, same-channel predecessor, suppression, meeting, and reply conditions.
-3. Fetches/persists the live LinkedIn conversation immediately before send.
-4. Re-runs the stop policy.
-5. Verifies live first-degree status.
-6. Freezes/stamps the attempt boundary.
-7. Calls the existing low-level LinkedIn send primitive, not `handle_follow_up`.
-8. Persists deterministic drip Message and attempt state.
-9. Records existing Follow Up rate usage without touching `Deal.state`.
+1. Atomically claim the operator-scoped Task.
+2. Lock enrollment, lane, rendition, delivery, and attempt.
+3. Recheck campaign/enrollment/lane state, predecessor, timing, exact email, stop policy, and idempotency.
+4. Refresh the exact Lead/operator Gmail conversation or owned thread.
+5. Require a successful exact Gmail refresh; unavailable Gmail delays Gmail only.
+6. Re-run the global stop policy without requiring LinkedIn freshness.
+7. Resolve the exact current/drip thread binding.
+8. Recheck the send boundary and stamp `submit_attempted_at`.
+9. Send through a typed Gmail result API returning provider message ID, actual thread ID, and RFC message metadata.
+10. Persist CRM Message, attempt, delivery, rendition, lane, and thread state.
 
-### 9.2 Gmail eligibility
+It never checks `Deal.state`, LinkedIn connection, LinkedIn delivery outcome, or LinkedIn process health.
 
-The drip Gmail handler:
+## 11. Gmail threading is a required shared fix
 
-1. Locks enrollment, lane, delivery, and current attempt.
-2. Rechecks active status, timing, same-channel predecessor, suppression, meeting, reply, and valid email.
-3. Refreshes Gmail threads for the Lead immediately before send.
-4. Re-runs the global stop policy.
-5. Freezes/stamps the attempt boundary.
-6. Sends through a drip-specific Gmail result method that returns message and thread IDs.
-7. Persists deterministic drip Message and attempt state.
+The current Gmail sequence must be corrected before the Gmail drip pilot.
 
-It never checks `Deal.state`, connection status, or LinkedIn delivery outcome.
+Rules:
 
-Email enrichment should be a later independent lane capability (`drip_enrich_email`) rather than silently routing through the legacy enrichment/Gmail handoff in the first delivery milestone.
+1. The first current-sequence email opens the sequence's exact Gmail thread.
+2. Every later current-sequence email while unanswered replies in that same thread.
+3. If an exact current-sequence thread exists at Gmail-lane handoff, the first drip email continues that known thread.
+4. If the current Gmail sequence was explicitly not applicable and no owned thread exists, the first drip email opens one enrollment-owned thread.
+5. Every later Gmail message in that drip enrollment, including later thematic drips, replies in that exact thread while unanswered.
+6. Never choose an arbitrary historical unanswered thread by subject or broad search.
+7. Never fake continuity by prepending `Re:` to a newly created message.
+8. If a required owned thread cannot be recovered exactly, pause for review; do not silently open a duplicate thread.
 
-## 10. Stop policy and human handoff
+Implementation requirements:
 
-Admission defaults:
+- Gmail API request includes the actual provider `threadId` for continuation;
+- MIME includes correct `In-Reply-To` and `References` using RFC `Message-ID` values;
+- the continuing subject matches the established thread subject;
+- Gmail API message ID, Gmail thread ID, and RFC Message-ID are stored as distinct values;
+- `crm.Message.thread_external_id` stores the real Gmail thread ID;
+- generated RFC Message-ID is deterministic per delivery for recovery;
+- exact Lead email/operator mailbox attribution replaces broad-query assumptions;
+- API-request-level tests inspect new-thread and reply-thread payloads;
+- existing current Gmail tests prove all sequence steps share one thread.
 
-- refuse disqualified or actively suppressed Leads;
-- refuse Leads with an existing meeting or unresolved human conversation;
-- refuse active legacy automation unless explicit reviewed takeover is requested;
-- deliberate re-engagement after historical inbound requires explicit override and a recorded reply baseline.
+There is no `ENABLE_GMAIL_THREADING` setting. Correct threading is the only behavior.
 
-Runtime global stops:
+## 12. External-send crash safety
 
-- inbound LinkedIn Message attributable after the enrollment baseline;
-- inbound Gmail Message attributable after the enrollment baseline;
-- Meeting created for the Lead;
-- suppression/disqualification;
-- recommended safety: non-drip human outbound after enrollment pauses automation.
+No database transaction can make an external provider send exactly once. Preserve an explicit uncertainty boundary:
 
-Stopping is transactional:
+- stamp `submit_attempted_at` immediately before provider mutation;
+- pre-submit recoverable errors may enter bounded `retry_wait`;
+- a stale attempt with `submit_attempted_at` becomes `uncertain`, never an automatic retry;
+- uncertainty pauses only that channel lane;
+- every recovery result is audited.
 
-1. Lock enrollment.
-2. Mark it `handed_off` or `stopped` with a reason and triggering record.
-3. Stop both lanes.
-4. Stop every nonterminal delivery.
-5. Complete pending drip Tasks with an audit reason.
-6. Let any running handler perform the same state check before crossing its send boundary.
+LinkedIn recovery fetches the exact sender-owned thread and reconciles only an exact frozen-body/sender/bounded-time match.
 
-Correctness does not depend on realtime callbacks. The worker periodically reconciles local Message/Meeting state, and every handler refreshes its own channel and rechecks immediately before send. Later, LinkedIn realtime and Gmail persistence may best-effort wake the same stop service to improve latency.
+Gmail recovery searches the deterministic RFC Message-ID and reconciles only exact provider evidence.
 
-## 11. External-send crash safety
+If proof is ambiguous, keep the delivery uncertain and require review rather than risk a duplicate send.
 
-Exactly-once external delivery cannot be guaranteed by a database transaction. Both providers have a crash window after accepting a send but before local success is committed.
+## 13. Coexistence boundaries
 
-Required policy:
+The following remain current-flow responsibilities:
 
-- Stamp `submit_attempted_at` before the external mutation.
-- A stale `sending` attempt with that stamp becomes `uncertain`, never an automatic retry.
-- `uncertain` affects only its channel lane and requires reconciliation or human review.
+- discovery and qualification;
+- connection requests and invitation notes;
+- connection acceptance sweeps;
+- current post-connection LinkedIn and Gmail sequences until their respective handoff;
+- manual replies, feed engagement, enrichment, status summaries, and CRM publication.
 
-LinkedIn recovery:
+Drip reads Lead, sender, ICP, Message, Meeting, connection, and Task evidence. It does not rewrite current campaign definitions or use `Deal.state` as its lifecycle.
 
-- fetch the exact thread;
-- match exact frozen body, sender, and bounded send time;
-- reconcile to `sent` only when proof is unambiguous;
-- otherwise keep `uncertain` and never duplicate automatically.
+Narrow defense-in-depth guards are added only where necessary:
 
-Gmail recovery:
+1. current LinkedIn enqueue/recovery no-ops after the LinkedIn drip lane owns automation;
+2. current Gmail handoff/enqueue no-ops after the Gmail drip lane owns automation;
+3. current handlers no-op if ownership changed after their Task was queued;
+4. daemon healing excludes only the Lead/operator/channel already owned by drip;
+5. connection acquisition and acceptance detection remain eligible even when Gmail drip ownership has transferred.
 
-- send with a deterministic RFC Message-ID derived from delivery UUID;
-- search that ID on recovery;
-- reconcile only with exact proof;
-- otherwise keep `uncertain`.
+An active enrollment waiting for current-channel completion does not suppress that current channel prematurely.
 
-Extend low-level send/persistence APIs with optional drip-specific deterministic persistence while preserving current defaults for every legacy caller.
+## 14. Operational controls and commands
 
-## 12. Coexistence and automation ownership
+No new environment feature flags are introduced. Existing current-flow settings remain untouched.
 
-An active drip enrollment and legacy follow-up automation must never operate concurrently for the same Lead.
+Controls are explicit database state:
 
-Enrollment behavior:
+- Campaign: `draft`, `active`, `paused`, `archived`;
+- Enrollment: `active`, `paused`, `stopped`, `completed`;
+- Lane: waiting/active/paused/stopped/completed states;
+- optional later auto-enrollment rules have their own database status.
 
-- default: refuse when pending/running legacy `follow_up` or `gmail_follow_up` exists;
-- `--take-over`: under one transaction, refuse if a legacy task is running, retire only pending legacy tasks, create the enrollment, and acquire durable automation ownership;
-- record every retired Task ID and reason.
+Commands default to validation or dry-run where mutation is not intrinsic:
 
-Narrow defense-in-depth integration points:
+- `validate_drip_campaigns`;
+- `publish_drip_campaign`;
+- `plan_drip_enrollment`;
+- `enroll_drip --apply`;
+- `reconcile_drips [--apply]`;
+- `drip_status`;
+- `pause_drip` / `resume_drip`;
+- `pause_drips --all --apply` for an operational emergency stop;
+- `release_drip_lane --apply`;
+- shared `run_gmail_worker --operator <handle>`.
 
-1. `enqueue_follow_up()` no-ops for the same Lead/operator when drip owns automation.
-2. `gmail.handoff.maybe_schedule_gmail_sequence()` does the same.
-3. Legacy LinkedIn and Gmail handlers no-op if ownership changed after their Task was queued.
-4. `heal_tasks()` excludes Leads whose drip enrollment owns automation, preventing restart from recreating legacy follow-ups.
+Validation, publication, enrollment planning, enrollment creation, and reconciliation itself never call a provider send API. Only queue workers send approved active deliveries.
 
-These checks consult durable enrollment ownership even if the drip send feature flag is temporarily disabled. Disabling drip pauses the new system; it must not silently reactivate legacy messages after partial drip delivery.
+## 15. Implementation phases and release gates
 
-Do not put a drip check inside the existing shared `automation_stop_reason()`, because the drip handler would then stop itself. Use a dedicated ownership predicate and a separate drip stop policy.
-
-Existing connection tasks and sweeps remain eligible. Drip ownership suppresses only automated follow-up messaging, not connection acquisition or acceptance detection.
-
-## 13. Optional outbound-to-drip enrollment rules
-
-Automatic integration is opt-in and arrives only after manual pilots.
-
-Add `DripEnrollmentRule`:
-
-- source legacy Campaign;
-- target DripCampaign/version;
-- canonical operator;
-- trigger (`deal_ready`, `invitation_sent`, or later `connected`);
-- enabled flag;
-- optional cohort/allowlist controls.
-
-The dedicated coordinator polls existing database evidence and enrolls idempotently. It does not add calls to `handle_connect` or `process_accepted_deal` in the initial implementation.
-
-Recommended first production trigger: `invitation_sent`, because it is positive proof that this project/operator sent the request. Gmail can then proceed while acceptance remains pending. If product policy requires Gmail even when the LinkedIn request itself never succeeds, use `deal_ready`; that is a deliberate campaign decision rather than an accidental fallback.
-
-## 14. Feature flags and operational controls
-
-All flags default false:
-
-- `ENABLE_DRIP_CAMPAIGNS`
-- `ENABLE_DRIP_SHADOW_MODE`
-- `ENABLE_DRIP_GMAIL`
-- `ENABLE_DRIP_LINKEDIN`
-- `ENABLE_DRIP_AUTO_ENROLL`
-
-Additional limits:
-
-- drip LinkedIn daily sub-cap;
-- maximum Gmail deliveries per worker pass;
-- maximum coordinator enrollments/materializations per pass;
-- retry caps and bounded backoff;
-- optional allowlisted Lead IDs for live pilots.
-
-Commands should default to validation/dry-run and require `--apply` for mutations:
-
-- `validate_drip_campaigns`
-- `publish_drip_campaign`
-- `plan_drip_enrollment`
-- `enroll_drip`
-- `release_drip_enrollment`
-- `reconcile_drip_campaigns`
-- `drip_status`
-- `run_drip_worker`
-
-No command sends during validation, publication, enrollment planning, or enrollment creation. External sends occur only through enabled workers processing approved active enrollments.
-
-## 15. Implementation phases and exit gates
-
-### Phase 0 — Clean baseline
+### Phase 0A — Harden the current reply-stop invariant
 
 Work:
 
-- use the existing clean sibling worktree and `codex/drip-campaigns` branch rebased onto `cbbf2da`;
-- retain only `f8a6619` and `2733157` as pre-plan prerequisites;
-- confirm fetched main remains the exact merge base;
-- leave the current dirty `temp` worktree untouched;
-- capture baseline test results with `.venv/bin/python` and an explicit test database configuration.
+- introduce the Lead-level stop service;
+- retain a narrow Deal wrapper only for current callers during migration;
+- enforce it in current enqueue, heal, handler-start, refresh, and pre-send paths;
+- refresh the exact LinkedIn conversation before current LinkedIn sends;
+- enforce exact Gmail refresh and stop checks for Gmail Leads with or without a Deal;
+- add inbound-persistence stop hooks and Task cleanup;
+- expose channel-sync freshness.
 
 Exit gate:
 
-- clean branch/worktree;
-- baseline focused and full tests recorded;
-- no user work moved or committed.
+- persisted reply on either channel blocks both current post-connection channels;
+- latest same-channel reply is found by pre-send refresh;
+- no-Deal Gmail is protected;
+- exact reply attribution tests pass;
+- all current-flow regression tests pass.
 
-### Phase 1 — Definitions and domain only
+### Phase 0B — Correct Gmail threading and process independence
 
 Work:
 
-- add separate `drip` app;
-- add strict definition schema/loader/publisher;
-- add campaign, version, enrollment, lane, delivery, and attempt models;
-- add migrations and admin;
-- add dry-run planner and default-off flags;
-- add one test-only/example campaign definition with nonproduction copy.
-
-No Task types, workers, or send calls.
+- add typed Gmail send results and exact provider/RFC identifiers;
+- thread the existing current Gmail sequence correctly;
+- replace broad send-gate attribution with exact thread/address logic;
+- add atomic Gmail Task claiming;
+- run GmailWorker as an independently supervised process;
+- remove its in-process dependency on the LinkedIn daemon.
 
 Exit gate:
 
-- immutable publication proven;
-- deterministic rendering proven;
-- constraints and admin visibility proven;
-- entire legacy suite unchanged.
+- current Gmail sequence uses one exact thread;
+- request-level threading tests pass;
+- one Gmail worker cannot double-claim;
+- current Gmail Tasks continue while the LinkedIn process is stopped;
+- no drip models or sends are needed to prove the shared fix.
 
-### Phase 2 — Shadow coordinator
+### Phase 1 — Drip domain, publication, and Admin
 
 Work:
 
-- materialize lanes/deliveries;
-- implement clocks, windows, dependencies, stops, expiry, and late-accept logic;
-- add coordinator in shadow mode;
-- record `would_queue` decisions without creating executable Tasks;
-- add observability/status command.
+- add the separate `drip` app;
+- add strict manifest schema/loader/publisher;
+- add campaign, version, enrollment, lane, rendition, delivery, and attempt models;
+- add migrations and a separate Admin section;
+- add dry-run enrollment planning with per-channel current-sequence gates;
+- add nonproduction example definitions.
+
+No Task types or provider send calls.
 
 Exit gate:
 
-- scenario matrix passes;
-- copied/nonproduction data produces correct decisions;
-- zero external sends possible by construction.
+- immutable publication, deterministic rendering, constraints, Admin state, and explicit handoff decisions are proven;
+- the entire current suite remains unchanged.
 
-### Phase 3 — Independent Gmail pilot
+### Phase 2 — Periodic reconciler in dry-run
 
 Work:
 
-- add `drip_gmail` type and browser exclusion;
-- add atomic drip Gmail claim/recovery;
-- add separate `run_drip_worker` service;
-- add Gmail preflight, deterministic Message-ID, attempt ledger, and uncertainty handling;
-- manually enroll an allowlisted internal/test cohort;
-- keep LinkedIn drip disabled and auto-enrollment disabled.
+- implement the same-channel state machine;
+- implement first-drip current-sequence gates;
+- implement within-drip timing from previous successful `sent_at`;
+- implement global stops, per-channel failure isolation, and status reporting;
+- run `reconcile_drips` without `--apply` against reviewed nonproduction data.
 
 Exit gate:
 
-- email sends while source Deal remains pending;
-- LinkedIn health is irrelevant to Gmail execution;
-- Gmail reply stops enrollment;
-- crash-window recovery never auto-duplicates;
-- legacy Gmail behavior unchanged outside active enrollments.
+- no external send or executable drip Task is possible;
+- scenario matrix proves late predecessor completion, independent channel positions, and no calendar/expiry behavior.
 
-### Phase 4 — LinkedIn pilot
+### Phase 3 — Gmail Task materialization and pilot
 
 Work:
 
-- add `drip_linkedin` type, operator scoping, dispatch, priority, and stale recovery;
-- add live thread refresh and first-degree verification;
-- add deterministic persistence and uncertain-send recovery;
-- count against existing rate caps with a drip sub-cap;
-- pilot only reviewed already-connected Leads with positive operator ownership;
-- keep auto-enrollment disabled.
+- add `drip_gmail` Task routing to the independent Gmail worker;
+- enable `reconcile_drips --apply` to atomically materialize eligible Gmail deliveries;
+- implement Gmail handler, thread continuation, attempt ledger, and uncertainty recovery;
+- manually enroll a tiny internal/allowlisted cohort;
+- leave LinkedIn drip without an executable handler until Phase 4.
 
 Exit gate:
 
-- wrong operator can never claim;
-- pending/nonconnected profiles never send;
-- no prior-thread requirement when live first-degree ownership is proven;
-- LinkedIn failure does not affect Gmail lane;
+- Gmail sends regardless of LinkedIn connection/process health;
+- current-sequence handoff prevents overlap;
+- Gmail reply stops the full enrollment;
+- crash recovery never auto-duplicates;
+- current Gmail behavior remains correct outside owned drip lanes.
+
+### Phase 4 — LinkedIn Task materialization and pilot
+
+Work:
+
+- add `drip_linkedin` operator scoping, routing, priority, and stale recovery;
+- implement live thread refresh, reply stop, and first-degree verification;
+- add deterministic persistence, action accounting, and uncertain-send recovery;
+- pilot reviewed already-connected Leads under the exact owner account.
+
+Exit gate:
+
+- wrong sender cannot claim;
+- pending/nonconnected Leads cannot send;
+- current-sequence handoff prevents overlap;
+- LinkedIn failure never blocks Gmail;
 - no `Deal.state` mutation.
 
-### Phase 5 — Multichannel ownership pilot
+### Phase 5 — Manual multichannel pilot
 
 Work:
 
-- implement transactional takeover/release;
-- add all four legacy guard points;
-- enable both lanes for a tiny allowlisted cohort;
-- exercise channel failures, replies, late acceptance, expiry, pauses, and rollback.
+- enable both renditions for a tiny manually reviewed cohort by activating database campaign/enrollment state;
+- exercise late LinkedIn acceptance, channel drift, multi-message delays, provider failures, replies, pauses, restarts, and explicit release;
+- verify the accepted LinkedIn-outage/Gmail-send behavior and subsequent stop after ingestion.
 
 Exit gate:
 
-- zero duplicate legacy+drip tasks/sends;
-- reply on either channel stops all remaining deliveries;
-- disable flags pause without handing back to legacy;
-- reviewed release is the only handback mechanism.
+- zero duplicate current+drip sends;
+- reply on either channel stops all known remaining automation;
+- each channel advances only from its own predecessors;
+- pause never silently hands ownership back.
 
-### Phase 6 — Opt-in source-campaign integration
+### Phase 6 — Optional source-campaign enrollment
 
-Work:
+Only after the manual pilot, add database-backed `DripEnrollmentRule` records mapping a current source Campaign/operator/cohort to a drip version and trigger such as invitation sent or connection accepted.
 
-- add disabled `DripEnrollmentRule` support;
-- enable one source Campaign/operator and a bounded cohort;
-- enroll from existing evidence by polling;
-- compare delivery, reply, skip, uncertainty, and human-handoff metrics;
-- retire legacy follow-up for that source campaign only after proof.
+Rules remain inactive until explicitly activated in Admin. The periodic reconciler enrolls idempotently from existing database evidence; current connect/sweep send paths receive no new provider calls.
 
 Exit gate:
 
-- stable production cohort over an agreed observation period;
-- no regression in connect/sweep performance;
+- stable bounded cohort over an agreed observation period;
+- no regression in connect/sweep throughput;
 - no wrong-sender, duplicate-send, or cross-channel-block incidents;
-- documented operator rollback procedure.
+- documented rollback and ownership-release procedure.
 
-### Phase 7 — Authoring workflow and controlled expansion
+### Phase 7 — Authoring workflow and expansion
 
-Work:
+After runtime behavior is proven, design a dedicated Drip Campaigns Sheet/skill if needed. It must preserve one atomic manifest/version containing both channel renditions and may not rewrite the current ICP message files.
 
-- design a dedicated Drip Campaigns Sheet/skill if needed;
-- preserve atomic campaign version publication;
-- expand sender/ICP coverage one reviewed campaign version at a time;
-- consider additional delivery policies only with explicit product requirements.
+## 16. Release-blocking verification matrix
 
-## 16. Required verification matrix
+### Current-flow reply safety
 
-Configuration and publication:
+- Gmail inbound blocks current LinkedIn follow-up;
+- LinkedIn inbound blocks current Gmail follow-up;
+- no-Deal/email-first Gmail task is blocked by inbound;
+- current LinkedIn pre-send refresh catches a new LinkedIn reply;
+- current Gmail pre-send refresh catches a new Gmail reply;
+- enqueue and healing do not recreate messaging work after a known reply;
+- exact Lead address/participant attribution excludes unrelated participants.
 
-- malformed definitions fail closed;
-- unknown sender/ICP/channel/placeholder fails closed;
-- cross-channel dependency fails publication;
-- published version digest cannot change;
-- active enrollments remain on frozen content after new publication.
+### Gmail correctness and independence
 
-State and timing:
+- current sequence step 2+ uses the exact thread from step 1;
+- provider message ID, provider thread ID, and RFC Message-ID remain distinct;
+- reply headers and subject are correct;
+- drip continues an exact eligible current thread or creates exactly one owned thread when none exists;
+- missing owned thread fails closed instead of opening a duplicate;
+- atomic Gmail claims prevent two workers from sending one Task;
+- Gmail current and drip Tasks run while LinkedIn is stopped.
 
-- exactly one automation-owning enrollment per Lead;
-- same-channel dependencies work;
-- channel-independent delivery works;
-- boundary times and expiry are deterministic;
-- late acceptance skips stale beats and queues at most one current beat;
-- no catch-up burst;
-- minimum same-channel gaps are respected.
+### Drip ordering and timing
 
-Channel isolation:
+- first LinkedIn drip waits for current LinkedIn completion and live connection;
+- first Gmail drip waits only for current Gmail completion/not-applicable state;
+- Gmail can advance while LinkedIn waits;
+- LinkedIn can advance while Gmail is paused;
+- Drip N waits only for the previous configured rendition in that channel;
+- late predecessor completion makes the next drip eligible without expiry;
+- only same-drip later messages calculate from previous successful `sent_at`;
+- failed/uncertain messages do not complete a rendition;
+- one next executable delivery per lane; no backlog burst.
 
-- LinkedIn pending while Gmail sends;
-- LinkedIn retry/failure/uncertainty while Gmail continues;
-- Gmail missing email/failure/uncertainty while LinkedIn continues;
-- one completed lane does not complete or fail the sibling lane.
+### Cross-channel stop and handoff
 
-Stop and handoff:
+- new inbound LinkedIn stops both drip lanes;
+- new inbound Gmail stops both drip lanes;
+- reply during either current sequence prevents either drip lane from starting;
+- inbound hook retires pending drip Tasks;
+- handler-start and final pre-send checks protect races;
+- Meeting, suppression/disqualification, and explicit human takeover stop both;
+- historical inbound admission is blocked unless reviewed re-engagement records a baseline;
+- LinkedIn outage does not block Gmail, and a subsequently ingested LinkedIn reply stops all remaining work.
 
-- new inbound LinkedIn stops both lanes;
-- new inbound Gmail stops both lanes;
-- Meeting and suppression stop both;
-- admission policy for historical inbound is explicit;
-- optional human outbound pause works;
-- running handlers recheck before send.
+### Queue, identity, and crash safety
 
-Queue and ownership:
+- wrong LinkedIn sender cannot claim;
+- LinkedIn daemon cannot claim `drip_gmail`;
+- Gmail worker cannot claim browser Tasks;
+- concurrent reconcilers materialize one Task per delivery;
+- current and drip ownership cannot overlap within a Lead/operator/channel;
+- stale post-submit attempts become uncertain, not automatic retries;
+- recovery needs exact provider evidence.
 
-- wrong sender cannot claim `drip_linkedin`;
-- browser daemon cannot claim `drip_gmail`;
-- atomic delivery and Task materialization under concurrent workers;
-- one Delivery produces at most one executable Task at a time;
-- stale attempted sends become uncertain rather than retrying;
-- all payload validation and task timing queries include new types.
+### Regression
 
-Legacy regression:
+- no drip enrollment means current behavior remains unchanged except the intentional Phase 0 safety/threading fixes;
+- connection, sweep, current follow-up, Gmail, manual reply, feed, discovery, enrichment, status, CRM, and Admin tests pass;
+- full suite passes on the supported PostgreSQL target before production.
 
-- no enrollment + all flags false equals current behavior;
-- active drip suppresses every legacy enqueue/heal/send path;
-- connection and sweep paths remain unchanged;
-- current follow-up, Gmail, manual reply, feed, discovery, enrichment, and status tests pass;
-- full suite passes on the project’s supported PostgreSQL target before production.
+## 17. Rollout and rollback
 
-Live verification:
+Roll out one reviewed goal/commit at a time. No phase becomes production-active merely because its code merged.
 
-- bounded internal/test Gmail send;
-- bounded already-connected LinkedIn send with the exact operator;
-- simulated and real reply-stop checks;
-- process-kill recovery around pre-send and post-send boundaries;
-- no broad production cohort until all uncertainty paths are visible and fail closed.
+Emergency pause is database- and scheduler-based:
 
-## 17. Rollback strategy
+1. Pause the affected DripCampaign and active enrollments in Admin.
+2. Stop scheduled `reconcile_drips --apply` invocations.
+3. Leave the shared LinkedIn daemons and independent Gmail workers running for current flows.
+4. Queued drip handlers recheck paused/stopped state and complete as no-ops.
+5. Preserve enrollment, delivery, attempt, Message, and Task audit records.
+6. Do not automatically reactivate current messaging for a channel already transferred to drip.
+7. Review and explicitly release each owned lane if handback is desired.
 
-Rollback is flag-first and non-destructive:
-
-1. Disable `ENABLE_DRIP_GMAIL` and/or `ENABLE_DRIP_LINKEDIN`.
-2. Stop the dedicated drip worker.
-3. Leave enrollment, delivery, and attempt audit rows intact.
-4. Mark active enrollments paused; do not delete them.
-5. Do not automatically reactivate legacy follow-ups.
-6. Review each enrollment before explicit release/handback.
-
-Database migrations add tables and nullable/backward-compatible queue/rate fields. Rollback should not require dropping tables in an incident. Existing outbound continues for Leads never owned by drip.
+Migrations are additive. Incident rollback must not require dropping drip tables or deleting audit state.
 
 ## 18. Deliberate shared-code budget
 
-Most implementation belongs under `drip/`. Shared edits should be limited to:
+Most implementation belongs under `drip/`. Shared edits are limited to the proven seams:
 
-- `linkedin/django_settings.py`: install the new app;
-- `linkedin/models.py`: new Task choices, validation, routing, and nullable ActionLog campaign;
-- one new LinkedIn migration for shared-model changes;
-- `linkedin/daemon.py`: register and safely route the LinkedIn drip handler;
-- `linkedin/conf.py` and `linkedin/env_spec.py`: default-off flags/limits;
-- `linkedin/tasks/connect.py`/`linkedin/daemon.py` legacy scheduling guards only when Phase 5 begins;
-- `gmail/handoff.py` and legacy Gmail handler guards only when Phase 5 begins;
-- `AGENTS.md` and `ARCHITECTURE.md`: synchronized operational documentation.
+- `linkedin/django_settings.py`: install the drip app;
+- `linkedin/tasks/stop_checks.py`: Lead-level canonical stop service;
+- current LinkedIn/Gmail enqueue, heal, refresh, and pre-send guards;
+- LinkedIn and Gmail inbound persistence: exact attribution and idempotent stop notification;
+- `gmail/client.py`: correct typed send/thread API;
+- `gmail/tasks/follow_up.py`: current sequence thread continuation and Lead-level stop checks;
+- `gmail/worker.py` plus one management command/supervision seam: atomic independent Gmail execution;
+- `linkedin/models.py`: new Task choices, claiming, routing, and wake-time support;
+- `linkedin/daemon.py`: LinkedIn drip dispatch and removal of the in-process Gmail worker;
+- one narrow rate-accounting change if drip attribution requires a nullable current Campaign;
+- `AGENTS.md` and `ARCHITECTURE.md`: synchronized implementation/operations documentation whenever code changes.
 
-Do not refactor existing connect, sweep, follow-up, or Gmail sequencing merely to make the new code look unified. Isolation and regression safety are more valuable than superficial reuse.
+Do not refactor current connect, sweep, or post-connection sequencing simply to make the new code look unified. Reuse stable primitives; keep lifecycle state separate.
 
 ## 19. Goal execution order
 
-Execute as separate reviewable goals/commits rather than one large change:
+Execute through separate reviewable goals:
 
-1. Clean branch/worktree and baseline verification.
-2. Drip app, schema, models, publication, and docs.
-3. Shadow coordinator and state-machine tests.
-4. Independent Gmail execution and pilot tooling.
-5. LinkedIn bridge and operator/rate safety.
-6. Mutual exclusion and multichannel pilot.
-7. Optional source-campaign enrollment rules.
-8. Authoring workflow and broader rollout.
+1. Lead-level cross-channel stop hardening for current flows.
+2. Correct current Gmail threading, exact attribution, and independent atomic Gmail worker.
+3. Drip app, manifest, models, migrations, Admin, and publication.
+4. Dry-run same-channel reconciler and scenario tests.
+5. Gmail Task materialization, handler, and bounded pilot.
+6. LinkedIn Task materialization, handler, and bounded pilot.
+7. Manual multichannel ownership/handoff pilot.
+8. Optional source-campaign enrollment rules.
+9. Dedicated authoring workflow and controlled expansion.
 
-Each goal must satisfy its exit gate and full relevant regression tests before the next goal begins. No phase should enable production sending merely because its code has merged.
+Every goal must satisfy its exit gate and relevant full regression suite before the next goal starts.
