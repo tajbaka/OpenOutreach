@@ -89,6 +89,39 @@ def test_build_status_summary_rows_groups_all_sender_counts(fake_session):
 
 
 @pytest.mark.django_db
+def test_gmail_status_count_prefers_canonical_message_operator(fake_session):
+    from crm.models import SalesOwner
+
+    fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+    fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
+    DaemonHeartbeat.objects.create(sender="Arian", last_alive=timezone.now())
+    owner, _ = SalesOwner.objects.get_or_create(handle="Arian")
+    lead = Lead.objects.create(
+        linkedin_url="https://www.linkedin.com/in/gmail-owner-status/",
+        public_identifier="gmail-owner-status",
+    )
+    Message.objects.create(
+        lead=lead,
+        operator=owner,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        sender="unmapped-send-as@example.com",
+        external_id="arian_boundera:provider-message-id",
+        sent_at=timezone.now(),
+        body="email",
+    )
+
+    rows = {
+        row["sender"]: row
+        for row in build_status_summary_rows(
+            since=timezone.now() - timedelta(hours=1),
+        )
+    }
+
+    assert rows["Arian"]["email_followups_today"] == 1
+
+
+@pytest.mark.django_db
 @patch("linkedin.tasks.status_summary.notify_status_summary")
 def test_handle_status_summary_posts_and_reschedules(mock_notify, fake_session, monkeypatch):
     monkeypatch.setattr("linkedin.tasks.status_summary.ENABLE_ACTIVE_HOURS", False)

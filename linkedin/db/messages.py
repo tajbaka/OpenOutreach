@@ -182,6 +182,7 @@ def persist_thread(
     }
 
     created = 0
+    inbound_message_ids: list[int] = []
     with transaction.atomic():
         for m in parsed:
             entity_urn = (m.get("entity_urn") or "").strip()
@@ -242,6 +243,23 @@ def persist_thread(
                 stored.save(update_fields={"operator"})
             if was_created:
                 created += 1
+                if (
+                    source == Message.Source.LINKEDIN
+                    and direction == Message.Direction.INBOUND
+                ):
+                    inbound_message_ids.append(stored.pk)
+
+        if inbound_message_ids:
+            committed_ids = tuple(inbound_message_ids)
+
+            def _apply_inbound_stops() -> None:
+                from linkedin.tasks.stop_checks import (
+                    handle_inbound_linkedin_messages_persisted,
+                )
+
+                handle_inbound_linkedin_messages_persisted(committed_ids)
+
+            transaction.on_commit(_apply_inbound_stops)
     return created
 
 

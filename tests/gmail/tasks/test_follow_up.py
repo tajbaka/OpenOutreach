@@ -4,34 +4,44 @@ import pytest
 from django.utils import timezone
 
 from crm.models import Deal, Lead, Message
+from gmail.client import GmailSendResult
+from gmail.tasks.follow_up import handle_gmail_follow_up
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SheetsError
 from linkedin.models import Campaign, Task
-from gmail.tasks.follow_up import handle_gmail_follow_up
 from tests.factories import UserFactory
 
 
 @pytest.fixture(autouse=True)
 def no_suppression(monkeypatch):
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
+    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    FakeGmailClient.calls = []
+    FakeGmailClient.send_count = 0
 
 
 class FakeGmailClient:
+    account_key = "arian_boundera"
     send_as = "ariant@getboundera.com"
+    calls = []
+    send_count = 0
 
     def __init__(self, *, operator):
         self.operator = operator
-        self.sent = []
 
-    def send_as_aliases(self):
-        return {"ariant@getboundera.com": {"isDefault": True}}
-
-    def search_threads_for_email(self, email):
-        return []
-
-    def send_message(self, *, to, subject, body):
-        self.sent.append((to, subject, body))
-        return "gmail-id-1"
+    def send_message(self, **kwargs):
+        callback = kwargs.get("on_submit_attempt")
+        if callback is not None:
+            callback()
+        type(self).send_count += 1
+        type(self).calls.append(kwargs)
+        message_id = f"gmail-id-{type(self).send_count}"
+        thread_id = kwargs.get("thread_id") or "gmail-thread-1"
+        return GmailSendResult(
+            message_id=message_id,
+            thread_id=thread_id,
+            rfc_message_id=kwargs["rfc_message_id"],
+        )
 
 
 def _lead(**overrides):
@@ -81,10 +91,18 @@ def test_gmail_follow_up_sends_and_persists(monkeypatch):
     handle_gmail_follow_up(_task(lead, deal))
 
     msg = Message.objects.get(source=Message.Source.GMAIL, direction=Message.Direction.OUTBOUND)
-    assert msg.external_id.startswith(f"gmail-send:Arian:{lead.id}:gmail_fallback:step-0:")
+    assert msg.external_id == "arian_boundera:gmail-id-1"
+    assert msg.thread_external_id == "arian_boundera:gmail-thread-1"
     assert msg.sender == "ariant@getboundera.com"
     assert "Hi Ada" in msg.body
     assert "Analytical Engines" in msg.body
+    assert msg.raw["gmail_message_id"] == "gmail-id-1"
+    assert msg.raw["gmail_thread_id"] == "gmail-thread-1"
+    assert msg.raw["gmail_account"] == "arian_boundera"
+    assert msg.raw["rfc_message_id"].startswith("<openoutreach-")
+    assert msg.raw["automation_key"] == (
+        f"gmail_follow_up:Arian:{lead.id}:gmail_fallback:step-0"
+    )
 
 
 @pytest.mark.django_db
@@ -127,31 +145,28 @@ def test_gmail_follow_up_uses_persisted_icp(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_gmail_follow_up_stops_after_synced_gmail_reply(monkeypatch):
+def test_gmail_follow_up_stops_on_persisted_gmail_reply_without_deal(monkeypatch):
     lead = _lead()
-    deal = _deal(lead)
     monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.INBOUND,
+        external_id="arian_boundera:reply-1",
+        thread_external_id="arian_boundera:gmail-thread-1",
+        sender=lead.email,
+        body="reply",
+        sent_at=timezone.now(),
+    )
 
-    class ReplyingClient(FakeGmailClient):
-        def search_threads_for_email(self, email):
-            return [{
-                "id": "thread-1",
-                "messages": [{
-                    "id": "reply-1",
-                    "headers": {"From": lead.email},
-                    "snippet": "reply",
-                    "internalDate": str(int(timezone.now().timestamp() * 1000)),
-                }],
-            }]
+    class NoClient:
+        def __init__(self, *, operator):
+            raise AssertionError("persisted stop should block before Gmail auth")
 
-        def send_message(self, **kwargs):
-            raise AssertionError("should not send after reply sync")
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoClient)
 
-    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", ReplyingClient)
+    handle_gmail_follow_up(_task(lead))
 
-    handle_gmail_follow_up(_task(lead, deal))
-
-    assert Message.objects.filter(source=Message.Source.GMAIL, direction=Message.Direction.INBOUND).exists()
     assert not Message.objects.filter(source=Message.Source.GMAIL, direction=Message.Direction.OUTBOUND).exists()
 
 
@@ -177,6 +192,106 @@ def test_gmail_follow_up_dedup_skips_existing_step(monkeypatch):
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoSendClient)
 
     handle_gmail_follow_up(_task(lead, deal))
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_continues_real_thread_and_retains_subject(monkeypatch):
+    lead = _lead()
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
+
+    handle_gmail_follow_up(_task(lead, deal))
+    step_one_task = Task.objects.get(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        payload__step_index=1,
+    )
+    handle_gmail_follow_up(step_one_task)
+
+    assert len(FakeGmailClient.calls) == 2
+    first_call, second_call = FakeGmailClient.calls
+    assert first_call["thread_id"] == ""
+    assert first_call["in_reply_to"] == ""
+    assert first_call["references"] == ()
+    assert second_call["thread_id"] == "gmail-thread-1"
+    assert second_call["in_reply_to"] == first_call["rfc_message_id"]
+    assert second_call["references"] == (first_call["rfc_message_id"],)
+    assert second_call["subject"] == first_call["subject"]
+
+    messages = list(
+        Message.objects.filter(
+            source=Message.Source.GMAIL,
+            direction=Message.Direction.OUTBOUND,
+        ).order_by("sent_at", "pk")
+    )
+    assert [message.external_id for message in messages] == [
+        "arian_boundera:gmail-id-1",
+        "arian_boundera:gmail-id-2",
+    ]
+    assert {message.thread_external_id for message in messages} == {
+        "arian_boundera:gmail-thread-1",
+    }
+    assert messages[1].raw["references"] == [messages[0].raw["rfc_message_id"]]
+    assert messages[1].raw["thread_subject"] == messages[0].raw["thread_subject"]
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_continuation_fails_closed_without_exact_binding(monkeypatch):
+    lead = _lead()
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        external_id=f"gmail-send:Arian:{lead.id}:gmail_fallback:step-0:legacy",
+        sender="ariant@getboundera.com",
+        body="legacy send with no provider thread binding",
+        sent_at=timezone.now(),
+    )
+
+    with pytest.raises(ValueError, match="stored Gmail message"):
+        handle_gmail_follow_up(_task(lead, deal, step_index=1))
+
+    assert FakeGmailClient.calls == []
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_rechecks_persisted_stop_immediately_before_send(monkeypatch):
+    lead = _lead()
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
+    reasons = iter(("", "Lead replied; automation stopped"))
+    monkeypatch.setattr(
+        "gmail.tasks.follow_up.lead_automation_stop_reason",
+        lambda lead: next(reasons),
+    )
+
+    handle_gmail_follow_up(_task(lead, deal))
+
+    assert FakeGmailClient.calls == []
+    assert not Message.objects.filter(source=Message.Source.GMAIL).exists()
+
+
+@pytest.mark.django_db
+def test_gmail_follow_up_dedup_heals_missing_next_task(monkeypatch):
+    lead = _lead()
+    deal = _deal(lead)
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
+    original_task = _task(lead, deal)
+
+    handle_gmail_follow_up(original_task)
+    Task.objects.filter(payload__step_index=1).delete()
+    handle_gmail_follow_up(original_task)
+
+    assert len(FakeGmailClient.calls) == 1
+    assert Task.objects.filter(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        payload__step_index=1,
+    ).count() == 1
 
 
 @pytest.mark.django_db

@@ -98,6 +98,7 @@ def persist_gmail_threads(
         else None
     )
     created = 0
+    inbound_message_ids: list[int] = []
     with transaction.atomic():
         for thread in threads or []:
             thread_id = (thread.get("id") or thread.get("threadId") or "").strip()
@@ -144,6 +145,20 @@ def persist_gmail_threads(
                     stored.save(update_fields={"operator"})
                 if was_created:
                     created += 1
+                    if direction == Message.Direction.INBOUND:
+                        inbound_message_ids.append(stored.pk)
+
+        if inbound_message_ids:
+            committed_ids = tuple(inbound_message_ids)
+
+            def _apply_inbound_stops() -> None:
+                from linkedin.tasks.stop_checks import (
+                    handle_inbound_gmail_messages_persisted,
+                )
+
+                handle_inbound_gmail_messages_persisted(committed_ids)
+
+            transaction.on_commit(_apply_inbound_stops)
     return created
 
 

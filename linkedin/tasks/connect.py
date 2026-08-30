@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from linkedin.tasks.sweep_connections import enqueue_sweep_connections
 
+from django.db import transaction
 from django.utils import timezone
 from termcolor import colored
 
@@ -304,6 +305,26 @@ def recommended_action_delay(profile, action_type: str) -> float:
     return delay
 
 
+def _stop_current_connect_if_needed(session, deal, public_id: str) -> bool:
+    """Stop a Deal-backed connect action when persisted Lead evidence says so."""
+    from linkedin.tasks.stop_checks import automation_stop_reason
+
+    reason = automation_stop_reason(deal)
+    if not reason:
+        return False
+
+    deal.lead.refresh_from_db(fields=["disqualified"])
+    failed = deal.lead.disqualified or reason.startswith("Suppression:")
+    logger.info("connect: %s stopped before send — %s", public_id, reason)
+    set_profile_state(
+        session,
+        public_id,
+        ProfileState.FAILED.value if failed else ProfileState.COMPLETED.value,
+        reason=reason,
+    )
+    return True
+
+
 def handle_connect(task, session, qualifiers):
     from linkedin.actions.connect import ExistingPendingInvite, send_connection_request
     from linkedin.actions.status import get_connection_status
@@ -373,6 +394,10 @@ def handle_connect(task, session, qualifiers):
             enqueue_connect(campaign_id, delay_seconds=0)
             return
 
+        if _stop_current_connect_if_needed(session, deal, public_id):
+            enqueue_connect(campaign_id, delay_seconds=0)
+            return
+
         # A confirmed withdrawal is sender-specific negative history. Preserve
         # the Lead for other operators/manual work, but never let this sender's
         # automated connect lane re-invite it through another campaign.
@@ -439,6 +464,14 @@ def handle_connect(task, session, qualifiers):
             candidate.get("lead_id"),
             sender=operator,
         )
+        # `get_connection_status` and template preparation may take long enough
+        # for listener/backfill persistence to add a reply after the candidate
+        # was selected. Recheck local persisted state at the mutation boundary.
+        if deal is not None and _stop_current_connect_if_needed(
+            session, deal, public_id,
+        ):
+            enqueue_connect(campaign_id, delay_seconds=0)
+            return
         new_state = send_connection_request(session=session, profile=profile, note=note)
 
         if new_state == ProfileState.QUALIFIED:
@@ -568,6 +601,7 @@ def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
     )
 
 
+@transaction.atomic
 def enqueue_follow_up(
     campaign_id: int,
     public_id: str,
@@ -592,6 +626,49 @@ def enqueue_follow_up(
         return
     if not operator:
         raise ValueError("enqueue_follow_up requires a non-empty operator")
+
+    from crm.models import Deal
+    from django.db.models import Q
+    from linkedin.db.urls import public_id_to_url
+    from linkedin.tasks.stop_checks import automation_stop_reason
+
+    deal = (
+        Deal.objects.filter(
+            campaign_id=campaign_id,
+        )
+        .filter(
+            Q(lead__public_identifier=public_id)
+            | Q(lead__linkedin_url=public_id_to_url(public_id)),
+        )
+        .select_related("lead")
+        .first()
+    )
+    if deal is not None:
+        from drip.models import DripLane
+        from drip.services.ownership import (
+            drip_owns_channel,
+            lock_lead_outbound_ownership,
+        )
+
+        lock_lead_outbound_ownership(deal.lead_id)
+        if drip_owns_channel(
+            lead_id=deal.lead_id,
+            channel=DripLane.Channel.LINKEDIN,
+        ):
+            logger.info(
+                "follow_up enqueue skipped for %s - drip owns LinkedIn",
+                public_id,
+            )
+            return
+        stop_reason = automation_stop_reason(deal)
+        if stop_reason:
+            logger.info(
+                "follow_up enqueue skipped for %s — %s",
+                public_id,
+                stop_reason,
+            )
+            return
+
     payload = {"campaign_id": campaign_id, "public_id": public_id, "operator": operator}
     if sequence_name is not None:
         payload["sequence_name"] = sequence_name

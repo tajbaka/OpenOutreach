@@ -19,14 +19,15 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         client = GmailClient(operator=options["operator"])
-        gmail_id = client.send_message(
+        send_result = client.send_message(
             to=options["to"],
             subject=options["subject"],
             body=options["body"],
         )
         self.stdout.write(
             self.style.SUCCESS(
-                f"Sent Gmail test message id={gmail_id} from={client.send_as} "
+                f"Sent Gmail test message id={send_result.message_id} "
+                f"thread={send_result.thread_id} from={client.send_as} "
                 f"to={options['to']}"
             )
         )

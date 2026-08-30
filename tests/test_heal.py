@@ -109,6 +109,39 @@ class TestHealTasks:
         assert owned.started_at is None
         assert foreign.status == Task.Status.RUNNING
 
+    def test_routes_stale_drip_through_uncertainty_aware_recovery(
+        self,
+        fake_session,
+        monkeypatch,
+    ):
+        operator = resolve_operator(fake_session.linkedin_profile.linkedin_username)
+        task = Task.objects.create(
+            task_type=Task.TaskType.DRIP_LINKEDIN,
+            status=Task.Status.RUNNING,
+            scheduled_at=timezone.now(),
+            started_at=timezone.now() - timedelta(minutes=31),
+            payload={"delivery_id": 999, "operator": operator},
+        )
+        recovered = []
+
+        def recover(task_id):
+            from drip.tasks.linkedin import StaleRecoveryResult
+
+            recovered.append(task_id)
+            Task.objects.filter(pk=task_id).update(status=Task.Status.COMPLETED)
+            return StaleRecoveryResult.UNCLEAR
+
+        monkeypatch.setattr(
+            "drip.tasks.linkedin.recover_stale_linkedin_task",
+            recover,
+        )
+
+        heal_tasks(fake_session)
+
+        task.refresh_from_db()
+        assert recovered == [task.pk]
+        assert task.status == Task.Status.COMPLETED
+
     def test_seeds_connect_per_campaign(self, fake_session):
         _make_ready(fake_session, "alice")
         heal_tasks(fake_session)
@@ -269,6 +302,30 @@ class TestHealTasks:
         _make_connected(fake_session, "alice")
         heal_tasks(fake_session)
         assert Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        ).exists()
+
+    def test_does_not_heal_follow_up_for_stopped_lead(self, fake_session):
+        from crm.models import Lead, Message
+
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session, "alice")
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="heal-stop-reply",
+            direction=Message.Direction.INBOUND,
+            sender="Alice Smith",
+            body="Thanks, let's talk",
+            sent_at=timezone.now(),
+        )
+
+        heal_tasks(fake_session)
+
+        assert not Task.objects.filter(
             task_type=Task.TaskType.FOLLOW_UP,
             status=Task.Status.PENDING,
             payload__public_id="alice",

@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "crm.apps.CrmConfig",
     "chat.apps.ChatConfig",
     "linkedin",
+    "drip.apps.DripConfig",
 ]
 
 MIDDLEWARE = [

@@ -7,7 +7,7 @@ import traceback
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
-from django.db import connections
+from django.db import connections, transaction
 from django.db.utils import InterfaceError, OperationalError
 from django.utils import timezone
 
@@ -56,12 +56,14 @@ from linkedin.tasks.feed_comment import handle_feed_comment
 from linkedin.tasks.feed_like import handle_feed_like
 from linkedin.tasks.status_summary import enqueue_status_summary, handle_status_summary
 from linkedin.tasks.sweep_connections import handle_sweep_connections
+from drip.tasks.linkedin import handle_drip_linkedin
 
 logger = logging.getLogger(__name__)
 
 _HANDLERS = {
     Task.TaskType.CONNECT: handle_connect,
     Task.TaskType.FOLLOW_UP: handle_follow_up,
+    Task.TaskType.DRIP_LINKEDIN: handle_drip_linkedin,
     Task.TaskType.MANUAL_REPLY: handle_manual_reply,
     Task.TaskType.FEED_COMMENT: handle_feed_comment,
     Task.TaskType.FEED_LIKE: handle_feed_like,
@@ -324,18 +326,49 @@ def heal_tasks(session):
     # 1. Recover only stale browser tasks owned by this sender. The previous
     # global reset let an Arian restart flip a healthy Chuka sweep back to
     # pending. Enrichment and Gmail workers retain their own recovery paths.
-    stale_count = (
-        Task.objects.filter(
-            status=Task.Status.RUNNING,
-        )
+    stale_owned = (
+        Task.objects.filter(status=Task.Status.RUNNING)
         .filter(Q(started_at__lt=stale_before) | Q(started_at__isnull=True))
         .owned_linkedin_by(our_operator, owned_campaign_ids)
-        .update(status=Task.Status.PENDING, started_at=None)
     )
-    if stale_count:
+    stale_drip_ids = list(
+        stale_owned.filter(task_type=Task.TaskType.DRIP_LINKEDIN).values_list(
+            "pk",
+            flat=True,
+        ),
+    )
+    from drip.models import DripDelivery
+
+    failed_sending_drip_ids = list(
+        Task.objects.filter(
+            task_type=Task.TaskType.DRIP_LINKEDIN,
+            status=Task.Status.FAILED,
+            payload__operator=our_operator,
+            drip_delivery__status=DripDelivery.Status.SENDING,
+        ).values_list("pk", flat=True)
+        if owned_campaign_ids
+        else []
+    )
+    recovered_drip = 0
+    drip_recovery_ids = list(dict.fromkeys((*stale_drip_ids, *failed_sending_drip_ids)))
+    if drip_recovery_ids:
+        from drip.tasks.linkedin import (
+            StaleRecoveryResult,
+            recover_stale_linkedin_task,
+        )
+
+        for task_id in drip_recovery_ids:
+            outcome = recover_stale_linkedin_task(task_id)
+            recovered_drip += int(outcome != StaleRecoveryResult.NOOP)
+
+    stale_count = stale_owned.exclude(
+        task_type=Task.TaskType.DRIP_LINKEDIN,
+    ).update(status=Task.Status.PENDING, started_at=None)
+    if stale_count or recovered_drip:
         logger.info(
-            "Recovered %d stale running browser task(s) for %s",
+            "Recovered %d current and %d drip stale browser task(s) for %s",
             stale_count,
+            recovered_drip,
             our_operator,
         )
 
@@ -458,6 +491,7 @@ def heal_tasks(session):
     # work this daemon's account can actually do.
     from linkedin.db.messages import lead_outbound_operators
     from linkedin.icp_outbound import resolve_icp
+    from linkedin.tasks.stop_checks import automation_stop_reason
     for campaign in _active_campaigns(session):
         session.campaign = campaign
         connected_deals = Deal.objects.filter(
@@ -468,6 +502,8 @@ def heal_tasks(session):
         created = 0
         rescheduled = 0
         skipped_other_operator = 0
+        skipped_stopped = 0
+        skipped_drip_owned = 0
         base_time = timezone.now()
 
         for index, deal in enumerate(connected_deals):
@@ -481,24 +517,52 @@ def heal_tasks(session):
             if owners and our_operator not in owners:
                 skipped_other_operator += 1
                 continue
-            target_time = base_time + timedelta(seconds=index * 30)
-            was_created, was_rescheduled = _bring_task_forward(
-                Task.TaskType.FOLLOW_UP,
-                {
-                    "campaign_id": campaign.pk,
-                    "public_id": public_id,
-                    "operator": our_operator,
-                    "icp": resolve_icp(deal.lead),
-                },
-                target_time,
-                dedup_keys=["campaign_id", "public_id", "operator"],
+            from drip.models import DripLane
+            from drip.services.ownership import (
+                drip_owns_channel,
+                lock_lead_outbound_ownership,
             )
+
+            with transaction.atomic():
+                lock_lead_outbound_ownership(deal.lead_id)
+                if drip_owns_channel(
+                    lead_id=deal.lead_id,
+                    channel=DripLane.Channel.LINKEDIN,
+                ):
+                    skipped_drip_owned += 1
+                    continue
+                if automation_stop_reason(deal):
+                    skipped_stopped += 1
+                    continue
+                target_time = base_time + timedelta(seconds=index * 30)
+                was_created, was_rescheduled = _bring_task_forward(
+                    Task.TaskType.FOLLOW_UP,
+                    {
+                        "campaign_id": campaign.pk,
+                        "public_id": public_id,
+                        "operator": our_operator,
+                        "icp": resolve_icp(deal.lead),
+                    },
+                    target_time,
+                    dedup_keys=["campaign_id", "public_id", "operator"],
+                )
             created += int(was_created)
             rescheduled += int(was_rescheduled)
         if skipped_other_operator:
             logger.info(
                 "[%s] follow-up catch-up: skipped %d lead(s) owned by other operators",
                 campaign, skipped_other_operator,
+            )
+        if skipped_stopped:
+            logger.info(
+                "[%s] follow-up catch-up: skipped %d stopped lead(s)",
+                campaign, skipped_stopped,
+            )
+        if skipped_drip_owned:
+            logger.info(
+                "[%s] follow-up catch-up: skipped %d drip-owned lead(s)",
+                campaign,
+                skipped_drip_owned,
             )
         if created or rescheduled:
             logger.info(
@@ -729,10 +793,6 @@ def run_daemon(session):
     enrichment_worker = EnrichmentWorker()
     enrichment_worker.start()
 
-    from gmail.worker import GmailWorker
-    gmail_worker = GmailWorker(operator=our_operator)
-    gmail_worker.start()
-
     # Node monitoring — a background thread that beats this daemon's
     # DaemonHeartbeat row and watches peers, plus an in-process
     # consecutive-failure tracker for the dispatch loop. Both alert the ops
@@ -851,18 +911,9 @@ def run_daemon(session):
                     connections.close_all()
                     time.sleep(ENRICHMENT_WAIT_POLL_SECONDS)
                     continue
-                if Task.objects.filter(
-                    task_type=Task.TaskType.GMAIL_FOLLOW_UP,
-                    status__in=[Task.Status.PENDING, Task.Status.RUNNING],
-                ).exists():
-                    logger.info("Outbound queue empty — waiting on Gmail worker")
-                    connections.close_all()
-                    time.sleep(ENRICHMENT_WAIT_POLL_SECONDS)
-                    continue
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()
                 enrichment_worker.stop()
-                gmail_worker.stop()
                 # Clean exit: clear our heartbeat so peers don't false-alarm
                 # on a daemon that stopped on purpose, then stop the monitor.
                 if node_monitor is not None:
@@ -882,9 +933,15 @@ def run_daemon(session):
                 time.sleep(wait)
             continue
 
+        # Drip carries no current Campaign ID, but its LinkedIn action still
+        # records against one active Campaign owned by this sender. The
+        # manager scope keeps it unclaimable when ``our_campaign_ids`` is
+        # empty, so this selection is deterministic and active.
+        if task.task_type == Task.TaskType.DRIP_LINKEDIN:
+            session.campaign = campaigns[0]
         # Account-wide tasks (e.g. sweep_connections) span all campaigns and
         # don't carry a campaign_id; the handler sets session.campaign as needed.
-        if task.task_type in {
+        elif task.task_type in {
             Task.TaskType.SWEEP_CONNECTIONS,
             Task.TaskType.MANUAL_REPLY,
             Task.TaskType.FEED_COMMENT,

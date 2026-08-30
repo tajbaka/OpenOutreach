@@ -124,13 +124,16 @@ def _gmail_counts_by_sender(today_start) -> dict[str, int]:
         source=Message.Source.GMAIL,
         direction=Message.Direction.OUTBOUND,
         sent_at__gte=today_start,
-    )
+    ).select_related("operator")
     for message in messages:
-        external_id = message.external_id or ""
-        if external_id.startswith("gmail-send:"):
-            sender = external_id.split(":", 2)[1]
+        if message.operator_id:
+            sender = message.operator.handle
         else:
-            sender = message.sender
+            external_id = message.external_id or ""
+            if external_id.startswith("gmail-send:"):
+                sender = external_id.split(":", 2)[1]
+            else:
+                sender = message.sender
         sender = resolve_operator(sender)
         if sender:
             counts[sender] = counts.get(sender, 0) + 1

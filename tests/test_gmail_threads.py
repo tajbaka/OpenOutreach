@@ -12,6 +12,7 @@ import pytest
 from django.utils import timezone as dj_tz
 
 from crm.models import Lead, Message
+from linkedin.models import Task
 from linkedin.notifications import gmail_threads
 
 
@@ -91,6 +92,105 @@ def test_persist_is_idempotent(lead):
     b = gmail_threads.persist_gmail_threads(lead=lead, threads=threads, self_emails=[HOST])
     assert a == 1 and b == 0
     assert lead.messages.count() == 1
+
+
+def test_persist_runs_after_commit_hook_for_new_inbound_only(
+    lead,
+    monkeypatch,
+    django_capture_on_commit_callbacks,
+):
+    from linkedin.tasks import stop_checks
+
+    seen = []
+    monkeypatch.setattr(
+        stop_checks,
+        "handle_inbound_gmail_messages_persisted",
+        lambda message_ids: seen.append(message_ids),
+        raising=False,
+    )
+    when = datetime(2026, 4, 8, 16, 0, tzinfo=timezone.utc)
+    threads = [{
+        "id": "t1",
+        "messages": [
+            _gmail_msg(id="hook-out", from_=HOST, body="hello", when=when),
+            _gmail_msg(
+                id="hook-in",
+                from_=lead.email,
+                body="reply",
+                when=when + timedelta(minutes=1),
+            ),
+        ],
+    }]
+
+    with django_capture_on_commit_callbacks(execute=True):
+        gmail_threads.persist_gmail_threads(
+            lead=lead,
+            threads=threads,
+            self_emails=[HOST],
+        )
+
+    inbound = lead.messages.get(external_id="hook-in")
+    assert seen == [(inbound.pk,)]
+
+    with django_capture_on_commit_callbacks(execute=True):
+        gmail_threads.persist_gmail_threads(
+            lead=lead,
+            threads=threads,
+            self_emails=[HOST],
+        )
+    assert seen == [(inbound.pk,)]
+
+
+def test_persisted_gmail_reply_retires_pending_current_automation(
+    lead,
+    django_capture_on_commit_callbacks,
+):
+    gmail_task = Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now(),
+        payload={"lead_id": lead.pk, "operator": "Arian", "step_index": 1},
+    )
+    enrichment_task = Task.objects.create(
+        task_type=Task.TaskType.ENRICH_EMAIL,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now(),
+        payload={"lead_id": lead.pk, "operator": "Arian"},
+    )
+    linkedin_task = Task.objects.create(
+        task_type=Task.TaskType.FOLLOW_UP,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now(),
+        payload={
+            "campaign_id": 1,
+            "public_id": "sarah-lange",
+            "operator": "Arian",
+        },
+    )
+    when = datetime(2026, 4, 8, 16, 0, tzinfo=timezone.utc)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        gmail_threads.persist_gmail_threads(
+            lead=lead,
+            threads=[{
+                "id": "stop-thread",
+                "messages": [
+                    _gmail_msg(
+                        id="stop-reply",
+                        from_=lead.email,
+                        body="Please stop",
+                        when=when,
+                    ),
+                ],
+            }],
+            self_emails=[HOST],
+        )
+
+    for task in (gmail_task, enrichment_task, linkedin_task):
+        task.refresh_from_db()
+        assert task.status == Task.Status.COMPLETED
+        assert task.completed_at is not None
+        assert task.error == "Lead replied; automation stopped"
 
 
 def test_persist_team_emails_count_as_outbound(lead):

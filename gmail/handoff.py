@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 from linkedin.conf import ENABLE_GMAIL_SEQUENCE
@@ -25,6 +26,17 @@ def _pending_or_running():
     return [Task.Status.PENDING, Task.Status.RUNNING]
 
 
+def _known_stop_reason(lead_id: int) -> str:
+    from crm.models import Lead
+    from linkedin.tasks.stop_checks import lead_automation_stop_reason
+
+    lead = Lead.objects.filter(pk=lead_id).first()
+    if lead is None:
+        return ""
+    return lead_automation_stop_reason(lead)
+
+
+@transaction.atomic
 def enqueue_gmail_follow_up(
     *,
     lead_id: int,
@@ -41,6 +53,27 @@ def enqueue_gmail_follow_up(
         return None
     if not operator:
         raise ValueError("enqueue_gmail_follow_up requires a non-empty operator")
+    from drip.models import DripLane
+    from drip.services.ownership import (
+        drip_owns_channel,
+        lock_lead_outbound_ownership,
+    )
+
+    lock_lead_outbound_ownership(lead_id)
+    if drip_owns_channel(lead_id=lead_id, channel=DripLane.Channel.GMAIL):
+        logger.info(
+            "gmail_follow_up enqueue skipped for lead %s: drip owns Gmail",
+            lead_id,
+        )
+        return None
+    stop_reason = _known_stop_reason(lead_id)
+    if stop_reason:
+        logger.info(
+            "gmail_follow_up enqueue skipped for lead %s: %s",
+            lead_id,
+            stop_reason,
+        )
+        return None
 
     payload = {
         "lead_id": lead_id,
@@ -69,6 +102,7 @@ def enqueue_gmail_follow_up(
     )
 
 
+@transaction.atomic
 def enqueue_email_enrichment(
     *,
     lead_id: int,
@@ -85,6 +119,27 @@ def enqueue_email_enrichment(
         return None
     if not operator:
         raise ValueError("enqueue_email_enrichment requires a non-empty operator")
+    from drip.models import DripLane
+    from drip.services.ownership import (
+        drip_owns_channel,
+        lock_lead_outbound_ownership,
+    )
+
+    lock_lead_outbound_ownership(lead_id)
+    if drip_owns_channel(lead_id=lead_id, channel=DripLane.Channel.GMAIL):
+        logger.info(
+            "email enrichment enqueue skipped for lead %s: drip owns Gmail",
+            lead_id,
+        )
+        return None
+    stop_reason = _known_stop_reason(lead_id)
+    if stop_reason:
+        logger.info(
+            "email enrichment enqueue skipped for lead %s: %s",
+            lead_id,
+            stop_reason,
+        )
+        return None
 
     payload = {
         "lead_id": lead_id,
@@ -140,6 +195,16 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
         return None
     if not _operator_can_send_gmail(operator):
         logger.info("gmail cadence skipped for operator %s: no Gmail mapping", operator)
+        return None
+
+    from drip.models import DripLane
+    from drip.services.ownership import drip_owns_channel
+
+    if drip_owns_channel(
+        lead_id=deal.lead_id,
+        channel=DripLane.Channel.GMAIL,
+    ):
+        logger.info("gmail cadence skipped for lead %s: drip owns Gmail", deal.lead_id)
         return None
 
     from gmail.templates import steps_for_icp

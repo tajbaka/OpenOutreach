@@ -763,8 +763,14 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     from django.db.models import Q
 
     owned = list(campaign_ids or [])
+    drip = (
+        Q(task_type=Task.TaskType.DRIP_LINKEDIN)
+        & Q(payload__operator=operator)
+        & (Q(pk__isnull=False) if owned else Q(pk__in=[]))
+    )
     return (
         (Q(task_type=Task.TaskType.FOLLOW_UP) & Q(payload__operator=operator))
+        | drip
         | (Q(task_type=Task.TaskType.MANUAL_REPLY) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.FEED_COMMENT) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.FEED_LIKE) & Q(payload__operator=operator))
@@ -849,6 +855,7 @@ class TaskQuerySet(models.QuerySet):
 
           - follow_up/manual_reply/feed_comment/feed_like/discovery Tasks are
             filtered to those whose `payload.operator` matches;
+          - drip_linkedin Tasks are filtered to their frozen lane operator;
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
             request must go out from the account that owns the campaign;
@@ -961,6 +968,8 @@ class Task(models.Model):
         ENRICH_PHONE = "enrich_phone"
         ENRICH_EMAIL = "enrich_email"
         GMAIL_FOLLOW_UP = "gmail_follow_up"
+        DRIP_LINKEDIN = "drip_linkedin"
+        DRIP_GMAIL = "drip_gmail"
         MANUAL_REPLY = "manual_reply"
         FEED_COMMENT = "feed_comment"
         FEED_LIKE = "feed_like"
@@ -988,6 +997,7 @@ class Task(models.Model):
     def linked_account_scoped_task_types(cls) -> list[str]:
         return [
             cls.TaskType.FOLLOW_UP,
+            cls.TaskType.DRIP_LINKEDIN,
             cls.TaskType.CONNECT,
             cls.TaskType.MANUAL_REPLY,
             cls.TaskType.FEED_COMMENT,
@@ -1002,6 +1012,7 @@ class Task(models.Model):
             cls.TaskType.ENRICH_PHONE,
             cls.TaskType.ENRICH_EMAIL,
             cls.TaskType.GMAIL_FOLLOW_UP,
+            cls.TaskType.DRIP_GMAIL,
         ]
 
     class Meta:
@@ -1107,6 +1118,28 @@ class Task(models.Model):
                 errors.append("gmail_follow_up tasks require non-empty payload.operator")
             if payload.get("step_index") is None:
                 errors.append("gmail_follow_up tasks require payload.step_index")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type in {
+                self.TaskType.DRIP_LINKEDIN,
+                self.TaskType.DRIP_GMAIL,
+            }
+        ):
+            delivery_id = payload.get("delivery_id")
+            if (
+                isinstance(delivery_id, bool)
+                or not isinstance(delivery_id, int)
+                or delivery_id <= 0
+            ):
+                errors.append(
+                    f"{self.task_type} tasks require a positive integer "
+                    "payload.delivery_id"
+                )
+            if not payload.get("operator"):
+                errors.append(
+                    f"{self.task_type} tasks require non-empty payload.operator"
+                )
 
         if errors:
             raise ValidationError({"payload": errors})

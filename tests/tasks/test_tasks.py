@@ -318,6 +318,79 @@ class TestHandleConnect:
         ).exists()
 
     @patch("linkedin.tasks.connect.strategy_for")
+    @patch("linkedin.actions.connect.send_connection_request")
+    @patch("linkedin.actions.status.get_connection_status")
+    def test_persisted_reply_blocks_connection_send(
+        self, mock_status, mock_send, mock_strategy, fake_session,
+    ):
+        from crm.models import Lead, Message
+
+        _make_qualified(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.GMAIL,
+            external_id="connect-stop-reply",
+            direction=Message.Direction.INBOUND,
+            sender="alice@example.com",
+            body="Already interested",
+            sent_at=timezone.now(),
+        )
+        mock_strategy.return_value = _mock_strategy(self._candidate())
+
+        handle_connect(
+            _make_task(
+                Task.TaskType.CONNECT,
+                {"campaign_id": fake_session.campaign.pk},
+            ),
+            fake_session,
+            _build_context(fake_session),
+        )
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        mock_status.assert_not_called()
+        mock_send.assert_not_called()
+
+    @patch("linkedin.tasks.connect.strategy_for")
+    @patch("linkedin.actions.connect.send_connection_request")
+    @patch("linkedin.actions.status.get_connection_status")
+    def test_connection_send_rechecks_stop_after_status_lookup(
+        self, mock_status, mock_send, mock_strategy, fake_session,
+    ):
+        from crm.models import Lead, Message
+
+        _make_qualified(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        mock_strategy.return_value = _mock_strategy(self._candidate())
+
+        def _status_then_reply(*_args, **_kwargs):
+            Message.objects.create(
+                lead=lead,
+                source=Message.Source.LINKEDIN,
+                external_id="connect-boundary-reply",
+                direction=Message.Direction.INBOUND,
+                sender="Alice Smith",
+                body="I replied while the profile was loading",
+                sent_at=timezone.now(),
+            )
+            return ProfileState.QUALIFIED
+
+        mock_status.side_effect = _status_then_reply
+
+        handle_connect(
+            _make_task(
+                Task.TaskType.CONNECT,
+                {"campaign_id": fake_session.campaign.pk},
+            ),
+            fake_session,
+            _build_context(fake_session),
+        )
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        mock_status.assert_called_once()
+        mock_send.assert_not_called()
+
+    @patch("linkedin.tasks.connect.strategy_for")
     @patch("linkedin.actions.status.get_connection_status")
     def test_marks_preexisting_connected(self, mock_status, mock_strategy, fake_session):
         _make_qualified(fake_session)
@@ -517,6 +590,39 @@ class TestHandleSweepConnections:
         assert not Task.objects.filter(
             task_type=Task.TaskType.FOLLOW_UP,
             payload__public_id="bob",
+        ).exists()
+
+    @patch("linkedin.tasks.sweep_connections.get_conversation", return_value=None)
+    @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
+    @patch("linkedin.tasks.sweep_connections.scrape_connections_with_stats")
+    def test_known_meeting_blocks_post_accept_follow_up(
+        self, mock_scrape, _mock_recycle, _mock_conversation, fake_session,
+    ):
+        from crm.models import Lead, Meeting
+        from linkedin.actions.connections import ConnectionEntry
+
+        _make_pending(fake_session, "alice")
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Meeting.objects.create(
+            lead=lead,
+            source=Meeting.Source.GOOGLE_CALENDAR,
+            external_id="sweep-stop-meeting",
+            start_at=timezone.now(),
+        )
+        mock_scrape.return_value = _completed_scrape([
+            ConnectionEntry(public_id="alice", name="Alice Smith", connected_on=None),
+        ])
+
+        handle_sweep_connections(
+            _make_task(Task.TaskType.SWEEP_CONNECTIONS, {}),
+            fake_session,
+            _build_context(fake_session),
+        )
+
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            payload__public_id="alice",
         ).exists()
 
     @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
@@ -1170,6 +1276,41 @@ class TestHandleFollowUp:
 
         _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         mock_send.assert_not_called()
+
+    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch("linkedin.actions.message.send_raw_message", return_value=True)
+    @patch("linkedin.actions.conversations.get_conversation", return_value=None)
+    def test_rechecks_persisted_stop_at_send_boundary(
+        self, _mock_conversation, mock_send, mock_send_media, fake_session,
+    ):
+        from crm.models import Lead, Message
+
+        fake_session.linkedin_profile.linkedin_username = "ariant@tryfedrampgpt.com"
+        _make_connected(fake_session)
+        lead = Lead.objects.get(linkedin_url="https://www.linkedin.com/in/alice/")
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            external_id="send-boundary-seed",
+            direction=Message.Direction.OUTBOUND,
+            sender=fake_session.linkedin_profile.linkedin_username,
+            body="Connection note",
+            sent_at=timezone.now() - timedelta(days=1),
+        )
+        task = _make_task(
+            Task.TaskType.FOLLOW_UP,
+            {"campaign_id": fake_session.campaign.pk, "public_id": "alice"},
+        )
+
+        with patch(
+            "linkedin.tasks.follow_up._sequence_stop_reason",
+            side_effect=["", "Lead replied; automation stopped"],
+        ):
+            handle_follow_up(task, fake_session, _build_context(fake_session))
+
+        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        mock_send.assert_not_called()
+        mock_send_media.assert_not_called()
 
     @patch("linkedin.actions.message.send_media_message", return_value=True)
     @patch("linkedin.actions.message.send_raw_message", return_value=True)

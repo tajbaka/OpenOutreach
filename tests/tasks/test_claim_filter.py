@@ -67,6 +67,40 @@ def test_claim_next_filters_followup_to_matching_operator():
 
 
 @pytest.mark.django_db
+def test_drip_linkedin_is_sender_scoped_and_lower_priority_than_current_work():
+    arian_drip = Task.objects.create(
+        task_type=Task.TaskType.DRIP_LINKEDIN,
+        scheduled_at=dj_tz.now() - timedelta(minutes=10),
+        payload={"delivery_id": 1, "operator": "Arian"},
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.DRIP_LINKEDIN,
+        scheduled_at=dj_tz.now() - timedelta(minutes=20),
+        payload={"delivery_id": 2, "operator": "Chuka"},
+    )
+    current = _mk(
+        Task.TaskType.FOLLOW_UP,
+        operator="Arian",
+        scheduled_offset_s=-5,
+    )
+
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]).pk == current.pk
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]).pk == arian_drip.pk
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[1]) is None
+
+
+@pytest.mark.django_db
+def test_drip_linkedin_requires_an_active_owned_campaign_scope():
+    Task.objects.create(
+        task_type=Task.TaskType.DRIP_LINKEDIN,
+        scheduled_at=dj_tz.now() - timedelta(minutes=1),
+        payload={"delivery_id": 1, "operator": "Arian"},
+    )
+
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[]) is None
+
+
+@pytest.mark.django_db
 def test_connect_task_scoped_to_owning_campaign():
     """A connect Task is claimable only by a daemon that owns its
     campaign — the invite goes out from that account. This is the
@@ -218,6 +252,12 @@ def test_claim_next_excludes_non_linkedin_tasks_but_claims_manual_reply():
         status=Task.Status.PENDING,
         scheduled_at=dj_tz.now() - timedelta(seconds=240),
         payload={"lead_id": 1, "operator": "Arian", "step_index": 0},
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.DRIP_GMAIL,
+        status=Task.Status.PENDING,
+        scheduled_at=dj_tz.now() - timedelta(seconds=260),
+        payload={"delivery_id": 1, "operator": "Arian"},
     )
     manual = Task.objects.create(
         task_type=Task.TaskType.MANUAL_REPLY,
@@ -394,6 +434,39 @@ def test_pending_connect_requires_campaign_id():
             scheduled_at=dj_tz.now(),
             payload={},
         )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "task_type",
+    [Task.TaskType.DRIP_LINKEDIN, Task.TaskType.DRIP_GMAIL],
+)
+def test_pending_drip_task_requires_delivery_and_operator(task_type):
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=task_type,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={"operator": "Arian"},
+        )
+    with pytest.raises(ValidationError):
+        Task.objects.create(
+            task_type=task_type,
+            status=Task.Status.PENDING,
+            scheduled_at=dj_tz.now(),
+            payload={"delivery_id": 1},
+        )
+    for invalid_delivery_id in (True, 0, -1, "1"):
+        with pytest.raises(ValidationError):
+            Task.objects.create(
+                task_type=task_type,
+                status=Task.Status.PENDING,
+                scheduled_at=dj_tz.now(),
+                payload={
+                    "delivery_id": invalid_delivery_id,
+                    "operator": "Arian",
+                },
+            )
 
 
 @pytest.mark.django_db

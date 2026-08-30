@@ -1,6 +1,9 @@
 # linkedin/actions/message.py
 import json
 import logging
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Callable
 from typing import Dict, Any
 
 from playwright.sync_api import Error as PlaywrightError
@@ -26,6 +29,111 @@ SELECTORS = {
 
 class MessageSendError(RuntimeError):
     """Raised when a caller needs the concrete UI/API send failure reason."""
+
+
+class MessageSubmissionAborted(RuntimeError):
+    """Raised by a pre-click callback when a persisted guard stops the send."""
+
+
+class DirectMessageOutcome(StrEnum):
+    SENT = "sent"
+    PRE_SUBMIT_FAILED = "pre_submit_failed"
+    UNCLEAR = "unclear"
+
+
+@dataclass(frozen=True)
+class DirectMessageResult:
+    outcome: DirectMessageOutcome
+    detail: str = ""
+
+
+def _direct_message_submission_confirmed(page, message: str) -> bool:
+    """Confirm the direct composer cleared or the exact body rendered."""
+    event_selector = "div.msg-s-event-listitem, li.msg-s-message-list__event"
+    for _attempt in range(12):
+        try:
+            composer = page.locator(SELECTORS["compose_input"]).first
+            if not (composer.inner_text(timeout=500) or "").strip():
+                return True
+        except PlaywrightError:
+            pass
+
+        try:
+            events = page.locator(event_selector)
+            start = max(events.count() - 8, 0)
+            for index in range(start, events.count()):
+                if message.strip() in (events.nth(index).inner_text(timeout=500) or ""):
+                    return True
+        except PlaywrightError:
+            pass
+        page.wait_for_timeout(250)
+    return False
+
+
+def send_direct_message_once(
+    session,
+    profile: Dict[str, Any],
+    message: str,
+    *,
+    on_submit_attempt: Callable[[], None],
+) -> DirectMessageResult:
+    """Use exactly one direct-compose route with an explicit click boundary.
+
+    The callback runs after typing and immediately before the only send click.
+    Once it returns successfully, any Playwright error or missing confirmation
+    is classified as ``unclear`` because the click may have reached LinkedIn.
+    No popup or Voyager API fallback is attempted.
+    """
+    from linkedin.api.messaging import encode_urn
+    from linkedin.db.leads import resolve_urn
+
+    public_identifier = profile.get("public_identifier")
+    submission_boundary_crossed = False
+    try:
+        target_urn = resolve_urn(public_identifier, session=session)
+        if not target_urn:
+            return DirectMessageResult(
+                DirectMessageOutcome.PRE_SUBMIT_FAILED,
+                f"Could not resolve URN for {public_identifier}",
+            )
+
+        direct_url = f"{LINKEDIN_MESSAGING_URL}?recipient={encode_urn(target_urn)}"
+        goto_page(
+            session,
+            action=lambda: session.page.goto(direct_url),
+            expected_url_pattern="/messaging",
+            timeout=30_000,
+            error_message="Error opening direct compose",
+        )
+        session.wait(0.5, 1.2)
+        human_type(session.page.locator(SELECTORS["compose_input"]), message)
+        session.wait(0.4, 0.9)
+
+        on_submit_attempt()
+        submission_boundary_crossed = True
+        session.page.locator(SELECTORS["compose_send"]).click(delay=200)
+        if not _direct_message_submission_confirmed(session.page, message):
+            return DirectMessageResult(
+                DirectMessageOutcome.UNCLEAR,
+                "Send click occurred but LinkedIn did not confirm the message",
+            )
+        logger.info(
+            "Message sent to %s (single direct thread route)",
+            public_identifier,
+        )
+        return DirectMessageResult(DirectMessageOutcome.SENT)
+    except MessageSubmissionAborted as exc:
+        return DirectMessageResult(
+            DirectMessageOutcome.PRE_SUBMIT_FAILED,
+            str(exc),
+        )
+    except (PlaywrightError, TimeoutError) as exc:
+        outcome = (
+            DirectMessageOutcome.UNCLEAR
+            if submission_boundary_crossed
+            else DirectMessageOutcome.PRE_SUBMIT_FAILED
+        )
+        return DirectMessageResult(outcome, str(exc))
 
 
 def send_raw_message(

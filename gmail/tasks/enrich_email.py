@@ -17,10 +17,9 @@ def _normalize_email(value: str) -> str:
 
 def handle_enrich_email(task) -> EnrichmentResult | None:
     """Find one lead's email address for the Gmail cadence lane."""
-    from crm.models import Deal, Lead
+    from crm.models import Lead
     from gmail.handoff import enqueue_gmail_follow_up
-    from linkedin.suppression import lead_suppression_match
-    from linkedin.tasks.stop_checks import automation_stop_reason
+    from linkedin.tasks.stop_checks import lead_automation_stop_reason
 
     lead_id = task.payload.get("lead_id")
     operator = task.payload.get("operator") or ""
@@ -28,8 +27,15 @@ def handle_enrich_email(task) -> EnrichmentResult | None:
     if lead is None:
         logger.warning("enrich_email: lead %s not found - skipping", lead_id)
         return None
-    if lead.disqualified:
-        logger.info("enrich_email: lead %s disqualified - skipping", lead_id)
+    from drip.models import DripLane
+    from drip.services.ownership import drip_owns_channel
+
+    if drip_owns_channel(lead_id=lead.id, channel=DripLane.Channel.GMAIL):
+        logger.info("enrich_email: lead %s skipped - drip owns Gmail", lead_id)
+        return None
+    stop_reason = lead_automation_stop_reason(lead)
+    if stop_reason:
+        logger.info("enrich_email: lead %s stopped - %s", lead_id, stop_reason)
         return None
     if lead.email:
         logger.info("enrich_email: lead %s already has email - enqueueing Gmail", lead_id)
@@ -43,22 +49,6 @@ def handle_enrich_email(task) -> EnrichmentResult | None:
         return None
 
     deal_id = task.payload.get("deal_id")
-    deal = None
-    if deal_id:
-        deal = Deal.objects.filter(pk=deal_id).select_related("lead").first()
-    if deal is not None:
-        stop_reason = automation_stop_reason(deal)
-        if stop_reason:
-            logger.info("enrich_email: lead %s stopped - %s", lead_id, stop_reason)
-            return None
-
-    suppression = lead_suppression_match(lead)
-    if suppression:
-        logger.info(
-            "enrich_email: lead %s blocked by suppression %s - skipping",
-            lead_id, suppression.value,
-        )
-        return None
 
     provider = BetterContactEmailProvider()
     tried = list(lead.email_providers_tried or [])

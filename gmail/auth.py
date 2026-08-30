@@ -75,3 +75,13 @@ def account_for_key(account_key: str) -> GmailAccount:
     except KeyError as exc:
         known = ", ".join(sorted(GMAIL_ACCOUNTS))
         raise ValueError(f"Unknown Gmail account {account_key!r}; known: {known}") from exc
+
+
+def operators_for_account(account_key: str) -> tuple[str, ...]:
+    """Return every configured operator routed through one Gmail mailbox."""
+    account_for_key(account_key)
+    return tuple(
+        operator
+        for operator, mapping in GMAIL_OPERATOR_MAPPING.items()
+        if mapping["gmail_account"] == account_key
+    )

@@ -278,6 +278,36 @@ def _start_feed_collector() -> subprocess.Popen:
     )
 
 
+def _gmail_account_for_supervisor() -> str | None:
+    """Resolve this checkout's LinkedIn operator to its shared Gmail mailbox."""
+    from gmail.auth import GMAIL_OPERATOR_MAPPING
+    from linkedin.operators import resolve_operator
+
+    linkedin_identity = os.getenv("LINKEDIN_USERNAME", "").strip()
+    operator = resolve_operator(linkedin_identity)
+    mapping = GMAIL_OPERATOR_MAPPING.get(operator)
+    if mapping is None:
+        return None
+    return mapping["gmail_account"]
+
+
+def _start_gmail_worker(account_key: str) -> subprocess.Popen:
+    env = os.environ.copy()
+    env["OPENOUTREACH_SUPERVISED"] = "1"
+    logger.warning("Starting Gmail worker child for %s", account_key)
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "manage.py",
+            "run_gmail_worker",
+            "--account",
+            account_key,
+        ],
+        cwd=ROOT_DIR,
+        env=env,
+    )
+
+
 def _stop_daemon(proc: subprocess.Popen, timeout_seconds: int = 30) -> None:
     if proc.poll() is not None:
         return
@@ -417,6 +447,8 @@ def supervise(args: argparse.Namespace) -> int:
 
     stop = False
     child: subprocess.Popen | None = None
+    gmail_child: subprocess.Popen | None = None
+    gmail_account = _gmail_account_for_supervisor()
     feed_child: subprocess.Popen | None = None
     feed_spawned_date = None
     feed_retry_after = 0.0
@@ -427,6 +459,8 @@ def supervise(args: argparse.Namespace) -> int:
         stop = True
         if child is not None:
             _stop_daemon(child)
+        if gmail_child is not None:
+            _stop_process(gmail_child, label="Gmail worker")
         if feed_child is not None:
             _stop_process(feed_child, label="LinkedIn feed collector")
 
@@ -439,10 +473,34 @@ def supervise(args: argparse.Namespace) -> int:
         requirements_file=args.requirements,
     )
     child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
+    if gmail_account is None:
+        logger.warning(
+            "No Gmail account mapping for LINKEDIN_USERNAME; "
+            "Gmail worker was not started"
+        )
+    else:
+        gmail_child = _start_gmail_worker(gmail_account)
     next_poll = time.monotonic() + args.poll_seconds
     next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
 
     while not stop:
+        if gmail_child is not None:
+            gmail_code = gmail_child.poll()
+            if gmail_code is not None:
+                logger.error(
+                    "Gmail worker exited with status %s; restarting in %ss",
+                    gmail_code,
+                    args.restart_delay,
+                )
+                _notify(
+                    "Gmail worker exited unexpectedly",
+                    f"Account `{gmail_account}` exited with status `{gmail_code}`. Restarting.",
+                )
+                time.sleep(args.restart_delay)
+                if stop:
+                    break
+                gmail_child = _start_gmail_worker(gmail_account)
+
         code = child.poll()
         if code is not None:
             if code != 0:
@@ -486,6 +544,9 @@ def supervise(args: argparse.Namespace) -> int:
                 migrate=not args.no_migrate,
                 requirements_file=args.requirements,
             ):
+                if gmail_child is not None:
+                    _stop_process(gmail_child, label="Gmail worker")
+                    gmail_child = None
                 if feed_child is not None and feed_child.poll() is None:
                     _stop_process(feed_child, label="LinkedIn feed collector")
                     feed_child = None
@@ -494,6 +555,8 @@ def supervise(args: argparse.Namespace) -> int:
                 if stop:
                     break
                 child = _start_daemon(restart_reason="git_pull")
+                if gmail_account is not None:
+                    gmail_child = _start_gmail_worker(gmail_account)
             next_poll = time.monotonic() + args.poll_seconds
 
         if time.monotonic() >= next_feed_check:
@@ -510,6 +573,8 @@ def supervise(args: argparse.Namespace) -> int:
 
     if child is not None:
         _stop_daemon(child)
+    if gmail_child is not None:
+        _stop_process(gmail_child, label="Gmail worker")
     if feed_child is not None:
         _stop_process(feed_child, label="LinkedIn feed collector")
     return 0

@@ -28,7 +28,7 @@ from django.db import transaction
 from django.utils import timezone as dj_tz
 
 from crm.models import Lead, Meeting, Message
-from gmail.client import GmailClient
+from gmail.client import GmailClient, scoped_gmail_id
 from linkedin.notifications.calendar_events import persist_gemini_notes
 from linkedin.notifications.gmail_threads import persist_gmail_threads
 from linkedin.operators import resolve_sales_owner_handle
@@ -161,7 +161,7 @@ def _normalize_email(value: str) -> str:
 
 def _scoped_gmail_id(account_key: str, raw_id: str) -> str:
     """Namespace Gmail's mailbox-local IDs before CRM persistence."""
-    return f"{account_key}:{raw_id}"[:200]
+    return scoped_gmail_id(account_key, raw_id)
 
 
 def _thread_checkpoint_key(thread_id: str) -> str:

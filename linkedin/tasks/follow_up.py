@@ -54,6 +54,16 @@ from linkedin.models import ActionLog
 
 logger = logging.getLogger(__name__)
 
+
+def _drip_owns_linkedin(lead_id: int) -> bool:
+    from drip.models import DripLane
+    from drip.services.ownership import drip_owns_channel
+
+    return drip_owns_channel(
+        lead_id=lead_id,
+        channel=DripLane.Channel.LINKEDIN,
+    )
+
 # DB errors that mean "fresh connection needed" — Neon idle-timeout drops.
 _DB_DEAD_ERRORS = (OperationalError, InterfaceError)
 DEFAULT_SEQUENCE_NAME = "linkedin_connect_followup"
@@ -84,6 +94,18 @@ def _sequence_stop_reason(deal) -> str:
     from linkedin.tasks.stop_checks import automation_stop_reason
 
     return automation_stop_reason(deal)
+
+
+def _finish_sequence_for_stop(session, deal, public_id: str, reason: str) -> None:
+    """Persist the current sequence's terminal state for a shared stop."""
+    deal.lead.refresh_from_db(fields=["disqualified"])
+    failed = deal.lead.disqualified or reason.startswith("Suppression:")
+    set_profile_state(
+        session,
+        public_id,
+        "Failed" if failed else "Completed",
+        reason=reason,
+    )
 
 
 def _delay_seconds_to_active_due(
@@ -185,6 +207,9 @@ def handle_follow_up(task, session, qualifiers):
         logger.warning("follow_up: no Deal for %s in campaign %s — skipping",
                        public_id, session.campaign)
         return
+    if _drip_owns_linkedin(deal.lead_id):
+        logger.info("follow_up: %s skipped - drip owns LinkedIn", public_id)
+        return
 
     from linkedin.suppression import lead_suppression_match
 
@@ -210,12 +235,7 @@ def handle_follow_up(task, session, qualifiers):
 
     stop_reason = _sequence_stop_reason(deal)
     if stop_reason:
-        set_profile_state(
-            session,
-            public_id,
-            "Completed" if not deal.lead.disqualified else "Failed",
-            reason=stop_reason,
-        )
+        _finish_sequence_for_stop(session, deal, public_id, stop_reason)
         return
 
     # Owner-scoping guard (second line of defense — claim_next already
@@ -366,6 +386,20 @@ def handle_follow_up(task, session, qualifiers):
         lead_id=deal.lead_id,
         step_index=step_index,
     )
+    # Profile/template work can outlive an earlier listener or backfill write.
+    # Recheck persisted state at the external mutation boundary without adding
+    # a live conversation dependency.
+    if _drip_owns_linkedin(deal.lead_id):
+        logger.info(
+            "follow_up: %s handed off before send - skipping",
+            public_id,
+        )
+        return
+    stop_reason = _sequence_stop_reason(deal)
+    if stop_reason:
+        _finish_sequence_for_stop(session, deal, public_id, stop_reason)
+        return
+
     # If the template included {add <filename>} placeholders, send via
     # the media path (first attachment only — LinkedIn's message form
     # accepts one inline media per send). Multiple attachments would

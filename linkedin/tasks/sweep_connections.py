@@ -115,6 +115,17 @@ def process_accepted_deal(session, deal, *, entry=None) -> None:
     except Exception as e:
         logger.warning("Slack notify failed for %s: %s", full_name, e)
 
+    from linkedin.tasks.stop_checks import automation_stop_reason
+
+    stop_reason = automation_stop_reason(deal)
+    if stop_reason:
+        logger.info(
+            "sweep_connections: %s post-accept automation stopped — %s",
+            public_id,
+            stop_reason,
+        )
+        return
+
     delay_seconds = recommended_action_delay(
         session.linkedin_profile, ActionLog.ActionType.FOLLOW_UP,
     )

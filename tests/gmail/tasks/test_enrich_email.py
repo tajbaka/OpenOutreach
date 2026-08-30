@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from crm.models import Lead
+from crm.models import Lead, Message
 from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
 from linkedin.models import Task
 from gmail.tasks.enrich_email import handle_enrich_email
@@ -125,3 +125,61 @@ def test_enrich_email_existing_email_skips_provider_and_queues_gmail(monkeypatch
     assert result is None
     assert called is False
     assert Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).exists()
+
+
+@pytest.mark.django_db
+def test_enrich_email_persisted_reply_blocks_provider_without_deal(monkeypatch):
+    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    lead = _lead()
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.INBOUND,
+        external_id="arian_boundera:reply-before-enrichment",
+        sender="ada@example.com",
+        body="No thanks",
+        sent_at=timezone.now(),
+    )
+
+    def _unexpected(self, lead, task):
+        raise AssertionError("known stop should block email enrichment")
+
+    monkeypatch.setattr(
+        "gmail.tasks.enrich_email.BetterContactEmailProvider.enrich",
+        _unexpected,
+    )
+
+    assert handle_enrich_email(_task(lead)) is None
+    assert not Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).exists()
+
+
+@pytest.mark.django_db
+def test_enrich_email_reply_during_lookup_blocks_gmail_enqueue(monkeypatch):
+    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    lead = _lead()
+
+    def _reply_then_find(self, lead, task):
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.GMAIL,
+            direction=Message.Direction.INBOUND,
+            external_id="arian_boundera:reply-during-enrichment",
+            sender="ada@example.com",
+            body="I replied while lookup was running",
+            sent_at=timezone.now(),
+        )
+        return EnrichmentResult(
+            status=EnrichmentStatus.FOUND,
+            provider="bettercontact",
+            email="ada@example.com",
+        )
+
+    monkeypatch.setattr(
+        "gmail.tasks.enrich_email.BetterContactEmailProvider.enrich",
+        _reply_then_find,
+    )
+
+    result = handle_enrich_email(_task(lead))
+
+    assert result.status == EnrichmentStatus.FOUND
+    assert not Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).exists()

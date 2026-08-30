@@ -1,14 +1,16 @@
-# Drip Campaign Implementation Plan
+# Drip Campaign Architecture and Implementation Plan
 
-Status: implementation plan, not yet implemented
+Status: repository implementation complete; controlled production pilot not started
 
 Branch: `codex/drip-campaigns`
 
 Scope: add a separate theme-based LinkedIn and Gmail drip subsystem to the existing OpenOutreach repository without replacing or reusing the lifecycle of the current connection and post-connection campaigns.
 
+Implementation boundary: phases 0–4 below are implemented in code, migrations, routing, Admin, and automated tests. This work did not add a production campaign manifest, publish a live version, enroll any live Lead, install a periodic reconciler schedule, or complete the phase-5 controlled pilot. Commands that can mutate campaign, enrollment, handoff, or reconciliation state remain explicitly `--apply` gated.
+
 ## 1. Outcome
 
-OpenOutreach will support reviewed drip campaigns that communicate an ordered set of themes across LinkedIn and Gmail.
+OpenOutreach supports reviewed drip campaigns that communicate an ordered set of themes across LinkedIn and Gmail.
 
 Each theme carries the point we want to communicate and supplies a channel-appropriate LinkedIn version and Gmail version. The two channels remain independent:
 
@@ -309,18 +311,19 @@ There is no extra Gmail pre-send reply query and no LinkedIn send-time conversat
 
 ## 8. Reconciler
 
-Add:
+Implemented operator commands:
 
 ```bash
 .venv/bin/python manage.py validate_drip_campaign <path>
-.venv/bin/python manage.py publish_drip_campaign <path>
-.venv/bin/python manage.py plan_drip_enrollments <campaign-key> --lead-id <id> [--lead-id <id> ...]
-.venv/bin/python manage.py enroll_drip_campaign <campaign-key> --plan <reviewed-plan.json> --apply
+.venv/bin/python manage.py publish_drip_campaign <path> [--apply]
+.venv/bin/python manage.py plan_drip_enrollments <campaign-key> --operator <operator> --lead-id <id> [--lead-id <id> ...] --output <new-private-plan.json>
+.venv/bin/python manage.py enroll_drip_campaign <campaign-key> --plan <reviewed-plan.json> --reviewed-by <reviewer> [--apply]
+.venv/bin/python manage.py review_drip_handoff --lane-id <id> --not-applicable --reviewed-by <reviewer> [--apply]
 .venv/bin/python manage.py reconcile_drips
-.venv/bin/python manage.py reconcile_drips --apply
+.venv/bin/python manage.py reconcile_drips [--campaign <campaign-key>] --apply
 ```
 
-The initial production schedule runs `reconcile_drips --apply` daily.
+No production schedule is installed by this implementation. After a controlled pilot succeeds, operations may schedule a reviewed `reconcile_drips --apply` pass (the proposed initial cadence is daily).
 
 Enrollment is reviewed and bounded. The planning command requires explicit Lead IDs and writes a stable-ID artifact. Apply accepts that exact reviewed artifact and refuses unlisted or changed Leads. V1 does not automatically enroll every Lead whose ICP matches the campaign JSON.
 
@@ -495,7 +498,7 @@ Operational prerequisites:
 
 Each phase is independently testable and leaves current outbound working.
 
-### Phase 0 — Shared prerequisites
+### Phase 0 — Shared prerequisites (implemented)
 
 Implement only the shared seams required before drip can send:
 
@@ -514,7 +517,7 @@ Exit criteria:
 - Gmail current Tasks run while the LinkedIn browser process is stopped;
 - no new provider polling or feature flags exist.
 
-### Phase 1 — Drip domain and publication
+### Phase 1 — Drip domain and publication (implemented)
 
 Implement models, migrations, Admin, manifest validation, immutable publication, and enrollment planning.
 
@@ -527,7 +530,7 @@ Exit criteria:
 - one nonterminal enrollment per Lead and one lane per channel are enforced;
 - plans explain handoff eligibility and refusal reasons without mutation.
 
-### Phase 2 — Handoff, timing, and dry-run reconciliation
+### Phase 2 — Handoff, timing, and reconciliation (implemented)
 
 Implement independent channel ownership, handoff evidence, timing services, stop integration, and `reconcile_drips` in dry-run mode.
 
@@ -539,7 +542,7 @@ Exit criteria:
 - late completion starts the next theme rather than using an expired campaign date;
 - no Task is created in dry-run mode.
 
-### Phase 3 — Gmail drip
+### Phase 3 — Gmail drip (implemented)
 
 Add `drip_gmail` materialization, routing, handler, threading, persistence, and tests.
 
@@ -551,7 +554,7 @@ Exit criteria:
 - a persisted reply stops both lanes;
 - Gmail never changes `Deal.state`.
 
-### Phase 4 — LinkedIn drip
+### Phase 4 — LinkedIn drip (implemented)
 
 Add `drip_linkedin` materialization, sender-scoped daemon routing, one-route UI sending, and unclear-outcome handling.
 
@@ -564,7 +567,7 @@ Exit criteria:
 - a possibly successful click is never followed by an automatic alternate send;
 - LinkedIn never changes `Deal.state`.
 
-### Phase 5 — Controlled pilot
+### Phase 5 — Controlled pilot (not started)
 
 Publish one reviewed campaign version and manually enroll a small Deal-backed cohort.
 
@@ -672,6 +675,8 @@ This implementation does not include:
 - changes to CRM v2 Actions, `generate_followups`, or sender-specific ICP Messages Sheets.
 
 ## 18. Definition of done
+
+Items 1–9 are implemented and covered by the repository test suites. Item 10 is deliberately outstanding: no real cohort was enrolled or sent by this implementation work, so operational completion must not be inferred from code completion.
 
 The feature is complete when:
 
