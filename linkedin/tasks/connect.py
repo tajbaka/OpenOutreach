@@ -328,6 +328,7 @@ def _stop_current_connect_if_needed(session, deal, public_id: str) -> bool:
 def handle_connect(task, session, qualifiers):
     from linkedin.actions.connect import ExistingPendingInvite, send_connection_request
     from linkedin.actions.status import get_connection_status
+    from linkedin.models import Campaign
 
     # Read at call-time (via the module attr) so tests can `@patch
     # "linkedin.tasks.connect.ENABLE_CONNECT"` without restarting conf.
@@ -341,6 +342,16 @@ def handle_connect(task, session, qualifiers):
     cfg = CAMPAIGN_CONFIG
     campaign = session.campaign
     campaign_id = campaign.pk
+    if not Campaign.objects.filter(
+        pk=campaign_id,
+        status=Campaign.Status.ACTIVE,
+    ).exists():
+        logger.info(
+            "connect: campaign %s is not active - skipping task %s",
+            campaign_id,
+            task.pk,
+        )
+        return
     strategy = strategy_for(campaign, qualifiers)
     operator = resolve_operator(session.linkedin_profile.linkedin_username)
 
@@ -594,6 +605,17 @@ def _enqueue_task(task_type: "Task.TaskType", payload: dict, delay_seconds: floa
 def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
     if not ENABLE_CONNECT:
         return
+    from linkedin.models import Campaign
+
+    if not Campaign.objects.filter(
+        pk=campaign_id,
+        status=Campaign.Status.ACTIVE,
+    ).exists():
+        logger.info(
+            "connect enqueue skipped for campaign %s: campaign is not active",
+            campaign_id,
+        )
+        return
     _enqueue_task(
         task_type=Task.TaskType.CONNECT,
         payload={"campaign_id": campaign_id},
@@ -630,7 +652,19 @@ def enqueue_follow_up(
     from crm.models import Deal
     from django.db.models import Q
     from linkedin.db.urls import public_id_to_url
+    from linkedin.models import Campaign
     from linkedin.tasks.stop_checks import automation_stop_reason
+
+    if not Campaign.objects.filter(
+        pk=campaign_id,
+        status=Campaign.Status.ACTIVE,
+    ).exists():
+        logger.info(
+            "follow_up enqueue skipped for %s: campaign %s is not active",
+            public_id,
+            campaign_id,
+        )
+        return
 
     deal = (
         Deal.objects.filter(

@@ -121,3 +121,9 @@ class DiscoveryScreeningError(Exception):
     """The discovery ICP screen returned an invalid structured result."""
 
     pass
+
+
+class LegacyOutboundCutoverError(Exception):
+    """A reviewed legacy-outbound retirement cannot be planned or applied safely."""
+
+    pass

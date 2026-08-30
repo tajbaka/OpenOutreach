@@ -417,6 +417,7 @@ class DripLaneAdmin(ReadOnlyAuditAdmin):
         "channel",
         "operator",
         "provider_account",
+        "linkedin_member_urn",
         "status",
         "current_sequence_status",
         "handed_off_at",
@@ -429,6 +430,7 @@ class DripLaneAdmin(ReadOnlyAuditAdmin):
         "provider_account",
         "sender_identity",
         "recipient_identity",
+        "linkedin_member_urn",
         "gmail_thread_id",
     )
     raw_id_fields = ("enrollment",)

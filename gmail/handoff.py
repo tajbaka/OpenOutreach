@@ -37,6 +37,25 @@ def _known_stop_reason(lead_id: int) -> str:
     return lead_automation_stop_reason(lead)
 
 
+def _current_deal_campaign_is_active(deal_id: int | None) -> bool:
+    """Return false only when an exact current-outbound Deal is inactive.
+
+    Current Gmail Tasks created by the post-accept handoff freeze ``deal_id``.
+    Older manually queued Tasks may not have one, so absence cannot safely be
+    mapped to an arbitrary Deal for a Lead that appears in several Campaigns.
+    """
+    if deal_id is None:
+        return True
+
+    from crm.models import Deal
+    from linkedin.models import Campaign
+
+    return Deal.objects.filter(
+        pk=deal_id,
+        campaign__status=Campaign.Status.ACTIVE,
+    ).exists()
+
+
 @transaction.atomic
 def enqueue_gmail_follow_up(
     *,
@@ -54,6 +73,14 @@ def enqueue_gmail_follow_up(
         return None
     if not operator:
         raise ValueError("enqueue_gmail_follow_up requires a non-empty operator")
+    if not _current_deal_campaign_is_active(deal_id):
+        logger.info(
+            "gmail_follow_up enqueue skipped for lead %s: Deal %s campaign "
+            "is not active",
+            lead_id,
+            deal_id,
+        )
+        return None
     from drip.models import DripLane
     from drip.services.ownership import (
         drip_owns_channel,
@@ -137,6 +164,14 @@ def enqueue_email_enrichment(
         return None
     if not operator:
         raise ValueError("enqueue_email_enrichment requires a non-empty operator")
+    if not _current_deal_campaign_is_active(deal_id):
+        logger.info(
+            "email enrichment enqueue skipped for lead %s: Deal %s campaign "
+            "is not active",
+            lead_id,
+            deal_id,
+        )
+        return None
     from drip.models import DripLane
     from drip.services.ownership import (
         drip_owns_channel,
@@ -210,6 +245,13 @@ def maybe_schedule_gmail_sequence(*, deal, operator: str):
 def _maybe_schedule_gmail_sequence(*, deal, operator: str):
     """Queue Gmail step 0 from the post-accept cadence when eligible."""
     if not ENABLE_GMAIL_SEQUENCE:
+        return None
+    if not _current_deal_campaign_is_active(deal.pk):
+        logger.info(
+            "gmail cadence skipped for lead %s: campaign %s is not active",
+            deal.lead_id,
+            deal.campaign_id,
+        )
         return None
     if not _operator_can_send_gmail(operator):
         logger.info("gmail cadence skipped for operator %s: no Gmail mapping", operator)

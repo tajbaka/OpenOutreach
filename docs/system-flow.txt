@@ -7,9 +7,14 @@ Runtime flags come from .env. Do not copy secret values into this file. Every
 non-test process uses the same Postgres DATABASE_URL; there is no runtime
 SQLite fallback.
 
+Normal startup uses daemon_supervisor.py (`make run`, awake launchers, and
+Docker). It independently supervises the browser-backed LinkedIn daemon and the
+mapped Gmail worker, so either process can restart without taking down the
+other. `make run-linkedin` is diagnostic only and does not consume Gmail Tasks.
+
 
 ================================================================================
-1. LINKEDIN DAEMON  (manage.py with no arguments)
+1. LINKEDIN DAEMON  (supervisor child: manage.py with no arguments)
 ================================================================================
 The long-running daemon owns browser-backed LinkedIn work. Active hours, rest
 days, feature flags, and per-profile limits gate its work.
@@ -25,6 +30,8 @@ SWEEP_CONNECTIONS
 
 FOLLOW_UP / GMAIL SEQUENCE
   - Outbound automation lanes remain separately feature-gated.
+  - The supervisor's independent account-scoped Gmail worker consumes current
+    gmail_follow_up and drip_gmail Tasks without using the LinkedIn browser.
   - They are not invoked by CRM v2 context, publication, drafting, or connector
     workflows.
 

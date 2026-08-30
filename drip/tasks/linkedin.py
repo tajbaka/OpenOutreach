@@ -50,7 +50,8 @@ class StaleRecoveryResult(StrEnum):
 class _Reservation:
     delivery_id: int
     attempt_id: int
-    public_identifier: str
+    member_urn: str
+    recipient_identity: str
     body: str
     action_campaign_id: int
 
@@ -80,24 +81,6 @@ def _session_operator(session) -> str:
     return resolve_operator(session.linkedin_profile.linkedin_username)
 
 
-def _current_linkedin_identity(lead) -> str:
-    from linkedin.notifications.sheets import linkedin_identity_key
-
-    identity = linkedin_identity_key(lead.linkedin_url or "")
-    if identity:
-        return identity
-    public_identifier = (lead.public_identifier or "").strip().lower()
-    return f"public:{public_identifier}" if public_identifier else ""
-
-
-def _public_identifier(lead) -> str:
-    from linkedin.db.urls import url_to_public_id
-
-    return (lead.public_identifier or "").strip() or (
-        url_to_public_id(lead.linkedin_url or "") or ""
-    )
-
-
 def _active_action_campaign(session, operator: str) -> Campaign | None:
     campaign = getattr(session, "campaign", None)
     profile = getattr(session, "linkedin_profile", None)
@@ -113,26 +96,19 @@ def _active_action_campaign(session, operator: str) -> Campaign | None:
 
 
 def _deal_proves_connection(lane: DripLane) -> bool:
-    """Require a connected Deal owned by this lane without mutating it."""
-    from crm.models import Deal
+    """Require exact sender-attributed connection evidence without mutation."""
+    from drip.services.linkedin_connection import sender_owned_connected_deal_proofs
 
     allowed_states = {ProfileState.CONNECTED}
     if lane.current_sequence_status == DripLane.CurrentSequenceStatus.COMPLETED:
         allowed_states.add(ProfileState.COMPLETED)
-
-    deals = Deal.objects.filter(
-        lead_id=lane.enrollment.lead_id,
-        state__in=allowed_states,
-    ).select_related("campaign__user")
-    for deal in deals:
-        evidence = {
-            resolve_operator(value)
-            for value in (deal.invitation_sender, deal.campaign.user.username)
-            if value
-        }
-        if lane.operator in evidence:
-            return True
-    return False
+    return bool(
+        sender_owned_connected_deal_proofs(
+            lead=lane.enrollment.lead,
+            operator=lane.operator,
+            allowed_states=allowed_states,
+        ),
+    )
 
 
 def _manifest_themes(enrollment: DripEnrollment) -> list[dict[str, Any]]:
@@ -246,6 +222,8 @@ def _execution_guard(
     session,
     now,
     expected_delivery_status: str,
+    expected_member_urn: str = "",
+    expected_recipient_identity: str = "",
 ) -> _GuardFailure | None:
     if task.task_type != Task.TaskType.DRIP_LINKEDIN:
         raise ValueError(f"Task {task.pk} is not a drip_linkedin task")
@@ -272,10 +250,24 @@ def _execution_guard(
         or lane.sender_identity != lane.operator.casefold()
     ):
         return _GuardFailure("frozen LinkedIn sender ownership drifted")
-    if lane.recipient_identity != _current_linkedin_identity(enrollment.lead):
-        return _GuardFailure("frozen LinkedIn recipient identity drifted")
-    if not _public_identifier(enrollment.lead):
-        return _GuardFailure("lead has no LinkedIn public identifier")
+    from drip.services.linkedin_identity import frozen_linkedin_identity_errors
+
+    identity_errors = frozen_linkedin_identity_errors(
+        lead=enrollment.lead,
+        recipient_identity=lane.recipient_identity,
+        member_urn=lane.linkedin_member_urn,
+    )
+    if identity_errors:
+        return _GuardFailure(
+            "frozen LinkedIn identity is invalid: " + ", ".join(identity_errors),
+        )
+    if expected_member_urn and expected_member_urn != lane.linkedin_member_urn:
+        return _GuardFailure("frozen LinkedIn member URN changed after reservation")
+    if (
+        expected_recipient_identity
+        and expected_recipient_identity != lane.recipient_identity
+    ):
+        return _GuardFailure("frozen LinkedIn recipient URL changed after reservation")
 
     if enrollment.campaign.status != DripCampaign.Status.ACTIVE:
         return _GuardFailure("drip campaign is not active", hold=True)
@@ -474,7 +466,8 @@ def _reserve_delivery(task: Task, session) -> _Reservation | None:
     return _Reservation(
         delivery_id=delivery.pk,
         attempt_id=attempt.pk,
-        public_identifier=_public_identifier(enrollment.lead),
+        member_urn=lane.linkedin_member_urn,
+        recipient_identity=lane.recipient_identity,
         body=delivery.frozen_body,
         action_campaign_id=action_campaign.pk,
     )
@@ -536,6 +529,8 @@ def _submission_callback(
                     session=session,
                     now=now,
                     expected_delivery_status=DripDelivery.Status.SENDING,
+                    expected_member_urn=reservation.member_urn,
+                    expected_recipient_identity=reservation.recipient_identity,
                 )
                 if failure:
                     _mark_attempt_not_submitted(attempt, detail=failure.detail, now=now)
@@ -661,6 +656,8 @@ def _finish_sent(reservation: _Reservation, task_id: int, session) -> None:
                 "task_id": task_id,
                 "operator": lane.operator,
                 "action_campaign_id": reservation.action_campaign_id,
+                "linkedin_member_urn": reservation.member_urn,
+                "recipient_identity": reservation.recipient_identity,
             },
         },
     )
@@ -781,8 +778,9 @@ def handle_drip_linkedin(task: Task, session, qualifiers=None) -> None:
     try:
         result = send_direct_message_once(
             session,
-            {"public_identifier": reservation.public_identifier},
+            reservation.member_urn,
             reservation.body,
+            recipient_label=reservation.recipient_identity,
             on_submit_attempt=lambda: _submission_callback(
                 task_id=task.pk,
                 reservation=reservation,

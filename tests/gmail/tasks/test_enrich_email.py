@@ -3,10 +3,12 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from crm.models import Lead, Message
+from crm.models import Deal, Lead, Message
 from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
-from linkedin.models import Task
+from linkedin.enums import ProfileState
+from linkedin.models import Campaign, Task
 from gmail.tasks.enrich_email import handle_enrich_email
+from tests.factories import UserFactory
 
 
 def _lead(**overrides):
@@ -62,6 +64,30 @@ def test_enrich_email_found_saves_email_and_queues_gmail(monkeypatch):
     assert gmail.payload["lead_id"] == lead.id
     assert gmail.payload["operator"] == "Arian"
     assert gmail.payload["step_index"] == 0
+
+
+@pytest.mark.django_db
+def test_enrich_email_from_finished_campaign_never_calls_provider(monkeypatch):
+    lead = _lead()
+    campaign = Campaign.objects.create(
+        name="Finished Gmail campaign",
+        user=UserFactory(),
+        status=Campaign.Status.FINISHED,
+    )
+    deal = Deal.objects.create(
+        lead=lead,
+        campaign=campaign,
+        state=ProfileState.CONNECTED,
+    )
+    monkeypatch.setattr(
+        "gmail.tasks.enrich_email.BetterContactEmailProvider.enrich",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("finished current Campaign must not enrich"),
+        ),
+    )
+
+    assert handle_enrich_email(_task(lead, deal_id=deal.pk)) is None
+    assert lead.email == ""
 
 
 @pytest.mark.django_db

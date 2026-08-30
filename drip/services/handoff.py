@@ -100,14 +100,18 @@ def _has_unresolved_current_gmail_submission(*, lead, operator: str) -> bool:
     return False
 
 
-def _eligible_linkedin_deals(*, lead):
+def _eligible_linkedin_deals(*, lead, operator: str):
     from crm.models import Deal
+    from drip.services.linkedin_connection import sender_owned_connected_deal_proofs
     from linkedin.enums import ProfileState
 
-    return Deal.objects.filter(
+    proofs = sender_owned_connected_deal_proofs(
         lead=lead,
-        state__in=(ProfileState.CONNECTED, ProfileState.COMPLETED),
-    ).order_by("pk")
+        operator=operator,
+        allowed_states=(ProfileState.CONNECTED, ProfileState.COMPLETED),
+    )
+    deal_ids = {proof.deal_id for proof in proofs}
+    return Deal.objects.filter(pk__in=deal_ids).order_by("pk")
 
 
 def _review_is_complete(lane: DripLane) -> bool:
@@ -125,16 +129,26 @@ def evaluate_linkedin_handoff(lane: DripLane) -> HandoffEvaluation:
     operator = lane.operator
     if lane.channel != DripLane.Channel.LINKEDIN:
         return HandoffEvaluation(False, "not_linkedin_lane")
-    if not lane.recipient_identity:
-        return HandoffEvaluation(False, "missing_linkedin_identity")
+    from drip.services.linkedin_identity import frozen_linkedin_identity_errors
+
+    identity_errors = frozen_linkedin_identity_errors(
+        lead=lead,
+        recipient_identity=lane.recipient_identity,
+        member_urn=lane.linkedin_member_urn,
+    )
+    if identity_errors:
+        return HandoffEvaluation(
+            False,
+            "linkedin_identity_invalid:" + ",".join(identity_errors),
+        )
     if _has_current_linkedin_task(lead=lead, operator=operator):
         return HandoffEvaluation(False, "current_linkedin_task_outstanding")
 
-    deals = list(_eligible_linkedin_deals(lead=lead))
+    deals = list(_eligible_linkedin_deals(lead=lead, operator=operator))
     if not deals:
         return HandoffEvaluation(
             False,
-            "linkedin_connection_not_accepted",
+            "sender_owned_linkedin_connection_not_proven",
             wait_status=DripLane.Status.WAITING_CONNECTION,
         )
 

@@ -27,6 +27,7 @@ from linkedin.actions.message import (
 )
 from linkedin.enums import ProfileState
 from linkedin.models import ActionLog, Task
+from tests.drip.helpers import linkedin_profile_description
 
 
 pytestmark = pytest.mark.django_db
@@ -61,6 +62,7 @@ def _execution(
         company_name="Analytical Engines",
         linkedin_url="https://www.linkedin.com/in/ada-lovelace/",
         public_identifier="ada-lovelace",
+        description=linkedin_profile_description("ada-lovelace"),
         email="ada@example.com",
         icp="CSPs",
     )
@@ -69,6 +71,7 @@ def _execution(
         campaign=fake_session.campaign,
         state=deal_state,
         invitation_sender="Arian",
+        invitation_sent_at=now - timedelta(days=30),
         connected_at=now - timedelta(days=20),
     )
     enrollment = DripEnrollment.objects.create(
@@ -89,6 +92,7 @@ def _execution(
         provider_account="arian",
         sender_identity="arian",
         recipient_identity="https://www.linkedin.com/in/ada-lovelace/",
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
         status=DripLane.Status.ACTIVE,
         current_sequence_status=sequence_status,
         current_sequence_reviewed_at=now - timedelta(days=10),
@@ -132,9 +136,10 @@ def test_success_commits_submit_boundary_then_persists_ledgers_without_altering_
 ):
     execution = _execution(valid_drip_payload, fake_session)
 
-    def send_once(session, profile, body, *, on_submit_attempt):
+    def send_once(session, member_urn, body, *, recipient_label, on_submit_attempt):
         assert session is fake_session
-        assert profile == {"public_identifier": "ada-lovelace"}
+        assert member_urn == "urn:li:fsd_profile:ada-lovelace"
+        assert recipient_label == "https://www.linkedin.com/in/ada-lovelace/"
         assert body == execution.delivery.frozen_body
         on_submit_attempt()
         attempt = DripDeliveryAttempt.objects.get(delivery=execution.delivery)
@@ -331,8 +336,10 @@ def test_inbound_reply_arriving_while_typing_aborts_click_and_globally_stops_dri
 
     clicked = False
 
-    def send_once(session, profile, body, *, on_submit_attempt):
+    def send_once(session, member_urn, body, *, recipient_label, on_submit_attempt):
         nonlocal clicked
+        assert member_urn == execution.lane.linkedin_member_urn
+        assert recipient_label == execution.lane.recipient_identity
         inbound = Message.objects.create(
             lead=execution.lead,
             source=Message.Source.LINKEDIN,
@@ -383,7 +390,9 @@ def test_post_click_unclear_pauses_lane_and_never_persists_success(
 ):
     execution = _execution(valid_drip_payload, fake_session)
 
-    def send_once(session, profile, body, *, on_submit_attempt):
+    def send_once(session, member_urn, body, *, recipient_label, on_submit_attempt):
+        assert member_urn == execution.lane.linkedin_member_urn
+        assert recipient_label == execution.lane.recipient_identity
         on_submit_attempt()
         return DirectMessageResult(
             DirectMessageOutcome.UNCLEAR,
@@ -497,7 +506,9 @@ def test_completed_deal_is_allowed_only_for_reviewed_completed_current_sequence(
         sequence_status=DripLane.CurrentSequenceStatus.COMPLETED,
     )
 
-    def send_once(session, profile, body, *, on_submit_attempt):
+    def send_once(session, member_urn, body, *, recipient_label, on_submit_attempt):
+        assert member_urn == execution.lane.linkedin_member_urn
+        assert recipient_label == execution.lane.recipient_identity
         on_submit_attempt()
         return DirectMessageResult(DirectMessageOutcome.SENT)
 
@@ -534,6 +545,116 @@ def test_non_connected_deal_returns_lane_to_waiting_connection(
     assert execution.lane.status == DripLane.Status.WAITING_CONNECTION
     assert execution.deal.state == ProfileState.PENDING
     assert not DripDeliveryAttempt.objects.filter(delivery=execution.delivery).exists()
+
+
+def test_connected_campaign_row_without_exact_sender_proof_cannot_send(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+):
+    execution = _execution(valid_drip_payload, fake_session)
+    execution.deal.invitation_sent_at = None
+    execution.deal.invitation_sender = ""
+    execution.deal.save(
+        update_fields={"invitation_sent_at", "invitation_sender", "update_date"},
+    )
+    monkeypatch.setattr(
+        "drip.tasks.linkedin.send_direct_message_once",
+        lambda *args, **kwargs: pytest.fail("unattributed connection must not send"),
+    )
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.delivery.refresh_from_db()
+    execution.lane.refresh_from_db()
+    assert execution.delivery.status == DripDelivery.Status.PLANNED
+    assert execution.lane.status == DripLane.Status.WAITING_CONNECTION
+    assert not execution.delivery.attempts.exists()
+
+
+def test_reservation_blocks_when_lead_profile_urn_drifted(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+):
+    execution = _execution(valid_drip_payload, fake_session)
+    execution.lead.description = linkedin_profile_description(
+        "someone-else",
+        member_urn="urn:li:fsd_profile:SOMEONE_ELSE",
+    )
+    execution.lead.save(update_fields={"description", "update_date"})
+    monkeypatch.setattr(
+        "drip.tasks.linkedin.send_direct_message_once",
+        lambda *args, **kwargs: pytest.fail("identity drift must stop before navigation"),
+    )
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.delivery.refresh_from_db()
+    execution.lane.refresh_from_db()
+    assert execution.delivery.status == DripDelivery.Status.PLANNED
+    assert execution.lane.status == DripLane.Status.PAUSED
+    assert not execution.delivery.attempts.exists()
+
+
+def test_pre_click_guard_binds_send_to_identity_reserved_before_navigation(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+):
+    execution = _execution(valid_drip_payload, fake_session)
+    clicked = False
+
+    def send_once(
+        session,
+        member_urn,
+        body,
+        *,
+        recipient_label,
+        on_submit_attempt,
+    ):
+        nonlocal clicked
+        assert member_urn == "urn:li:fsd_profile:ada-lovelace"
+        assert recipient_label == "https://www.linkedin.com/in/ada-lovelace/"
+        execution.lead.public_identifier = "new-vanity"
+        execution.lead.linkedin_url = "https://www.linkedin.com/in/new-vanity/"
+        execution.lead.description = linkedin_profile_description(
+            "new-vanity",
+            member_urn="urn:li:fsd_profile:NEW_MEMBER",
+        )
+        execution.lead.save(
+            update_fields={
+                "public_identifier",
+                "linkedin_url",
+                "description",
+                "update_date",
+            },
+        )
+        execution.lane.recipient_identity = execution.lead.linkedin_url
+        execution.lane.linkedin_member_urn = "urn:li:fsd_profile:NEW_MEMBER"
+        execution.lane.save(
+            update_fields={"recipient_identity", "linkedin_member_urn", "updated_at"},
+        )
+        try:
+            on_submit_attempt()
+        except MessageSubmissionAborted as exc:
+            return DirectMessageResult(DirectMessageOutcome.PRE_SUBMIT_FAILED, str(exc))
+        clicked = True
+        return DirectMessageResult(DirectMessageOutcome.SENT)
+
+    monkeypatch.setattr("drip.tasks.linkedin.send_direct_message_once", send_once)
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.delivery.refresh_from_db()
+    execution.lane.refresh_from_db()
+    attempt = execution.delivery.attempts.get()
+    assert clicked is False
+    assert attempt.outcome == DripDeliveryAttempt.Outcome.NOT_SUBMITTED
+    assert attempt.submission_attempted_at is None
+    assert execution.delivery.status == DripDelivery.Status.PLANNED
+    assert execution.lane.status == DripLane.Status.PAUSED
+    assert not Message.objects.filter(external_id__startswith="drip-linkedin:").exists()
 
 
 def test_claimed_work_after_lane_pause_releases_completed_task_link(

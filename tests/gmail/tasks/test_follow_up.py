@@ -123,6 +123,25 @@ def test_gmail_follow_up_sends_and_persists(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_gmail_follow_up_from_finished_campaign_never_builds_client(monkeypatch):
+    lead = _lead()
+    deal = _deal(lead)
+    deal.campaign.status = Campaign.Status.FINISHED
+    deal.campaign.save(update_fields=["status"])
+    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
+
+    class NoClient:
+        def __init__(self, *, operator):
+            raise AssertionError("finished current Campaign must not send Gmail")
+
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", NoClient)
+
+    handle_gmail_follow_up(_task(lead, deal))
+
+    assert not Message.objects.filter(source=Message.Source.GMAIL).exists()
+
+
+@pytest.mark.django_db
 def test_gmail_follow_up_stamps_durable_submission_boundary(monkeypatch):
     lead = _lead()
     deal = _deal(lead)

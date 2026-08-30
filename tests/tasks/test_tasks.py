@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from linkedin.db.deals import set_profile_state
 from linkedin.db.leads import create_enriched_lead, promote_lead_to_deal
-from linkedin.models import ActionLog, Task
+from linkedin.models import ActionLog, Campaign, Task
 from linkedin.ml.qualifier import BayesianQualifier
 from linkedin.enums import ProfileState
 from linkedin.exceptions import SkipProfile, ReachedConnectionLimit
@@ -29,6 +29,7 @@ from linkedin.tasks.follow_up import (
 )
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 from linkedin.actions.connections import ConnectionScrapeResult
+from tests.factories import UserFactory
 
 
 SAMPLE_PROFILE = {
@@ -122,19 +123,23 @@ def _completed_scrape(entries=None):
 
 @pytest.mark.django_db
 def test_enqueue_follow_up_freezes_icp_without_duplication():
+    campaign = Campaign.objects.create(
+        name="Active follow-up campaign",
+        user=UserFactory(),
+    )
     Task.objects.create(
         task_type=Task.TaskType.FOLLOW_UP,
         status=Task.Status.PENDING,
         scheduled_at=timezone.now(),
         payload={
-            "campaign_id": 1,
+            "campaign_id": campaign.pk,
             "public_id": "alice",
             "operator": "Athena",
         },
     )
 
     enqueue_follow_up(
-        1,
+        campaign.pk,
         "alice",
         operator="Athena",
         icp="CMMC Buyers",
@@ -144,7 +149,7 @@ def test_enqueue_follow_up_freezes_icp_without_duplication():
     tasks = list(Task.objects.filter(task_type=Task.TaskType.FOLLOW_UP))
     assert len(tasks) == 1
     assert tasks[0].payload == {
-        "campaign_id": 1,
+        "campaign_id": campaign.pk,
         "public_id": "alice",
         "operator": "Athena",
         "icp": "CMMC Buyers",
@@ -163,6 +168,32 @@ class TestHandleConnect:
     @pytest.fixture(autouse=True)
     def _db(self, embeddings_db):
         pass
+
+    def test_finished_campaign_task_never_selects_or_sends_candidate(
+        self,
+        fake_session,
+        monkeypatch,
+    ):
+        fake_session.campaign.status = Campaign.Status.FINISHED
+        fake_session.campaign.save(update_fields=["status"])
+        monkeypatch.setattr(
+            "linkedin.tasks.connect.strategy_for",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("finished Campaign must not select a connect candidate"),
+            ),
+        )
+
+        task = _make_task(
+            Task.TaskType.CONNECT,
+            {"campaign_id": fake_session.campaign.pk},
+        )
+        handle_connect(task, fake_session, _build_context(fake_session))
+
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            status=Task.Status.PENDING,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).exists()
 
     def test_build_connection_note_sanitizes_nickname_greeting(self, monkeypatch):
         from crm.models import Lead
@@ -599,6 +630,52 @@ class TestHandleSweepConnections:
     @patch("linkedin.tasks.sweep_connections.get_conversation", return_value=None)
     @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
     @patch("linkedin.tasks.sweep_connections.scrape_connections_with_stats")
+    def test_finished_campaign_acceptance_reconciles_without_resurrecting_outbound(
+        self,
+        mock_scrape,
+        _mock_recycle,
+        _mock_conversation,
+        fake_session,
+        monkeypatch,
+    ):
+        from linkedin.actions.connections import ConnectionEntry
+
+        monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+        _make_pending(fake_session, "alice")
+        fake_session.campaign.status = Campaign.Status.FINISHED
+        fake_session.campaign.save(update_fields=["status"])
+        mock_scrape.return_value = _completed_scrape([
+            ConnectionEntry(public_id="alice", name="Alice Smith", connected_on=None),
+        ])
+
+        handle_sweep_connections(
+            _make_task(Task.TaskType.SWEEP_CONNECTIONS, {}),
+            fake_session,
+            _build_context(fake_session),
+        )
+
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            payload__public_id="alice",
+        ).exists()
+        from crm.models import Deal
+
+        deal = Deal.objects.get(
+            campaign=fake_session.campaign,
+            lead__public_identifier="alice",
+        )
+        assert not Task.objects.filter(
+            task_type__in=[
+                Task.TaskType.GMAIL_FOLLOW_UP,
+                Task.TaskType.ENRICH_EMAIL,
+            ],
+            payload__lead_id=deal.lead_id,
+        ).exists()
+
+    @patch("linkedin.tasks.sweep_connections.get_conversation", return_value=None)
+    @patch("linkedin.tasks.sweep_connections._recycle_database_connection")
+    @patch("linkedin.tasks.sweep_connections.scrape_connections_with_stats")
     def test_known_meeting_blocks_post_accept_follow_up(
         self, mock_scrape, _mock_recycle, _mock_conversation, fake_session,
     ):
@@ -672,6 +749,39 @@ class TestHandleSweepConnections:
 
 @pytest.mark.django_db
 class TestHandleFollowUp:
+    def test_finished_campaign_task_never_reaches_linkedin_profile_or_send(
+        self,
+        fake_session,
+        monkeypatch,
+    ):
+        _make_connected(fake_session, "alice")
+        fake_session.campaign.status = Campaign.Status.FINISHED
+        fake_session.campaign.save(update_fields=["status"])
+        monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_FOLLOW_UP", True)
+        monkeypatch.setattr(
+            "linkedin.tasks.follow_up.get_profile_dict_for_public_id",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("finished current Campaign must not inspect or send"),
+            ),
+        )
+
+        handle_follow_up(
+            _make_task(
+                Task.TaskType.FOLLOW_UP,
+                {
+                    "campaign_id": fake_session.campaign.pk,
+                    "public_id": "alice",
+                    "operator": "Arian",
+                },
+            ),
+            fake_session,
+            _build_context(fake_session),
+        )
+
+        assert not ActionLog.objects.filter(
+            action_type=ActionLog.ActionType.FOLLOW_UP,
+        ).exists()
+
     @patch("linkedin.tasks.follow_up.ACTIVE_START_HOUR", 9)
     @patch("linkedin.tasks.follow_up.ACTIVE_END_HOUR", 17)
     @patch("linkedin.tasks.follow_up.ACTIVE_TIMEZONE", "UTC")

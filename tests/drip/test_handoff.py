@@ -17,6 +17,7 @@ from gmail.client import scoped_gmail_id
 from gmail.submission import SUBMISSION_ATTEMPTED_AT_KEY
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign, Task
+from tests.drip.helpers import linkedin_profile_description
 from tests.factories import UserFactory
 
 
@@ -31,6 +32,7 @@ def _enrollment(valid_drip_payload):
         company_name="Analytical Engines",
         linkedin_url="https://www.linkedin.com/in/ada-lovelace/",
         public_identifier="ada-lovelace",
+        description=linkedin_profile_description("ada-lovelace"),
         email="ada@example.com",
         icp="CSPs",
     )
@@ -61,6 +63,7 @@ def test_linkedin_handoff_uses_canonical_message_operator_as_primary_owner(
         campaign=current_campaign,
         state=ProfileState.CONNECTED,
         invitation_sender="Arian",
+        invitation_sent_at=timezone.now() - timedelta(days=20),
     )
     lane = DripLane.objects.create(
         enrollment=enrollment,
@@ -69,8 +72,12 @@ def test_linkedin_handoff_uses_canonical_message_operator_as_primary_owner(
         provider_account="arian",
         sender_identity="arian",
         recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
     )
-    owner = SalesOwner.objects.get(normalized_handle="arian")
+    owner, _ = SalesOwner.objects.get_or_create(
+        handle="Arian",
+        defaults={"display_name": "Arian"},
+    )
     monkeypatch.setattr("linkedin.icp_outbound.channel_steps", lambda **kwargs: [1, 2])
     message = Message.objects.create(
         lead=lead,
@@ -106,6 +113,7 @@ def test_linkedin_handoff_requires_final_evidence_and_no_live_current_task(
         campaign=current_campaign,
         state=ProfileState.CONNECTED,
         invitation_sender="Arian",
+        invitation_sent_at=timezone.now() - timedelta(days=20),
     )
     lane = DripLane.objects.create(
         enrollment=enrollment,
@@ -114,6 +122,7 @@ def test_linkedin_handoff_requires_final_evidence_and_no_live_current_task(
         provider_account="arian",
         sender_identity="arian",
         recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
     )
     monkeypatch.setattr("linkedin.icp_outbound.channel_steps", lambda **kwargs: [1, 2])
     assert evaluate_linkedin_handoff(lane).reason == "current_linkedin_final_step_not_persisted"
@@ -128,6 +137,71 @@ def test_linkedin_handoff_requires_final_evidence_and_no_live_current_task(
         },
     )
     assert evaluate_linkedin_handoff(lane).reason == "current_linkedin_task_outstanding"
+
+
+def test_linkedin_handoff_does_not_treat_campaign_owner_as_connection_proof(
+    valid_drip_payload,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    current_campaign = Campaign.objects.create(
+        name="Unattributed connected row",
+        user=UserFactory(username="arian"),
+    )
+    Deal.objects.create(
+        lead=lead,
+        campaign=current_campaign,
+        state=ProfileState.CONNECTED,
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
+    )
+
+    result = evaluate_linkedin_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason == "sender_owned_linkedin_connection_not_proven"
+    assert result.wait_status == DripLane.Status.WAITING_CONNECTION
+
+
+def test_linkedin_handoff_revalidates_frozen_member_identity(valid_drip_payload):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    current_campaign = Campaign.objects.create(
+        name="Current outbound",
+        user=UserFactory(username="arian"),
+    )
+    Deal.objects.create(
+        lead=lead,
+        campaign=current_campaign,
+        state=ProfileState.CONNECTED,
+        invitation_sender="Arian",
+        invitation_sent_at=timezone.now() - timedelta(days=20),
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
+    )
+    lead.description = linkedin_profile_description(
+        "someone-else",
+        member_urn="urn:li:fsd_profile:SOMEONE_ELSE",
+    )
+    lead.save(update_fields={"description", "update_date"})
+
+    result = evaluate_linkedin_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason.startswith("linkedin_identity_invalid:")
+    assert "linkedin_profile_public_identifier_mismatch" in result.reason
 
 
 def test_gmail_handoff_freezes_exact_thread_and_rfc_continuation(
@@ -430,6 +504,7 @@ def test_linkedin_handoff_revalidates_evidence_after_not_applicable_review(
         campaign=current_campaign,
         state=ProfileState.CONNECTED,
         invitation_sender="Arian",
+        invitation_sent_at=timezone.now() - timedelta(days=20),
     )
     lane = DripLane.objects.create(
         enrollment=enrollment,
@@ -438,6 +513,7 @@ def test_linkedin_handoff_revalidates_evidence_after_not_applicable_review(
         provider_account="arian",
         sender_identity="arian",
         recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
         current_sequence_status=DripLane.CurrentSequenceStatus.NOT_APPLICABLE,
         current_sequence_reviewed_at=timezone.now(),
         current_sequence_reviewed_by="human-reviewer",

@@ -39,7 +39,7 @@ if ($result -eq 0) {
 }
 
 try {
-    & $python manage.py
+    & $python daemon_supervisor.py
     exit $LASTEXITCODE
 }
 finally {

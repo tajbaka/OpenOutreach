@@ -2,7 +2,7 @@
 """OpenOutreach management entrypoint.
 
 Usage:
-    python manage.py              # run the daemon
+    python manage.py              # run only the LinkedIn daemon child/diagnostic
     python manage.py runserver    # Django Admin at http://localhost:8000/admin/
     python manage.py migrate      # run Django migrations
     python manage.py createsuperuser

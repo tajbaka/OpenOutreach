@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-"""Terminal-run supervisor for the OpenOutreach daemon.
+"""Canonical process supervisor for the OpenOutreach runtime.
 
-Runs `manage.py` as a child process, polls the current Git upstream for new
-commits, and restarts the daemon after applying updates. This is intentionally
-OS-agnostic: run it in a terminal on macOS, Windows, or Linux.
+Runs the browser-backed LinkedIn daemon and the mapped browserless Gmail worker
+as independent child processes, optionally polls the current Git upstream for
+new commits, and restarts the children after applying updates. This is
+intentionally OS-agnostic: run it in a terminal on macOS, Windows, or Linux.
 """
 from __future__ import annotations
 
@@ -256,6 +257,17 @@ def _pull_update(*, install: bool, migrate: bool, requirements_file: str) -> boo
         return False
 
 
+def _maybe_pull_update(args: argparse.Namespace) -> bool:
+    """Apply one supervisor update check unless deployment owns code updates."""
+    if args.no_update:
+        return False
+    return _pull_update(
+        install=not args.no_install,
+        migrate=not args.no_migrate,
+        requirements_file=args.requirements,
+    )
+
+
 def _start_daemon(*, restart_reason: str = "") -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
@@ -438,11 +450,7 @@ def _feed_collection_retry_seconds() -> int:
 
 def supervise(args: argparse.Namespace) -> int:
     if args.once:
-        updated = _pull_update(
-            install=not args.no_install,
-            migrate=not args.no_migrate,
-            requirements_file=args.requirements,
-        )
+        updated = _maybe_pull_update(args)
         return 0 if updated else 1
 
     stop = False
@@ -467,11 +475,7 @@ def supervise(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    initial_updated = _pull_update(
-        install=not args.no_install,
-        migrate=not args.no_migrate,
-        requirements_file=args.requirements,
-    )
+    initial_updated = _maybe_pull_update(args)
     child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
     if gmail_account is None:
         logger.warning(
@@ -539,11 +543,7 @@ def supervise(args: argparse.Namespace) -> int:
                 feed_child = None
 
         if time.monotonic() >= next_poll:
-            if _pull_update(
-                install=not args.no_install,
-                migrate=not args.no_migrate,
-                requirements_file=args.requirements,
-            ):
+            if _maybe_pull_update(args):
                 if gmail_child is not None:
                     _stop_process(gmail_child, label="Gmail worker")
                     gmail_child = None
@@ -581,12 +581,19 @@ def supervise(args: argparse.Namespace) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run and auto-update the OpenOutreach daemon")
+    parser = argparse.ArgumentParser(
+        description="Run the supervised LinkedIn and Gmail OpenOutreach runtime"
+    )
     parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS)
     parser.add_argument("--restart-delay", type=int, default=10)
     parser.add_argument("--requirements", default="requirements/local.txt")
     parser.add_argument("--no-install", action="store_true", help="Do not install requirements after dependency changes")
     parser.add_argument("--no-migrate", action="store_true", help="Do not run migrations after pulling updates")
+    parser.add_argument(
+        "--no-update",
+        action="store_true",
+        help="Do not fetch or pull Git updates (for immutable/container deployments)",
+    )
     parser.add_argument("--once", action="store_true", help="Check/pull once and exit without starting the daemon")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
@@ -600,11 +607,14 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    logger.warning(
-        "Supervisor polling git every %ss; requirements=%s",
-        args.poll_seconds,
-        args.requirements,
-    )
+    if args.no_update:
+        logger.warning("Supervisor code updates disabled by --no-update")
+    else:
+        logger.warning(
+            "Supervisor polling git every %ss; requirements=%s",
+            args.poll_seconds,
+            args.requirements,
+        )
     return supervise(args)
 
 

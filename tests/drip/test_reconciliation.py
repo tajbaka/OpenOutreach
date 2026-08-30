@@ -12,6 +12,7 @@ from drip.services.publication import publish_manifest
 from drip.services.reconciliation import reconcile_drips
 from linkedin.models import Task, WorkflowRun
 from linkedin.enums import ProfileState
+from tests.drip.helpers import linkedin_profile_description
 
 
 pytestmark = pytest.mark.django_db
@@ -33,6 +34,7 @@ def _domain(valid_drip_payload, *, now):
         company_name="Analytical Engines",
         linkedin_url="https://www.linkedin.com/in/ada-lovelace/",
         public_identifier="ada-lovelace",
+        description=linkedin_profile_description("ada-lovelace"),
         email="ada@example.com",
         icp="CSPs",
     )
@@ -69,6 +71,7 @@ def _domain(valid_drip_payload, *, now):
         provider_account="arian",
         sender_identity="arian",
         recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
         status=DripLane.Status.COMPLETED,
         current_sequence_status=DripLane.CurrentSequenceStatus.NOT_APPLICABLE,
         current_sequence_reviewed_at=now - timedelta(days=10),
@@ -139,7 +142,7 @@ def test_gmail_lane_advances_while_linkedin_independently_waits_for_connection(
     assert any(
         decision.channel == DripLane.Channel.LINKEDIN
         and decision.action == "waiting_handoff"
-        and decision.detail == "linkedin_connection_not_accepted"
+        and decision.detail == "sender_owned_linkedin_connection_not_proven"
         for decision in result.decisions
     )
 
@@ -171,6 +174,7 @@ def test_handed_off_linkedin_lane_reactivates_when_connection_is_restored(
         campaign=fake_session.campaign,
         state=ProfileState.CONNECTED,
         invitation_sender="Arian",
+        invitation_sent_at=now - timedelta(days=20),
         connected_at=now - timedelta(days=5),
     )
 

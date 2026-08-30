@@ -366,7 +366,7 @@ Minimal payload:
 - lower priority than current connection and current post-connection follow-up work;
 - counted with current LinkedIn follow-ups against the existing account-wide follow-up action limit, without adding a new limit or environment setting.
 
-The daemon continues to require an active traditional Campaign and the existing sender ICP configuration. Drip does not introduce a drip-only daemon mode.
+The daemon continues to require one active sender-owned Campaign and the existing sender ICP configuration. The clean-slate cutover creates an empty `Drip Runtime - <operator>` Campaign for that session/ActionLog contract; it is not a traditional outbound cohort. Drip does not introduce a drip-only daemon mode.
 
 ### 9.2 Gmail routing
 
@@ -492,7 +492,7 @@ Operational prerequisites:
 
 - the existing hourly CRM v2 context workflow remains scheduled and healthy;
 - the existing LinkedIn listener/backfill operation remains as currently deployed;
-- an active traditional Campaign keeps each participating LinkedIn daemon running;
+- an empty active runtime Campaign keeps each participating LinkedIn daemon running after the reviewed clean-slate cutover;
 - the independently supervised Gmail worker is running for the existing resolved accounts.
 
 ## 14. Implementation phases
@@ -663,11 +663,11 @@ This implementation does not include:
 - separate unrelated LinkedIn and Gmail campaign JSON files;
 - a new Google Sheets campaign tab;
 - a new LinkedIn browser or drip-only daemon mode;
-- daemon startup without an active traditional Campaign;
+- daemon startup without an active sender runtime Campaign;
 - a new Gmail reply poller;
 - a Gmail provider query before every send;
 - a LinkedIn conversation refresh before every send;
-- a new LinkedIn member-URN identity project;
+- live or mutable LinkedIn member-URN resolution at send time (the exact persisted profile URN is instead reviewed and frozen at enrollment);
 - a new drip-specific LinkedIn inbox recovery system;
 - new mailbox, sender, or drip pacing/limit infrastructure;
 - cross-channel predecessor requirements;

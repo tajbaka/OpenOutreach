@@ -183,3 +183,19 @@ def test_handoff_queue_error_does_not_escape_to_linkedin(monkeypatch):
 
     assert maybe_schedule_gmail_sequence(deal=deal, operator="Arian") is None
     assert not Task.objects.exists()
+
+
+@pytest.mark.django_db
+def test_finished_campaign_does_not_start_or_continue_current_gmail(monkeypatch):
+    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    deal = _deal(email="ada@example.com")
+    deal.campaign.status = Campaign.Status.FINISHED
+    deal.campaign.save(update_fields=["status"])
+
+    assert maybe_schedule_gmail_sequence(deal=deal, operator="Arian") is None
+    assert enqueue_gmail_follow_up(
+        lead_id=deal.lead_id,
+        deal_id=deal.pk,
+        operator="Arian",
+    ) is None
+    assert not Task.objects.exists()

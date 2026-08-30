@@ -63,7 +63,11 @@ cd OpenOutreach
 make up
 ```
 
-This builds the Docker image from source with `BUILD_ENV=local` (includes test dependencies) and starts the daemon.
+This builds the Docker image from source with `BUILD_ENV=local` (includes test
+dependencies) and starts the canonical supervisor. The supervisor runs the
+LinkedIn daemon and mapped Gmail worker as independent child processes. Docker
+passes `--no-update`, so image deployment—not a bind-mounted checkout—owns code
+updates.
 
 **Note:** The compose file uses `HOST_UID` / `HOST_GID` environment variables (defaulting to 1000)
 for file ownership. If your host UID differs from 1000, set them explicitly:

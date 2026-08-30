@@ -37,7 +37,6 @@ def _session(*, on_click=None):
 
 
 def _patch_prepare(monkeypatch, *, confirmed=True):
-    monkeypatch.setattr("linkedin.db.leads.resolve_urn", lambda *_args, **_kwargs: "urn:li:fsd_profile:1")
     monkeypatch.setattr("linkedin.api.messaging.encode_urn", lambda value: value)
     monkeypatch.setattr("linkedin.actions.message.goto_page", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("linkedin.actions.message.human_type", lambda *_args, **_kwargs: None)
@@ -50,6 +49,17 @@ def _patch_prepare(monkeypatch, *, confirmed=True):
 def test_single_route_callback_runs_before_click(monkeypatch):
     _patch_prepare(monkeypatch)
     state = {"callback": False, "click": False}
+    encoded = []
+    monkeypatch.setattr(
+        "linkedin.db.leads.resolve_urn",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("frozen-URN send must not resolve a mutable Lead"),
+        ),
+    )
+    monkeypatch.setattr(
+        "linkedin.api.messaging.encode_urn",
+        lambda value: encoded.append(value) or value,
+    )
 
     def callback():
         state["callback"] = True
@@ -60,13 +70,15 @@ def test_single_route_callback_runs_before_click(monkeypatch):
 
     result = send_direct_message_once(
         _session(on_click=click),
-        {"public_identifier": "alice"},
+        "urn:li:fsd_profile:ALICE",
         "Hello Alice",
+        recipient_label="https://www.linkedin.com/in/alice/",
         on_submit_attempt=callback,
     )
 
     assert result.outcome == DirectMessageOutcome.SENT
     assert state == {"callback": True, "click": True}
+    assert encoded == ["urn:li:fsd_profile:ALICE"]
 
 
 def test_callback_abort_is_definitely_pre_submit(monkeypatch):
@@ -78,8 +90,9 @@ def test_callback_abort_is_definitely_pre_submit(monkeypatch):
 
     result = send_direct_message_once(
         _session(on_click=lambda: clicked.append(True)),
-        {"public_identifier": "alice"},
+        "urn:li:fsd_profile:ALICE",
         "Hello Alice",
+        recipient_label="https://www.linkedin.com/in/alice/",
         on_submit_attempt=abort,
     )
 
@@ -96,8 +109,9 @@ def test_click_error_is_unclear_and_never_falls_back(monkeypatch):
 
     result = send_direct_message_once(
         _session(on_click=click),
-        {"public_identifier": "alice"},
+        "urn:li:fsd_profile:ALICE",
         "Hello Alice",
+        recipient_label="https://www.linkedin.com/in/alice/",
         on_submit_attempt=lambda: None,
     )
 
@@ -109,9 +123,32 @@ def test_missing_post_click_confirmation_is_unclear(monkeypatch):
 
     result = send_direct_message_once(
         _session(),
-        {"public_identifier": "alice"},
+        "urn:li:fsd_profile:ALICE",
         "Hello Alice",
+        recipient_label="https://www.linkedin.com/in/alice/",
         on_submit_attempt=lambda: None,
     )
 
     assert result.outcome == DirectMessageOutcome.UNCLEAR
+
+
+def test_invalid_member_urn_fails_before_navigation_or_callback(monkeypatch):
+    navigated = []
+    callback = []
+    monkeypatch.setattr(
+        "linkedin.actions.message.goto_page",
+        lambda *_args, **_kwargs: navigated.append(True),
+    )
+
+    result = send_direct_message_once(
+        _session(),
+        "https://www.linkedin.com/in/alice/",
+        "Hello Alice",
+        recipient_label="Alice",
+        on_submit_attempt=lambda: callback.append(True),
+    )
+
+    assert result.outcome == DirectMessageOutcome.PRE_SUBMIT_FAILED
+    assert "exact fsd_profile" in result.detail
+    assert navigated == []
+    assert callback == []

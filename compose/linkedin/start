@@ -24,5 +24,8 @@ x11vnc -display :99 -forever -shared -nopw &
 python manage.py migrate --no-input
 python manage.py setup_crm
 
-# Run the daemon
-python manage.py
+# Run the canonical process supervisor. Container images are immutable, so do
+# not let a bind-mounted Git checkout auto-pull itself; image deployment owns
+# code updates. `exec` keeps Docker signals attached to the supervisor, which
+# then stops both the LinkedIn daemon and Gmail worker cleanly.
+exec python daemon_supervisor.py --no-update

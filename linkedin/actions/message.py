@@ -72,31 +72,31 @@ def _direct_message_submission_confirmed(page, message: str) -> bool:
 
 def send_direct_message_once(
     session,
-    profile: Dict[str, Any],
+    member_urn: str,
     message: str,
     *,
+    recipient_label: str,
     on_submit_attempt: Callable[[], None],
 ) -> DirectMessageResult:
-    """Use exactly one direct-compose route with an explicit click boundary.
+    """Send to one already-reviewed member URN through one compose route.
 
     The callback runs after typing and immediately before the only send click.
     Once it returns successfully, any Playwright error or missing confirmation
     is classified as ``unclear`` because the click may have reached LinkedIn.
-    No popup or Voyager API fallback is attempted.
+    No mutable Lead lookup, popup route, or Voyager API fallback is attempted.
     """
     from linkedin.api.messaging import encode_urn
-    from linkedin.db.leads import resolve_urn
+    from linkedin.member_identity import normalize_member_urn, valid_member_urn
 
-    public_identifier = profile.get("public_identifier")
+    target_urn = normalize_member_urn(member_urn)
+    target_label = (recipient_label or "").strip() or target_urn
+    if not valid_member_urn(target_urn):
+        return DirectMessageResult(
+            DirectMessageOutcome.PRE_SUBMIT_FAILED,
+            "Refusing direct message without an exact fsd_profile member URN",
+        )
     submission_boundary_crossed = False
     try:
-        target_urn = resolve_urn(public_identifier, session=session)
-        if not target_urn:
-            return DirectMessageResult(
-                DirectMessageOutcome.PRE_SUBMIT_FAILED,
-                f"Could not resolve URN for {public_identifier}",
-            )
-
         direct_url = f"{LINKEDIN_MESSAGING_URL}?recipient={encode_urn(target_urn)}"
         goto_page(
             session,
@@ -119,7 +119,7 @@ def send_direct_message_once(
             )
         logger.info(
             "Message sent to %s (single direct thread route)",
-            public_identifier,
+            target_label,
         )
         return DirectMessageResult(DirectMessageOutcome.SENT)
     except MessageSubmissionAborted as exc:

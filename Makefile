@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help attach test docker-test stop build up up-view install setup run supervise run-awake admin view selfhost-db-prepare selfhost-db-up selfhost-db-stop selfhost-db-ps selfhost-db-logs selfhost-db-restore-copy
+.PHONY: help attach test docker-test stop build up up-view install setup run supervise run-linkedin run-awake admin view selfhost-db-prepare selfhost-db-up selfhost-db-stop selfhost-db-ps selfhost-db-logs selfhost-db-restore-copy
 -include compose/.env
 SELFHOST_POSTGRES_BIND ?= 127.0.0.1
 SELFHOST_POSTGRES_PORT ?= 55432
@@ -16,17 +16,20 @@ setup: install ## install deps + Playwright browsers + migrate + bootstrap CRM
 	python manage.py migrate --no-input
 	python manage.py setup_crm
 
-run: ## run the daemon
-	python manage.py
+run: ## run the full LinkedIn + Gmail runtime under the supervisor
+	.venv/bin/python daemon_supervisor.py
 
-supervise: ## run daemon under terminal supervisor with git auto-update
-	python daemon_supervisor.py
+supervise: ## alias for the canonical supervised runtime
+	.venv/bin/python daemon_supervisor.py
 
-run-awake: ## run the daemon on macOS without system sleep
+run-linkedin: ## run only the LinkedIn daemon (diagnostics; no Gmail worker)
+	.venv/bin/python manage.py
+
+run-awake: ## run the full supervised runtime on macOS without system sleep
 	@if command -v caffeinate >/dev/null 2>&1; then \
-		caffeinate -ims python manage.py; \
+		caffeinate -ims .venv/bin/python daemon_supervisor.py; \
 	else \
-		echo "run-awake requires macOS caffeinate; use OS power settings or run: python manage.py"; \
+		echo "run-awake requires macOS caffeinate; use OS power settings or run: make run"; \
 		exit 1; \
 	fi
 

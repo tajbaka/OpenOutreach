@@ -15,7 +15,7 @@ from drip.exceptions import EnrollmentPlanError
 from drip.models import DripCampaign, DripEnrollment, DripLane
 
 
-PLAN_SCHEMA_VERSION = 1
+PLAN_SCHEMA_VERSION = 2
 PLAN_KIND = "drip_enrollment_plan"
 
 
@@ -44,43 +44,6 @@ def _gmail_mapping(operator: str) -> dict[str, str]:
         "provider_account": mapping["gmail_account"].strip().lower(),
         "sender_identity": mapping["send_as"].strip().lower(),
     }
-
-
-def _linkedin_recipient_identity(lead) -> str:
-    from linkedin.notifications.sheets import linkedin_identity_key
-
-    identity = linkedin_identity_key(lead.linkedin_url or "")
-    if identity:
-        return identity
-    public_identifier = (lead.public_identifier or "").strip().lower()
-    return f"public:{public_identifier}" if public_identifier else ""
-
-
-def _sender_evidence(lead) -> set[str]:
-    from crm.models import Deal, Message
-    from linkedin.operators import CANONICAL_OPERATOR_HANDLES, resolve_operator
-
-    evidence: set[str] = set()
-    deals = Deal.objects.filter(lead=lead).select_related("campaign__user")
-    for deal in deals:
-        for raw in (deal.invitation_sender, deal.campaign.user.username):
-            resolved = resolve_operator(raw)
-            if resolved in CANONICAL_OPERATOR_HANDLES:
-                evidence.add(resolved)
-    outbound = Message.objects.filter(
-        lead=lead,
-        source=Message.Source.LINKEDIN,
-        direction=Message.Direction.OUTBOUND,
-    ).select_related("operator")
-    for message in outbound:
-        for raw in (
-            message.sender,
-            message.operator.handle if message.operator_id else "",
-        ):
-            resolved = resolve_operator(raw)
-            if resolved in CANONICAL_OPERATOR_HANDLES:
-                evidence.add(resolved)
-    return evidence
 
 
 def _known_stop_blockers(lead) -> list[str]:
@@ -124,6 +87,13 @@ def _sender_channels(manifest: dict[str, Any], *, icp: str, operator: str) -> di
 
 def _entry_for_lead(*, campaign: DripCampaign, lead, operator: str) -> dict[str, Any]:
     from crm.models import Deal
+    from drip.services.linkedin_connection import connected_deal_proofs_by_operator
+    from drip.services.linkedin_identity import (
+        LinkedInRecipientIdentity,
+        inspect_linkedin_recipient,
+    )
+    from linkedin.enums import ProfileState
+    from linkedin.operators import CANONICAL_OPERATOR_HANDLES
 
     version = campaign.active_version
     if version is None:
@@ -140,11 +110,33 @@ def _entry_for_lead(*, campaign: DripCampaign, lead, operator: str) -> dict[str,
     if icp in manifest["audiences"] and not any(channels.values()):
         blockers.append("sender_not_configured_for_icp")
 
-    linkedin_identity = _linkedin_recipient_identity(lead)
-    sender_evidence = _sender_evidence(lead)
-    if channels[DripLane.Channel.LINKEDIN]:
-        if not linkedin_identity:
-            blockers.append("missing_linkedin_identity")
+    linkedin_configured = channels[DripLane.Channel.LINKEDIN]
+    linkedin_identity = (
+        inspect_linkedin_recipient(lead)
+        if linkedin_configured
+        else LinkedInRecipientIdentity("", "", "", ())
+    )
+    proof_states = (
+        ProfileState.PENDING,
+        ProfileState.CONNECTED,
+        ProfileState.COMPLETED,
+    )
+    proofs_by_operator = (
+        connected_deal_proofs_by_operator(
+            lead=lead,
+            operators=sorted(CANONICAL_OPERATOR_HANDLES),
+            allowed_states=proof_states,
+        )
+        if linkedin_configured
+        else {}
+    )
+    sender_evidence = {
+        candidate_operator
+        for candidate_operator, proofs in proofs_by_operator.items()
+        if proofs
+    }
+    if linkedin_configured:
+        blockers.extend(linkedin_identity.errors)
         if not Deal.objects.filter(lead=lead).exists():
             blockers.append("linkedin_requires_deal")
         if not sender_evidence:
@@ -165,20 +157,36 @@ def _entry_for_lead(*, campaign: DripCampaign, lead, operator: str) -> dict[str,
             "company_name": lead.company_name,
             "icp": icp,
             "email": normalized_email,
-            "linkedin_identity": linkedin_identity,
+            "linkedin_identity": linkedin_identity.canonical_url,
+            "linkedin_public_identifier": linkedin_identity.public_identifier,
+            "linkedin_member_urn": linkedin_identity.member_urn,
         },
         "sender_evidence": sorted(sender_evidence),
+        "linkedin_connection_evidence": [
+            proof.as_plan_value()
+            for proof in proofs_by_operator.get(operator, ())
+        ],
         "channels": {
             DripLane.Channel.LINKEDIN: {
                 "configured": channels[DripLane.Channel.LINKEDIN],
                 "provider_account": operator.lower(),
                 "sender_identity": operator.lower(),
-                "recipient_identity": linkedin_identity,
+                "recipient_identity": (
+                    linkedin_identity.canonical_url
+                    if channels[DripLane.Channel.LINKEDIN]
+                    else ""
+                ),
+                "linkedin_member_urn": (
+                    linkedin_identity.member_urn
+                    if channels[DripLane.Channel.LINKEDIN]
+                    else ""
+                ),
             },
             DripLane.Channel.GMAIL: {
                 "configured": channels[DripLane.Channel.GMAIL],
                 **gmail,
                 "recipient_identity": normalized_email,
+                "linkedin_member_urn": "",
             },
         },
         "blockers": sorted(set(blockers)),
@@ -390,6 +398,7 @@ def apply_reviewed_plan(
                 provider_account=channel_plan["provider_account"],
                 sender_identity=channel_plan["sender_identity"],
                 recipient_identity=channel_plan["recipient_identity"],
+                linkedin_member_urn=channel_plan["linkedin_member_urn"],
                 status=(
                     DripLane.Status.WAITING_CURRENT
                     if configured

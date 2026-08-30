@@ -89,8 +89,12 @@ cd OpenOutreach
 # Install deps + Playwright browsers + migrations + CRM bootstrap
 make setup
 
-# Run the daemon (interactive onboarding on first run)
+# Run LinkedIn and Gmail under the canonical supervisor
+# (interactive onboarding on first run)
 make run
+
+# LinkedIn-only diagnostic; does not consume Gmail Tasks
+make run-linkedin
 
 # Browse the CRM (Django Admin)
 .venv/bin/python manage.py createsuperuser
@@ -104,7 +108,7 @@ make admin
 
 For module-level detail see [`CLAUDE.md`](CLAUDE.md) (kept current alongside code changes). For the live operational picture (what's running on your box right now given your `.env` flags) see [`docs/system-flow.txt`](docs/system-flow.txt).
 
-**Entry point:** `manage.py` — no args runs the daemon. With args, delegates to Django CLI. Auto-migrates and bootstraps CRM on startup.
+**Entry point:** `daemon_supervisor.py` is the normal runtime and starts both the browser-backed LinkedIn daemon and the mapped independent Gmail worker. `manage.py` with no arguments is the LinkedIn-only child/diagnostic; with arguments it delegates to Django CLI and auto-migrates where required.
 
 **State machine** (`enums.py:ProfileState`):
 
@@ -189,7 +193,8 @@ make build / make up / make stop / make attach / make up-view
 
 # Local dev
 make setup    # install deps + browsers + migrate + bootstrap CRM
-make run      # run daemon
+make run      # supervised LinkedIn daemon + Gmail worker
+make run-linkedin  # LinkedIn-only diagnostic
 make admin    # Django Admin at localhost:8000/admin/
 
 # Testing
@@ -288,7 +293,8 @@ Configured via `.env` and the Campaign / LinkedInProfile models in Django Admin.
 │   └── tasks/                          # connect, sweep, follow_up, discovery
 ├── crm/                                # Django app: Lead, Deal, Message
 ├── chat/                               # Django app: ChatMessage
-├── manage.py                           # Entry point (no args = daemon, else Django CLI)
+├── daemon_supervisor.py                # Canonical LinkedIn + Gmail process supervisor
+├── manage.py                           # LinkedIn child/diagnostic; Django CLI with args
 ├── local.yml                           # Docker Compose
 └── Makefile                            # setup / run / admin / test shortcuts
 ```

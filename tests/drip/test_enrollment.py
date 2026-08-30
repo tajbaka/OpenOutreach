@@ -3,6 +3,7 @@ import stat
 
 import pytest
 from django.core.management import call_command
+from django.utils import timezone
 
 from crm.models import Deal, Lead
 from drip.exceptions import EnrollmentPlanError
@@ -17,6 +18,7 @@ from drip.services.enrollment import (
 from drip.services.publication import publish_manifest
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign
+from tests.drip.helpers import linkedin_profile_description
 from tests.factories import UserFactory
 
 
@@ -32,6 +34,7 @@ def _eligible_lead():
         company_name="Analytical Engines",
         linkedin_url="https://www.linkedin.com/in/ada-lovelace/",
         public_identifier="ada-lovelace",
+        description=linkedin_profile_description("ada-lovelace"),
         email="ADA@EXAMPLE.COM",
         icp="CSPs",
     )
@@ -40,6 +43,7 @@ def _eligible_lead():
         campaign=current_campaign,
         state=ProfileState.CONNECTED,
         invitation_sender="Arian",
+        invitation_sent_at=timezone.now(),
     )
     return lead
 
@@ -74,9 +78,12 @@ def test_reviewed_plan_is_explicit_private_and_applies_atomically(
         DripLane.Channel.GMAIL,
     }
     gmail_lane = enrollment.lanes.get(channel=DripLane.Channel.GMAIL)
+    linkedin_lane = enrollment.lanes.get(channel=DripLane.Channel.LINKEDIN)
     assert gmail_lane.provider_account == "arian_boundera"
     assert gmail_lane.sender_identity == "ariant@getboundera.com"
     assert gmail_lane.recipient_identity == "ada@example.com"
+    assert linkedin_lane.recipient_identity == "https://www.linkedin.com/in/ada-lovelace/"
+    assert linkedin_lane.linkedin_member_urn == "urn:li:fsd_profile:ada-lovelace"
 
 
 def test_reviewed_plan_scopes_campaign_lock_to_nonnullable_row(
@@ -139,6 +146,109 @@ def test_tampered_or_stale_plan_fails_closed(valid_drip_payload):
     lead.save(update_fields={"email", "update_date"})
     with pytest.raises(EnrollmentPlanError, match="changed after review"):
         validate_reviewed_plan(campaign_key=published.campaign.key, plan=plan)
+
+
+def test_plan_freezes_exact_member_urn_and_rejects_profile_identity_mismatch(
+    valid_drip_payload,
+):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = _eligible_lead()
+    plan = build_enrollment_plan(
+        campaign_key=published.campaign.key,
+        operator="Arian",
+        lead_ids=[lead.pk],
+    )
+
+    reviewed = plan["leads"][0]
+    assert reviewed["snapshot"]["linkedin_member_urn"] == (
+        "urn:li:fsd_profile:ada-lovelace"
+    )
+    assert reviewed["channels"]["linkedin"]["linkedin_member_urn"] == (
+        "urn:li:fsd_profile:ada-lovelace"
+    )
+    assert reviewed["linkedin_connection_evidence"][0]["mode"] == (
+        "invitation_ledger"
+    )
+
+    lead.description = linkedin_profile_description(
+        "someone-else",
+        member_urn="urn:li:fsd_profile:SOMEONE_ELSE",
+    )
+    lead.save(update_fields={"description", "update_date"})
+    changed = build_enrollment_plan(
+        campaign_key=published.campaign.key,
+        operator="Arian",
+        lead_ids=[lead.pk],
+    )["leads"][0]
+
+    assert changed["eligible"] is False
+    assert "linkedin_profile_public_identifier_mismatch" in changed["blockers"]
+    assert "linkedin_profile_url_mismatch" in changed["blockers"]
+
+
+def test_plan_rejects_member_urn_shared_by_another_lead(valid_drip_payload):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = _eligible_lead()
+    Lead.objects.create(
+        linkedin_url="https://www.linkedin.com/in/grace-hopper/",
+        public_identifier="grace-hopper",
+        description=linkedin_profile_description(
+            "grace-hopper",
+            member_urn="urn:li:fsd_profile:ada-lovelace",
+        ),
+    )
+
+    reviewed = build_enrollment_plan(
+        campaign_key=published.campaign.key,
+        operator="Arian",
+        lead_ids=[lead.pk],
+    )["leads"][0]
+
+    assert reviewed["eligible"] is False
+    assert "linkedin_member_urn_stored_on_another_lead" in reviewed["blockers"]
+
+
+def test_apply_rechecks_member_urn_after_human_review(valid_drip_payload):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = _eligible_lead()
+    plan = build_enrollment_plan(
+        campaign_key=published.campaign.key,
+        operator="Arian",
+        lead_ids=[lead.pk],
+    )
+    lead.description = linkedin_profile_description(
+        "ada-lovelace",
+        member_urn="urn:li:fsd_profile:CHANGED_AFTER_REVIEW",
+    )
+    lead.save(update_fields={"description", "update_date"})
+
+    with pytest.raises(EnrollmentPlanError, match="changed after review"):
+        apply_reviewed_plan(
+            campaign_key=published.campaign.key,
+            plan=plan,
+            reviewed_by="reviewer",
+        )
+
+    assert not DripEnrollment.objects.filter(lead=lead).exists()
+
+
+def test_campaign_ownership_alone_is_not_linkedin_sender_proof(valid_drip_payload):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = _eligible_lead()
+    Deal.objects.filter(lead=lead).update(
+        invitation_sent_at=None,
+        invitation_sender="",
+    )
+
+    reviewed = build_enrollment_plan(
+        campaign_key=published.campaign.key,
+        operator="Arian",
+        lead_ids=[lead.pk],
+    )["leads"][0]
+
+    assert reviewed["eligible"] is False
+    assert reviewed["sender_evidence"] == []
+    assert "linkedin_sender_unproven" in reviewed["blockers"]
 
 
 def test_known_reply_is_an_explicit_plan_blocker(valid_drip_payload):

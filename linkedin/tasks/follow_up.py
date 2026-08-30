@@ -174,6 +174,7 @@ def handle_follow_up(task, session, qualifiers):
     from crm.models import ClosingReason, Deal
     from linkedin.actions.message import send_raw_message
     from linkedin.db.messages import lead_outbound_operators
+    from linkedin.models import Campaign
     from linkedin.operators import resolve_operator
     from linkedin.tasks.connect import _seconds_until_tomorrow, enqueue_follow_up
 
@@ -184,6 +185,17 @@ def handle_follow_up(task, session, qualifiers):
     channel = payload.get("channel") or sequence_name or DEFAULT_CHANNEL
     step_index = int(payload.get("step_index") or 0)
     queued_icp = (payload.get("icp") or "").strip()
+
+    if not Campaign.objects.filter(
+        pk=campaign_id,
+        status=Campaign.Status.ACTIVE,
+    ).exists():
+        logger.info(
+            "follow_up: campaign %s is not active - skipping task %s",
+            campaign_id,
+            task.pk,
+        )
+        return
 
     logger.info(
         "[%s] %s %s",

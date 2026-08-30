@@ -18,11 +18,20 @@ def _normalize_email(value: str) -> str:
 def handle_enrich_email(task) -> EnrichmentResult | None:
     """Find one lead's email address for the Gmail cadence lane."""
     from crm.models import Lead
-    from gmail.handoff import enqueue_gmail_follow_up
+    from gmail.handoff import (
+        _current_deal_campaign_is_active,
+        enqueue_gmail_follow_up,
+    )
     from linkedin.tasks.stop_checks import lead_automation_stop_reason
 
     lead_id = task.payload.get("lead_id")
     operator = task.payload.get("operator") or ""
+    if not _current_deal_campaign_is_active(task.payload.get("deal_id")):
+        logger.info(
+            "enrich_email: Deal %s campaign is not active - skipping",
+            task.payload.get("deal_id"),
+        )
+        return None
     lead = Lead.objects.filter(pk=lead_id).first()
     if lead is None:
         logger.warning("enrich_email: lead %s not found - skipping", lead_id)

@@ -147,6 +147,59 @@ def test_not_applicable_lane_requires_review_evidence(valid_drip_payload):
         lane.full_clean()
 
 
+def test_nonterminal_linkedin_lane_requires_valid_unique_member_urn(
+    valid_drip_payload,
+    second_drip_payload,
+):
+    first = publish_manifest(validate_manifest(valid_drip_payload))
+    second = publish_manifest(validate_manifest(second_drip_payload))
+    lead_one = Lead.objects.create(first_name="Ada", icp="CSPs")
+    lead_two = Lead.objects.create(first_name="Grace", icp="CSPs")
+    enrollment_one = _enrollment(
+        campaign=first.campaign,
+        version=first.version,
+        lead=lead_one,
+    )
+    enrollment_two = _enrollment(
+        campaign=second.campaign,
+        version=second.version,
+        lead=lead_two,
+    )
+    missing = DripLane(
+        enrollment=enrollment_one,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity="https://www.linkedin.com/in/ada/",
+    )
+    with pytest.raises(ValidationError, match="exact fsd_profile"):
+        missing.full_clean()
+
+    missing.status = DripLane.Status.STOPPED
+    missing.full_clean()
+
+    DripLane.objects.create(
+        enrollment=enrollment_one,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity="https://www.linkedin.com/in/ada/",
+        linkedin_member_urn="urn:li:fsd_profile:SAME",
+    )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        DripLane.objects.create(
+            enrollment=enrollment_two,
+            channel=DripLane.Channel.LINKEDIN,
+            operator="Chuka",
+            provider_account="chuka",
+            sender_identity="chuka",
+            recipient_identity="https://www.linkedin.com/in/grace/",
+            linkedin_member_urn="urn:li:fsd_profile:SAME",
+        )
+
+
 def test_campaign_version_constraint_rejects_cross_campaign_reference(
     valid_drip_payload,
     second_drip_payload,

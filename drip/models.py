@@ -217,6 +217,12 @@ class DripLane(models.Model):
     provider_account = models.CharField(max_length=128)
     sender_identity = models.CharField(max_length=254)
     recipient_identity = models.CharField(max_length=500, blank=True, default="")
+    linkedin_member_urn = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        db_index=True,
+    )
     status = models.CharField(
         max_length=32,
         choices=Status.choices,
@@ -256,6 +262,15 @@ class DripLane(models.Model):
                 ),
                 name="drip_one_active_recipient_owner",
             ),
+            models.UniqueConstraint(
+                fields=("linkedin_member_urn",),
+                condition=(
+                    Q(channel="linkedin")
+                    & Q(status__in=NONTERMINAL_LANE_STATUSES)
+                    & ~Q(linkedin_member_urn="")
+                ),
+                name="drip_one_active_linkedin_urn",
+            ),
         ]
         indexes = [
             models.Index(fields=("status", "channel"), name="drip_lane_status_idx"),
@@ -267,10 +282,40 @@ class DripLane(models.Model):
 
     def clean(self) -> None:
         super().clean()
+        from linkedin.member_identity import valid_member_urn
+
         if self.channel != self.Channel.GMAIL and (
             self.gmail_thread_id or self.gmail_thread_subject
         ):
             raise ValidationError("Gmail thread metadata is valid only on a Gmail lane.")
+        if self.channel == self.Channel.LINKEDIN:
+            if self.linkedin_member_urn and not valid_member_urn(self.linkedin_member_urn):
+                raise ValidationError(
+                    {
+                        "linkedin_member_urn": (
+                            "LinkedIn member URN must be an exact fsd_profile URN."
+                        ),
+                    },
+                )
+            if (
+                self.status in NONTERMINAL_LANE_STATUSES
+                and not self.linkedin_member_urn
+            ):
+                raise ValidationError(
+                    {
+                        "linkedin_member_urn": (
+                            "An active LinkedIn lane requires an exact fsd_profile URN."
+                        ),
+                    },
+                )
+        elif self.linkedin_member_urn:
+            raise ValidationError(
+                {
+                    "linkedin_member_urn": (
+                        "A LinkedIn member URN is valid only on a LinkedIn lane."
+                    ),
+                },
+            )
         if self.current_sequence_status == self.CurrentSequenceStatus.NOT_APPLICABLE:
             if not self.current_sequence_reviewed_at or not self.current_sequence_reviewed_by:
                 raise ValidationError(
@@ -282,6 +327,7 @@ class DripLane(models.Model):
         self.provider_account = (self.provider_account or "").strip().lower()
         self.sender_identity = (self.sender_identity or "").strip().lower()
         self.recipient_identity = (self.recipient_identity or "").strip().lower()
+        self.linkedin_member_urn = (self.linkedin_member_urn or "").strip()
         update_fields = kwargs.get("update_fields")
         if update_fields is not None:
             kwargs["update_fields"] = set(update_fields) | {
@@ -289,6 +335,7 @@ class DripLane(models.Model):
                 "provider_account",
                 "sender_identity",
                 "recipient_identity",
+                "linkedin_member_urn",
             }
         super().save(*args, **kwargs)
 

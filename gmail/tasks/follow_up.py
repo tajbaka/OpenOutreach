@@ -346,6 +346,15 @@ def handle_gmail_follow_up(task) -> None:
     sequence_name = payload.get("sequence_name") or DEFAULT_GMAIL_SEQUENCE_NAME
     step_index = int(payload.get("step_index") or 0)
 
+    from gmail.handoff import _current_deal_campaign_is_active
+
+    if not _current_deal_campaign_is_active(payload.get("deal_id")):
+        logger.info(
+            "gmail_follow_up: Deal %s campaign is not active - skipping",
+            payload.get("deal_id"),
+        )
+        return
+
     lead = Lead.objects.filter(pk=lead_id).first()
     if lead is None:
         logger.warning("gmail_follow_up: lead %s not found - skipping", lead_id)
