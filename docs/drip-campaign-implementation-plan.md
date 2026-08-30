@@ -1,12 +1,12 @@
 # Drip Campaign Architecture and Implementation Plan
 
-Status: repository implementation complete; controlled production pilot not started
+Status: repository implementation complete; controlled internal provider QA complete; controlled production pilot not started
 
 Branch: `codex/drip-campaigns`
 
 Scope: add a separate theme-based LinkedIn and Gmail drip subsystem to the existing OpenOutreach repository without replacing or reusing the lifecycle of the current connection and post-connection campaigns.
 
-Implementation boundary: phases 0–4 below are implemented in code, migrations, routing, Admin, and automated tests. This work did not add a production campaign manifest, publish a live version, enroll any live Lead, install a periodic reconciler schedule, or complete the phase-5 controlled pilot. Commands that can mutate campaign, enrollment, handoff, or reconciliation state remain explicitly `--apply` gated.
+Implementation boundary: phases 0–4 below are implemented in code, migrations, routing, Admin, and automated tests. A temporary internal Lead completed a controlled two-theme provider QA and was then restored; its campaign was paused. This work did not add a production campaign manifest, publish or enroll a production cohort, install a periodic reconciler schedule, or complete the phase-5 controlled production pilot. Commands that can mutate campaign, enrollment, handoff, or reconciliation state remain explicitly `--apply` gated.
 
 ## 1. Outcome
 
@@ -130,7 +130,7 @@ first_theme_anchor = max(enrollment_activated_at, current_sequence_completed_at)
 - The first step in a channel rendition is due from `theme_started_at`.
 - Every later step in that rendition is due from the previous successful same-channel `sent_at`.
 - Failed, paused, skipped, or unclear sends never become timing anchors.
-- Existing active-hours/rest-day normalization determines the actual LinkedIn send time.
+- Existing active-hours/rest-day normalization determines the actual LinkedIn send time. Reconciliation computes one absolute due time from the later of the exact channel minimum and its pass snapshot, then moves it only forward into an eligible window; the recorded due time can never precede the applicable channel anchor plus `delay_days`.
 
 ### 4.3 Moving to the next theme
 
@@ -385,11 +385,11 @@ The worker’s claim must atomically move a matching pending Task to running. Du
 
 ### 10.1 Correct current Gmail threading first
 
-The current Gmail sequence must become a real thread before drip can inherit it.
+The current Gmail sequence must establish a reusable sender-mailbox provider thread before drip can inherit it. Throughout this plan, "Gmail thread" means reusing the sender mailbox's raw Gmail `threadId`, original subject, and canonical delivered RFC `Message-ID` values as the next `In-Reply-To` parent and accumulated `References` chain. Recipient-side conversation grouping and inbox/spam placement remain controlled by the recipient's mail provider and are not guaranteed by OpenOutreach.
 
 Required behavior:
 
-1. The first current-sequence email opens one Gmail thread.
+1. The first current-sequence email opens one sender-mailbox Gmail thread.
 2. The send result returns the raw Gmail message ID, raw Gmail thread ID, and RFC Message-ID separately.
 3. Later current-sequence steps send with that Gmail `threadId` and the correct `In-Reply-To` and `References` headers.
 4. The original subject is retained for thread continuation.
@@ -397,6 +397,7 @@ Required behavior:
 6. The first email establishes the subject; every continuation retains it even when later template steps exist.
 7. Provider/account identity is retained so shared mailbox aliases resolve consistently.
 8. Current sequence completion and thread evidence become available to the drip handoff service.
+9. Sender-mailbox thread continuity and canonical RFC ancestry are enforced; recipient-side conversation grouping and inbox placement remain provider-controlled.
 
 For an existing Lead, handoff may inherit only a thread that can be resolved to the exact current sender/account and Lead. If no current Gmail message ever sent, handoff records `not_applicable` and the first drip Gmail delivery opens a new thread. If existing history is ambiguous, the Gmail lane pauses for review rather than guessing or opening a competing thread.
 
@@ -513,7 +514,7 @@ Exit criteria:
 
 - current LinkedIn/Gmail tests remain green;
 - an hourly-ingested Gmail reply blocks later current automation through the database stop policy;
-- current Gmail steps share one real Gmail thread;
+- current Gmail steps preserve one sender-mailbox provider thread and canonical RFC parent chain;
 - Gmail current Tasks run while the LinkedIn browser process is stopped;
 - no new provider polling or feature flags exist.
 
@@ -567,9 +568,9 @@ Exit criteria:
 - a possibly successful click is never followed by an automatic alternate send;
 - LinkedIn never changes `Deal.state`.
 
-### Phase 5 — Controlled pilot (not started)
+### Phase 5 — Controlled production pilot (not started)
 
-Publish one reviewed campaign version and manually enroll a small Deal-backed cohort.
+Publish one reviewed production campaign version and manually enroll a small Deal-backed production cohort.
 
 Create that cohort through explicit `--lead-id` planning and the resulting reviewed plan artifact; do not use an unbounded ICP-wide apply.
 
@@ -616,8 +617,8 @@ Only after the pilot passes should the daily reconciler be scheduled broadly.
 
 ### Gmail
 
-- first send opens one thread;
-- later current and drip sends reuse the actual Gmail thread ID;
+- first send opens one sender-mailbox thread;
+- later current and drip sends reuse the actual sender-mailbox Gmail thread ID;
 - provider message ID and thread ID are never confused;
 - raw Gmail IDs, mailbox-scoped CRM IDs, and RFC Message-ID remain distinct;
 - later Gmail steps retain the first message’s subject;
@@ -676,7 +677,7 @@ This implementation does not include:
 
 ## 18. Definition of done
 
-Items 1–9 are implemented and covered by the repository test suites. Item 10 is deliberately outstanding: no real cohort was enrolled or sent by this implementation work, so operational completion must not be inferred from code completion.
+Items 1–9 are implemented and covered by the repository test suites. A controlled internal two-theme provider QA exercised the mechanics in item 10, but no production cohort was enrolled, so production readiness must not be inferred from one internal run.
 
 The feature is complete when:
 
@@ -684,7 +685,7 @@ The feature is complete when:
 2. current outreach hands each channel to drip independently without overlap and with the same sender/account;
 3. each lane starts Day 1 from its own handoff and advances using only same-channel timing;
 4. Gmail continues when LinkedIn is unconnected or failed;
-5. Gmail current and drip messages continue one correct thread;
+5. Gmail current and drip messages continue one correct sender-mailbox thread with canonical RFC ancestry, while recipient-side grouping remains provider-controlled;
 6. existing hourly Gmail ingestion and LinkedIn listener/backfill persist replies that stop all remaining automation;
 7. LinkedIn drip uses the existing matching daemon with no send-time refresh and no alternate send after an unclear click;
 8. current connection and post-connection behavior remains unchanged outside the narrow handoff/stop/threading guards;

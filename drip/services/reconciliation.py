@@ -89,13 +89,13 @@ def _render_context(*, lane: DripLane) -> dict[str, str]:
 def _due_at(*, lane: DripLane, anchor, delay_days: float, now):
     if lane.channel == DripLane.Channel.GMAIL:
         return anchor + timedelta(days=float(delay_days))
-    from linkedin.tasks.follow_up import _delay_seconds_to_active_due
+    from linkedin.tasks.follow_up import _normalize_linkedin_due_at
 
-    delay_seconds = _delay_seconds_to_active_due(
-        float(delay_days) * 24,
-        reference_time=anchor,
+    minimum_due_at = anchor + timedelta(days=float(delay_days))
+    return _normalize_linkedin_due_at(
+        minimum_due_at,
+        current_time=now,
     )
-    return now + timedelta(seconds=delay_seconds)
 
 
 def _render_step(

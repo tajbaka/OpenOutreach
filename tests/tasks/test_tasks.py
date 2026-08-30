@@ -22,7 +22,11 @@ from linkedin.tasks.connect import (
     handle_connect,
     recommended_action_delay,
 )
-from linkedin.tasks.follow_up import _delay_seconds_to_active_due, handle_follow_up
+from linkedin.tasks.follow_up import (
+    _delay_seconds_to_active_due,
+    _normalize_linkedin_due_at,
+    handle_follow_up,
+)
 from linkedin.tasks.sweep_connections import handle_sweep_connections
 from linkedin.actions.connections import ConnectionScrapeResult
 
@@ -668,6 +672,38 @@ class TestHandleSweepConnections:
 
 @pytest.mark.django_db
 class TestHandleFollowUp:
+    @patch("linkedin.tasks.follow_up.ACTIVE_START_HOUR", 9)
+    @patch("linkedin.tasks.follow_up.ACTIVE_END_HOUR", 17)
+    @patch("linkedin.tasks.follow_up.ACTIVE_TIMEZONE", "UTC")
+    @patch("linkedin.tasks.follow_up.REST_DAYS", (5, 6))
+    @patch("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", True)
+    def test_absolute_due_preserves_fractional_minimum_inside_active_hours(self):
+        evaluated_at = datetime(2026, 8, 31, 12, 0, tzinfo=ZoneInfo("UTC"))
+        minimum_due_at = evaluated_at + timedelta(seconds=129.6)
+
+        due_at = _normalize_linkedin_due_at(
+            minimum_due_at,
+            current_time=evaluated_at,
+        )
+
+        assert due_at == minimum_due_at
+
+    @patch("linkedin.tasks.follow_up.ACTIVE_START_HOUR", 9)
+    @patch("linkedin.tasks.follow_up.ACTIVE_END_HOUR", 17)
+    @patch("linkedin.tasks.follow_up.ACTIVE_TIMEZONE", "UTC")
+    @patch("linkedin.tasks.follow_up.REST_DAYS", (5, 6))
+    @patch("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", True)
+    def test_absolute_due_normalizes_overdue_weekend_work_from_evaluation_time(self):
+        minimum_due_at = datetime(2026, 8, 28, 16, 0, tzinfo=ZoneInfo("UTC"))
+        evaluated_at = datetime(2026, 8, 29, 12, 0, tzinfo=ZoneInfo("UTC"))
+
+        due_at = _normalize_linkedin_due_at(
+            minimum_due_at,
+            current_time=evaluated_at,
+        )
+
+        assert due_at == datetime(2026, 8, 31, 9, 0, tzinfo=ZoneInfo("UTC"))
+
     @patch("linkedin.tasks.follow_up.ACTIVE_START_HOUR", 9)
     @patch("linkedin.tasks.follow_up.ACTIVE_END_HOUR", 17)
     @patch("linkedin.tasks.follow_up.ACTIVE_TIMEZONE", "UTC")

@@ -108,31 +108,23 @@ def _finish_sequence_for_stop(session, deal, public_id: str, reason: str) -> Non
     )
 
 
-def _delay_seconds_to_active_due(
-    delay_hours: float,
-    *,
-    reference_time=None,
-) -> float:
-    """Return a delay whose target lands inside the active-hours window.
+def _normalize_linkedin_due_at(minimum_due_at, *, current_time=None):
+    """Return one absolute LinkedIn due time at or after the minimum.
 
-    `delay_hours` is an offset from `reference_time`, normally
-    `Deal.connected_at`. Falling back to now keeps legacy rows with no
-    connection timestamp schedulable without special cases.
+    Overdue work starts from the evaluation instant rather than a historical
+    active window.  Capturing that instant once also keeps callers from
+    combining a stale pass timestamp with a relative delay calculated from a
+    newer wall-clock read.
     """
-    anchor = reference_time or timezone.now()
-    parsed_delay_hours = float(delay_hours)
-    if not isfinite(parsed_delay_hours):
-        raise ValueError(f"delay_hours must be finite, got {delay_hours!r}")
-    target = anchor + timedelta(hours=max(parsed_delay_hours, 0.0))
-    raw_delay = max((target - timezone.now()).total_seconds(), 0.0)
+    evaluated_at = current_time or timezone.now()
+    effective_due_at = max(minimum_due_at, evaluated_at)
     if not ENABLE_ACTIVE_HOURS:
-        return float(raw_delay)
+        return effective_due_at
 
     tz = ZoneInfo(ACTIVE_TIMEZONE)
-    now = timezone.now()
-    due = timezone.localtime(now + timedelta(seconds=raw_delay), timezone=tz)
+    due = timezone.localtime(effective_due_at, timezone=tz)
     if due.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= due.hour < ACTIVE_END_HOUR:
-        return float(raw_delay)
+        return effective_due_at
 
     if due.weekday() in REST_DAYS or due.hour >= ACTIVE_END_HOUR:
         candidate = due + timedelta(days=1)
@@ -143,7 +135,31 @@ def _delay_seconds_to_active_due(
     )
     while candidate.weekday() in REST_DAYS:
         candidate += timedelta(days=1)
-    return max((candidate - timezone.localtime(now, timezone=tz)).total_seconds(), 0.0)
+    return candidate
+
+
+def _delay_seconds_to_active_due(
+    delay_hours: float,
+    *,
+    reference_time=None,
+) -> float:
+    """Return a relative delay backed by one deterministic absolute due time.
+
+    `delay_hours` is an offset from `reference_time`, normally
+    `Deal.connected_at`. Falling back to now keeps legacy rows with no
+    connection timestamp schedulable without special cases.
+    """
+    evaluated_at = timezone.now()
+    anchor = reference_time or evaluated_at
+    parsed_delay_hours = float(delay_hours)
+    if not isfinite(parsed_delay_hours):
+        raise ValueError(f"delay_hours must be finite, got {delay_hours!r}")
+    minimum_due_at = anchor + timedelta(hours=max(parsed_delay_hours, 0.0))
+    due_at = _normalize_linkedin_due_at(
+        minimum_due_at,
+        current_time=evaluated_at,
+    )
+    return max((due_at - evaluated_at).total_seconds(), 0.0)
 
 
 def handle_follow_up(task, session, qualifiers):

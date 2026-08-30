@@ -1,5 +1,6 @@
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.utils import timezone
@@ -282,6 +283,72 @@ def test_later_gmail_step_due_is_anchored_to_previous_successful_sent_at(
 
     assert waiting.due_at == predecessor_sent_at + timedelta(days=3)
     assert lane.deliveries.count() == 1
+
+
+def test_linkedin_fractional_due_is_exact_and_never_materializes_early(
+    valid_drip_payload,
+    monkeypatch,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][1][
+        "delay_days"
+    ] = 0.0015
+    now = datetime(2026, 8, 31, 12, 1, tzinfo=ZoneInfo("UTC"))
+    _published, _enrollment, gmail_lane, linkedin_lane = _domain(payload, now=now)
+    gmail_lane.status = DripLane.Status.COMPLETED
+    gmail_lane.current_theme_index = 2
+    gmail_lane.current_theme_key = ""
+    gmail_lane.save(
+        update_fields={"status", "current_theme_index", "current_theme_key", "updated_at"},
+    )
+    predecessor_sent_at = datetime(2026, 8, 31, 12, 0, tzinfo=ZoneInfo("UTC"))
+    linkedin_lane.status = DripLane.Status.ACTIVE
+    linkedin_lane.current_theme_index = 0
+    linkedin_lane.current_theme_key = "visibility_gap"
+    linkedin_lane.theme_started_at = predecessor_sent_at
+    linkedin_lane.save(
+        update_fields={
+            "status",
+            "current_theme_index",
+            "current_theme_key",
+            "theme_started_at",
+            "updated_at",
+        },
+    )
+    DripDelivery.objects.create(
+        lane=linkedin_lane,
+        theme_key="visibility_gap",
+        theme_index=0,
+        step_index=0,
+        frozen_body="First LinkedIn message",
+        scheduled_at=predecessor_sent_at,
+        sent_at=predecessor_sent_at,
+        status=DripDelivery.Status.SENT,
+        provider_account=linkedin_lane.provider_account,
+    )
+    monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr("linkedin.tasks.follow_up.ACTIVE_START_HOUR", 9)
+    monkeypatch.setattr("linkedin.tasks.follow_up.ACTIVE_END_HOUR", 17)
+    monkeypatch.setattr("linkedin.tasks.follow_up.ACTIVE_TIMEZONE", "UTC")
+    monkeypatch.setattr("linkedin.tasks.follow_up.REST_DAYS", (5, 6))
+    exact_due_at = predecessor_sent_at + timedelta(days=0.0015)
+
+    preview = reconcile_drips(apply=False, now=now)
+    waiting = next(
+        decision
+        for decision in preview.decisions
+        if decision.lane_id == linkedin_lane.pk and decision.action == "waiting_due"
+    )
+
+    assert waiting.due_at == exact_due_at
+    reconcile_drips(apply=True, now=now)
+    assert linkedin_lane.deliveries.count() == 1
+    assert not Task.objects.filter(task_type=Task.TaskType.DRIP_LINKEDIN).exists()
+
+    reconcile_drips(apply=True, now=exact_due_at)
+    delivery = linkedin_lane.deliveries.get(step_index=1)
+    assert delivery.scheduled_at == exact_due_at
+    assert delivery.current_task.task_type == Task.TaskType.DRIP_LINKEDIN
 
 
 def test_next_theme_starts_fresh_at_prior_theme_completion(valid_drip_payload):
