@@ -16,7 +16,7 @@ from gmail.auth import (
 
 
 class Command(BaseCommand):
-    help = "Authorize a Gmail account and verify configured send-as aliases."
+    help = "Authorize Gmail and verify configured From/Reply-To identities."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -96,31 +96,33 @@ class Command(BaseCommand):
             self.stdout.write(f"  - {email} ({status}{default})")
 
         missing = [
-            alias for alias in account.send_as_aliases
+            alias for alias in account.delivery_aliases
             if alias.lower() not in available
         ]
         if missing:
             raise CommandError(
-                "Missing configured send-as aliases for "
+                "Missing configured Gmail delivery identities for "
                 f"{account.key}: {', '.join(missing)}"
             )
 
         unverified = [
-            alias for alias in account.send_as_aliases
+            alias for alias in account.delivery_aliases
             if not available[alias.lower()].get("isDefault")
             and (available[alias.lower()].get("verificationStatus") or "").lower()
             not in {"accepted", "verified"}
         ]
         if unverified:
             raise CommandError(
-                "Configured send-as aliases are present but not verified/accepted: "
+                "Configured Gmail delivery identities are present but not "
+                "verified/accepted: "
                 f"{', '.join(unverified)}"
             )
 
         manifest = {
             "account": account.key,
             "token_path": str(token_file),
-            "aliases": account.send_as_aliases,
+            "send_as_aliases": account.send_as_aliases,
+            "reply_to_aliases": account.reply_to_aliases,
         }
         self.stdout.write(json.dumps(manifest, indent=2))
         self.stdout.write(self.style.SUCCESS(f"Gmail OAuth ready for {account.key}"))

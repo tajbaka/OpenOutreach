@@ -304,7 +304,9 @@ def validate_reviewed_plan(
     from crm.models import Lead
 
     _validate_plan_envelope(plan, campaign_key=campaign_key)
-    campaign = DripCampaign.objects.select_for_update().select_related("active_version").filter(
+    campaign = DripCampaign.objects.select_for_update(of=("self",)).select_related(
+        "active_version",
+    ).filter(
         key=campaign_key,
     ).first()
     if campaign is None or campaign.active_version is None:

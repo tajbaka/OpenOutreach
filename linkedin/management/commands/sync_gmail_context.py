@@ -376,6 +376,7 @@ class Command(BaseCommand):
             owner = resolve_sales_owner_handle(operator)
             if owner:
                 operators[mapping["send_as"].strip().lower()] = owner
+                operators[mapping["reply_to"].strip().lower()] = owner
         return operators
 
     def _record_workflow_runs(self, account_key: str, result) -> None:

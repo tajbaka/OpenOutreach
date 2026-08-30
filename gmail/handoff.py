@@ -12,6 +12,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from gmail.submission import persisted_submission_evidence, submission_attempted
 from linkedin.conf import ENABLE_GMAIL_SEQUENCE
 
 logger = logging.getLogger(__name__)
@@ -84,16 +85,33 @@ def enqueue_gmail_follow_up(
     if deal_id is not None:
         payload["deal_id"] = deal_id
 
-    existing = Task.objects.filter(
+    candidates = list(Task.objects.filter(
         task_type=Task.TaskType.GMAIL_FOLLOW_UP,
-        status__in=_pending_or_running(),
         payload__lead_id=lead_id,
         payload__operator=operator,
         payload__sequence_name=sequence_name,
         payload__step_index=step_index,
-    ).first()
-    if existing is not None:
-        return existing
+    ).order_by("pk"))
+    for candidate in candidates:
+        if candidate.status in _pending_or_running():
+            return candidate
+    for candidate in candidates:
+        if submission_attempted(candidate.payload):
+            if (
+                candidate.status == Task.Status.FAILED
+                and persisted_submission_evidence(candidate.payload)
+            ):
+                candidate.status = Task.Status.PENDING
+                candidate.started_at = None
+                candidate.scheduled_at = timezone.now()
+                candidate.error = ""
+                candidate.save(update_fields={
+                    "status",
+                    "started_at",
+                    "scheduled_at",
+                    "error",
+                })
+            return candidate
 
     return Task.objects.create(
         task_type=Task.TaskType.GMAIL_FOLLOW_UP,

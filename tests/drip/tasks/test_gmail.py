@@ -23,10 +23,12 @@ pytestmark = pytest.mark.django_db
 class FakeGmailClient:
     account_key = "arian_boundera"
     send_as = "ariant@getboundera.com"
+    reply_to = "ariant@boundera.io"
     calls = []
     send_count = 0
     before_callback = None
     fail_after_callback = None
+    provider_rfc_ids = []
 
     def __init__(self, *, operator):
         self.operator = operator
@@ -39,10 +41,15 @@ class FakeGmailClient:
             raise type(self).fail_after_callback
         type(self).send_count += 1
         type(self).calls.append(kwargs)
+        provider_rfc_message_id = (
+            type(self).provider_rfc_ids[type(self).send_count - 1]
+            if len(type(self).provider_rfc_ids) >= type(self).send_count
+            else kwargs["rfc_message_id"]
+        )
         return GmailSendResult(
             message_id=f"drip-message-{type(self).send_count}",
             thread_id=kwargs["thread_id"] or "drip-thread-1",
-            rfc_message_id=kwargs["rfc_message_id"],
+            rfc_message_id=provider_rfc_message_id,
         )
 
 
@@ -52,6 +59,7 @@ def _reset_fake(monkeypatch):
     FakeGmailClient.send_count = 0
     FakeGmailClient.before_callback = None
     FakeGmailClient.fail_after_callback = None
+    FakeGmailClient.provider_rfc_ids = []
     monkeypatch.setattr("drip.tasks.gmail.GmailClient", FakeGmailClient)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
 
@@ -173,6 +181,7 @@ def test_drip_gmail_opens_thread_and_persists_real_provider_ids(valid_drip_paylo
     assert message.thread_external_id == "arian_boundera:drip-thread-1"
     assert message.raw["gmail_message_id"] == "drip-message-1"
     assert message.raw["gmail_thread_id"] == "drip-thread-1"
+    assert message.raw["reply_to"] == "ariant@boundera.io"
     assert message.raw["delivery_id"] == delivery.pk
     assert FakeGmailClient.calls[0]["thread_id"] == ""
     assert FakeGmailClient.calls[0]["in_reply_to"] == ""
@@ -197,6 +206,10 @@ def test_drip_gmail_inherits_current_thread_and_original_subject(valid_drip_payl
 
 
 def test_drip_gmail_later_step_replies_to_previous_success(valid_drip_payload):
+    FakeGmailClient.provider_rfc_ids = [
+        "<provider-first@gmail.com>",
+        "<provider-second@gmail.com>",
+    ]
     _lead, _enrollment, lane = _domain(valid_drip_payload)
     first, first_task = _queued_delivery(lane)
     handle_drip_gmail(first_task)
@@ -216,11 +229,13 @@ def test_drip_gmail_later_step_replies_to_previous_success(valid_drip_payload):
 
     second.refresh_from_db()
     call = FakeGmailClient.calls[1]
+    assert first.rfc_message_id == "<provider-first@gmail.com>"
     assert call["thread_id"] == "drip-thread-1"
     assert call["subject"] == "A new drip subject"
-    assert call["in_reply_to"] == first.rfc_message_id
-    assert call["references"] == (first.rfc_message_id,)
-    assert second.rfc_references == first.rfc_message_id
+    assert call["in_reply_to"] == "<provider-first@gmail.com>"
+    assert call["references"] == ("<provider-first@gmail.com>",)
+    assert second.rfc_message_id == "<provider-second@gmail.com>"
+    assert second.rfc_references == "<provider-first@gmail.com>"
 
 
 def test_drip_gmail_does_not_send_before_manifest_delay(valid_drip_payload):
@@ -331,6 +346,22 @@ def test_drip_gmail_provider_failure_after_boundary_is_unclear(valid_drip_payloa
     assert lane.status == DripLane.Status.PAUSED
     assert attempt.outcome == DripDeliveryAttempt.Outcome.UNCLEAR
     assert attempt.submission_attempted_at is not None
+
+
+def test_drip_gmail_malformed_provider_message_id_is_unclear(valid_drip_payload):
+    _lead, _enrollment, lane = _domain(valid_drip_payload)
+    delivery, task = _queued_delivery(lane)
+    FakeGmailClient.provider_rfc_ids = ["<bad id>"]
+
+    with pytest.raises(ValueError, match="invalid RFC Message-ID"):
+        handle_drip_gmail(task)
+
+    delivery.refresh_from_db()
+    lane.refresh_from_db()
+    attempt = delivery.attempts.get()
+    assert delivery.status == DripDelivery.Status.UNCLEAR
+    assert lane.status == DripLane.Status.PAUSED
+    assert attempt.outcome == DripDeliveryAttempt.Outcome.UNCLEAR
 
 
 def test_drip_gmail_client_failure_before_boundary_is_retryable(

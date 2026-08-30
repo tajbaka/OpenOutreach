@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -13,12 +14,12 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from linkedin.exceptions import EnrichmentError
 from gmail.auth import (
     GMAIL_OPERATOR_MAPPING,
     SCOPES,
     token_path,
 )
+from linkedin.exceptions import EnrichmentError
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,17 @@ def _normalized_rfc_message_id(value: str, *, domain: str) -> str:
     return message_id
 
 
+_PROVIDER_RFC_MESSAGE_ID = re.compile(r"\A<[^<>\s@]+@[^<>\s@]+>\Z")
+
+
+def validated_provider_rfc_message_id(value: str) -> str:
+    """Validate a provider-returned RFC Message-ID without repairing it."""
+    message_id = str(value or "").strip()
+    if not _PROVIDER_RFC_MESSAGE_ID.fullmatch(message_id):
+        raise ValueError("Provider RFC Message-ID is malformed")
+    return message_id
+
+
 class GmailClient:
     def __init__(self, *, operator: str):
         mapping = GMAIL_OPERATOR_MAPPING.get(operator)
@@ -64,6 +76,7 @@ class GmailClient:
         self.operator = operator
         self.account_key = mapping["gmail_account"]
         self.send_as = mapping["send_as"].lower()
+        self.reply_to = mapping["reply_to"].lower()
         path = token_path(self.account_key)
         if not path.exists():
             raise EnrichmentError(
@@ -92,16 +105,54 @@ class GmailClient:
 
     def validate_send_as(self) -> None:
         aliases = self.send_as_aliases()
-        meta = aliases.get(self.send_as)
-        if not meta:
+        for label, address in (("send-as", self.send_as), ("reply-to", self.reply_to)):
+            meta = aliases.get(address)
+            if not meta:
+                raise EnrichmentError(
+                    f"{address} is not configured as a {label} alias for {self.account_key}"
+                )
+            status = (meta.get("verificationStatus") or "").lower()
+            if not meta.get("isDefault") and status not in {"accepted", "verified"}:
+                raise EnrichmentError(
+                    f"{address} is present but not verified for {self.account_key}"
+                )
+
+    def _provider_rfc_message_id(self, message_id: str, thread_id: str) -> str:
+        """Read the canonical Message-ID header Gmail stored after sending.
+
+        Gmail may replace a caller-supplied Message-ID during submission. A
+        continuation must reference the header recipients actually received,
+        not the pre-send value embedded in the MIME request.
+        """
+        try:
+            sent = self._service.users().messages().get(
+                userId="me",
+                id=message_id,
+                format="metadata",
+                metadataHeaders=["Message-ID"],
+            ).execute()
+        except HttpError as exc:
             raise EnrichmentError(
-                f"{self.send_as} is not configured as a send-as alias for {self.account_key}"
-            )
-        status = (meta.get("verificationStatus") or "").lower()
-        if not meta.get("isDefault") and status not in {"accepted", "verified"}:
+                f"Gmail sent-message metadata lookup failed: {exc}"
+            ) from exc
+        if str(sent.get("id") or "") != message_id:
+            raise EnrichmentError("Gmail sent-message metadata returned another message")
+        if str(sent.get("threadId") or "") != thread_id:
+            raise EnrichmentError("Gmail sent-message metadata returned another thread")
+        headers = (sent.get("payload") or {}).get("headers", [])
+        values = [
+            str(header.get("value") or "").strip()
+            for header in headers
+            if str(header.get("name") or "").strip().lower() == "message-id"
+        ]
+        if len(values) != 1 or not values[0]:
             raise EnrichmentError(
-                f"{self.send_as} is present but not verified for {self.account_key}"
+                "Gmail sent message needs exactly one RFC Message-ID header"
             )
+        try:
+            return validated_provider_rfc_message_id(values[0])
+        except ValueError as exc:
+            raise EnrichmentError("Gmail returned an invalid RFC Message-ID header") from exc
 
     def send_message(
         self,
@@ -135,6 +186,7 @@ class GmailClient:
         msg = EmailMessage()
         msg["To"] = to
         msg["From"] = self.send_as
+        msg["Reply-To"] = self.reply_to
         msg["Subject"] = subject
         msg["Message-ID"] = message_id_header
         if reply_thread_id:
@@ -163,8 +215,12 @@ class GmailClient:
             raise EnrichmentError(
                 "Gmail continued message returned an unexpected thread ID"
             )
+        provider_rfc_message_id = self._provider_rfc_message_id(
+            str(msg_id),
+            str(sent_thread_id),
+        )
         return GmailSendResult(
             message_id=str(msg_id),
             thread_id=str(sent_thread_id),
-            rfc_message_id=message_id_header,
+            rfc_message_id=provider_rfc_message_id,
         )

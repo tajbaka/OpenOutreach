@@ -1379,11 +1379,12 @@ def _default_internal_emails() -> set[str]:
     emails = {
         _normalize_email(value)
         for account in GMAIL_ACCOUNTS.values()
-        for value in account.send_as_aliases
+        for value in account.delivery_aliases
     }
     emails.update(
-        _normalize_email(mapping.get("send_as"))
+        _normalize_email(value)
         for mapping in GMAIL_OPERATOR_MAPPING.values()
+        for value in (mapping.get("send_as"), mapping.get("reply_to"))
     )
     emails.discard("")
     return emails

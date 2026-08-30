@@ -14,6 +14,7 @@ from drip.services.handoff import (
 )
 from drip.services.publication import publish_manifest
 from gmail.client import scoped_gmail_id
+from gmail.submission import SUBMISSION_ATTEMPTED_AT_KEY
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign, Task
 from tests.factories import UserFactory
@@ -258,3 +259,240 @@ def test_not_applicable_review_rejects_legacy_gmail_history_without_raw_binding(
             reviewed_by="human-reviewer",
             apply=True,
         )
+
+
+def test_gmail_handoff_blocks_unresolved_post_submission_current_task(
+    valid_drip_payload,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+        current_sequence_status=DripLane.CurrentSequenceStatus.NOT_APPLICABLE,
+        current_sequence_reviewed_at=timezone.now(),
+        current_sequence_reviewed_by="human-reviewer",
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.FAILED,
+        scheduled_at=timezone.now(),
+        payload={
+            "lead_id": lead.pk,
+            "operator": "Arian",
+            "sequence_name": "gmail_fallback",
+            "step_index": 0,
+            SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+        },
+    )
+
+    result = evaluate_gmail_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason == "current_gmail_submission_unclear"
+
+
+def test_not_applicable_review_rejects_unresolved_post_submission_current_task(
+    valid_drip_payload,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.FAILED,
+        scheduled_at=timezone.now(),
+        payload={
+            "lead_id": lead.pk,
+            "operator": "Arian",
+            "sequence_name": "gmail_fallback",
+            "step_index": 0,
+            SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+        },
+    )
+
+    with pytest.raises(HandoffReviewError, match="submission outcome is unclear"):
+        review_handoff_not_applicable(
+            lane_id=lane.pk,
+            reviewed_by="human-reviewer",
+            apply=True,
+        )
+
+
+def test_gmail_handoff_allows_persisted_marked_submission_evidence(
+    valid_drip_payload,
+    monkeypatch,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+    )
+    automation_key = f"gmail_follow_up:Arian:{lead.pk}:gmail_fallback:step-0"
+    Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.FAILED,
+        scheduled_at=timezone.now(),
+        payload={
+            "lead_id": lead.pk,
+            "operator": "Arian",
+            "sequence_name": "gmail_fallback",
+            "step_index": 0,
+            SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+        },
+    )
+    thread_id = "current-thread-1"
+    sent = Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        external_id="arian_boundera:current-message-1",
+        sender="ariant@getboundera.com",
+        sent_at=timezone.now(),
+        thread_external_id=scoped_gmail_id("arian_boundera", thread_id),
+        raw={
+            "automation_key": automation_key,
+            "gmail_account": "arian_boundera",
+            "send_as": "ariant@getboundera.com",
+            "gmail_thread_id": thread_id,
+            "thread_subject": "Original subject",
+            "rfc_message_id": "<current-step-0@getboundera.com>",
+            "references": [],
+        },
+    )
+    monkeypatch.setattr("gmail.templates.steps_for_icp", lambda **kwargs: [1])
+
+    result = evaluate_gmail_handoff(lane)
+
+    assert result.eligible is True
+    assert result.reason == "current_gmail_sequence_completed"
+    assert result.completed_at == sent.sent_at
+
+
+def test_gmail_handoff_revalidates_evidence_after_not_applicable_review(
+    valid_drip_payload,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+        current_sequence_status=DripLane.CurrentSequenceStatus.NOT_APPLICABLE,
+        current_sequence_reviewed_at=timezone.now(),
+        current_sequence_reviewed_by="human-reviewer",
+    )
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        external_id="arian_boundera:late-current-message",
+        sender="ariant@getboundera.com",
+        sent_at=timezone.now(),
+        raw={
+            "automation_key": (
+                f"gmail_follow_up:Arian:{lead.pk}:gmail_fallback:step-0"
+            ),
+        },
+    )
+
+    result = evaluate_gmail_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason == "current_gmail_evidence_after_not_applicable_review"
+
+
+def test_linkedin_handoff_revalidates_evidence_after_not_applicable_review(
+    valid_drip_payload,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    current_campaign = Campaign.objects.create(
+        name="Current outbound",
+        user=UserFactory(username="arian"),
+    )
+    deal = Deal.objects.create(
+        lead=lead,
+        campaign=current_campaign,
+        state=ProfileState.CONNECTED,
+        invitation_sender="Arian",
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity=lead.linkedin_url,
+        current_sequence_status=DripLane.CurrentSequenceStatus.NOT_APPLICABLE,
+        current_sequence_reviewed_at=timezone.now(),
+        current_sequence_reviewed_by="human-reviewer",
+    )
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        direction=Message.Direction.OUTBOUND,
+        external_id=(
+            f"daemon-send:Arian:{deal.pk}:"
+            "linkedin_connect_followup:step-0:variant-0"
+        ),
+        sender="Arian",
+        sent_at=timezone.now(),
+    )
+
+    result = evaluate_linkedin_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason == "current_linkedin_evidence_after_not_applicable_review"
+
+
+def test_gmail_handoff_rejects_malformed_stored_references(valid_drip_payload, monkeypatch):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+    )
+    monkeypatch.setattr("gmail.templates.steps_for_icp", lambda **kwargs: [1])
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        external_id="arian_boundera:current-message-with-bad-references",
+        sender="ariant@getboundera.com",
+        sent_at=timezone.now(),
+        thread_external_id="arian_boundera:current-thread-1",
+        raw={
+            "automation_key": (
+                f"gmail_follow_up:Arian:{lead.pk}:gmail_fallback:step-0"
+            ),
+            "gmail_account": "arian_boundera",
+            "send_as": "ariant@getboundera.com",
+            "gmail_thread_id": "current-thread-1",
+            "thread_subject": "Original subject",
+            "rfc_message_id": "<current-step-0@getboundera.com>",
+            "references": ["not-an-rfc-message-id"],
+        },
+    )
+
+    result = evaluate_gmail_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason == "gmail_references_invalid"

@@ -9,8 +9,18 @@ from django.db import transaction
 from django.utils import timezone
 
 from gmail.auth import GMAIL_OPERATOR_MAPPING
-from gmail.client import GmailClient, GmailSendResult, scoped_gmail_id
+from gmail.client import (
+    GmailClient,
+    GmailSendResult,
+    scoped_gmail_id,
+    validated_provider_rfc_message_id,
+)
 from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME, enqueue_gmail_follow_up
+from gmail.submission import (
+    current_gmail_automation_key,
+    stamp_submission_attempt,
+    submission_attempted,
+)
 from gmail.templates import render_for_icp, steps_for_icp
 from linkedin.conf import ENABLE_GMAIL_SEQUENCE
 from linkedin.exceptions import SheetsError
@@ -49,7 +59,15 @@ def _gmail_automation_key(
     sequence_name: str,
     step_index: int,
 ) -> str:
-    return f"gmail_follow_up:{operator}:{lead_id}:{sequence_name}:step-{step_index}"
+    automation_key = current_gmail_automation_key({
+        "operator": operator,
+        "lead_id": lead_id,
+        "sequence_name": sequence_name,
+        "step_index": step_index,
+    })
+    if not automation_key:
+        raise ValueError("Current Gmail automation identity is invalid")
+    return automation_key
 
 
 def _sent_gmail_step(*, lead, operator: str, sequence_name: str, step_index: int):
@@ -82,9 +100,12 @@ def _sent_gmail_step(*, lead, operator: str, sequence_name: str, step_index: int
     ).order_by("pk").first()
 
 
-def _enqueue_next_step(task, *, delay_hours: float):
+def _enqueue_next_step(task, *, delay_hours: float, reference_time):
     payload = task.payload or {}
-    delay_seconds = _delay_seconds_to_active_due(delay_hours)
+    delay_seconds = _delay_seconds_to_active_due(
+        delay_hours,
+        reference_time=reference_time,
+    )
     return enqueue_gmail_follow_up(
         lead_id=int(payload["lead_id"]),
         operator=payload["operator"],
@@ -128,7 +149,13 @@ def _required_binding(
         isinstance(value, str) and value.strip() for value in references_value
     ):
         raise ValueError("stored Gmail References metadata is invalid")
-    references = tuple(value.strip() for value in references_value)
+    try:
+        references = tuple(
+            validated_provider_rfc_message_id(value)
+            for value in references_value
+        )
+    except ValueError:
+        raise ValueError("stored Gmail References metadata is invalid")
 
     if raw.get("gmail_account") != account_key:
         raise ValueError("stored Gmail message belongs to another mailbox")
@@ -136,9 +163,9 @@ def _required_binding(
         raise ValueError("stored Gmail message belongs to another Send-As alias")
     if not raw_thread_id or not rfc_message_id or not thread_subject:
         raise ValueError("stored Gmail message lacks exact thread metadata")
-    if "\r" in rfc_message_id or "\n" in rfc_message_id:
-        raise ValueError("stored Gmail RFC Message-ID is invalid")
-    if not (rfc_message_id.startswith("<") and rfc_message_id.endswith(">")):
+    try:
+        validated_provider_rfc_message_id(rfc_message_id)
+    except ValueError:
         raise ValueError("stored Gmail RFC Message-ID is invalid")
     if message.thread_external_id != scoped_gmail_id(account_key, raw_thread_id):
         raise ValueError("stored Gmail CRM thread ID does not match its raw binding")
@@ -203,6 +230,7 @@ def _persist_outbound(
     send_result: GmailSendResult,
     account_key: str,
     sender: str,
+    reply_to: str,
     subject: str,
     body: str,
     operator: str,
@@ -235,6 +263,7 @@ def _persist_outbound(
         "step_index": step_index,
         "gmail_account": account_key,
         "send_as": sender.lower(),
+        "reply_to": reply_to.lower(),
         "gmail_message_id": send_result.message_id,
         "gmail_thread_id": send_result.thread_id,
         "rfc_message_id": send_result.rfc_message_id,
@@ -387,9 +416,15 @@ def handle_gmail_follow_up(task) -> None:
             _enqueue_next_step(
                 task,
                 delay_hours=steps[next_step_index].delay_hours,
+                reference_time=sent_step.sent_at,
             )
         logger.info("gmail_follow_up: step already sent for lead %s", lead_id)
         return
+    if submission_attempted(task.payload):
+        raise ValueError(
+            "gmail_follow_up: prior Gmail submission outcome is unclear; "
+            "automatic retry is blocked"
+        )
 
     client = GmailClient(operator=operator)
     context = _thread_context(
@@ -436,6 +471,7 @@ def handle_gmail_follow_up(task) -> None:
                 f"gmail_follow_up: lead {lead_id} stopped before submission - "
                 f"{callback_stop_reason}"
             )
+        stamp_submission_attempt(task)
 
     send_result = client.send_message(
         to=lead.email,
@@ -450,11 +486,12 @@ def handle_gmail_follow_up(task) -> None:
         ),
         on_submit_attempt=_recheck_before_submission,
     )
-    _persist_outbound(
+    sent_message = _persist_outbound(
         lead=lead,
         send_result=send_result,
         account_key=client.account_key,
         sender=client.send_as,
+        reply_to=client.reply_to,
         subject=subject,
         body=rendered.body,
         operator=operator,
@@ -467,5 +504,6 @@ def handle_gmail_follow_up(task) -> None:
         _enqueue_next_step(
             task,
             delay_hours=steps[next_step_index].delay_hours,
+            reference_time=sent_message.sent_at,
         )
     logger.info("gmail_follow_up sent to lead=%s step=%s", lead_id, step_index)

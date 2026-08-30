@@ -12,6 +12,10 @@ from django.utils import timezone
 
 from drip.tasks.gmail import handle_drip_gmail, recover_stale_drip_gmail_task
 from gmail.auth import account_for_key, operators_for_account
+from gmail.submission import (
+    recover_stale_current_gmail_task,
+    reschedule_persisted_current_gmail_task,
+)
 from gmail.tasks.follow_up import handle_gmail_follow_up
 from linkedin.conf import TASK_RUNNING_STALE_MINUTES
 from linkedin.notifications.slack import notify_error
@@ -113,9 +117,15 @@ class GmailWorker:
             recover_stale_drip_gmail_task(task_id)
             for task_id in drip_task_ids
         )
-        current_reclaimed = (
-            stale_scope.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP)
-            .update(status=Task.Status.PENDING, started_at=None)
+        current_task_ids = list(
+            stale_scope.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).values_list(
+                "pk",
+                flat=True,
+            ),
+        )
+        current_reclaimed = sum(
+            recover_stale_current_gmail_task(task_id)
+            for task_id in current_task_ids
         )
         reclaimed = drip_recovered + current_reclaimed
         if reclaimed:
@@ -179,7 +189,12 @@ class GmailWorker:
             handler(task)
         except Exception as exc:
             logger.exception("%s task %s failed", task.task_type, task.id)
-            task.mark_failed(traceback.format_exc())
+            rescheduled = (
+                task.task_type == self._task_model().TaskType.GMAIL_FOLLOW_UP
+                and reschedule_persisted_current_gmail_task(task.id)
+            )
+            if not rescheduled:
+                task.mark_failed(traceback.format_exc())
             notify_error(
                 f"gmail-worker:{task.task_type}",
                 exc,

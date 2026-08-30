@@ -3,7 +3,8 @@ from django.utils import timezone
 
 from crm.models import Deal, Lead, Message
 from linkedin.enums import ProfileState
-from gmail.handoff import maybe_schedule_gmail_sequence
+from gmail.handoff import enqueue_gmail_follow_up, maybe_schedule_gmail_sequence
+from gmail.submission import SUBMISSION_ATTEMPTED_AT_KEY
 from linkedin.models import Campaign, Task
 from tests.factories import UserFactory
 
@@ -39,6 +40,69 @@ def test_handoff_existing_email_enqueues_gmail_follow_up(monkeypatch):
     assert task.payload["lead_id"] == deal.lead_id
     assert task.payload["operator"] == "Arian"
     assert task.payload["step_index"] == 0
+
+
+@pytest.mark.django_db
+def test_handoff_does_not_recreate_failed_post_submission_step(monkeypatch):
+    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
+    deal = _deal(email="ada@example.com")
+    existing = Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.FAILED,
+        scheduled_at=timezone.now(),
+        payload={
+            "lead_id": deal.lead_id,
+            "operator": "Arian",
+            "sequence_name": "gmail_fallback",
+            "step_index": 0,
+            SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+        },
+    )
+
+    result = enqueue_gmail_follow_up(lead_id=deal.lead_id, operator="Arian")
+
+    assert result == existing
+    assert Task.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_handoff_requeues_failed_post_submission_step_with_exact_message(monkeypatch):
+    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
+    monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
+    deal = _deal(email="ada@example.com")
+    existing = Task.objects.create(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        status=Task.Status.FAILED,
+        scheduled_at=timezone.now(),
+        payload={
+            "lead_id": deal.lead_id,
+            "operator": "Arian",
+            "sequence_name": "gmail_fallback",
+            "step_index": 0,
+            SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+        },
+    )
+    Message.objects.create(
+        lead=deal.lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        external_id="arian_boundera:sent-before-task-failed",
+        sender="ariant@getboundera.com",
+        sent_at=timezone.now(),
+        raw={
+            "automation_key": (
+                f"gmail_follow_up:Arian:{deal.lead_id}:gmail_fallback:step-0"
+            ),
+        },
+    )
+
+    result = enqueue_gmail_follow_up(lead_id=deal.lead_id, operator="Arian")
+
+    existing.refresh_from_db()
+    assert result == existing
+    assert existing.status == Task.Status.PENDING
+    assert Task.objects.count() == 1
 
 
 @pytest.mark.django_db

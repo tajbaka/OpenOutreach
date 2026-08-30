@@ -76,6 +76,30 @@ def _has_current_gmail_or_enrich_task(*, lead) -> bool:
     ).exists()
 
 
+def _has_unresolved_current_gmail_submission(*, lead, operator: str) -> bool:
+    """Block handoff after a possibly submitted current Gmail Task.
+
+    A provider submission marker without its exact persisted outbound Message
+    is intentionally permanent automation-stop evidence. If the Message does
+    exist, normal current-sequence completion validation owns the decision.
+    """
+    from gmail.submission import persisted_submission_evidence, submission_attempted
+    from linkedin.models import Task
+
+    tasks = Task.objects.filter(
+        task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+        payload__lead_id=lead.pk,
+        payload__operator=operator,
+    ).only("payload")
+    for task in tasks:
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        if not submission_attempted(payload):
+            continue
+        if not persisted_submission_evidence(payload):
+            return True
+    return False
+
+
 def _eligible_linkedin_deals(*, lead):
     from crm.models import Deal
     from linkedin.enums import ProfileState
@@ -117,6 +141,11 @@ def evaluate_linkedin_handoff(lane: DripLane) -> HandoffEvaluation:
     if lane.current_sequence_status == DripLane.CurrentSequenceStatus.NOT_APPLICABLE:
         if not _review_is_complete(lane):
             return HandoffEvaluation(False, "not_applicable_review_incomplete")
+        if _current_sequence_evidence_exists(lane):
+            return HandoffEvaluation(
+                False,
+                "current_linkedin_evidence_after_not_applicable_review",
+            )
         return HandoffEvaluation(
             True,
             "reviewed_not_applicable",
@@ -210,7 +239,7 @@ def _gmail_sequence_messages(*, lead, operator: str, step_count: int):
 
 
 def _safe_gmail_binding(message, *, account_key: str, send_as: str):
-    from gmail.client import scoped_gmail_id
+    from gmail.client import scoped_gmail_id, validated_provider_rfc_message_id
 
     raw = message.raw if isinstance(message.raw, dict) else {}
     thread_id = str(raw.get("gmail_thread_id") or "").strip()
@@ -227,9 +256,16 @@ def _safe_gmail_binding(message, *, account_key: str, send_as: str):
         isinstance(value, str) and value.strip() for value in references
     ):
         return None, "gmail_references_invalid"
-    if "\r" in rfc_message_id or "\n" in rfc_message_id:
-        return None, "gmail_rfc_message_id_invalid"
-    if not (rfc_message_id.startswith("<") and rfc_message_id.endswith(">")):
+    try:
+        validated_references = [
+            validated_provider_rfc_message_id(value)
+            for value in references
+        ]
+    except ValueError:
+        return None, "gmail_references_invalid"
+    try:
+        validated_provider_rfc_message_id(rfc_message_id)
+    except ValueError:
         return None, "gmail_rfc_message_id_invalid"
     try:
         expected_thread_external_id = scoped_gmail_id(account_key, thread_id)
@@ -241,7 +277,7 @@ def _safe_gmail_binding(message, *, account_key: str, send_as: str):
         "thread_id": thread_id,
         "subject": subject,
         "rfc_message_id": rfc_message_id,
-        "references": [value.strip() for value in references],
+        "references": validated_references,
     }, ""
 
 
@@ -254,11 +290,21 @@ def evaluate_gmail_handoff(lane: DripLane) -> HandoffEvaluation:
         return HandoffEvaluation(False, "not_gmail_lane")
     if not lead.email or lane.recipient_identity != lead.email.strip().lower():
         return HandoffEvaluation(False, "gmail_recipient_identity_changed")
+    if _has_unresolved_current_gmail_submission(
+        lead=lead,
+        operator=lane.operator,
+    ):
+        return HandoffEvaluation(False, "current_gmail_submission_unclear")
     if _has_current_gmail_or_enrich_task(lead=lead):
         return HandoffEvaluation(False, "current_gmail_or_enrich_task_outstanding")
     if lane.current_sequence_status == DripLane.CurrentSequenceStatus.NOT_APPLICABLE:
         if not _review_is_complete(lane):
             return HandoffEvaluation(False, "not_applicable_review_incomplete")
+        if _current_sequence_evidence_exists(lane):
+            return HandoffEvaluation(
+                False,
+                "current_gmail_evidence_after_not_applicable_review",
+            )
         return HandoffEvaluation(
             True,
             "reviewed_not_applicable",
@@ -340,7 +386,6 @@ def evaluate_handoff(lane: DripLane) -> HandoffEvaluation:
 
 def _current_sequence_evidence_exists(lane: DripLane) -> bool:
     from crm.models import Deal, Message
-    from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME
     from linkedin.tasks.follow_up import DEFAULT_SEQUENCE_NAME
 
     lead = lane.enrollment.lead
@@ -356,10 +401,7 @@ def _current_sequence_evidence_exists(lane: DripLane) -> bool:
                 return True
         return False
 
-    prefix = (
-        f"gmail_follow_up:{lane.operator}:{lead.pk}:"
-        f"{DEFAULT_GMAIL_SEQUENCE_NAME}:step-"
-    )
+    prefix = f"gmail_follow_up:{lane.operator}:{lead.pk}:"
     legacy_external_prefix = f"gmail-send:{lane.operator}:{lead.pk}:"
     messages = Message.objects.filter(
         lead=lead,
@@ -401,6 +443,16 @@ def review_handoff_not_applicable(
     if _current_sequence_evidence_exists(lane):
         raise HandoffReviewError(
             "Current-sequence outbound evidence exists; not-applicable would be false.",
+        )
+    if (
+        lane.channel == DripLane.Channel.GMAIL
+        and _has_unresolved_current_gmail_submission(
+            lead=lane.enrollment.lead,
+            operator=lane.operator,
+        )
+    ):
+        raise HandoffReviewError(
+            "Current Gmail submission outcome is unclear; not-applicable is unsafe.",
         )
     if lane.channel == DripLane.Channel.LINKEDIN:
         has_task = _has_current_linkedin_task(

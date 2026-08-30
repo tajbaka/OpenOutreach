@@ -21,6 +21,12 @@ SCOPES = (
 class GmailAccount:
     key: str
     send_as_aliases: tuple[str, ...]
+    reply_to_aliases: tuple[str, ...]
+
+    @property
+    def delivery_aliases(self) -> tuple[str, ...]:
+        """Every verified mailbox identity required for outbound delivery."""
+        return tuple(dict.fromkeys((*self.send_as_aliases, *self.reply_to_aliases)))
 
 
 GMAIL_ACCOUNTS: dict[str, GmailAccount] = {
@@ -30,12 +36,20 @@ GMAIL_ACCOUNTS: dict[str, GmailAccount] = {
             "ariant@getboundera.com",
             "leili@getboundera.com",
         ),
+        reply_to_aliases=(
+            "ariant@boundera.io",
+            "leili@boundera.io",
+        ),
     ),
     "eddy_boundera": GmailAccount(
         key="eddy_boundera",
         send_as_aliases=(
             "athena@getboundera.com",
             "eddy@getboundera.com",
+        ),
+        reply_to_aliases=(
+            "athena@boundera.io",
+            "eddy@boundera.io",
         ),
     ),
 }
@@ -44,23 +58,28 @@ GMAIL_OPERATOR_MAPPING: dict[str, dict[str, str]] = {
     "Arian": {
         "gmail_account": "arian_boundera",
         "send_as": "ariant@getboundera.com",
+        "reply_to": "ariant@boundera.io",
     },
     "Athena": {
         "gmail_account": "eddy_boundera",
         "send_as": "athena@getboundera.com",
+        "reply_to": "athena@boundera.io",
     },
     "Leili": {
         "gmail_account": "arian_boundera",
         "send_as": "leili@getboundera.com",
+        "reply_to": "leili@boundera.io",
     },
     "Chuka": {
         "gmail_account": "eddy_boundera",
         "send_as": "eddy@getboundera.com",
+        "reply_to": "eddy@boundera.io",
         "display_name": "Eddy",
     },
     "Eddy": {
         "gmail_account": "eddy_boundera",
         "send_as": "eddy@getboundera.com",
+        "reply_to": "eddy@boundera.io",
     },
 }
 

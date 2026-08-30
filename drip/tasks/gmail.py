@@ -17,7 +17,12 @@ from drip.models import (
     DripLane,
 )
 from gmail.auth import GMAIL_OPERATOR_MAPPING
-from gmail.client import GmailClient, GmailSendResult, scoped_gmail_id
+from gmail.client import (
+    GmailClient,
+    GmailSendResult,
+    scoped_gmail_id,
+    validated_provider_rfc_message_id,
+)
 from linkedin.tasks.stop_checks import lead_automation_stop_reason
 
 
@@ -30,6 +35,7 @@ class _Reservation:
     operator: str
     account_key: str
     send_as: str
+    reply_to: str
     recipient: str
     subject: str
     body: str
@@ -70,9 +76,9 @@ def _reference_ids(value) -> tuple[str, ...]:
         message_id = candidate.strip()
         if not message_id:
             continue
-        if "\r" in message_id or "\n" in message_id:
-            raise ValueError("Gmail References metadata contains a newline")
-        if not (message_id.startswith("<") and message_id.endswith(">")):
+        try:
+            validated_provider_rfc_message_id(message_id)
+        except ValueError:
             raise ValueError("Gmail References metadata contains an invalid Message-ID")
         if message_id not in references:
             references.append(message_id)
@@ -80,14 +86,9 @@ def _reference_ids(value) -> tuple[str, ...]:
 
 
 def _validate_rfc_message_id(value: str, *, label: str) -> str:
-    message_id = (value or "").strip()
-    if (
-        not message_id
-        or "\r" in message_id
-        or "\n" in message_id
-        or not message_id.startswith("<")
-        or not message_id.endswith(">")
-    ):
+    try:
+        message_id = validated_provider_rfc_message_id(value)
+    except ValueError:
         raise ValueError(f"{label} is not a valid RFC Message-ID")
     return message_id
 
@@ -285,6 +286,7 @@ def _reserve_attempt(task) -> _Reservation | None:
         raise ValueError(f"No Gmail mapping configured for operator {operator!r}")
     account_key = mapping["gmail_account"].strip().lower()
     send_as = mapping["send_as"].strip().lower()
+    reply_to = mapping["reply_to"].strip().lower()
     recipient = (lane.recipient_identity or "").strip().lower()
     if lane.provider_account != account_key or delivery.provider_account != account_key:
         raise ValueError("Drip Gmail delivery is assigned to another mailbox")
@@ -354,6 +356,7 @@ def _reserve_attempt(task) -> _Reservation | None:
         operator=operator,
         account_key=account_key,
         send_as=send_as,
+        reply_to=reply_to,
         recipient=recipient,
         subject=subject,
         body=delivery.frozen_body,
@@ -495,8 +498,10 @@ def _record_success(
         or attempt.submission_attempted_at is None
     ):
         raise ValueError("Drip Gmail success cannot finalize changed delivery state")
-    if result.rfc_message_id != reservation.rfc_message_id:
-        raise ValueError("Gmail returned another RFC Message-ID")
+    try:
+        validated_provider_rfc_message_id(result.rfc_message_id)
+    except ValueError:
+        raise ValueError("Gmail returned an invalid RFC Message-ID")
     if reservation.raw_thread_id and result.thread_id != reservation.raw_thread_id:
         raise ValueError("Gmail returned another thread for a continuation")
     if lane.gmail_thread_id and lane.gmail_thread_id != result.thread_id:
@@ -519,6 +524,7 @@ def _record_success(
         "operator": reservation.operator,
         "gmail_account": reservation.account_key,
         "send_as": reservation.send_as,
+        "reply_to": reservation.reply_to,
         "gmail_message_id": result.message_id,
         "gmail_thread_id": result.thread_id,
         "rfc_message_id": result.rfc_message_id,
@@ -612,6 +618,7 @@ def handle_drip_gmail(task) -> None:
         if (
             client.account_key != reservation.account_key
             or client.send_as != reservation.send_as
+            or client.reply_to != reservation.reply_to
         ):
             raise ValueError("Resolved Gmail client does not match delivery ownership")
         result = client.send_message(

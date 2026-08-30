@@ -4,6 +4,8 @@ from unittest.mock import patch
 import pytest
 from django.utils import timezone
 
+from crm.models import Lead, Message
+from gmail.submission import SUBMISSION_ATTEMPTED_AT_KEY
 from gmail.worker import GmailWorker
 from linkedin.models import Task
 
@@ -12,6 +14,7 @@ def _gmail_task(
     status=Task.Status.PENDING,
     *,
     operator="Arian",
+    lead_id=1,
     started_at=None,
     scheduled_at=None,
 ):
@@ -20,7 +23,7 @@ def _gmail_task(
         status=status,
         started_at=started_at,
         scheduled_at=scheduled_at or timezone.now() - timedelta(seconds=1),
-        payload={"lead_id": 1, "operator": operator, "step_index": 0},
+        payload={"lead_id": lead_id, "operator": operator, "step_index": 0},
     )
 
 
@@ -85,6 +88,105 @@ def test_gmail_worker_reclaims_stale_running_tasks():
     assert stale.started_at is None
     assert fresh.status == Task.Status.RUNNING
     assert other_account.status == Task.Status.RUNNING
+
+
+@pytest.mark.django_db
+def test_gmail_worker_never_requeues_stale_post_submission_task():
+    stale = _gmail_task(
+        status=Task.Status.RUNNING,
+        started_at=timezone.now() - timedelta(hours=1),
+    )
+    stale.payload = {
+        **stale.payload,
+        SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+    }
+    stale.save(update_fields={"payload"})
+
+    GmailWorker(account_key="arian_boundera")._reclaim_stale()
+
+    stale.refresh_from_db()
+    assert stale.status == Task.Status.FAILED
+    assert "automatic retry is blocked" in stale.error
+
+
+@pytest.mark.django_db
+def test_gmail_worker_requeues_stale_post_submission_with_exact_message():
+    lead = Lead.objects.create(
+        first_name="Ada",
+        email="ada@example.com",
+        icp="CSPs",
+    )
+    stale = _gmail_task(
+        status=Task.Status.RUNNING,
+        lead_id=lead.pk,
+        started_at=timezone.now() - timedelta(hours=1),
+    )
+    stale.payload = {
+        **stale.payload,
+        SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+    }
+    stale.save(update_fields={"payload"})
+    Message.objects.create(
+        lead=lead,
+        source=Message.Source.GMAIL,
+        direction=Message.Direction.OUTBOUND,
+        external_id="arian_boundera:sent-before-crash",
+        sender="ariant@getboundera.com",
+        sent_at=timezone.now(),
+        raw={
+            "automation_key": (
+                f"gmail_follow_up:Arian:{lead.pk}:gmail_fallback:step-0"
+            ),
+        },
+    )
+
+    GmailWorker(account_key="arian_boundera")._reclaim_stale()
+
+    stale.refresh_from_db()
+    assert stale.status == Task.Status.PENDING
+    assert stale.started_at is None
+
+
+@pytest.mark.django_db
+def test_gmail_worker_delays_retry_after_post_send_handler_failure():
+    lead = Lead.objects.create(
+        first_name="Ada",
+        email="ada@example.com",
+        icp="CSPs",
+    )
+    task = _gmail_task(lead_id=lead.pk)
+
+    def persist_then_fail(claimed):
+        payload = {
+            **claimed.payload,
+            SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+        }
+        Task.objects.filter(pk=claimed.pk).update(payload=payload)
+        Message.objects.create(
+            lead=lead,
+            source=Message.Source.GMAIL,
+            direction=Message.Direction.OUTBOUND,
+            external_id="arian_boundera:sent-before-successor-error",
+            sender="ariant@getboundera.com",
+            sent_at=timezone.now(),
+            raw={
+                "automation_key": (
+                    f"gmail_follow_up:Arian:{lead.pk}:gmail_fallback:step-0"
+                ),
+            },
+        )
+        raise RuntimeError("successor enqueue failed")
+
+    with (
+        patch("gmail.worker.handle_gmail_follow_up", side_effect=persist_then_fail),
+        patch("gmail.worker.notify_error"),
+    ):
+        assert GmailWorker(account_key="arian_boundera")._run_once() is True
+
+    task.refresh_from_db()
+    assert task.status == Task.Status.PENDING
+    assert task.started_at is None
+    assert task.scheduled_at > timezone.now() + timedelta(minutes=4)
 
 
 @pytest.mark.django_db

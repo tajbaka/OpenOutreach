@@ -7,7 +7,7 @@ from django.core.management import call_command
 from crm.models import Deal, Lead
 from drip.exceptions import EnrollmentPlanError
 from drip.manifest import validate_manifest
-from drip.models import DripEnrollment, DripLane
+from drip.models import DripCampaign, DripEnrollment, DripLane
 from drip.services.enrollment import (
     apply_reviewed_plan,
     build_enrollment_plan,
@@ -77,6 +77,35 @@ def test_reviewed_plan_is_explicit_private_and_applies_atomically(
     assert gmail_lane.provider_account == "arian_boundera"
     assert gmail_lane.sender_identity == "ariant@getboundera.com"
     assert gmail_lane.recipient_identity == "ada@example.com"
+
+
+def test_reviewed_plan_scopes_campaign_lock_to_nonnullable_row(
+    valid_drip_payload,
+    monkeypatch,
+):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = _eligible_lead()
+    plan = build_enrollment_plan(
+        campaign_key=published.campaign.key,
+        operator="Arian",
+        lead_ids=[lead.pk],
+    )
+    manager = DripCampaign.objects
+    original_select_for_update = manager.select_for_update
+    calls = []
+
+    def scoped_select_for_update(*args, **kwargs):
+        calls.append(kwargs)
+        return original_select_for_update(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "select_for_update", scoped_select_for_update)
+
+    validate_reviewed_plan(
+        campaign_key=published.campaign.key,
+        plan=plan,
+    )
+
+    assert calls == [{"of": ("self",)}]
 
 
 def test_review_artifact_refuses_overwrite(valid_drip_payload, tmp_path):
