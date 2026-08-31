@@ -8,6 +8,12 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
+from drip.exceptions import LinkAttributionError
+from drip.link_attribution import (
+    MAX_REFERENCE_GENERATION_ATTEMPTS,
+    build_attributed_url,
+    generate_reference,
+)
 from drip.manifest import render_template
 from drip.models import (
     NONTERMINAL_ENROLLMENT_STATUSES,
@@ -15,6 +21,7 @@ from drip.models import (
     DripDelivery,
     DripEnrollment,
     DripLane,
+    DripTrackedLink,
 )
 from drip.services.handoff import evaluate_handoff
 from drip.services.ownership import acquire_reconciliation_lock, lock_enrollment_graph
@@ -104,13 +111,24 @@ def _render_step(
     rendition: list[dict[str, Any]],
     step_index: int,
     thread_subject: str,
+    extra_context: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     context = _render_context(lane=lane)
+    if extra_context:
+        context.update(extra_context)
     body = render_template(rendition[step_index]["body"], context)
     if lane.channel == DripLane.Channel.LINKEDIN:
         return "", body
     first_subject = render_template(rendition[0]["subject"], context)
     return thread_subject or first_subject, body
+
+
+def _available_reference() -> str:
+    for _attempt in range(MAX_REFERENCE_GENERATION_ATTEMPTS):
+        reference = generate_reference()
+        if not DripTrackedLink.objects.filter(reference=reference).exists():
+            return reference
+    raise LinkAttributionError("Could not generate a unique drip tracked-link reference.")
 
 
 def _save_lane_progress(
@@ -180,11 +198,23 @@ def _materialize_delivery(
     due_at,
     thread_subject: str,
 ) -> DripDelivery:
+    step = rendition[step_index]
+    link = step.get("link")
+    reference = ""
+    attributed_url = ""
+    extra_context = None
+    if link is not None:
+        if lane.channel != DripLane.Channel.GMAIL:
+            raise ValueError("Tracked links are permitted only on Gmail deliveries")
+        reference = _available_reference()
+        attributed_url = build_attributed_url(link["url"], reference)
+        extra_context = {"tracked_link": attributed_url}
     subject, body = _render_step(
         lane=lane,
         rendition=rendition,
         step_index=step_index,
         thread_subject=thread_subject,
+        extra_context=extra_context,
     )
     media = rendition[step_index].get("media") or {}
     delivery = DripDelivery(
@@ -205,6 +235,16 @@ def _materialize_delivery(
     )
     delivery.full_clean()
     delivery.save()
+    if link is not None:
+        tracked_link = DripTrackedLink(
+            delivery=delivery,
+            reference=reference,
+            link_key=link["key"],
+            destination_url=link["url"],
+            attributed_url=attributed_url,
+        )
+        tracked_link.full_clean()
+        tracked_link.save()
     _materialize_task(delivery=delivery, lane=lane)
     if lane.channel == DripLane.Channel.GMAIL and not lane.gmail_thread_subject:
         lane.gmail_thread_subject = subject

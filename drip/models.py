@@ -481,6 +481,90 @@ class DripDelivery(models.Model):
         return f"{self.lane_id}:{self.theme_key}:{self.step_index}"
 
 
+class DripTrackedLink(models.Model):
+    delivery = models.ForeignKey(
+        DripDelivery,
+        on_delete=models.PROTECT,
+        related_name="tracked_links",
+    )
+    reference = models.CharField(max_length=25, unique=True)
+    link_key = models.SlugField(max_length=100)
+    destination_url = models.URLField(max_length=2_048)
+    attributed_url = models.URLField(max_length=2_048)
+    created_at = models.DateTimeField(auto_now_add=True, editable=False)
+
+    class Meta:
+        ordering = ("delivery_id", "link_key")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("delivery",),
+                name="drip_one_tracked_link_per_delivery",
+            ),
+            models.UniqueConstraint(
+                fields=("delivery", "link_key"),
+                name="drip_unique_delivery_link_key",
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        from drip.link_attribution import (
+            build_attributed_url,
+            canonical_destination_url,
+            validate_reference,
+        )
+        from drip.exceptions import LinkAttributionError
+
+        try:
+            reference = validate_reference(self.reference)
+            destination = canonical_destination_url(self.destination_url)
+            attributed = build_attributed_url(destination, reference)
+        except LinkAttributionError as exc:
+            raise ValidationError(str(exc)) from exc
+        if destination != self.destination_url:
+            raise ValidationError(
+                {"destination_url": "Tracked-link destination must be canonical."},
+            )
+        if attributed != self.attributed_url:
+            raise ValidationError(
+                {"attributed_url": "Attributed URL does not match its destination and reference."},
+            )
+        if self.delivery_id and self.delivery.lane.channel != DripLane.Channel.GMAIL:
+            raise ValidationError(
+                {"delivery": "Tracked links are permitted only on Gmail deliveries."},
+            )
+
+    def save(self, *args, **kwargs) -> None:
+        self.link_key = (self.link_key or "").strip()
+        self.destination_url = (self.destination_url or "").strip()
+        self.attributed_url = (self.attributed_url or "").strip()
+        if self._state.adding:
+            # Model.save() does not call validation by default. Keep ordinary
+            # ORM creation from bypassing the reference/URL/channel contract,
+            # while leaving database uniqueness enforcement authoritative.
+            self.clean_fields()
+            self.clean()
+        else:
+            original = type(self).objects.get(pk=self.pk)
+            immutable_fields = (
+                "delivery_id",
+                "reference",
+                "link_key",
+                "destination_url",
+                "attributed_url",
+                "created_at",
+            )
+            if any(getattr(original, field) != getattr(self, field) for field in immutable_fields):
+                raise ValidationError("Drip tracked links are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Drip tracked links are immutable.")
+
+    def __str__(self) -> str:
+        return f"{self.reference}: {self.link_key}"
+
+
 class DripDeliveryAttempt(models.Model):
     class Outcome(models.TextChoices):
         RESERVED = "reserved", "Reserved"

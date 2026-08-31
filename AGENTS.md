@@ -74,6 +74,8 @@ pytest -k test_name                # single test
   --apply
 .venv/bin/python manage.py reconcile_drips --campaign <campaign-key>
 .venv/bin/python manage.py reconcile_drips --campaign <campaign-key> --apply
+# Read-only resolution of one opaque Gmail tracked-link reference.
+.venv/bin/python manage.py resolve_drip_reference oo_<22-char-token>
 # One-time clean-slate retirement before production drip startup. Planning is
 # read-only. Apply requires the exact private plan, a reviewer, and an explicit
 # stopped-process attestation; it preserves Campaign/Deal/Lead/Message history,

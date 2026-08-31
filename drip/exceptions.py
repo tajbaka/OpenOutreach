@@ -6,6 +6,10 @@ class ManifestValidationError(DripError):
     """A campaign manifest is invalid or cannot be read."""
 
 
+class LinkAttributionError(DripError):
+    """A drip tracked-link reference or destination is invalid."""
+
+
 class PublicationError(DripError):
     """A validated manifest cannot be published safely."""
 

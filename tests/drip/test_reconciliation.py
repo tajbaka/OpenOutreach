@@ -7,7 +7,9 @@ from django.utils import timezone
 
 from crm.models import Deal, Lead
 from drip.manifest import validate_manifest
-from drip.models import DripDelivery, DripEnrollment, DripLane
+from drip.exceptions import LinkAttributionError
+from drip.link_attribution import build_attributed_url
+from drip.models import DripDelivery, DripEnrollment, DripLane, DripTrackedLink
 from drip.services.publication import publish_manifest
 from drip.services.reconciliation import reconcile_drips
 from linkedin.models import Task, WorkflowRun
@@ -124,7 +126,12 @@ def test_linkedin_materialization_freezes_published_media_metadata(
     gmail_lane.current_theme_index = 2
     gmail_lane.current_theme_key = ""
     gmail_lane.save(
-        update_fields={"status", "current_theme_index", "current_theme_key", "updated_at"},
+        update_fields={
+            "status",
+            "current_theme_index",
+            "current_theme_key",
+            "updated_at",
+        },
     )
     linkedin_lane.status = DripLane.Status.ACTIVE
     linkedin_lane.current_theme_index = 0
@@ -456,3 +463,243 @@ def test_omitted_theme_starts_next_applicable_theme_at_transition_time(
     )
     assert materialize.detail == "theme proof step 0"
     assert materialize.due_at == now
+
+
+def _payload_with_tracked_link(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    step = payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "gmail"
+    ][0]
+    step["body"] = "Hi {first_name}, this may help: {tracked_link}"
+    step["link"] = {
+        "key": "fedramp_automation",
+        "url": "https://boundera.io/fedramp-automation?view=gap#details",
+    }
+    return payload
+
+
+def _seed_reference_collision(*, published, reference, now):
+    lead = Lead.objects.create(
+        first_name="Existing",
+        email="existing@example.com",
+        icp="CSPs",
+    )
+    enrollment = DripEnrollment.objects.create(
+        campaign=published.campaign,
+        campaign_version=published.version,
+        lead=lead,
+        frozen_icp="CSPs",
+        status=DripEnrollment.Status.STOPPED,
+        stopped_at=now,
+        enrolled_by="reviewer",
+        plan_hash="b" * 64,
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+        status=DripLane.Status.STOPPED,
+    )
+    delivery = DripDelivery.objects.create(
+        lane=lane,
+        theme_key="existing",
+        theme_index=0,
+        step_index=0,
+        frozen_subject="Existing",
+        frozen_body="Existing",
+        scheduled_at=now,
+        status=DripDelivery.Status.STOPPED,
+        provider_account=lane.provider_account,
+    )
+    destination = "https://boundera.io/existing"
+    DripTrackedLink.objects.create(
+        delivery=delivery,
+        reference=reference,
+        link_key="existing",
+        destination_url=destination,
+        attributed_url=build_attributed_url(destination, reference),
+    )
+
+
+def test_tracked_link_is_frozen_before_task_and_reused_on_rematerialization(
+    valid_drip_payload,
+    monkeypatch,
+):
+    reference = "oo_EjRWeJCrze8SNFZ4kKvN7w"
+    monkeypatch.setattr(
+        "drip.services.reconciliation.generate_reference",
+        lambda: reference,
+    )
+    now = timezone.now()
+    payload = _payload_with_tracked_link(valid_drip_payload)
+    _published, _enrollment, lane, _linkedin = _domain(payload, now=now)
+
+    reconcile_drips(apply=True, now=now)
+
+    delivery = lane.deliveries.get()
+    link = delivery.tracked_links.get()
+    original_task = delivery.current_task
+    assert link.reference == reference
+    assert link.link_key == "fedramp_automation"
+    assert link.destination_url == (
+        "https://boundera.io/fedramp-automation?view=gap#details"
+    )
+    assert link.attributed_url == (
+        "https://boundera.io/fedramp-automation?view=gap"
+        f"&ref={reference}#details"
+    )
+    assert delivery.frozen_body == f"Hi Ada, this may help: {link.attributed_url}"
+    assert original_task is not None
+
+    original_task.status = Task.Status.FAILED
+    original_task.save(update_fields={"status"})
+    reconcile_drips(apply=True, now=now)
+
+    delivery.refresh_from_db()
+    link.refresh_from_db()
+    assert delivery.current_task_id != original_task.pk
+    assert delivery.tracked_links.count() == 1
+    assert link.reference == reference
+    assert delivery.frozen_body == f"Hi Ada, this may help: {link.attributed_url}"
+
+
+def test_tracked_link_reference_collision_regenerates_before_materialization(
+    valid_drip_payload,
+    monkeypatch,
+):
+    collision = "oo_000000000000000000000A"
+    replacement = "oo_111111111111111111111Q"
+    generated = iter((collision, replacement))
+    monkeypatch.setattr(
+        "drip.services.reconciliation.generate_reference",
+        lambda: next(generated),
+    )
+    now = timezone.now()
+    payload = _payload_with_tracked_link(valid_drip_payload)
+    published, _enrollment, lane, _linkedin = _domain(payload, now=now)
+    _seed_reference_collision(
+        published=published,
+        reference=collision,
+        now=now,
+    )
+
+    reconcile_drips(apply=True, now=now)
+
+    assert lane.deliveries.get().tracked_links.get().reference == replacement
+
+
+def test_tracked_link_collision_exhaustion_rolls_back_target_materialization(
+    valid_drip_payload,
+    monkeypatch,
+):
+    collision = "oo_000000000000000000000A"
+    monkeypatch.setattr(
+        "drip.services.reconciliation.generate_reference",
+        lambda: collision,
+    )
+    now = timezone.now()
+    payload = _payload_with_tracked_link(valid_drip_payload)
+    published, _enrollment, lane, _linkedin = _domain(payload, now=now)
+    _seed_reference_collision(
+        published=published,
+        reference=collision,
+        now=now,
+    )
+
+    with pytest.raises(LinkAttributionError, match="unique"):
+        reconcile_drips(apply=True, now=now)
+
+    assert not lane.deliveries.exists()
+    assert not Task.objects.filter(
+        task_type=Task.TaskType.DRIP_GMAIL,
+        payload__operator="Arian",
+        payload__delivery_id__isnull=False,
+    ).exists()
+
+
+def test_persisted_older_schema_snapshot_still_reconciles(valid_drip_payload):
+    now = timezone.now()
+    published, _enrollment, lane, _linkedin = _domain(valid_drip_payload, now=now)
+    older_manifest = deepcopy(published.version.manifest)
+    older_manifest["schema_version"] = 2
+    type(published.version).objects.filter(pk=published.version.pk).update(
+        manifest=older_manifest,
+    )
+
+    reconcile_drips(apply=True, now=now)
+
+    delivery = lane.deliveries.get()
+    assert delivery.current_task.task_type == Task.TaskType.DRIP_GMAIL
+    assert not delivery.tracked_links.exists()
+
+
+def test_persisted_schema_two_media_snapshot_still_reconciles(
+    valid_drip_payload,
+    monkeypatch,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][
+        0
+    ]["media"] = {"type": "gif", "file": "demo.gif"}
+    now = timezone.now()
+    published, _enrollment, gmail_lane, linkedin_lane = _domain(payload, now=now)
+    older_manifest = deepcopy(published.version.manifest)
+    older_manifest["schema_version"] = 2
+    type(published.version).objects.filter(pk=published.version.pk).update(
+        manifest=older_manifest,
+    )
+    gmail_lane.status = DripLane.Status.COMPLETED
+    gmail_lane.current_theme_index = 2
+    gmail_lane.current_theme_key = ""
+    gmail_lane.save(
+        update_fields={"status", "current_theme_index", "current_theme_key", "updated_at"},
+    )
+    linkedin_lane.status = DripLane.Status.ACTIVE
+    linkedin_lane.current_theme_index = 0
+    linkedin_lane.current_theme_key = "visibility_gap"
+    linkedin_lane.theme_started_at = now - timedelta(days=1)
+    linkedin_lane.save(
+        update_fields={
+            "status",
+            "current_theme_index",
+            "current_theme_key",
+            "theme_started_at",
+            "updated_at",
+        },
+    )
+    monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", False)
+
+    reconcile_drips(apply=True, now=now)
+
+    delivery = linkedin_lane.deliveries.get()
+    assert delivery.current_task.task_type == Task.TaskType.DRIP_LINKEDIN
+    assert delivery.frozen_media_kind == "gif"
+    assert delivery.frozen_media_reference == "demo.gif"
+    assert delivery.frozen_media_sha256
+
+
+def test_materialization_failure_rolls_back_delivery_link_and_task(
+    valid_drip_payload,
+    monkeypatch,
+):
+    now = timezone.now()
+    payload = _payload_with_tracked_link(valid_drip_payload)
+    _published, _enrollment, _lane, _linkedin = _domain(payload, now=now)
+
+    def fail_task_creation(*, delivery, lane):
+        raise RuntimeError("queue unavailable")
+
+    monkeypatch.setattr(
+        "drip.services.reconciliation._materialize_task",
+        fail_task_creation,
+    )
+
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        reconcile_drips(apply=True, now=now)
+
+    assert not DripDelivery.objects.exists()
+    assert not DripTrackedLink.objects.exists()
+    assert not Task.objects.filter(task_type=Task.TaskType.DRIP_GMAIL).exists()
