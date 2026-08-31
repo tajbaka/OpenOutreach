@@ -19,26 +19,13 @@ Auth: a separate LinkedIn account from the daemon's outreach account, via
 env vars only:
     SALES_NAV_LINKEDIN_USERNAME
     SALES_NAV_LINKEDIN_PASSWORD
-Cookies cached at `data/sales_nav_cookies.json` so reruns don't re-login.
+Cookies are cached per username under `data/` so reruns don't re-login.
 """
 from __future__ import annotations
 
-import csv
-import sys
-import time
 from pathlib import Path
 
 from django.core.management.base import BaseCommand
-
-CSV_HEADER = [
-    "Profile URL",
-    "First Name",
-    "Last Name",
-    "Company",
-    "Title",
-    "Geo Region",
-    "Degree",
-]
 
 
 class Command(BaseCommand):
@@ -100,6 +87,7 @@ class Command(BaseCommand):
             self._handle_impl(*args, **options)
 
     def _handle_impl(self, *args, **options):
+        from linkedin.actions.sales_nav_export import export_sales_nav_csv
         from linkedin.actions.sales_nav_list import discover_list_url_template
         from linkedin.actions.standalone_session import StandaloneLinkedInSession
         from linkedin.api.client import PlaywrightLinkedinAPI
@@ -127,72 +115,23 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"Fetching Sales Nav list {list_id} as {session.username} → {output_path}"
             )
-            written, stats = self._dump_csv(
-                api, list_id, url_template, limit, delay, output_path,
+            stats = export_sales_nav_csv(
+                api,
+                list_id=list_id,
+                url_template=url_template,
+                output_path=output_path,
+                max_results=limit,
+                delay_seconds=delay,
+                report=self.stdout.write,
             )
 
         self.stdout.write(self.style.SUCCESS(
-            f"Wrote {written} rows to {output_path} "
-            f"({stats['inaccessible']} inaccessible, "
-            f"{stats['unresolvable']} unresolvable)"
+            f"Wrote {stats.written} rows to {output_path} "
+            f"({stats.inaccessible} inaccessible, "
+            f"{stats.unresolvable} unresolvable)"
         ))
         self.stdout.write(
             f"\nNext: import into a campaign with\n"
             f"  .venv/bin/python manage.py add_seeds <campaign_pk> --csv "
             f"< {output_path}"
         )
-
-    def _dump_csv(self, api, list_id, url_template, limit, delay, output_path):
-        from linkedin.actions.sales_nav_list import iter_sales_nav_list
-
-        stats = {"inaccessible": 0, "unresolvable": 0}
-        written = 0
-
-        with output_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(CSV_HEADER)
-
-            for row in iter_sales_nav_list(
-                api, list_id, max_results=limit, url_template=url_template,
-            ):
-                member_urn = row["member_urn"]
-                try:
-                    profile, _ = api.get_profile(public_identifier=member_urn)
-                except Exception as e:
-                    self.stderr.write(f"  ! {member_urn}: {e}")
-                    stats["inaccessible"] += 1
-                    time.sleep(delay)
-                    continue
-
-                if profile is None:
-                    self.stdout.write(
-                        f"  - {row['full_name']}: inaccessible (private/restricted)"
-                    )
-                    stats["inaccessible"] += 1
-                    time.sleep(delay)
-                    continue
-
-                public_id = profile.get("public_identifier")
-                if not public_id:
-                    self.stderr.write(f"  ! {member_urn}: no publicIdentifier in response")
-                    stats["unresolvable"] += 1
-                    time.sleep(delay)
-                    continue
-
-                writer.writerow([
-                    profile.get("url", f"https://www.linkedin.com/in/{public_id}/"),
-                    row["first_name"] or profile.get("first_name", ""),
-                    row["last_name"] or profile.get("last_name", ""),
-                    row["company_name"],
-                    row["title"],
-                    row["geo_region"],
-                    row["degree"] or "",
-                ])
-                f.flush()  # crash-safe — partial CSV is still usable
-                written += 1
-                self.stdout.write(
-                    f"  + {row['full_name']} ({row['company_name']}) → {public_id}"
-                )
-                time.sleep(delay)
-
-        return written, stats

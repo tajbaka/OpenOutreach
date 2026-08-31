@@ -117,6 +117,12 @@ class DiscoverySessionConflictError(Exception):
     pass
 
 
+class SalesNavigatorSurfaceError(Exception):
+    """A supported Sales Navigator search/list surface could not be read safely."""
+
+    pass
+
+
 class DiscoveryScreeningError(Exception):
     """The discovery ICP screen returned an invalid structured result."""
 

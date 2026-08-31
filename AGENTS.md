@@ -230,6 +230,29 @@ pytest -k test_name                # single test
 # Profile URL, First Name, Last Name, Company, Title, Geo Region, Degree.
 .venv/bin/python manage.py export_sales_search --url '<sales_nav_people_search_url>' --output artifacts/leads/<name>.csv
 .venv/bin/python manage.py export_sales_list <sales_nav_list_id> --output artifacts/leads/<name>.csv
+# Discover every saved lead search under the configured Sales Navigator account
+# whose name starts with the selected prefix and, when provided, ends with the
+# selected suffix, then export one CSV per search in one authenticated browser
+# session. Discovery/export is read-only on LinkedIn:
+# it does not save leads, modify saved searches, or perform outreach. Each final
+# CSV is atomically completed, manifest.json records per-search status/counts,
+# and --resume skips only completed CSVs whose account, prefix, optional suffix,
+# inventory, and per-search limit exactly match the existing manifest. Limited probes are
+# recorded as limited_complete and cannot masquerade as full exports. Saved
+# search capture ignores LinkedIn's early unfiltered XHR and waits for the exact
+# saved-search request whose non-empty query clause contains the active filters.
+.venv/bin/python manage.py export_sales_saved_searches --discover-only --name-prefix 'FMKT |'
+.venv/bin/python manage.py export_sales_saved_searches \
+  --name-prefix 'FMKT |' \
+  --name-suffix ' - NEW' \
+  --output-dir artifacts/leads/fedramp-marketplace-saved-searches-new
+.venv/bin/python manage.py export_sales_saved_searches \
+  --name-prefix 'FMKT |' \
+  --output-dir artifacts/leads/fedramp-marketplace-saved-searches
+.venv/bin/python manage.py export_sales_saved_searches \
+  --name-prefix 'FMKT |' \
+  --output-dir artifacts/leads/fedramp-marketplace-saved-searches \
+  --resume
 
 # Collect LinkedIn home-feed posts for the currently configured daemon account.
 # Normally triggered by daemon_supervisor.py at 5 PM America/Toronto when
