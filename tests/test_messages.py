@@ -145,6 +145,34 @@ def test_save_chat_message_uses_manual_reply_external_id(fake_session):
     assert msg.sender == "chukyjack@gmail.com"
 
 
+def test_save_chat_message_persists_optional_raw_evidence(fake_session):
+    from linkedin.db.chat import save_chat_message
+
+    lead = Lead.objects.create(
+        first_name="Alice",
+        linkedin_url="https://www.linkedin.com/in/alice-media/",
+    )
+    media = {
+        "media": {
+            "type": "gif",
+            "reference": "demo.gif",
+            "mime_type": "image/gif",
+            "size_bytes": 489838,
+            "sha256": "a" * 64,
+        },
+    }
+
+    save_chat_message(
+        fake_session,
+        "alice-media",
+        "media body",
+        raw=media,
+    )
+
+    msg = Message.objects.get(lead=lead, source=Message.Source.LINKEDIN)
+    assert msg.raw == media
+
+
 def test_send_raw_message_can_disable_api_fallback(fake_session):
     from linkedin.actions import message as message_mod
 

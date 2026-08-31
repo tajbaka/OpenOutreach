@@ -10,9 +10,11 @@ from string import Formatter
 from typing import Any, Mapping
 
 from drip.exceptions import ManifestValidationError
+from linkedin.exceptions import LinkedInMediaValidationError
+from linkedin.message_media import resolve_linkedin_media
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ALLOWED_PLACEHOLDERS = frozenset(
     {
         "first_name",
@@ -115,7 +117,7 @@ def _normalize_step(
 ) -> dict[str, Any]:
     step = _expect_object(value, path=path)
     required = {"delay_days", "body"}
-    optional: set[str] = set()
+    optional: set[str] = {"media"} if channel == "linkedin" else set()
     if channel == "gmail" and step_index == 0:
         required.add("subject")
     elif channel == "gmail":
@@ -156,7 +158,29 @@ def _normalize_step(
     body = _nonblank_string(step["body"], path=f"{path}.body", max_length=body_limit)
     _placeholder_names(body, path=f"{path}.body")
     normalized["body"] = body
+    if channel == "linkedin" and "media" in step:
+        normalized["media"] = _normalize_media(step["media"], path=f"{path}.media")
     return normalized
+
+
+def _normalize_media(value: Any, *, path: str) -> dict[str, Any]:
+    media = _expect_object(value, path=path)
+    _expect_exact_keys(media, path=path, required={"type", "file"})
+    media_type = _nonblank_string(media["type"], path=f"{path}.type", max_length=16)
+    if media_type not in {"gif", "video"}:
+        _fail(f"{path}.type", "must be either 'gif' or 'video'")
+    reference = _nonblank_string(media["file"], path=f"{path}.file", max_length=500)
+    try:
+        asset = resolve_linkedin_media(reference, expected_kind=media_type)
+    except LinkedInMediaValidationError as exc:
+        _fail(path, str(exc))
+    return {
+        "type": asset.kind.value,
+        "file": asset.reference,
+        "mime_type": asset.mime_type,
+        "size_bytes": asset.size_bytes,
+        "sha256": asset.sha256,
+    }
 
 
 def _normalize_rendition(value: Any, *, path: str, channel: str) -> list[dict[str, Any]]:

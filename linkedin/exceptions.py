@@ -127,3 +127,21 @@ class LegacyOutboundCutoverError(Exception):
     """A reviewed legacy-outbound retirement cannot be planned or applied safely."""
 
     pass
+
+
+class LinkedInMediaValidationError(Exception):
+    """A declared LinkedIn message attachment is missing, unsafe, or invalid."""
+
+    pass
+
+
+class LinkedInMediaMismatchError(LinkedInMediaValidationError):
+    """A LinkedIn attachment no longer matches its frozen metadata."""
+
+    pass
+
+
+class LinkedInMessageSubmissionUnclearError(Exception):
+    """LinkedIn may have accepted a message, so automation must not retry it."""
+
+    pass

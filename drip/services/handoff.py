@@ -100,6 +100,13 @@ def _has_unresolved_current_gmail_submission(*, lead, operator: str) -> bool:
     return False
 
 
+def _has_unresolved_current_linkedin_submission(*, lead, operator: str) -> bool:
+    """Block handoff after a possibly submitted current LinkedIn media Task."""
+    from linkedin.tasks.follow_up_submission import has_unresolved_submission
+
+    return has_unresolved_submission(lead_id=lead.pk, operator=operator)
+
+
 def _eligible_linkedin_deals(*, lead, operator: str):
     from crm.models import Deal
     from drip.services.linkedin_connection import sender_owned_connected_deal_proofs
@@ -143,6 +150,11 @@ def evaluate_linkedin_handoff(lane: DripLane) -> HandoffEvaluation:
         )
     if _has_current_linkedin_task(lead=lead, operator=operator):
         return HandoffEvaluation(False, "current_linkedin_task_outstanding")
+    if _has_unresolved_current_linkedin_submission(
+        lead=lead,
+        operator=operator,
+    ):
+        return HandoffEvaluation(False, "current_linkedin_submission_unclear")
 
     deals = list(_eligible_linkedin_deals(lead=lead, operator=operator))
     if not deals:
@@ -467,6 +479,16 @@ def review_handoff_not_applicable(
     ):
         raise HandoffReviewError(
             "Current Gmail submission outcome is unclear; not-applicable is unsafe.",
+        )
+    if (
+        lane.channel == DripLane.Channel.LINKEDIN
+        and _has_unresolved_current_linkedin_submission(
+            lead=lane.enrollment.lead,
+            operator=lane.operator,
+        )
+    ):
+        raise HandoffReviewError(
+            "Current LinkedIn submission outcome is unclear; not-applicable is unsafe.",
         )
     if lane.channel == DripLane.Channel.LINKEDIN:
         has_task = _has_current_linkedin_task(

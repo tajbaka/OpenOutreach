@@ -274,6 +274,127 @@ def test_fill_message_legacy_add_placeholder_still_resolves(tmp_path, monkeypatc
     assert out.attachments == [asset]
 
 
+def test_fill_message_resolves_registered_mp4_placeholder(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    asset_dir = root / "assets" / "follow_up"
+    asset_dir.mkdir(parents=True)
+    asset = asset_dir / "overview.mp4"
+    asset.write_bytes(b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2")
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "media": ["overview.mp4"],
+                "linkedin_connect_followup": [
+                    "Hi {first_name}, quick overview attached.\n\n{overview.mp4}"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "ROOT_DIR", root)
+
+    out = icp_outbound.fill_message(
+        sender="Arian",
+        icp="CSPs",
+        channel="linkedin_connect_followup",
+        first_name="Jane",
+    )
+
+    assert out.body == "Hi Jane, quick overview attached."
+    assert out.attachments == [asset]
+
+
+def test_fill_message_missing_media_fails_closed(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    (root / "assets" / "follow_up").mkdir(parents=True)
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "media": ["missing.gif"],
+                "linkedin_connect_followup": [
+                    "Hi {first_name}.\n\n{missing.gif}"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "ROOT_DIR", root)
+
+    with pytest.raises(
+        icp_outbound.LinkedInMediaValidationError,
+        match="does not exist",
+    ):
+        icp_outbound.fill_message(
+            sender="Arian",
+            icp="CSPs",
+            channel="linkedin_connect_followup",
+            first_name="Jane",
+        )
+
+
+def test_fill_message_rejects_multiple_media_attachments(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    asset_dir = root / "assets" / "follow_up"
+    asset_dir.mkdir(parents=True)
+    (asset_dir / "one.gif").write_bytes(b"GIF89a-one")
+    (asset_dir / "two.gif").write_bytes(b"GIF89a-two")
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "media": ["one.gif", "two.gif"],
+                "linkedin_connect_followup": [
+                    "Hi {first_name}.\n\n{one.gif}\n\n{two.gif}"
+                ],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "ROOT_DIR", root)
+
+    with pytest.raises(
+        icp_outbound.LinkedInMediaValidationError,
+        match="at most one",
+    ):
+        icp_outbound.fill_message(
+            sender="Arian",
+            icp="CSPs",
+            channel="linkedin_connect_followup",
+            first_name="Jane",
+        )
+
+
+def test_fill_message_rejects_media_without_text_body(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    asset_dir = root / "assets" / "follow_up"
+    asset_dir.mkdir(parents=True)
+    (asset_dir / "demo.gif").write_bytes(b"GIF89a-only")
+    path = tmp_path / "icp_messages.json"
+    path.write_text(json.dumps({
+        "Arian": {
+            "CSPs": {
+                "media": ["demo.gif"],
+                "linkedin_connect_followup": ["{demo.gif}"],
+            },
+        },
+    }))
+    monkeypatch.setattr(icp_outbound, "_MESSAGES_PATH", path)
+    monkeypatch.setattr(icp_outbound, "ROOT_DIR", root)
+
+    with pytest.raises(
+        icp_outbound.LinkedInMediaValidationError,
+        match="nonempty text body",
+    ):
+        icp_outbound.fill_message(
+            sender="Arian",
+            icp="CSPs",
+            channel="linkedin_connect_followup",
+            first_name="Jane",
+        )
+
+
 def test_fill_message_replaces_unknown_company_sentinel(tmp_path, monkeypatch):
     path = tmp_path / "icp_messages.json"
     path.write_text(json.dumps({

@@ -25,4 +25,19 @@ Use the dry-run-first workflow from the repository root:
 
 The plan command requires explicit Lead IDs and creates a new private artifact; it never performs ICP-wide enrollment. Review that artifact before apply. Use `review_drip_handoff --lane-id <id> --not-applicable --reviewed-by <reviewer>` only when the current sequence truly never ran; persisted current or legacy outbound evidence makes that attestation fail closed.
 
-A manifest contains one ordered theme list per canonical ICP. Every theme has a shared `intent`, the same canonical sender set, and one or both independent `linkedin`/`gmail` renditions. `delay_days` is channel-local. Gmail step 0 requires the lane subject; later Gmail steps omit it or repeat it exactly because the lane stays in one thread. See `docs/drip-campaign-implementation-plan.md` for the complete schema and runtime contract.
+A manifest uses `schema_version: 2` and contains one ordered theme list per canonical ICP. Every theme has a shared `intent`, the same canonical sender set, and one or both independent `linkedin`/`gmail` renditions. `delay_days` is channel-local. Gmail step 0 requires the lane subject; later Gmail steps omit it or repeat it exactly because the lane stays in one thread.
+
+A LinkedIn step may declare one optional GIF or MP4 attachment. Gmail steps do not accept media:
+
+```json
+{
+  "delay_days": 0,
+  "body": "Sharing a quick overview. Curious what you think.",
+  "media": {
+    "type": "video",
+    "file": "overview.mp4"
+  }
+}
+```
+
+Publication resolves the file under the approved LinkedIn message asset root, validates its type and 20 MiB size limit, and freezes its MIME type, byte size, and SHA-256 digest into the immutable campaign version. Changing the bytes at the same filename therefore creates a different version. Missing or invalid media rejects the entire manifest; it is never silently sent as text only. See `docs/drip-campaign-implementation-plan.md` for the broader runtime contract.

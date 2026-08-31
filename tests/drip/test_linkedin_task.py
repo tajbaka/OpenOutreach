@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -26,6 +27,7 @@ from linkedin.actions.message import (
     MessageSubmissionAborted,
 )
 from linkedin.enums import ProfileState
+from linkedin.exceptions import LinkedInMediaMismatchError
 from linkedin.models import ActionLog, Task
 from tests.drip.helpers import linkedin_profile_description
 
@@ -107,12 +109,18 @@ def _execution(
         .replace("{first_name}", lead.first_name)
         .replace("{company_name}", lead.company_name)
     )
+    media = theme["senders"]["Arian"]["linkedin"][step_index].get("media") or {}
     delivery = DripDelivery.objects.create(
         lane=lane,
         theme_key=theme["key"],
         theme_index=theme_index,
         step_index=step_index,
         frozen_body=body,
+        frozen_media_kind=media.get("type", ""),
+        frozen_media_reference=media.get("file", ""),
+        frozen_media_mime_type=media.get("mime_type", ""),
+        frozen_media_size_bytes=media.get("size_bytes"),
+        frozen_media_sha256=media.get("sha256", ""),
         scheduled_at=now - timedelta(minutes=5),
         status=DripDelivery.Status.QUEUED,
         provider_account="arian",
@@ -175,6 +183,213 @@ def test_success_commits_submit_boundary_then_persists_ledgers_without_altering_
         campaign=fake_session.campaign,
         action_type=ActionLog.ActionType.FOLLOW_UP,
     ).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("media_type", "filename", "media_bytes"),
+    (
+        ("gif", "demo.gif", b"GIF89a-drip-media"),
+        (
+            "video",
+            "overview.mp4",
+            b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2",
+        ),
+    ),
+)
+def test_media_success_uses_frozen_asset_and_persists_exact_evidence(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+    tmp_path,
+    media_type,
+    filename,
+    media_bytes,
+):
+    asset_root = tmp_path / "assets" / "follow_up"
+    asset_root.mkdir(parents=True)
+    (asset_root / filename).write_bytes(media_bytes)
+    monkeypatch.setattr("linkedin.message_media.ROOT_DIR", tmp_path)
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "linkedin"
+    ][0]["media"] = {"type": media_type, "file": filename}
+    execution = _execution(payload, fake_session)
+
+    def send_once(
+        session,
+        member_urn,
+        body,
+        *,
+        recipient_label,
+        on_submit_attempt,
+        media,
+    ):
+        assert session is fake_session
+        assert member_urn == execution.lane.linkedin_member_urn
+        assert recipient_label == execution.lane.recipient_identity
+        assert body == execution.delivery.frozen_body
+        assert media.reference == filename
+        assert media.kind.value == media_type
+        assert media.sha256 == execution.delivery.frozen_media_sha256
+        on_submit_attempt()
+        return DirectMessageResult(DirectMessageOutcome.SENT)
+
+    monkeypatch.setattr("drip.tasks.linkedin.send_direct_message_once", send_once)
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.delivery.refresh_from_db()
+    outbound = Message.objects.get(
+        external_id=f"drip-linkedin:{execution.delivery.pk}",
+    )
+    assert execution.delivery.status == DripDelivery.Status.SENT
+    assert outbound.raw["media"] == {
+        "type": execution.delivery.frozen_media_kind,
+        "reference": execution.delivery.frozen_media_reference,
+        "mime_type": execution.delivery.frozen_media_mime_type,
+        "size_bytes": execution.delivery.frozen_media_size_bytes,
+        "sha256": execution.delivery.frozen_media_sha256,
+    }
+
+
+def test_missing_or_changed_frozen_media_pauses_without_browser_send(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "linkedin"
+    ][0]["media"] = {"type": "gif", "file": "demo.gif"}
+    execution = _execution(payload, fake_session)
+    monkeypatch.setattr(
+        "linkedin.message_media.resolve_linkedin_media",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            LinkedInMediaMismatchError("SHA-256 mismatch"),
+        ),
+    )
+    monkeypatch.setattr(
+        "drip.tasks.linkedin.send_direct_message_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid frozen media must not reach the browser"),
+        ),
+    )
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.delivery.refresh_from_db()
+    execution.lane.refresh_from_db()
+    attempt = execution.delivery.attempts.get()
+    assert execution.delivery.status == DripDelivery.Status.PLANNED
+    assert execution.delivery.current_task_id is None
+    assert execution.lane.status == DripLane.Status.PAUSED
+    assert attempt.outcome == DripDeliveryAttempt.Outcome.NOT_SUBMITTED
+    assert attempt.submission_attempted_at is None
+    assert "SHA-256 mismatch" in attempt.diagnostic_detail
+    assert not Message.objects.filter(external_id__startswith="drip-linkedin:").exists()
+
+
+def test_frozen_media_db_drift_during_upload_aborts_before_click(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "linkedin"
+    ][0]["media"] = {"type": "gif", "file": "demo.gif"}
+    execution = _execution(payload, fake_session)
+    clicked = []
+
+    def send_once(*args, on_submit_attempt, media, **kwargs):
+        DripDelivery.objects.filter(pk=execution.delivery.pk).update(
+            frozen_media_sha256="f" * 64,
+        )
+        try:
+            on_submit_attempt()
+        except MessageSubmissionAborted as exc:
+            return DirectMessageResult(
+                DirectMessageOutcome.PRE_SUBMIT_FAILED,
+                str(exc),
+            )
+        clicked.append(True)
+        return DirectMessageResult(DirectMessageOutcome.SENT)
+
+    monkeypatch.setattr("drip.tasks.linkedin.send_direct_message_once", send_once)
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.delivery.refresh_from_db()
+    execution.lane.refresh_from_db()
+    attempt = execution.delivery.attempts.get()
+    assert clicked == []
+    assert execution.delivery.status == DripDelivery.Status.PLANNED
+    assert execution.lane.status == DripLane.Status.PAUSED
+    assert attempt.outcome == DripDeliveryAttempt.Outcome.NOT_SUBMITTED
+    assert "frozen LinkedIn media changed" in attempt.diagnostic_detail
+
+
+def test_inbound_stop_during_upload_survives_pre_submit_failure_without_callback(
+    valid_drip_payload,
+    fake_session,
+    monkeypatch,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "linkedin"
+    ][0]["media"] = {"type": "gif", "file": "demo.gif"}
+    execution = _execution(payload, fake_session)
+    inbound_id = None
+
+    def send_once(*args, on_submit_attempt, media, **kwargs):
+        nonlocal inbound_id
+        assert callable(on_submit_attempt)
+        assert media.reference == execution.delivery.frozen_media_reference
+        inbound = Message.objects.create(
+            lead=execution.lead,
+            source=Message.Source.LINKEDIN,
+            external_id="linkedin-inbound-during-upload-failure",
+            direction=Message.Direction.INBOUND,
+            sender="Ada Lovelace",
+            body="Thanks, I will take it from here",
+            sent_at=timezone.now(),
+        )
+        inbound_id = inbound.pk
+        from drip.services.stops import stop_for_inbound_message
+
+        assert stop_for_inbound_message(inbound.pk) == 1
+        execution.enrollment.refresh_from_db()
+        execution.lane.refresh_from_db()
+        execution.delivery.refresh_from_db()
+        assert execution.enrollment.status == DripEnrollment.Status.STOPPED
+        assert execution.lane.status == DripLane.Status.STOPPED
+        # The inbound hook deliberately leaves an in-flight delivery alone.
+        # Cleanup of a definitely pre-submit failure must preserve the global
+        # stop instead of making this delivery retryable again.
+        assert execution.delivery.status == DripDelivery.Status.SENDING
+        return DirectMessageResult(
+            DirectMessageOutcome.PRE_SUBMIT_FAILED,
+            "attachment upload failed before callback",
+        )
+
+    monkeypatch.setattr("drip.tasks.linkedin.send_direct_message_once", send_once)
+
+    handle_drip_linkedin(execution.task, fake_session)
+
+    execution.enrollment.refresh_from_db()
+    execution.lane.refresh_from_db()
+    execution.delivery.refresh_from_db()
+    attempt = execution.delivery.attempts.get()
+    assert inbound_id is not None
+    assert execution.enrollment.status == DripEnrollment.Status.STOPPED
+    assert execution.enrollment.stop_trigger_message_id == inbound_id
+    assert execution.lane.status == DripLane.Status.STOPPED
+    assert execution.delivery.status == DripDelivery.Status.STOPPED
+    assert execution.delivery.current_task_id is None
+    assert attempt.outcome == DripDeliveryAttempt.Outcome.NOT_SUBMITTED
+    assert attempt.submission_attempted_at is None
+    assert "upload failed" in attempt.diagnostic_detail
+    assert not Message.objects.filter(external_id__startswith="drip-linkedin:").exists()
 
 
 def test_pre_submit_failure_is_retryable_without_enqueuing_an_alternate_route(

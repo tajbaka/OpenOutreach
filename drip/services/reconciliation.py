@@ -186,6 +186,7 @@ def _materialize_delivery(
         step_index=step_index,
         thread_subject=thread_subject,
     )
+    media = rendition[step_index].get("media") or {}
     delivery = DripDelivery(
         lane=lane,
         theme_key=theme["key"],
@@ -193,6 +194,11 @@ def _materialize_delivery(
         step_index=step_index,
         frozen_subject=subject,
         frozen_body=body,
+        frozen_media_kind=media.get("type", ""),
+        frozen_media_reference=media.get("file", ""),
+        frozen_media_mime_type=media.get("mime_type", ""),
+        frozen_media_size_bytes=media.get("size_bytes"),
+        frozen_media_sha256=media.get("sha256", ""),
         scheduled_at=due_at,
         status=DripDelivery.Status.PLANNED,
         provider_account=lane.provider_account,

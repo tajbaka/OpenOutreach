@@ -110,6 +110,54 @@ def test_dry_run_has_no_writes_and_apply_materializes_only_one_task(
     assert delivery.current_task_id == first_task_id
 
 
+def test_linkedin_materialization_freezes_published_media_metadata(
+    valid_drip_payload,
+    monkeypatch,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][
+        0
+    ]["media"] = {"type": "gif", "file": "demo.gif"}
+    now = timezone.now()
+    published, _enrollment, gmail_lane, linkedin_lane = _domain(payload, now=now)
+    gmail_lane.status = DripLane.Status.COMPLETED
+    gmail_lane.current_theme_index = 2
+    gmail_lane.current_theme_key = ""
+    gmail_lane.save(
+        update_fields={"status", "current_theme_index", "current_theme_key", "updated_at"},
+    )
+    linkedin_lane.status = DripLane.Status.ACTIVE
+    linkedin_lane.current_theme_index = 0
+    linkedin_lane.current_theme_key = "visibility_gap"
+    linkedin_lane.theme_started_at = now - timedelta(days=1)
+    linkedin_lane.save(
+        update_fields={
+            "status",
+            "current_theme_index",
+            "current_theme_key",
+            "theme_started_at",
+            "updated_at",
+        },
+    )
+    monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", False)
+
+    reconcile_drips(apply=True, now=now)
+
+    delivery = linkedin_lane.deliveries.get()
+    frozen_media = published.version.manifest["audiences"]["CSPs"]["themes"][0][
+        "senders"
+    ]["Arian"]["linkedin"][0]["media"]
+    assert delivery.frozen_media_kind == frozen_media["type"]
+    assert delivery.frozen_media_reference == frozen_media["file"]
+    assert delivery.frozen_media_mime_type == frozen_media["mime_type"]
+    assert delivery.frozen_media_size_bytes == frozen_media["size_bytes"]
+    assert delivery.frozen_media_sha256 == frozen_media["sha256"]
+    assert delivery.current_task.payload == {
+        "delivery_id": delivery.pk,
+        "operator": "Arian",
+    }
+
+
 def test_gmail_lane_advances_while_linkedin_independently_waits_for_connection(
     valid_drip_payload,
 ):

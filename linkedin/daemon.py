@@ -108,6 +108,8 @@ def _bring_task_forward(
     payload: dict,
     scheduled_at,
     dedup_keys: list[str] | None = None,
+    *,
+    preserve_existing_payload: bool = False,
 ) -> tuple[bool, bool]:
     """Ensure one pending task exists and is scheduled no later than *scheduled_at*.
 
@@ -134,7 +136,7 @@ def _bring_task_forward(
     if existing.scheduled_at > scheduled_at:
         existing.scheduled_at = scheduled_at
         update_fields.append("scheduled_at")
-    if existing.payload != payload:
+    if not preserve_existing_payload and existing.payload != payload:
         existing.payload = payload
         update_fields.append("payload")
 
@@ -337,6 +339,31 @@ def heal_tasks(session):
             flat=True,
         ),
     )
+    from linkedin.tasks.follow_up_submission import (
+        SUBMISSION_OPERATOR_KEY as MEDIA_SUBMISSION_OPERATOR_KEY,
+        persisted_submission_evidence as media_submission_evidence,
+        recover_stale_media_follow_up_task,
+        submission_attempted as media_submission_attempted,
+    )
+
+    stale_media_follow_up_ids = [
+        task.pk
+        for task in stale_owned.filter(task_type=Task.TaskType.FOLLOW_UP).only(
+            "pk",
+            "payload",
+        )
+        if media_submission_attempted(task.payload)
+    ]
+    failed_media_follow_up_ids = [
+        task.pk
+        for task in Task.objects.filter(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.FAILED,
+            payload__campaign_id__in=owned_campaign_ids,
+            **{f"payload__{MEDIA_SUBMISSION_OPERATOR_KEY}": our_operator},
+        ).only("pk", "payload")
+        if media_submission_evidence(task.payload)
+    ]
     from drip.models import DripDelivery
 
     failed_sending_drip_ids = list(
@@ -361,13 +388,26 @@ def heal_tasks(session):
             outcome = recover_stale_linkedin_task(task_id)
             recovered_drip += int(outcome != StaleRecoveryResult.NOOP)
 
+    media_follow_up_recovery_ids = list(dict.fromkeys((
+        *stale_media_follow_up_ids,
+        *failed_media_follow_up_ids,
+    )))
+    recovered_media_follow_up = sum(
+        int(recover_stale_media_follow_up_task(task_id))
+        for task_id in media_follow_up_recovery_ids
+    )
+
     stale_count = stale_owned.exclude(
         task_type=Task.TaskType.DRIP_LINKEDIN,
+    ).exclude(
+        pk__in=stale_media_follow_up_ids,
     ).update(status=Task.Status.PENDING, started_at=None)
-    if stale_count or recovered_drip:
+    if stale_count or recovered_media_follow_up or recovered_drip:
         logger.info(
-            "Recovered %d current and %d drip stale browser task(s) for %s",
+            "Recovered %d ordinary current, %d media current, and %d drip "
+            "stale browser task(s) for %s",
             stale_count,
+            recovered_media_follow_up,
             recovered_drip,
             our_operator,
         )
@@ -491,7 +531,10 @@ def heal_tasks(session):
     # work this daemon's account can actually do.
     from linkedin.db.messages import lead_outbound_operators
     from linkedin.icp_outbound import resolve_icp
+    from linkedin.tasks.follow_up_submission import unresolved_submission_keys
     from linkedin.tasks.stop_checks import automation_stop_reason
+
+    unresolved_media_keys = unresolved_submission_keys()
     for campaign in _active_campaigns(session):
         session.campaign = campaign
         connected_deals = Deal.objects.filter(
@@ -504,6 +547,7 @@ def heal_tasks(session):
         skipped_other_operator = 0
         skipped_stopped = 0
         skipped_drip_owned = 0
+        skipped_uncertain_media = 0
         base_time = timezone.now()
 
         for index, deal in enumerate(connected_deals):
@@ -525,6 +569,9 @@ def heal_tasks(session):
 
             with transaction.atomic():
                 lock_lead_outbound_ownership(deal.lead_id)
+                if (deal.lead_id, our_operator) in unresolved_media_keys:
+                    skipped_uncertain_media += 1
+                    continue
                 if drip_owns_channel(
                     lead_id=deal.lead_id,
                     channel=DripLane.Channel.LINKEDIN,
@@ -545,6 +592,7 @@ def heal_tasks(session):
                     },
                     target_time,
                     dedup_keys=["campaign_id", "public_id", "operator"],
+                    preserve_existing_payload=True,
                 )
             created += int(was_created)
             rescheduled += int(was_rescheduled)
@@ -563,6 +611,13 @@ def heal_tasks(session):
                 "[%s] follow-up catch-up: skipped %d drip-owned lead(s)",
                 campaign,
                 skipped_drip_owned,
+            )
+        if skipped_uncertain_media:
+            logger.info(
+                "[%s] follow-up catch-up: skipped %d lead(s) with an "
+                "unresolved media submission",
+                campaign,
+                skipped_uncertain_media,
             )
         if created or rescheduled:
             logger.info(

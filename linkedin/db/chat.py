@@ -16,9 +16,9 @@ or the next `get_conversation` call; `crm.Message`'s
 `(source, external_id)` uniqueness keeps the synthetic + URN versions
 distinct without duplicating the body.
 
-Crash-safety: any DB error here is logged-and-swallowed. A persist
-failure must NOT unwind the send — the message already went out, the
-Deal needs to advance to Completed regardless.
+Crash-safety: any DB error here is logged-and-swallowed for established
+text-send callers. Strict media callers re-read their exact synthetic Message
+after this helper returns and fail closed without advancing when it is absent.
 """
 import logging
 from datetime import datetime, timezone
@@ -38,6 +38,7 @@ def save_chat_message(
     step_index: int | None = None,
     operator: str = "",
     external_id_kind: str = "daemon-send",
+    raw: dict | None = None,
 ):
     """Persist an outbound LinkedIn message to `crm.Message`. Never raises."""
     try:
@@ -79,23 +80,27 @@ def save_chat_message(
         else:
             external_id = f"daemon-send:{lead.pk}:{int(now.timestamp())}"
 
+        defaults = {
+            "lead": lead,
+            "operator": message_owner,
+            "direction": Message.Direction.OUTBOUND,
+            "sender": sender,
+            "body": content,
+            "sent_at": now,
+        }
+        if raw is not None:
+            defaults["raw"] = dict(raw)
+
         Message.objects.get_or_create(
             source=Message.Source.LINKEDIN,
             external_id=external_id,
-            defaults={
-                "lead": lead,
-                "operator": message_owner,
-                "direction": Message.Direction.OUTBOUND,
-                "sender": sender,
-                "body": content,
-                "sent_at": now,
-            },
+            defaults=defaults,
         )
         logger.debug("Saved outbound LinkedIn message for %s", public_identifier)
     except Exception as e:
-        # Never let a persist failure undo a successful send. The message
-        # already went out; the worst we can do is fail to record it, and
-        # the next backfill_messages pass will pick it up from LinkedIn.
+        # Preserve the established non-raising contract. Strict media callers
+        # verify their exact evidence after this returns; other senders rely on
+        # the next backfill_messages pass to restore provider history.
         logger.warning(
             "save_chat_message: persist failed for %s (send already succeeded): %s",
             public_identifier, e,

@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from enum import StrEnum
 from math import isfinite
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from django.db import connections
@@ -70,6 +72,12 @@ DEFAULT_SEQUENCE_NAME = "linkedin_connect_followup"
 DEFAULT_CHANNEL = "linkedin_connect_followup"
 
 
+class _MediaFollowUpOutcome(StrEnum):
+    SENT = "sent"
+    RETRYABLE_FAILURE = "retryable_failure"
+    BLOCKED = "blocked"
+
+
 def _step_external_id_prefix(*, operator: str, deal_id: int, sequence_name: str, step_index: int) -> str:
     return f"daemon-send:{operator}:{deal_id}:{sequence_name}:step-{step_index}:"
 
@@ -90,6 +98,25 @@ def _has_sent_sequence_step(*, deal, operator: str, sequence_name: str, step_ind
     ).exists()
 
 
+def _has_same_operator_followup(*, lead, operator: str) -> bool:
+    """Return whether this operator already persisted any daemon follow-up."""
+    from crm.models import Message
+    from linkedin.operators import resolve_operator
+
+    senders = (
+        Message.objects.filter(
+            lead=lead,
+            source=Message.Source.LINKEDIN,
+            direction=Message.Direction.OUTBOUND,
+            external_id__startswith="daemon-send:",
+        )
+        .exclude(sender="")
+        .values_list("sender", flat=True)
+        .distinct()
+    )
+    return operator in {resolve_operator(sender) for sender in senders}
+
+
 def _sequence_stop_reason(deal) -> str:
     from linkedin.tasks.stop_checks import automation_stop_reason
 
@@ -106,6 +133,212 @@ def _finish_sequence_for_stop(session, deal, public_id: str, reason: str) -> Non
         "Failed" if failed else "Completed",
         reason=reason,
     )
+
+
+def _approved_media_reference(attachment: Path) -> str:
+    """Return the approved-root-relative reference for a rendered attachment."""
+    from linkedin.conf import ROOT_DIR
+    from linkedin.exceptions import LinkedInMediaValidationError
+
+    try:
+        approved_root = (ROOT_DIR / "assets" / "follow_up").resolve(strict=True)
+        candidate = Path(attachment).resolve(strict=True)
+    except OSError as exc:
+        raise LinkedInMediaValidationError(
+            f"LinkedIn follow-up media cannot be resolved: {attachment}"
+        ) from exc
+    try:
+        return candidate.relative_to(approved_root).as_posix()
+    except ValueError as exc:
+        raise LinkedInMediaValidationError(
+            f"LinkedIn follow-up media escapes assets/follow_up: {attachment}"
+        ) from exc
+
+
+def _send_media_follow_up(
+    *,
+    task,
+    session,
+    deal,
+    public_id: str,
+    body: str,
+    attachment: Path,
+    campaign_id: int,
+    sequence_name: str,
+    step_index: int,
+    operator: str,
+) -> _MediaFollowUpOutcome:
+    """Send one validated follow-up attachment through the strict UI route."""
+    from crm.models import Deal
+    from linkedin.actions.message import (
+        DirectMessageOutcome,
+        MessageSubmissionAborted,
+        send_direct_message_once,
+    )
+    from linkedin.db.chat import save_chat_message
+    from linkedin.db.leads import resolve_urn
+    from linkedin.db.messages import lead_outbound_operators
+    from linkedin.enums import ProfileState
+    from linkedin.exceptions import LinkedInMessageSubmissionUnclearError
+    from linkedin.message_media import resolve_linkedin_media
+    from linkedin.models import Campaign
+    from linkedin.tasks.follow_up_submission import (
+        has_unresolved_submission,
+        persisted_submission_evidence,
+        stamp_submission_attempt,
+    )
+
+    asset = resolve_linkedin_media(_approved_media_reference(attachment))
+    member_urn = resolve_urn(public_id, session=session) or ""
+    blocked: dict[str, object] = {}
+
+    def _abort(kind: str, detail: str, *, fresh_deal=None) -> None:
+        blocked.update(kind=kind, detail=detail, deal=fresh_deal)
+        raise MessageSubmissionAborted(detail)
+
+    def _final_submission_guard() -> None:
+        if not Campaign.objects.filter(
+            pk=campaign_id,
+            status=Campaign.Status.ACTIVE,
+        ).exists():
+            _abort("campaign", "current LinkedIn campaign became inactive")
+
+        fresh_deal = Deal.objects.select_related("lead").filter(pk=deal.pk).first()
+        if fresh_deal is None:
+            _abort("deal", "current LinkedIn Deal disappeared")
+        if fresh_deal.state != ProfileState.CONNECTED:
+            _abort(
+                "deal",
+                f"current LinkedIn Deal changed to {fresh_deal.state}",
+                fresh_deal=fresh_deal,
+            )
+        if _drip_owns_linkedin(fresh_deal.lead_id):
+            _abort(
+                "drip",
+                "drip took ownership of LinkedIn before submission",
+                fresh_deal=fresh_deal,
+            )
+        owning_operators = lead_outbound_operators(fresh_deal.lead)
+        if owning_operators and operator not in owning_operators:
+            _abort(
+                "owner",
+                "LinkedIn thread ownership changed before submission",
+                fresh_deal=fresh_deal,
+            )
+        stop_reason = _sequence_stop_reason(fresh_deal)
+        if stop_reason:
+            _abort("stop", stop_reason, fresh_deal=fresh_deal)
+        if has_unresolved_submission(
+            lead_id=fresh_deal.lead_id,
+            operator=operator,
+        ):
+            _abort(
+                "unclear",
+                "another same-operator LinkedIn media submission became unresolved",
+                fresh_deal=fresh_deal,
+            )
+        if _has_sent_sequence_step(
+            deal=fresh_deal,
+            operator=operator,
+            sequence_name=sequence_name,
+            step_index=step_index,
+        ):
+            _abort(
+                "sent",
+                "this LinkedIn sequence step was persisted before submission",
+                fresh_deal=fresh_deal,
+            )
+        if step_index == 0 and _has_same_operator_followup(
+            lead=fresh_deal.lead,
+            operator=operator,
+        ):
+            _abort(
+                "sent",
+                "this operator persisted another LinkedIn follow-up before submission",
+                fresh_deal=fresh_deal,
+            )
+
+    def _submission_callback() -> None:
+        stamp_submission_attempt(
+            task,
+            lead_id=deal.lead_id,
+            message_prefix=_step_external_id_prefix(
+                operator=operator,
+                deal_id=deal.pk,
+                sequence_name=sequence_name,
+                step_index=step_index,
+            ),
+            operator=operator,
+            final_guard=_final_submission_guard,
+        )
+
+    result = send_direct_message_once(
+        session,
+        member_urn,
+        body,
+        recipient_label=deal.lead.linkedin_url or public_id,
+        on_submit_attempt=_submission_callback,
+        media=asset,
+    )
+    if result.outcome == DirectMessageOutcome.SENT:
+        save_chat_message(
+            session,
+            public_id,
+            body,
+            deal_id=deal.pk,
+            sequence_name=sequence_name,
+            step_index=step_index,
+            operator=operator,
+            raw={"media": asset.evidence()},
+        )
+        try:
+            evidence_persisted = persisted_submission_evidence(task.payload)
+        except _DB_DEAD_ERRORS as exc:
+            raise LinkedInMessageSubmissionUnclearError(
+                "LinkedIn confirmed the media send, but durable Message evidence "
+                f"could not be verified for Task {task.pk}"
+            ) from exc
+        if not evidence_persisted:
+            raise LinkedInMessageSubmissionUnclearError(
+                "LinkedIn confirmed the media send, but exact durable Message "
+                f"evidence is absent for Task {task.pk}; sequence advancement is blocked"
+            )
+        return _MediaFollowUpOutcome.SENT
+    if result.outcome == DirectMessageOutcome.UNCLEAR:
+        raise LinkedInMessageSubmissionUnclearError(
+            "LinkedIn media submission is unclear for Task "
+            f"{task.pk} / {public_id}: {result.detail}"
+        )
+    if result.outcome != DirectMessageOutcome.PRE_SUBMIT_FAILED:
+        raise ValueError(f"Unknown direct-message result: {result.outcome!r}")
+
+    # Upload/navigation failures occur before the action primitive invokes its
+    # submit callback. Re-run the same persisted guards before deciding to
+    # create a retry so a reply or drip handoff that arrived during a failed
+    # upload does not leave new automated work queued.
+    if not blocked:
+        try:
+            _final_submission_guard()
+        except MessageSubmissionAborted:
+            pass
+
+    if blocked:
+        detail = str(blocked.get("detail") or "media follow-up blocked")
+        logger.info("follow_up: %s blocked at media submit boundary: %s", public_id, detail)
+        if blocked.get("kind") == "stop" and blocked.get("deal") is not None:
+            _finish_sequence_for_stop(
+                session,
+                blocked["deal"],
+                public_id,
+                detail,
+            )
+        return _MediaFollowUpOutcome.BLOCKED
+    logger.warning(
+        "follow_up media pre-submit failure for %s: %s",
+        public_id,
+        result.detail,
+    )
+    return _MediaFollowUpOutcome.RETRYABLE_FAILURE
 
 
 def _normalize_linkedin_due_at(minimum_due_at, *, current_time=None):
@@ -177,6 +410,11 @@ def handle_follow_up(task, session, qualifiers):
     from linkedin.models import Campaign
     from linkedin.operators import resolve_operator
     from linkedin.tasks.connect import _seconds_until_tomorrow, enqueue_follow_up
+    from linkedin.tasks.follow_up_submission import (
+        has_unresolved_submission,
+        persisted_submission_evidence,
+        submission_attempted,
+    )
 
     payload = task.payload
     public_id = payload["public_id"]
@@ -185,6 +423,14 @@ def handle_follow_up(task, session, qualifiers):
     channel = payload.get("channel") or sequence_name or DEFAULT_CHANNEL
     step_index = int(payload.get("step_index") or 0)
     queued_icp = (payload.get("icp") or "").strip()
+
+    if submission_attempted(payload) and not persisted_submission_evidence(payload):
+        from linkedin.exceptions import LinkedInMessageSubmissionUnclearError
+
+        raise LinkedInMessageSubmissionUnclearError(
+            "LinkedIn media submission is already marked unclear for Task "
+            f"{task.pk}; automatic resend is blocked"
+        )
 
     if not Campaign.objects.filter(
         pk=campaign_id,
@@ -203,19 +449,6 @@ def handle_follow_up(task, session, qualifiers):
     )
 
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
-
-    # Rate limit check — defer to tomorrow if we've hit today's cap.
-    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
-        enqueue_follow_up(
-            campaign_id, public_id,
-            operator=our_operator,
-            icp=queued_icp or None,
-            delay_seconds=_seconds_until_tomorrow(),
-            sequence_name=sequence_name,
-            channel=channel,
-            step_index=step_index,
-        )
-        return
 
     profile_dict = get_profile_dict_for_public_id(session, public_id)
     if profile_dict is None:
@@ -237,6 +470,28 @@ def handle_follow_up(task, session, qualifiers):
         return
     if _drip_owns_linkedin(deal.lead_id):
         logger.info("follow_up: %s skipped - drip owns LinkedIn", public_id)
+        return
+    if has_unresolved_submission(lead_id=deal.lead_id, operator=our_operator):
+        from linkedin.exceptions import LinkedInMessageSubmissionUnclearError
+
+        raise LinkedInMessageSubmissionUnclearError(
+            "Another current LinkedIn media submission is unresolved for "
+            f"Lead {deal.lead_id} / {our_operator}; automatic send is blocked"
+        )
+
+    # Rate limit deferral happens only after durable uncertainty is checked.
+    # Otherwise a sibling campaign Task could manufacture an unmarked retry
+    # for a send whose provider outcome is already ambiguous.
+    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
+        enqueue_follow_up(
+            campaign_id, public_id,
+            operator=our_operator,
+            icp=queued_icp or None,
+            delay_seconds=_seconds_until_tomorrow(),
+            sequence_name=sequence_name,
+            channel=channel,
+            step_index=step_index,
+        )
         return
 
     from linkedin.suppression import lead_suppression_match
@@ -339,18 +594,15 @@ def handle_follow_up(task, session, qualifiers):
         step_index=step_index,
     )
 
-    prior_followup_senders = (
-        Message.objects.filter(
-            lead=deal.lead,
-            source=Message.Source.LINKEDIN,
-            direction=Message.Direction.OUTBOUND,
-            external_id__startswith="daemon-send:",
-        )
-        .exclude(sender="")
-        .values_list("sender", flat=True)
-        .distinct()
-    )
-    if step_index == 0 and our_operator in {resolve_operator(s) for s in prior_followup_senders}:
+    # Prefer exact current-sequence evidence when it exists. In particular, a
+    # recovered media Task can already have the confirmed step-0 Message while
+    # still needing this handler to enqueue step 1. The broad legacy
+    # cross-campaign guard applies only when this exact step was not sent.
+    if (
+        step_index == 0
+        and not step_already_sent
+        and _has_same_operator_followup(lead=deal.lead, operator=our_operator)
+    ):
         set_profile_state(
             session, public_id, "Completed",
             reason="Follow-up already sent by this operator (deduped across campaigns)",
@@ -400,9 +652,9 @@ def handle_follow_up(task, session, qualifiers):
     # ICP-keyed send. `my_name` is unused for LinkedIn channel (no
     # signature block in those templates), passed for symmetry with the
     # email channel where {my_name} fills the sign-off. Templates can
-    # also embed `{add <filename>}` placeholders to attach a media file
-    # (looked up in assets/followup/ then ROOT_DIR) — handled in
-    # `_send_with_attachments_or_text` below.
+    # also embed `{add <filename>}` placeholders to attach one validated
+    # GIF/MP4 from assets/follow_up/ — handled by the strict media branch
+    # below.
     filled = fill_message(
         sender=our_operator,
         icp=icp,
@@ -428,19 +680,27 @@ def handle_follow_up(task, session, qualifiers):
         _finish_sequence_for_stop(session, deal, public_id, stop_reason)
         return
 
-    # If the template included {add <filename>} placeholders, send via
-    # the media path (first attachment only — LinkedIn's message form
-    # accepts one inline media per send). Multiple attachments would
-    # require sequential sends; today's templates use 0 or 1.
+    # Media rendering already enforces exactly zero or one validated asset.
+    # The attachment branch uses the strict exact-URN route and performs its
+    # final persisted stop check after upload/typing, immediately before the
+    # only Send click. Text-only current follow-ups retain their established
+    # sender path to keep this change isolated.
     if filled.attachments:
-        from linkedin.actions.message import send_media_message
-        sent = send_media_message(
-            session, profile, filled.body, str(filled.attachments[0]),
-            deal_id=deal.pk,
+        media_outcome = _send_media_follow_up(
+            task=task,
+            session=session,
+            deal=deal,
+            public_id=public_id,
+            body=filled.body,
+            attachment=filled.attachments[0],
+            campaign_id=campaign_id,
             sequence_name=sequence_name,
             step_index=step_index,
             operator=our_operator,
         )
+        if media_outcome == _MediaFollowUpOutcome.BLOCKED:
+            return
+        sent = media_outcome == _MediaFollowUpOutcome.SENT
     else:
         sent = send_raw_message(
             session,

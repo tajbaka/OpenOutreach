@@ -150,13 +150,9 @@ def test_follow_up_post_send_retries_on_dead_conn(db, fake_session, monkeypatch)
         lambda **kw: [type("S", (), {"delay_hours": 0})()],
     )
 
-    # Inline send_raw_message + send_media_message that pretend to succeed.
-    import linkedin.tasks.follow_up as fu_pkg
+    # Inline text send that pretends to succeed.
     monkeypatch.setattr(
         "linkedin.actions.message.send_raw_message", lambda *a, **k: True, raising=False,
-    )
-    monkeypatch.setattr(
-        "linkedin.actions.message.send_media_message", lambda *a, **k: True, raising=False,
     )
 
     # Flaky record_action: first call raises OperationalError, second succeeds.

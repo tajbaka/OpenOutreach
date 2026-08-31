@@ -150,7 +150,7 @@ Illustrative shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "campaign_key": "fedramp_reengagement",
   "name": "FedRAMP re-engagement",
   "audiences": {
@@ -164,7 +164,11 @@ Illustrative shape:
               "linkedin": [
                 {
                   "delay_days": 0,
-                  "body": "LinkedIn rendition"
+                  "body": "LinkedIn rendition",
+                  "media": {
+                    "type": "video",
+                    "file": "fedramp-overview.mp4"
+                  }
                 }
               ],
               "gmail": [
@@ -193,6 +197,13 @@ Rules:
 - The first step’s delay is from the lane’s theme start; subsequent delays are from the previous successful same-channel send.
 - An omitted rendition is explicitly not applicable for that lane/theme.
 - Subjects exist on Gmail only. The first Gmail delivery establishes the thread subject; later Gmail steps omit it or repeat that exact subject. A different later subject fails validation because the lane remains in one thread.
+- A LinkedIn step may contain one optional `media` object with `type: "gif"`
+  and a `.gif` file or `type: "video"` and an `.mp4` file. Gmail steps reject
+  media.
+- Publication resolves media under the approved repository asset root,
+  validates its signature and 20 MiB size limit, and adds its MIME type, byte
+  size, and SHA-256 digest to the normalized immutable manifest. Changing the
+  bytes at the same filename therefore creates a new campaign version.
 - Runtime placeholders use a strict allowlist and are rendered/frozen before Task creation.
 - Publishing validates the complete file and stores an immutable normalized snapshot and content hash. Existing enrollments never change when the disk file changes.
 
@@ -247,7 +258,8 @@ Each enrollment has exactly one lane per channel. The enrollment constraint plus
 One rendered channel step.
 
 - lane, theme key/index, and step index;
-- frozen subject/body;
+- frozen subject/body and, for an attached LinkedIn asset, its kind, reference,
+  MIME type, byte size, and SHA-256 digest;
 - `scheduled_at` and `sent_at`;
 - status: `planned`, `queued`, `sending`, `sent`, `failed`, `unclear`, `stopped`;
 - concrete link to its one active `Task`;
@@ -442,9 +454,17 @@ The handler receives an already-claimed Task and:
 3. confirms the existing Deal/connection state permits LinkedIn messaging;
 4. verifies the same-channel predecessor and timing;
 5. reserves one attempt in a short transaction;
-6. passes an `on_submit_attempt` callback to the chosen UI action; immediately before the click, that callback rechecks stopped/ownership state and commits `submission_attempted_at`;
-7. sends through one chosen existing direct-message UI route returning `sent`, `pre_submit_failed`, or `unclear`;
-8. records success in `crm.Message`, delivery, and attempt without changing `Deal.state`.
+6. resolves any frozen GIF or MP4 and verifies its MIME type, byte size, and
+   SHA-256 before browser mutation;
+7. uploads the optional asset and types the body through the strict direct
+   message UI route;
+8. passes an `on_submit_attempt` callback to the chosen UI action after upload
+   and typing; immediately before the click, that callback rechecks
+   stopped/ownership state and commits `submission_attempted_at`;
+9. sends through that one route, returning `sent`, `pre_submit_failed`, or
+   `unclear`; and
+10. records success and media evidence in `crm.Message`, delivery, and attempt
+    without changing `Deal.state`.
 
 Do not use the current popup -> direct -> API fallback chain for drip. Once a send click may have occurred, a timeout or missing confirmation pauses the LinkedIn delivery as `unclear`. It is not sent again automatically through another route.
 
@@ -590,9 +610,13 @@ Only after the pilot passes should the daily reconciler be scheduled broadly.
 
 ### Manifest and domain
 
-- schema, canonical ICP, canonical sender, placeholder, and timing validation;
+- schema, canonical ICP, canonical sender, placeholder, timing, and optional
+  LinkedIn media validation;
+- Gmail media rejection and deterministic content-hash changes when linked
+  media bytes change;
 - immutable version snapshots and deterministic rendering;
 - enrollment/lane uniqueness and state transitions;
+- all-or-none frozen delivery media metadata restricted to LinkedIn lanes;
 - one executable Task per delivery.
 
 ### Handoff and timing

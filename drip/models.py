@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -363,6 +365,16 @@ class DripDelivery(models.Model):
     step_index = models.PositiveIntegerField()
     frozen_subject = models.CharField(max_length=998, blank=True, default="")
     frozen_body = models.TextField()
+    frozen_media_kind = models.CharField(
+        max_length=16,
+        choices=(("gif", "GIF"), ("video", "Video")),
+        blank=True,
+        default="",
+    )
+    frozen_media_reference = models.CharField(max_length=500, blank=True, default="")
+    frozen_media_mime_type = models.CharField(max_length=100, blank=True, default="")
+    frozen_media_size_bytes = models.PositiveBigIntegerField(null=True, blank=True)
+    frozen_media_sha256 = models.CharField(max_length=64, blank=True, default="")
     scheduled_at = models.DateTimeField()
     sent_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
@@ -416,9 +428,53 @@ class DripDelivery(models.Model):
         if self.lane_id and self.lane.channel == DripLane.Channel.LINKEDIN:
             if self.frozen_subject:
                 raise ValidationError({"frozen_subject": "LinkedIn deliveries do not have subjects."})
+        media_values = (
+            bool(self.frozen_media_kind),
+            bool(self.frozen_media_reference),
+            bool(self.frozen_media_mime_type),
+            self.frozen_media_size_bytes is not None,
+            bool(self.frozen_media_sha256),
+        )
+        if any(media_values) and not all(media_values):
+            raise ValidationError(
+                "Frozen media metadata must be entirely populated or entirely blank.",
+            )
+        if all(media_values):
+            if not self.lane_id or self.lane.channel != DripLane.Channel.LINKEDIN:
+                raise ValidationError("Frozen media is permitted only on LinkedIn deliveries.")
+            expected_mime_type = {
+                "gif": "image/gif",
+                "video": "video/mp4",
+            }.get(self.frozen_media_kind)
+            if expected_mime_type != self.frozen_media_mime_type:
+                raise ValidationError(
+                    {"frozen_media_mime_type": "Media kind and MIME type do not match."},
+                )
+            if not self.frozen_media_size_bytes or self.frozen_media_size_bytes > 20 * 1024 * 1024:
+                raise ValidationError(
+                    {"frozen_media_size_bytes": "Media size must be between 1 byte and 20 MiB."},
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", self.frozen_media_sha256):
+                raise ValidationError(
+                    {"frozen_media_sha256": "Media SHA-256 must be 64 lowercase hexadecimal characters."},
+                )
 
     def save(self, *args, **kwargs) -> None:
         self.provider_account = (self.provider_account or "").strip().lower()
+        self.frozen_media_kind = (self.frozen_media_kind or "").strip().lower()
+        self.frozen_media_reference = (self.frozen_media_reference or "").strip()
+        self.frozen_media_mime_type = (self.frozen_media_mime_type or "").strip().lower()
+        self.frozen_media_sha256 = (self.frozen_media_sha256 or "").strip().lower()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {
+                "provider_account",
+                "frozen_media_kind",
+                "frozen_media_reference",
+                "frozen_media_mime_type",
+                "frozen_media_size_bytes",
+                "frozen_media_sha256",
+            }
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:

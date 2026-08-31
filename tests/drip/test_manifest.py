@@ -1,9 +1,12 @@
 from copy import deepcopy
+import hashlib
+from pathlib import Path
 
 import pytest
 
 from drip.exceptions import ManifestValidationError
 from drip.manifest import render_template, validate_manifest
+from linkedin.message_media import resolve_linkedin_media
 
 
 def test_valid_manifest_normalizes_and_hashes_deterministically(valid_drip_payload):
@@ -12,7 +15,7 @@ def test_valid_manifest_normalizes_and_hashes_deterministically(valid_drip_paylo
         "audiences": valid_drip_payload["audiences"],
         "name": valid_drip_payload["name"],
         "campaign_key": valid_drip_payload["campaign_key"],
-        "schema_version": 1,
+        "schema_version": 2,
     }
     second = validate_manifest(reordered)
 
@@ -67,6 +70,123 @@ def test_gmail_subject_is_constant_across_themes_in_one_lane(valid_drip_payload)
     ] = "A new theme and a competing thread subject"
 
     with pytest.raises(ManifestValidationError, match="one lane uses one thread"):
+        validate_manifest(payload)
+
+
+def test_linkedin_media_is_resolved_and_frozen_in_normalized_manifest(
+    valid_drip_payload,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][
+        0
+    ]["media"] = {"type": "gif", "file": "demo.gif"}
+
+    validated = validate_manifest(payload)
+
+    media = validated.normalized["audiences"]["CSPs"]["themes"][0]["senders"][
+        "Arian"
+    ]["linkedin"][0]["media"]
+    asset_path = Path("assets/follow_up/demo.gif")
+    assert media == {
+        "type": "gif",
+        "file": "demo.gif",
+        "mime_type": "image/gif",
+        "size_bytes": asset_path.stat().st_size,
+        "sha256": hashlib.sha256(asset_path.read_bytes()).hexdigest(),
+    }
+
+
+def test_linkedin_video_media_is_accepted(valid_drip_payload, monkeypatch, tmp_path):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][
+        0
+    ]["media"] = {"type": "video", "file": "overview.mp4"}
+    asset_root = tmp_path / "assets" / "follow_up"
+    asset_root.mkdir(parents=True)
+    asset_path = asset_root / "overview.mp4"
+    asset_path.write_bytes((12).to_bytes(4, "big") + b"ftyp" + b"isom")
+
+    def _resolver(reference, **kwargs):
+        return resolve_linkedin_media(reference, root_dir=tmp_path, **kwargs)
+
+    monkeypatch.setattr("drip.manifest.resolve_linkedin_media", _resolver)
+
+    validated = validate_manifest(payload)
+
+    media = validated.normalized["audiences"]["CSPs"]["themes"][0]["senders"][
+        "Arian"
+    ]["linkedin"][0]["media"]
+    assert media["type"] == "video"
+    assert media["mime_type"] == "video/mp4"
+    assert media["size_bytes"] == 12
+
+
+def test_manifest_hash_changes_when_media_bytes_change(
+    valid_drip_payload,
+    monkeypatch,
+    tmp_path,
+):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][
+        0
+    ]["media"] = {"type": "gif", "file": "changing.gif"}
+    asset_root = tmp_path / "assets" / "follow_up"
+    asset_root.mkdir(parents=True)
+    asset_path = asset_root / "changing.gif"
+    asset_path.write_bytes(b"GIF89a-alpha")
+
+    def _resolver(reference, **kwargs):
+        return resolve_linkedin_media(reference, root_dir=tmp_path, **kwargs)
+
+    monkeypatch.setattr("drip.manifest.resolve_linkedin_media", _resolver)
+    first = validate_manifest(payload)
+    asset_path.write_bytes(b"GIF89a-bravo")
+    second = validate_manifest(payload)
+
+    assert first.content_hash != second.content_hash
+    first_media = first.normalized["audiences"]["CSPs"]["themes"][0]["senders"][
+        "Arian"
+    ]["linkedin"][0]["media"]
+    second_media = second.normalized["audiences"]["CSPs"]["themes"][0]["senders"][
+        "Arian"
+    ]["linkedin"][0]["media"]
+    assert first_media["sha256"] != second_media["sha256"]
+    assert first_media["size_bytes"] == second_media["size_bytes"]
+
+
+def test_gmail_rejects_media(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["gmail"][0][
+        "media"
+    ] = {"type": "gif", "file": "demo.gif"}
+
+    with pytest.raises(ManifestValidationError, match=r"unknown key\(s\): media"):
+        validate_manifest(payload)
+
+
+@pytest.mark.parametrize(
+    ("media", "message"),
+    [
+        ({"type": "image", "file": "demo.gif"}, "either 'gif' or 'video'"),
+        ({"type": "gif", "file": "missing.gif"}, "does not exist"),
+        ({"type": "gif", "file": "demo.gif", "caption": "no"}, "unknown key"),
+    ],
+)
+def test_linkedin_rejects_invalid_media(valid_drip_payload, media, message):
+    payload = deepcopy(valid_drip_payload)
+    payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"]["linkedin"][
+        0
+    ]["media"] = media
+
+    with pytest.raises(ManifestValidationError, match=message):
+        validate_manifest(payload)
+
+
+def test_manifest_rejects_obsolete_schema_version(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    payload["schema_version"] = 1
+
+    with pytest.raises(ManifestValidationError, match="must equal 2"):
         validate_manifest(payload)
 
 

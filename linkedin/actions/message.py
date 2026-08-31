@@ -3,11 +3,14 @@ import json
 import logging
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from typing import Dict, Any
 
 from playwright.sync_api import Error as PlaywrightError
 from linkedin.browser.nav import goto_page, human_type
+
+if TYPE_CHECKING:
+    from linkedin.message_media import LinkedInMediaAsset
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,36 @@ SELECTORS = {
     "compose_input": 'div[class^="msg-form__contenteditable"]',
     "compose_send": 'button[class^="msg-form__send-button"]',
 }
+
+DIRECT_COMPOSER_SELECTOR = 'form[class*="msg-form"]:visible'
+DIRECT_COMPOSER_INPUT_SELECTOR = 'div[class*="msg-form__contenteditable"]:visible'
+DIRECT_COMPOSER_SEND_SELECTOR = (
+    'button[type="submit"][class*="msg-form"]:visible, '
+    'button[class^="msg-form__send-button"]:visible'
+)
+DIRECT_MEDIA_FILE_INPUT_SELECTOR = 'input[type="file"]'
+DIRECT_MEDIA_ATTACHMENT_READY_SELECTOR = (
+    '[class*="msg-form__attachment-preview"]:visible, '
+    '[class*="msg-form__attachment-list-item"]:visible, '
+    '[class*="msg-form__upload-data"]:visible, '
+    'button[aria-label*="Remove attachment" i]:visible, '
+    'button[aria-label*="Remove file" i]:visible'
+)
+DIRECT_MEDIA_UPLOAD_BUSY_SELECTOR = (
+    '[class*="uploading"]:visible, '
+    '[class*="upload-progress"]:visible, '
+    '[role="progressbar"]:visible, '
+    '[aria-label*="Uploading" i]:visible'
+)
+DIRECT_MEDIA_UPLOAD_ERROR_SELECTOR = (
+    '[class*="upload-error"]:visible, '
+    '[class*="attachment-error"]:visible, '
+    '[aria-label*="upload failed" i]:visible, '
+    '[aria-label*="could not upload" i]:visible'
+)
+DIRECT_MEDIA_UPLOAD_TIMEOUT_MS = 90_000
+DIRECT_MEDIA_SEND_READY_TIMEOUT_MS = 15_000
+DIRECT_MEDIA_POLL_INTERVAL_MS = 250
 
 
 class MessageSendError(RuntimeError):
@@ -47,13 +80,161 @@ class DirectMessageResult:
     detail: str = ""
 
 
-def _direct_message_submission_confirmed(page, message: str) -> bool:
+def _locator_has_visible_match(locator) -> bool:
+    """Return whether a potentially multi-element locator has a visible match."""
+    for index in range(locator.count()):
+        if locator.nth(index).is_visible(timeout=500):
+            return True
+    return False
+
+
+def _resolve_direct_composer(page):
+    """Return the sole visible direct-route composer, or fail closed."""
+    composers = page.locator(DIRECT_COMPOSER_SELECTOR)
+    if composers.count() != 1:
+        return None
+    composer = composers.first
+    if (
+        composer.locator(DIRECT_COMPOSER_INPUT_SELECTOR).count() != 1
+        or composer.locator(DIRECT_COMPOSER_SEND_SELECTOR).count() != 1
+    ):
+        return None
+    return composer
+
+
+def _select_direct_media_input(composer, media: "LinkedInMediaAsset"):
+    """Choose one unambiguous file control compatible with the frozen MIME."""
+    inputs = composer.locator(DIRECT_MEDIA_FILE_INPUT_SELECTOR)
+    ranked: list[tuple[tuple[int, int], int]] = []
+    media_family = media.mime_type.split("/", 1)[0]
+    media_suffix = media.path.suffix.casefold()
+    for index in range(inputs.count()):
+        candidate = inputs.nth(index)
+        accept = (candidate.get_attribute("accept", timeout=500) or "").casefold()
+        accept_tokens = {
+            token.strip()
+            for token in accept.split(",")
+            if token.strip()
+        }
+        if media.mime_type.casefold() in accept_tokens:
+            score = 4
+        elif media_suffix in accept_tokens:
+            score = 3
+        elif f"{media_family}/*" in accept or media_family in accept:
+            score = 2
+        elif not accept or "*/*" in accept:
+            score = 1
+        else:
+            continue
+        # When two controls accept the same family, prefer the narrower one.
+        # LinkedIn currently exposes both an image-only input and a broad file
+        # input that also includes image/*; a GIF must bind to the former,
+        # while MP4 matches only the latter by exact suffix.
+        ranked.append(((score, -len(accept_tokens)), index))
+    if not ranked:
+        return None
+    best_score = max(score for score, _index in ranked)
+    best = [index for score, index in ranked if score == best_score]
+    if len(best) != 1:
+        return None
+    return inputs.nth(best[0])
+
+
+def _direct_media_input_has_file(file_input, media: "LinkedInMediaAsset") -> bool:
+    """Use the browser's selected filename as attachment evidence when present."""
+    value = (file_input.input_value(timeout=500) or "").replace("\\", "/")
+    return value.rsplit("/", 1)[-1] == media.path.name
+
+
+def _direct_media_attachment_ready(
+    composer,
+    file_input,
+    media: "LinkedInMediaAsset",
+    *,
+    require_visible_preview: bool = False,
+) -> bool:
+    """Check that LinkedIn accepted the asset and is not visibly uploading it."""
+    if _locator_has_visible_match(
+        composer.locator(DIRECT_MEDIA_UPLOAD_ERROR_SELECTOR),
+    ):
+        return False
+    if _locator_has_visible_match(composer.locator(DIRECT_MEDIA_UPLOAD_BUSY_SELECTOR)):
+        return False
+
+    preview_visible = _locator_has_visible_match(
+        composer.locator(DIRECT_MEDIA_ATTACHMENT_READY_SELECTOR),
+    )
+    if preview_visible:
+        return True
+    if require_visible_preview:
+        return False
+
+    # LinkedIn has shipped composer variants without a filename-bearing preview.
+    # In those variants the selected file plus an enabled media-only Send button
+    # is the strongest available upload-ready signal before typing the body.
+    if not _direct_media_input_has_file(file_input, media):
+        return False
+    return composer.locator(DIRECT_COMPOSER_SEND_SELECTOR).first.is_enabled(timeout=500)
+
+
+def _wait_for_direct_media_attachment(
+    page,
+    composer,
+    file_input,
+    media: "LinkedInMediaAsset",
+) -> bool:
+    """Poll LinkedIn's composer state until the attachment is stably ready."""
+    attempts = max(
+        1,
+        DIRECT_MEDIA_UPLOAD_TIMEOUT_MS // DIRECT_MEDIA_POLL_INTERVAL_MS,
+    )
+    consecutive_ready = 0
+    for attempt in range(attempts):
+        if _direct_media_attachment_ready(composer, file_input, media):
+            consecutive_ready += 1
+            if consecutive_ready >= 2:
+                return True
+        else:
+            consecutive_ready = 0
+        if attempt + 1 < attempts:
+            page.wait_for_timeout(DIRECT_MEDIA_POLL_INTERVAL_MS)
+    return False
+
+
+def _wait_for_direct_send_enabled(
+    page,
+    composer,
+    *,
+    file_input=None,
+    media: "LinkedInMediaAsset | None" = None,
+) -> bool:
+    """Poll the same composer and re-prove its attachment before submission."""
+    attempts = max(
+        1,
+        DIRECT_MEDIA_SEND_READY_TIMEOUT_MS // DIRECT_MEDIA_POLL_INTERVAL_MS,
+    )
+    send_button = composer.locator(DIRECT_COMPOSER_SEND_SELECTOR).first
+    for attempt in range(attempts):
+        media_ready = media is None or _direct_media_attachment_ready(
+            composer,
+            file_input,
+            media,
+            require_visible_preview=True,
+        )
+        if media_ready and send_button.is_enabled(timeout=500):
+            return True
+        if attempt + 1 < attempts:
+            page.wait_for_timeout(DIRECT_MEDIA_POLL_INTERVAL_MS)
+    return False
+
+
+def _direct_message_submission_confirmed(page, composer, message: str) -> bool:
     """Confirm the direct composer cleared or the exact body rendered."""
     event_selector = "div.msg-s-event-listitem, li.msg-s-message-list__event"
     for _attempt in range(12):
         try:
-            composer = page.locator(SELECTORS["compose_input"]).first
-            if not (composer.inner_text(timeout=500) or "").strip():
+            editor = composer.locator(DIRECT_COMPOSER_INPUT_SELECTOR).first
+            if not (editor.inner_text(timeout=500) or "").strip():
                 return True
         except PlaywrightError:
             pass
@@ -77,13 +258,16 @@ def send_direct_message_once(
     *,
     recipient_label: str,
     on_submit_attempt: Callable[[], None],
+    media: "LinkedInMediaAsset | None" = None,
 ) -> DirectMessageResult:
     """Send to one already-reviewed member URN through one compose route.
 
-    The callback runs after typing and immediately before the only send click.
-    Once it returns successfully, any Playwright error or missing confirmation
-    is classified as ``unclear`` because the click may have reached LinkedIn.
-    No mutable Lead lookup, popup route, or Voyager API fallback is attempted.
+    For a media send, the already-validated asset is attached and its composer
+    state is polled before typing. The callback runs after upload and typing,
+    immediately before the only send click. Once it returns successfully, any
+    Playwright error or missing confirmation is classified as ``unclear``
+    because the click may have reached LinkedIn. No mutable Lead lookup, popup
+    route, or Voyager API fallback is attempted.
     """
     from linkedin.api.messaging import encode_urn
     from linkedin.member_identity import normalize_member_urn, valid_member_urn
@@ -106,13 +290,67 @@ def send_direct_message_once(
             error_message="Error opening direct compose",
         )
         session.wait(0.5, 1.2)
-        human_type(session.page.locator(SELECTORS["compose_input"]), message)
+
+        composer = _resolve_direct_composer(session.page)
+        if composer is None:
+            return DirectMessageResult(
+                DirectMessageOutcome.PRE_SUBMIT_FAILED,
+                "LinkedIn direct route did not expose exactly one usable composer",
+            )
+
+        file_input = None
+        if media is not None:
+            file_input = _select_direct_media_input(composer, media)
+            if file_input is None:
+                return DirectMessageResult(
+                    DirectMessageOutcome.PRE_SUBMIT_FAILED,
+                    "LinkedIn direct composer did not expose one compatible media file input",
+                )
+            file_input.set_input_files(str(media.path))
+            if not _wait_for_direct_media_attachment(
+                session.page,
+                composer,
+                file_input,
+                media,
+            ):
+                return DirectMessageResult(
+                    DirectMessageOutcome.PRE_SUBMIT_FAILED,
+                    f"LinkedIn did not finish attaching {media.reference}",
+                )
+
+        human_type(composer.locator(DIRECT_COMPOSER_INPUT_SELECTOR), message)
         session.wait(0.4, 0.9)
+
+        if not _wait_for_direct_send_enabled(
+            session.page,
+            composer,
+            file_input=file_input,
+            media=media,
+        ):
+            return DirectMessageResult(
+                DirectMessageOutcome.PRE_SUBMIT_FAILED,
+                (
+                    f"LinkedIn Send did not retain {media.reference} in the intended composer"
+                    if media is not None
+                    else "LinkedIn Send did not become ready in the intended composer"
+                ),
+            )
 
         on_submit_attempt()
         submission_boundary_crossed = True
-        session.page.locator(SELECTORS["compose_send"]).click(delay=200)
-        if not _direct_message_submission_confirmed(session.page, message):
+        if media is not None and not _direct_media_attachment_ready(
+            composer,
+            file_input,
+            media,
+            require_visible_preview=True,
+        ):
+            return DirectMessageResult(
+                DirectMessageOutcome.UNCLEAR,
+                "Submit boundary committed but the intended composer no longer proved "
+                f"attachment {media.reference}; no click was attempted",
+            )
+        composer.locator(DIRECT_COMPOSER_SEND_SELECTOR).click(delay=200)
+        if not _direct_message_submission_confirmed(session.page, composer, message):
             return DirectMessageResult(
                 DirectMessageOutcome.UNCLEAR,
                 "Send click occurred but LinkedIn did not confirm the message",
@@ -334,106 +572,6 @@ def _send_message_via_api(
         return True
     except Exception as e:
         logger.error("API send failed for %s → %s", public_identifier, e)
-        return False
-
-
-def send_media_message(
-    session,
-    profile: Dict[str, Any],
-    message: str,
-    media_path: str,
-    *,
-    deal_id: int | None = None,
-    sequence_name: str = "",
-    step_index: int | None = None,
-    operator: str = "",
-) -> bool:
-    """Send a message + media attachment via the URN-keyed direct compose URL.
-
-    Mirrors `_send_message`'s single-nav pattern: navigate once to
-    `/messaging/thread/new/?recipient=<URN>` (recipient attached by URL —
-    no search, no click), attach the file via the hidden file input,
-    human_type the body, click Send.
-
-    Previously this resolved the existing conversation URN (API first,
-    navigation fallback) and then navigated to `/messaging/thread/<id>/`,
-    which produced a visible double-nav whenever the conv URN wasn't in
-    the recent-conversations cache — the fallback navigation to
-    `/messaging/thread/new/?recipient=<URN>` left the page on the
-    compose, then we'd immediately goto the thread URL on top of it.
-    Hemang Bhatt incident, 2026-05-12. The compose URL already renders
-    the file input + send button, so the conv-URN lookup wasn't earning
-    its second navigation.
-    """
-    import time
-    from linkedin.api.messaging import encode_urn
-    from linkedin.db.chat import save_chat_message
-    from linkedin.db.leads import resolve_urn
-
-    public_identifier = profile.get("public_identifier")
-    page = session.page
-
-    target_urn = resolve_urn(public_identifier, session=session)
-    if not target_urn:
-        logger.error("Cannot resolve URN for %s — media send failed", public_identifier)
-        return False
-
-    direct_url = f"{LINKEDIN_MESSAGING_URL}?recipient={encode_urn(target_urn)}"
-
-    try:
-        goto_page(
-            session,
-            action=lambda: page.goto(direct_url),
-            expected_url_pattern="/messaging",
-            timeout=30_000,
-            error_message="Error opening direct compose for media send",
-        )
-        session.wait()
-
-        # Attach file via hidden file input
-        file_input = page.locator('input[type="file"]')
-        if file_input.count() == 0:
-            logger.error("No file input found on messaging page for %s", public_identifier)
-            return False
-
-        file_input.first.set_input_files(media_path)
-        logger.debug("Media attached via file input: %s", media_path)
-        time.sleep(3)
-        session.wait()
-
-        # Type message if provided. human_type uses per-keystroke randomized
-        # cadence (HUMAN_TYPE_MIN/MAX_DELAY_MS) and is multi-line safe
-        # (\n → Shift+Enter). fill() pasted the entire body in one shot,
-        # which read as bot-like in-thread (2026-05-12 operator report).
-        if message:
-            msg_input = page.locator(SELECTORS["message_input"])
-            if msg_input.count() > 0:
-                human_type(msg_input.first, message)
-                session.wait()
-
-        # Click send
-        send_btn = page.locator(SELECTORS["send_button"])
-        if send_btn.count() == 0:
-            logger.error("Send button not found after attaching media for %s", public_identifier)
-            return False
-
-        send_btn.first.click(force=True)
-        session.wait(3, 4)
-
-        save_chat_message(
-            session,
-            public_identifier,
-            message or "[media]",
-            deal_id=deal_id,
-            sequence_name=sequence_name,
-            step_index=step_index,
-            operator=operator,
-        )
-        logger.info("Media message sent to %s", public_identifier)
-        return True
-
-    except Exception as e:
-        logger.error("Media send failed for %s → %s", public_identifier, e)
         return False
 
 

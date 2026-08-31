@@ -23,6 +23,7 @@ from linkedin.tasks.connect import (
     recommended_action_delay,
 )
 from linkedin.tasks.follow_up import (
+    _MediaFollowUpOutcome,
     _delay_seconds_to_active_due,
     _normalize_linkedin_due_at,
     handle_follow_up,
@@ -836,7 +837,10 @@ class TestHandleFollowUp:
 
         assert delay == pytest.approx(0.33 * 3600, abs=1)
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_sends_icp_dm_when_no_reply(
@@ -884,13 +888,10 @@ class TestHandleFollowUp:
             payload__public_id="alice",
         ).exclude(pk=task.pk).get()
         assert next_task.payload["step_index"] == 1
-        # Template has `{add demo.gif}` so the send routes through
-        # send_media_message when the file exists in assets/follow_up/.
-        # In the test env that path resolves, so we expect the media send.
-        # If demo.gif is missing, the placeholder is stripped and the
-        # send falls back to send_raw_message — handle either.
+        # Template has `{add demo.gif}` so the send routes through the strict
+        # media helper when the file exists in assets/follow_up/.
         sent_message = (
-            mock_send_media.call_args.args[2] if mock_send_media.called
+            mock_send_media.call_args.kwargs["body"] if mock_send_media.called
             else mock_send.call_args.args[2]
         )
         assert "{our_company_name}" not in sent_message
@@ -904,7 +905,10 @@ class TestHandleFollowUp:
         assert send_kwargs["step_index"] == 0
         assert send_kwargs["operator"] == "Arian"
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_follow_up_uses_persisted_lead_icp_not_role_fallback(
@@ -942,13 +946,16 @@ class TestHandleFollowUp:
         handle_follow_up(task, fake_session, _build_context(fake_session))
 
         sent_message = (
-            mock_send_media.call_args.args[2] if mock_send_media.called
+            mock_send_media.call_args.kwargs["body"] if mock_send_media.called
             else mock_send.call_args.args[2]
         )
         assert "CMMC" in sent_message
         assert "FedRAMP 20x" not in sent_message
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_follow_up_uses_queued_icp_for_in_process_sequence(
@@ -986,13 +993,16 @@ class TestHandleFollowUp:
         handle_follow_up(task, fake_session, _build_context(fake_session))
 
         sent_message = (
-            mock_send_media.call_args.args[2] if mock_send_media.called
+            mock_send_media.call_args.kwargs["body"] if mock_send_media.called
             else mock_send.call_args.args[2]
         )
         assert "CMMC" in sent_message
         assert "FedRAMP 20x" not in sent_message
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_sends_when_connection_note_echo_has_lead_as_sender(
@@ -1211,7 +1221,7 @@ class TestHandleFollowUp:
 
     @patch("linkedin.actions.message.send_raw_message")
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
-    def test_skips_when_same_sequence_step_already_sent(
+    def test_exact_sent_step_dedupes_and_schedules_successor(
         self, mock_conversation, mock_send, fake_session,
     ):
         from crm.models import Deal, Lead, Message
@@ -1255,8 +1265,14 @@ class TestHandleFollowUp:
 
         handle_follow_up(task, fake_session, _build_context(fake_session))
 
-        _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
+        _assert_deal_state(fake_session, "alice", ProfileState.CONNECTED)
         mock_send.assert_not_called()
+        successor = Task.objects.exclude(pk=task.pk).get(
+            task_type=Task.TaskType.FOLLOW_UP,
+            status=Task.Status.PENDING,
+            payload__public_id="alice",
+        )
+        assert successor.payload["step_index"] == 1
 
     @patch("linkedin.actions.message.send_raw_message")
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
@@ -1423,7 +1439,10 @@ class TestHandleFollowUp:
         _assert_deal_state(fake_session, "alice", ProfileState.COMPLETED)
         mock_send.assert_not_called()
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_rechecks_persisted_stop_at_send_boundary(
@@ -1458,7 +1477,10 @@ class TestHandleFollowUp:
         mock_send.assert_not_called()
         mock_send_media.assert_not_called()
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_skips_when_same_operator_already_followed_up(
@@ -1496,7 +1518,10 @@ class TestHandleFollowUp:
             action_type=ActionLog.ActionType.FOLLOW_UP
         ).count() == 0
 
-    @patch("linkedin.actions.message.send_media_message", return_value=True)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.SENT,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=True)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_sends_when_only_a_different_operator_followed_up(
@@ -1547,7 +1572,10 @@ class TestHandleFollowUp:
         assert next_task.payload["step_index"] == 1
         assert mock_send.called or mock_send_media.called
 
-    @patch("linkedin.actions.message.send_media_message", return_value=False)
+    @patch(
+        "linkedin.tasks.follow_up._send_media_follow_up",
+        return_value=_MediaFollowUpOutcome.RETRYABLE_FAILURE,
+    )
     @patch("linkedin.actions.message.send_raw_message", return_value=False)
     @patch("linkedin.actions.conversations.get_conversation", return_value=None)
     def test_reenqueues_in_24h_on_send_failure(

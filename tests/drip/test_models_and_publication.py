@@ -10,6 +10,7 @@ from drip.manifest import validate_manifest
 from drip.models import (
     DripCampaign,
     DripCampaignVersion,
+    DripDelivery,
     DripEnrollment,
     DripLane,
 )
@@ -222,3 +223,66 @@ def test_campaign_version_constraint_rejects_cross_campaign_reference(
 
 def test_published_version_model_is_registered():
     assert DripCampaignVersion._meta.app_label == "drip"
+
+
+def test_delivery_media_metadata_is_all_or_none_and_linkedin_only(
+    valid_drip_payload,
+):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = Lead.objects.create(first_name="Ada", email="ada@example.com", icp="CSPs")
+    enrollment = _enrollment(
+        campaign=published.campaign,
+        version=published.version,
+        lead=lead,
+    )
+    linkedin_lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity="https://www.linkedin.com/in/ada/",
+        linkedin_member_urn="urn:li:fsd_profile:ada",
+    )
+    gmail_lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity="ada@example.com",
+    )
+    fields = {
+        "theme_key": "visibility_gap",
+        "theme_index": 0,
+        "step_index": 0,
+        "frozen_body": "Body",
+        "scheduled_at": timezone.now(),
+        "provider_account": linkedin_lane.provider_account,
+    }
+    partial = DripDelivery(
+        lane=linkedin_lane,
+        frozen_media_kind="gif",
+        **fields,
+    )
+    with pytest.raises(ValidationError, match="entirely populated or entirely blank"):
+        partial.full_clean()
+
+    media = {
+        "frozen_media_kind": "gif",
+        "frozen_media_reference": "demo.gif",
+        "frozen_media_mime_type": "image/gif",
+        "frozen_media_size_bytes": 100,
+        "frozen_media_sha256": "a" * 64,
+    }
+    linked_delivery = DripDelivery(lane=linkedin_lane, **fields, **media)
+    linked_delivery.full_clean()
+
+    gmail_fields = {
+        **fields,
+        "frozen_subject": "Subject",
+        "provider_account": gmail_lane.provider_account,
+    }
+    gmail_delivery = DripDelivery(lane=gmail_lane, **gmail_fields, **media)
+    with pytest.raises(ValidationError, match="only on LinkedIn"):
+        gmail_delivery.full_clean()
