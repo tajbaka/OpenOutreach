@@ -424,7 +424,11 @@ def handle_follow_up(task, session, qualifiers):
     step_index = int(payload.get("step_index") or 0)
     queued_icp = (payload.get("icp") or "").strip()
 
-    if submission_attempted(payload) and not persisted_submission_evidence(payload):
+    submission_was_attempted = submission_attempted(payload)
+    submission_evidence_persisted = (
+        persisted_submission_evidence(payload) if submission_was_attempted else False
+    )
+    if submission_was_attempted and not submission_evidence_persisted:
         from linkedin.exceptions import LinkedInMessageSubmissionUnclearError
 
         raise LinkedInMessageSubmissionUnclearError(
@@ -479,10 +483,15 @@ def handle_follow_up(task, session, qualifiers):
             f"Lead {deal.lead_id} / {our_operator}; automatic send is blocked"
         )
 
-    # Rate limit deferral happens only after durable uncertainty is checked.
+    # Rate-limit deferral happens only after durable uncertainty is checked.
     # Otherwise a sibling campaign Task could manufacture an unmarked retry
-    # for a send whose provider outcome is already ambiguous.
-    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
+    # for a send whose provider outcome is already ambiguous. A recovered
+    # media Task with exact persisted evidence bypasses quota because its only
+    # remaining work is the dedupe/successor/state repair below.
+    if (
+        not submission_evidence_persisted
+        and not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP)
+    ):
         enqueue_follow_up(
             campaign_id, public_id,
             operator=our_operator,
@@ -587,11 +596,14 @@ def handle_follow_up(task, session, qualifiers):
     # follow-up sends (`save_chat_message`). Also closes the latent same-
     # campaign re-send hole when a prior send succeeded but its
     # `set_profile_state` write failed.
-    step_already_sent = _has_sent_sequence_step(
-        deal=deal,
-        operator=our_operator,
-        sequence_name=sequence_name,
-        step_index=step_index,
+    step_already_sent = (
+        submission_evidence_persisted
+        or _has_sent_sequence_step(
+            deal=deal,
+            operator=our_operator,
+            sequence_name=sequence_name,
+            step_index=step_index,
+        )
     )
 
     # Prefer exact current-sequence evidence when it exists. In particular, a

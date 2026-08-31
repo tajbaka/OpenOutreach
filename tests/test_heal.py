@@ -287,7 +287,7 @@ class TestHealTasks:
             payload__operator=daemon_operator,
         ).exists()
 
-    def test_stale_media_follow_up_with_exact_message_requeues_for_dedup(
+    def test_stale_media_follow_up_with_exact_message_bypasses_quota_for_dedup(
         self,
         fake_session,
         tmp_path,
@@ -364,6 +364,11 @@ class TestHealTasks:
             lambda *args, **kwargs: pytest.fail(
                 "recovered confirmed media step must not send again"
             ),
+        )
+        monkeypatch.setattr(
+            type(fake_session.linkedin_profile),
+            "can_execute",
+            lambda *args, **kwargs: False,
         )
 
         task.status = Task.Status.RUNNING
