@@ -9,10 +9,11 @@ from pathlib import Path
 from string import Formatter
 from typing import Any, Mapping
 
-from drip.exceptions import ManifestValidationError
+from drip.exceptions import LinkAttributionError, ManifestValidationError
+from drip.link_attribution import canonical_destination_url, reserved_references_in_text
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 ALLOWED_PLACEHOLDERS = frozenset(
     {
         "first_name",
@@ -21,6 +22,7 @@ ALLOWED_PLACEHOLDERS = frozenset(
         "my_name",
         "our_company_name",
         "our_website_url",
+        "tracked_link",
     },
 )
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -83,12 +85,12 @@ def _validate_key(value: Any, *, path: str) -> str:
     return key
 
 
-def _placeholder_names(value: str, *, path: str) -> set[str]:
+def _placeholder_fields(value: str, *, path: str) -> tuple[str, ...]:
     try:
         parsed = list(_FORMATTER.parse(value))
     except ValueError as exc:
         _fail(path, f"contains invalid braces: {exc}")
-    names: set[str] = set()
+    names: list[str] = []
     for _literal, field_name, format_spec, conversion in parsed:
         if field_name is None:
             continue
@@ -98,11 +100,15 @@ def _placeholder_names(value: str, *, path: str) -> set[str]:
             _fail(path, f"uses unsupported placeholder expression {{{field_name}}}")
         if format_spec or conversion:
             _fail(path, f"uses unsupported formatting on {{{field_name}}}")
-        names.add(field_name)
-    unknown = sorted(names - ALLOWED_PLACEHOLDERS)
+        names.append(field_name)
+    unknown = sorted(set(names) - ALLOWED_PLACEHOLDERS)
     if unknown:
         _fail(path, f"uses unsupported placeholder(s): {', '.join(unknown)}")
-    return names
+    return tuple(names)
+
+
+def _placeholder_names(value: str, *, path: str) -> set[str]:
+    return set(_placeholder_fields(value, path=path))
 
 
 def _normalize_step(
@@ -115,7 +121,7 @@ def _normalize_step(
 ) -> dict[str, Any]:
     step = _expect_object(value, path=path)
     required = {"delay_days", "body"}
-    optional: set[str] = set()
+    optional: set[str] = {"link"} if channel == "gmail" else set()
     if channel == "gmail" and step_index == 0:
         required.add("subject")
     elif channel == "gmail":
@@ -138,7 +144,9 @@ def _normalize_step(
             path=f"{path}.subject",
             max_length=998,
         )
-        _placeholder_names(subject, path=f"{path}.subject")
+        subject_fields = _placeholder_fields(subject, path=f"{path}.subject")
+        if "tracked_link" in subject_fields:
+            _fail(f"{path}.subject", "cannot use {tracked_link}")
         normalized["subject"] = subject
     elif channel == "gmail" and "subject" in step:
         subject = _nonblank_string(
@@ -146,7 +154,9 @@ def _normalize_step(
             path=f"{path}.subject",
             max_length=998,
         )
-        _placeholder_names(subject, path=f"{path}.subject")
+        subject_fields = _placeholder_fields(subject, path=f"{path}.subject")
+        if "tracked_link" in subject_fields:
+            _fail(f"{path}.subject", "cannot use {tracked_link}")
         if subject != gmail_thread_subject:
             _fail(
                 f"{path}.subject",
@@ -154,9 +164,35 @@ def _normalize_step(
             )
     body_limit = 8_000 if channel == "linkedin" else 100_000
     body = _nonblank_string(step["body"], path=f"{path}.body", max_length=body_limit)
-    _placeholder_names(body, path=f"{path}.body")
+    body_fields = _placeholder_fields(body, path=f"{path}.body")
+    if reserved_references_in_text(body):
+        _fail(f"{path}.body", "cannot contain a literal reserved ref=oo_ value")
     normalized["body"] = body
+    tracked_link_count = body_fields.count("tracked_link")
+    if "link" in step:
+        if channel != "gmail":
+            _fail(f"{path}.link", "is permitted only on Gmail steps")
+        if tracked_link_count != 1:
+            _fail(
+                f"{path}.body",
+                "must contain exactly one {tracked_link} placeholder when link is configured",
+            )
+        normalized["link"] = _normalize_link(step["link"], path=f"{path}.link")
+    elif tracked_link_count:
+        _fail(f"{path}.body", "uses {tracked_link} without a configured link")
     return normalized
+
+
+def _normalize_link(value: Any, *, path: str) -> dict[str, str]:
+    link = _expect_object(value, path=path)
+    _expect_exact_keys(link, path=path, required={"key", "url"})
+    link_key = _validate_key(link["key"], path=f"{path}.key")
+    raw_url = _nonblank_string(link["url"], path=f"{path}.url", max_length=2_048)
+    try:
+        destination_url = canonical_destination_url(raw_url)
+    except LinkAttributionError as exc:
+        _fail(f"{path}.url", str(exc))
+    return {"key": link_key, "url": destination_url}
 
 
 def _normalize_rendition(value: Any, *, path: str, channel: str) -> list[dict[str, Any]]:

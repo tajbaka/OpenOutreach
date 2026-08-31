@@ -4,12 +4,14 @@ import pytest
 from django.utils import timezone
 
 from crm.models import Lead, Message
+from drip.link_attribution import build_attributed_url
 from drip.manifest import validate_manifest
 from drip.models import (
     DripDelivery,
     DripDeliveryAttempt,
     DripEnrollment,
     DripLane,
+    DripTrackedLink,
 )
 from drip.services.publication import publish_manifest
 from drip.tasks.gmail import handle_drip_gmail, recover_stale_drip_gmail_task
@@ -153,6 +155,19 @@ def _queued_delivery(
     delivery.current_task = task
     delivery.save(update_fields={"status", "current_task", "updated_at"})
     return delivery, task
+
+
+def _attach_tracked_link(delivery, *, reference="oo_EjRWeJCrze8SNFZ4kKvN7w"):
+    destination = "https://boundera.io/fedramp-automation"
+    attributed = build_attributed_url(destination, reference)
+    link = DripTrackedLink.objects.create(
+        delivery=delivery,
+        reference=reference,
+        link_key="fedramp_automation",
+        destination_url=destination,
+        attributed_url=attributed,
+    )
+    return link
 
 
 def test_drip_gmail_opens_thread_and_persists_real_provider_ids(valid_drip_payload):
@@ -476,3 +491,98 @@ def test_stale_drip_gmail_does_not_requeue_while_lane_paused(valid_drip_payload)
     assert delivery.current_task_id is None
     assert attempt.outcome == DripDeliveryAttempt.Outcome.NOT_SUBMITTED
     assert task.status == Task.Status.COMPLETED
+
+
+def test_drip_gmail_sends_exact_tracked_link_and_persists_evidence(valid_drip_payload):
+    _lead, _enrollment, lane = _domain(valid_drip_payload)
+    reference = "oo_EjRWeJCrze8SNFZ4kKvN7w"
+    attributed = build_attributed_url(
+        "https://boundera.io/fedramp-automation",
+        reference,
+    )
+    delivery, task = _queued_delivery(lane, body=f"This may help: {attributed}")
+    link = _attach_tracked_link(delivery, reference=reference)
+
+    handle_drip_gmail(task)
+
+    delivery.refresh_from_db()
+    assert FakeGmailClient.calls[0]["body"] == delivery.frozen_body
+    assert delivery.outbound_message.raw["tracked_links"] == [
+        {
+            "reference": reference,
+            "link_key": "fedramp_automation",
+            "destination_url": link.destination_url,
+        },
+    ]
+
+
+@pytest.mark.parametrize("body_shape", ("missing", "duplicated", "foreign"))
+def test_drip_gmail_rejects_tracked_link_body_drift_before_attempt(
+    valid_drip_payload,
+    body_shape,
+):
+    _lead, _enrollment, lane = _domain(valid_drip_payload)
+    reference = "oo_EjRWeJCrze8SNFZ4kKvN7w"
+    attributed = build_attributed_url(
+        "https://boundera.io/fedramp-automation",
+        reference,
+    )
+    bodies = {
+        "missing": "The link disappeared",
+        "duplicated": f"{attributed} and again {attributed}",
+        "foreign": (
+            f"{attributed} and ref=oo_0000000000000000000000"
+        ),
+    }
+    delivery, task = _queued_delivery(lane, body=bodies[body_shape])
+    _attach_tracked_link(delivery, reference=reference)
+
+    with pytest.raises(ValueError, match="tracked|Tracked"):
+        handle_drip_gmail(task)
+
+    delivery.refresh_from_db()
+    assert delivery.status == DripDelivery.Status.QUEUED
+    assert not delivery.attempts.exists()
+    assert FakeGmailClient.calls == []
+
+
+def test_drip_gmail_rejects_unledgered_reserved_reference(valid_drip_payload):
+    _lead, _enrollment, lane = _domain(valid_drip_payload)
+    delivery, task = _queued_delivery(
+        lane,
+        body="See https://boundera.io/path?ref=oo_0000000000000000000000",
+    )
+
+    with pytest.raises(ValueError, match="unexpected tracked-link"):
+        handle_drip_gmail(task)
+
+    delivery.refresh_from_db()
+    assert delivery.status == DripDelivery.Status.QUEUED
+    assert not delivery.attempts.exists()
+    assert FakeGmailClient.calls == []
+
+
+def test_drip_gmail_revalidates_corrupted_tracked_link_before_attempt(
+    valid_drip_payload,
+):
+    _lead, _enrollment, lane = _domain(valid_drip_payload)
+    reference = "oo_EjRWeJCrze8SNFZ4kKvN7w"
+    valid_url = build_attributed_url(
+        "https://boundera.io/fedramp-automation",
+        reference,
+    )
+    delivery, task = _queued_delivery(lane, body=f"This may help: {valid_url}")
+    link = _attach_tracked_link(delivery, reference=reference)
+    corrupt_url = f"https://evil.example/path?ref={reference}"
+    DripTrackedLink.objects.filter(pk=link.pk).update(attributed_url=corrupt_url)
+    DripDelivery.objects.filter(pk=delivery.pk).update(
+        frozen_body=f"This may help: {corrupt_url}",
+    )
+
+    with pytest.raises(ValueError, match="ledger is invalid"):
+        handle_drip_gmail(task)
+
+    delivery.refresh_from_db()
+    assert delivery.status == DripDelivery.Status.QUEUED
+    assert not delivery.attempts.exists()
+    assert FakeGmailClient.calls == []

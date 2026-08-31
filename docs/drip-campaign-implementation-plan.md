@@ -150,7 +150,7 @@ Illustrative shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "campaign_key": "fedramp_reengagement",
   "name": "FedRAMP re-engagement",
   "audiences": {
@@ -171,7 +171,11 @@ Illustrative shape:
                 {
                   "delay_days": 1,
                   "subject": "Email subject",
-                  "body": "Email rendition"
+                  "body": "Email rendition with {tracked_link}",
+                  "link": {
+                    "key": "fedramp_automation",
+                    "url": "https://boundera.io/fedramp-automation"
+                  }
                 }
               ]
             }
@@ -194,6 +198,8 @@ Rules:
 - An omitted rendition is explicitly not applicable for that lane/theme.
 - Subjects exist on Gmail only. The first Gmail delivery establishes the thread subject; later Gmail steps omit it or repeat that exact subject. A different later subject fails validation because the lane remains in one thread.
 - Runtime placeholders use a strict allowlist and are rendered/frozen before Task creation.
+- A Gmail step may declare zero or one first-party `link` with a stable key and exact Boundera HTTPS destination. It requires exactly one `{tracked_link}` body placeholder. LinkedIn link objects, literal `ref=oo_` values, existing `ref` query keys, and non-Boundera destinations fail validation.
+- Materialization generates one opaque 128-bit `oo_` reference, freezes its final URL in `DripDelivery.frozen_body`, and creates the immutable link row before the Task in the same transaction. Retries and Task rematerialization reuse that exact delivery/reference.
 - Publishing validates the complete file and stores an immutable normalized snapshot and content hash. Existing enrollments never change when the disk file changes.
 
 ## 6. Data model

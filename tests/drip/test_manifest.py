@@ -12,7 +12,7 @@ def test_valid_manifest_normalizes_and_hashes_deterministically(valid_drip_paylo
         "audiences": valid_drip_payload["audiences"],
         "name": valid_drip_payload["name"],
         "campaign_key": valid_drip_payload["campaign_key"],
-        "schema_version": 1,
+        "schema_version": 3,
     }
     second = validate_manifest(reordered)
 
@@ -127,3 +127,112 @@ def test_render_template_requires_complete_allowlisted_context():
 
     with pytest.raises(ManifestValidationError, match="missing render value"):
         render_template("Hi {first_name}", {})
+
+
+def test_gmail_structured_link_is_normalized_and_hashed(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    step = payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "gmail"
+    ][0]
+    step["body"] = "Hi {first_name}, see {tracked_link}"
+    step["link"] = {
+        "key": "fedramp_automation",
+        "url": "https://BOUNDERA.io/fedramp-automation?view=gap%20report#details",
+    }
+
+    validated = validate_manifest(payload)
+    normalized = validated.normalized["audiences"]["CSPs"]["themes"][0][
+        "senders"
+    ]["Arian"]["gmail"][0]
+
+    assert normalized["body"] == "Hi {first_name}, see {tracked_link}"
+    assert normalized["link"] == {
+        "key": "fedramp_automation",
+        "url": "https://boundera.io/fedramp-automation?view=gap+report#details",
+    }
+    assert validate_manifest(deepcopy(payload)).content_hash == validated.content_hash
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    (
+        (
+            lambda step: step.update(
+                {"link": {"key": "product", "url": "https://boundera.io/product"}},
+            ),
+            "exactly one.*tracked_link",
+        ),
+        (
+            lambda step: step.update({"body": "See {tracked_link}"}),
+            "without a configured link",
+        ),
+        (
+            lambda step: step.update(
+                {
+                    "body": "See {tracked_link} twice {tracked_link}",
+                    "link": {"key": "product", "url": "https://boundera.io/product"},
+                },
+            ),
+            "exactly one.*tracked_link",
+        ),
+        (
+            lambda step: step.update(
+                {"body": "See https://boundera.io/product?ref=oo_literal"},
+            ),
+            "literal reserved",
+        ),
+        (
+            lambda step: step.update(
+                {
+                    "body": "See {tracked_link}",
+                    "link": {"key": "product", "url": "https://example.com/product"},
+                },
+            ),
+            "allowed Boundera host",
+        ),
+    ),
+)
+def test_gmail_structured_link_rejects_unsafe_shapes(
+    valid_drip_payload,
+    mutate,
+    message,
+):
+    payload = deepcopy(valid_drip_payload)
+    step = payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "gmail"
+    ][0]
+    mutate(step)
+
+    with pytest.raises(ManifestValidationError, match=message):
+        validate_manifest(payload)
+
+
+def test_link_object_and_tracked_placeholder_are_gmail_only(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    step = payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "linkedin"
+    ][0]
+    step["body"] = "See {tracked_link}"
+    step["link"] = {"key": "product", "url": "https://boundera.io/product"}
+
+    with pytest.raises(ManifestValidationError, match="unknown key.*link"):
+        validate_manifest(payload)
+
+
+def test_gmail_subject_cannot_contain_tracked_link(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    step = payload["audiences"]["CSPs"]["themes"][0]["senders"]["Arian"][
+        "gmail"
+    ][0]
+    step["subject"] = "See {tracked_link}"
+
+    with pytest.raises(ManifestValidationError, match="cannot use.*tracked_link"):
+        validate_manifest(payload)
+
+
+def test_previous_schema_is_not_republished_as_current(valid_drip_payload):
+    payload = deepcopy(valid_drip_payload)
+    payload["schema_version"] = 1
+
+    with pytest.raises(ManifestValidationError, match="must equal 3"):
+        validate_manifest(payload)

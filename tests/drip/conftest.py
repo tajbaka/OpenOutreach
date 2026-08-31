@@ -6,7 +6,7 @@ import pytest
 @pytest.fixture
 def valid_drip_payload():
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "campaign_key": "fedramp_reengagement",
         "name": "FedRAMP re-engagement",
         "audiences": {
