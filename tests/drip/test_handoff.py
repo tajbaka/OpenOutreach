@@ -17,6 +17,12 @@ from gmail.client import scoped_gmail_id
 from gmail.submission import SUBMISSION_ATTEMPTED_AT_KEY
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign, Task
+from linkedin.tasks.follow_up_submission import (
+    SUBMISSION_ATTEMPTED_AT_KEY as LINKEDIN_SUBMISSION_ATTEMPTED_AT_KEY,
+    SUBMISSION_LEAD_ID_KEY as LINKEDIN_SUBMISSION_LEAD_ID_KEY,
+    SUBMISSION_MESSAGE_PREFIX_KEY as LINKEDIN_SUBMISSION_MESSAGE_PREFIX_KEY,
+    SUBMISSION_OPERATOR_KEY as LINKEDIN_SUBMISSION_OPERATOR_KEY,
+)
 from tests.drip.helpers import linkedin_profile_description
 from tests.factories import UserFactory
 
@@ -395,6 +401,64 @@ def test_not_applicable_review_rejects_unresolved_post_submission_current_task(
     )
 
     with pytest.raises(HandoffReviewError, match="submission outcome is unclear"):
+        review_handoff_not_applicable(
+            lane_id=lane.pk,
+            reviewed_by="human-reviewer",
+            apply=True,
+        )
+
+
+def test_linkedin_handoff_and_review_block_unresolved_current_media_submission(
+    valid_drip_payload,
+):
+    lead, enrollment = _enrollment(valid_drip_payload)
+    current_campaign = Campaign.objects.create(
+        name="Current media outbound",
+        user=UserFactory(username="arian-media"),
+    )
+    deal = Deal.objects.create(
+        lead=lead,
+        campaign=current_campaign,
+        state=ProfileState.CONNECTED,
+        invitation_sender="Arian",
+        invitation_sent_at=timezone.now() - timedelta(days=20),
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity=lead.linkedin_url,
+        linkedin_member_urn="urn:li:fsd_profile:ada-lovelace",
+    )
+    prefix = (
+        f"daemon-send:Arian:{deal.pk}:linkedin_connect_followup:step-0:"
+    )
+    Task.objects.create(
+        task_type=Task.TaskType.FOLLOW_UP,
+        status=Task.Status.FAILED,
+        scheduled_at=timezone.now(),
+        error="Current LinkedIn media submission outcome is unclear",
+        payload={
+            "campaign_id": current_campaign.pk,
+            "public_id": lead.public_identifier,
+            "operator": "Arian",
+            LINKEDIN_SUBMISSION_ATTEMPTED_AT_KEY: timezone.now().isoformat(),
+            LINKEDIN_SUBMISSION_LEAD_ID_KEY: lead.pk,
+            LINKEDIN_SUBMISSION_MESSAGE_PREFIX_KEY: prefix,
+            LINKEDIN_SUBMISSION_OPERATOR_KEY: "Arian",
+        },
+    )
+
+    result = evaluate_linkedin_handoff(lane)
+
+    assert result.eligible is False
+    assert result.reason == "current_linkedin_submission_unclear"
+    with pytest.raises(
+        HandoffReviewError,
+        match="Current LinkedIn submission outcome is unclear",
+    ):
         review_handoff_not_applicable(
             lane_id=lane.pk,
             reviewed_by="human-reviewer",

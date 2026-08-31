@@ -7,11 +7,14 @@ from django.utils import timezone
 
 from crm.models import Lead
 from drip.manifest import validate_manifest
+from drip.link_attribution import build_attributed_url
 from drip.models import (
     DripCampaign,
     DripCampaignVersion,
+    DripDelivery,
     DripEnrollment,
     DripLane,
+    DripTrackedLink,
 )
 from drip.services.publication import publish_manifest
 
@@ -222,3 +225,182 @@ def test_campaign_version_constraint_rejects_cross_campaign_reference(
 
 def test_published_version_model_is_registered():
     assert DripCampaignVersion._meta.app_label == "drip"
+
+
+def test_delivery_media_metadata_is_all_or_none_and_linkedin_only(
+    valid_drip_payload,
+):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = Lead.objects.create(first_name="Ada", email="ada@example.com", icp="CSPs")
+    enrollment = _enrollment(
+        campaign=published.campaign,
+        version=published.version,
+        lead=lead,
+    )
+    linkedin_lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity="https://www.linkedin.com/in/ada/",
+        linkedin_member_urn="urn:li:fsd_profile:ada",
+    )
+    gmail_lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity="ada@example.com",
+    )
+    fields = {
+        "theme_key": "visibility_gap",
+        "theme_index": 0,
+        "step_index": 0,
+        "frozen_body": "Body",
+        "scheduled_at": timezone.now(),
+        "provider_account": linkedin_lane.provider_account,
+    }
+    partial = DripDelivery(
+        lane=linkedin_lane,
+        frozen_media_kind="gif",
+        **fields,
+    )
+    with pytest.raises(ValidationError, match="entirely populated or entirely blank"):
+        partial.full_clean()
+
+    media = {
+        "frozen_media_kind": "gif",
+        "frozen_media_reference": "demo.gif",
+        "frozen_media_mime_type": "image/gif",
+        "frozen_media_size_bytes": 100,
+        "frozen_media_sha256": "a" * 64,
+    }
+    linked_delivery = DripDelivery(lane=linkedin_lane, **fields, **media)
+    linked_delivery.full_clean()
+
+    gmail_fields = {
+        **fields,
+        "frozen_subject": "Subject",
+        "provider_account": gmail_lane.provider_account,
+    }
+    gmail_delivery = DripDelivery(lane=gmail_lane, **gmail_fields, **media)
+    with pytest.raises(ValidationError, match="only on LinkedIn"):
+        gmail_delivery.full_clean()
+
+
+def test_tracked_link_is_gmail_only_unique_and_immutable(valid_drip_payload):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = Lead.objects.create(first_name="Ada", email="ada@example.com", icp="CSPs")
+    enrollment = _enrollment(
+        campaign=published.campaign,
+        version=published.version,
+        lead=lead,
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.GMAIL,
+        operator="Arian",
+        provider_account="arian_boundera",
+        sender_identity="ariant@getboundera.com",
+        recipient_identity=lead.email,
+    )
+    delivery = DripDelivery.objects.create(
+        lane=lane,
+        theme_key="visibility_gap",
+        theme_index=0,
+        step_index=0,
+        frozen_subject="Subject",
+        frozen_body="Body",
+        scheduled_at=timezone.now(),
+        provider_account=lane.provider_account,
+    )
+    reference = "oo_EjRWeJCrze8SNFZ4kKvN7w"
+    destination = "https://boundera.io/fedramp-automation"
+    link = DripTrackedLink(
+        delivery=delivery,
+        reference=reference,
+        link_key="fedramp_automation",
+        destination_url=destination,
+        attributed_url=build_attributed_url(destination, reference),
+    )
+    link.full_clean()
+    link.save()
+
+    with pytest.raises(ValidationError, match="does not match"):
+        DripTrackedLink.objects.create(
+            delivery=DripDelivery.objects.create(
+                lane=lane,
+                theme_key="visibility_gap",
+                theme_index=0,
+                step_index=1,
+                frozen_subject="Subject",
+                frozen_body="Body",
+                scheduled_at=timezone.now(),
+                provider_account=lane.provider_account,
+            ),
+            reference="oo_000000000000000000000A",
+            link_key="invalid",
+            destination_url=destination,
+            attributed_url="https://evil.example/path?ref=oo_000000000000000000000A",
+        )
+
+    link.link_key = "changed"
+    with pytest.raises(ValidationError, match="immutable"):
+        link.save()
+    link.refresh_from_db()
+    with pytest.raises(ValidationError, match="immutable"):
+        link.delete()
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        DripTrackedLink.objects.create(
+            delivery=delivery,
+            reference="oo_000000000000000000000A",
+            link_key="another",
+            destination_url=destination,
+            attributed_url=(
+                "https://boundera.io/fedramp-automation?"
+                "ref=oo_000000000000000000000A"
+            ),
+        )
+
+
+def test_tracked_link_rejects_linkedin_delivery(valid_drip_payload):
+    published = publish_manifest(validate_manifest(valid_drip_payload))
+    lead = Lead.objects.create(first_name="Ada", icp="CSPs")
+    enrollment = _enrollment(
+        campaign=published.campaign,
+        version=published.version,
+        lead=lead,
+    )
+    lane = DripLane.objects.create(
+        enrollment=enrollment,
+        channel=DripLane.Channel.LINKEDIN,
+        operator="Arian",
+        provider_account="arian",
+        sender_identity="arian",
+        recipient_identity="https://www.linkedin.com/in/ada/",
+        linkedin_member_urn="urn:li:fsd_profile:ada",
+    )
+    delivery = DripDelivery.objects.create(
+        lane=lane,
+        theme_key="visibility_gap",
+        theme_index=0,
+        step_index=0,
+        frozen_body="Body",
+        scheduled_at=timezone.now(),
+        provider_account=lane.provider_account,
+    )
+    reference = "oo_EjRWeJCrze8SNFZ4kKvN7w"
+    destination = "https://boundera.io/fedramp-automation"
+    link = DripTrackedLink(
+        delivery=delivery,
+        reference=reference,
+        link_key="fedramp_automation",
+        destination_url=destination,
+        attributed_url=build_attributed_url(destination, reference),
+    )
+
+    with pytest.raises(ValidationError, match="only on Gmail"):
+        link.full_clean()

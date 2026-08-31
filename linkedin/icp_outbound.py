@@ -16,8 +16,9 @@ shape is `{sender: {icp: {channel: [variant1, variant2, ...]}}}`. Follow-up
 channels can also use step objects:
 `{channel: [{"delay_hours": 0, "variants": [...]}, ...]}`. An ICP block can
 declare `"media": ["demo.gif"]`; templates in that block may reference
-`{demo.gif}` to attach that file, resolved from `assets/follow_up/` or
-`assets/followup/`. The legacy `{add demo.gif}` syntax still works. The top
+`{demo.gif}` to attach that file from the reviewed `assets/follow_up/` root.
+The legacy `{add demo.gif}` syntax still works. Declared media is validated
+and fails closed rather than silently turning into a text-only send. The top
 level is keyed by the operator's canonical handle
 (`linkedin.operators.resolve_operator`, e.g. "Arian" / "Chuka") so each sender
 gets a fully independent template block. Under each sender, variants stay
@@ -53,7 +54,11 @@ from math import isfinite
 from pathlib import Path
 
 from linkedin.conf import ROOT_DIR
-from linkedin.exceptions import DiscoveryConfigurationError, SheetsError
+from linkedin.exceptions import (
+    DiscoveryConfigurationError,
+    LinkedInMediaValidationError,
+    SheetsError,
+)
 from linkedin.name_utils import greeting_first_name
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP, LEAD_ICP_BUCKETS
 from linkedin.operators import resolve_operator
@@ -65,20 +70,11 @@ _GMAIL_MESSAGES_PATH = ROOT_DIR / "gmail" / "icp_emails.json"
 
 # `{add <filename>}` placeholders attach a file to the send. ICP blocks can
 # also declare `"media": ["demo.gif"]`, allowing templates in that block to
-# attach media with the shorter `{demo.gif}` token. Placeholder text is stripped
-# from the rendered body. Multiple attachments per template are supported.
-# Resolution order:
-#   1. If the value contains a path separator → resolve relative to
-#      ROOT_DIR verbatim (e.g. `{add assets/followup/demo.gif}`).
-#   2. Else → search `_ATTACH_SEARCH_DIRS` in order; first match wins
-#      (e.g. `{add demo.gif}` finds `assets/followup/demo.gif`).
-# Missing files log a warning and are silently dropped so a stale
-# template reference doesn't block the whole send.
+# attach media with the shorter `{demo.gif}` token. Placeholder text is
+# stripped from the rendered body. One validated GIF or MP4 is allowed per
+# message, always under `assets/follow_up/`. Missing or invalid bytes fail
+# closed before any browser mutation.
 _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
-# Both spellings supported — `assets/follow_up` (snake_case, matches the
-# Python `follow_up` task module) and `assets/followup` (no separator).
-# Trailing "" = ROOT_DIR itself for legacy callers.
-_ATTACH_SEARCH_DIRS = ("assets/follow_up", "assets/followup", "")
 ICP_MESSAGES_BASE_HEADERS = ["ICP", "Connect Message"]
 ICP_MESSAGES_SHEET_BUCKETS = LEAD_ICP_BUCKETS
 # Follow-up sequences are arbitrary-length: the sheet grows one
@@ -844,6 +840,10 @@ def fill_message(
     )
     # Collapse the blank line the stripped placeholder leaves behind.
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    if attachments and not body:
+        raise LinkedInMediaValidationError(
+            "LinkedIn media messages require a nonempty text body"
+        )
     return FilledMessage(body=body, attachments=attachments)
 
 
@@ -867,23 +867,16 @@ def _extract_attachments(
 ) -> tuple[str, list[Path]]:
     """Strip media placeholders from `template` and resolve each filename.
 
-    Returns `(template_without_attach_placeholders, resolved_paths)`.
-    Missing files are logged-and-dropped so a stale reference doesn't
-    block the send.
+    Returns `(template_without_attach_placeholders, resolved_paths)`. A
+    declared attachment is validated immediately and never silently omitted.
     """
+    from linkedin.message_media import resolve_linkedin_media
+
     attachments: list[Path] = []
 
     def _attach(filename: str) -> None:
-        candidate = _resolve_attachment(filename)
-        if candidate:
-            attachments.append(candidate)
-        else:
-            logger.warning(
-                "icp_outbound: attachment %r referenced in template but not found "
-                "(searched %s)",
-                filename,
-                [str(ROOT_DIR / d / filename) for d in _ATTACH_SEARCH_DIRS],
-            )
+        asset = resolve_linkedin_media(filename, root_dir=ROOT_DIR)
+        attachments.append(asset.path)
 
     def _swap_add(match):
         _attach(match.group(1).strip())
@@ -900,21 +893,11 @@ def _extract_attachments(
 
         stripped = token_re.sub(_swap_media, stripped)
 
+    if len(attachments) > 1:
+        raise LinkedInMediaValidationError(
+            "LinkedIn messages support at most one GIF or MP4 attachment"
+        )
     return stripped, attachments
-
-
-def _resolve_attachment(filename: str) -> Path | None:
-    """Search ROOT_DIR-relative paths for an attachment. Returns None on miss."""
-    # Explicit path → resolve verbatim relative to ROOT_DIR.
-    if "/" in filename or "\\" in filename:
-        path = ROOT_DIR / filename
-        return path if path.exists() else None
-    # Bare filename → search known asset dirs in order.
-    for subdir in _ATTACH_SEARCH_DIRS:
-        path = ROOT_DIR / subdir / filename if subdir else ROOT_DIR / filename
-        if path.exists():
-            return path
-    return None
 
 
 def fill_for_lead(

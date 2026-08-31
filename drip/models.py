@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -363,6 +365,16 @@ class DripDelivery(models.Model):
     step_index = models.PositiveIntegerField()
     frozen_subject = models.CharField(max_length=998, blank=True, default="")
     frozen_body = models.TextField()
+    frozen_media_kind = models.CharField(
+        max_length=16,
+        choices=(("gif", "GIF"), ("video", "Video")),
+        blank=True,
+        default="",
+    )
+    frozen_media_reference = models.CharField(max_length=500, blank=True, default="")
+    frozen_media_mime_type = models.CharField(max_length=100, blank=True, default="")
+    frozen_media_size_bytes = models.PositiveBigIntegerField(null=True, blank=True)
+    frozen_media_sha256 = models.CharField(max_length=64, blank=True, default="")
     scheduled_at = models.DateTimeField()
     sent_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(
@@ -416,13 +428,141 @@ class DripDelivery(models.Model):
         if self.lane_id and self.lane.channel == DripLane.Channel.LINKEDIN:
             if self.frozen_subject:
                 raise ValidationError({"frozen_subject": "LinkedIn deliveries do not have subjects."})
+        media_values = (
+            bool(self.frozen_media_kind),
+            bool(self.frozen_media_reference),
+            bool(self.frozen_media_mime_type),
+            self.frozen_media_size_bytes is not None,
+            bool(self.frozen_media_sha256),
+        )
+        if any(media_values) and not all(media_values):
+            raise ValidationError(
+                "Frozen media metadata must be entirely populated or entirely blank.",
+            )
+        if all(media_values):
+            if not self.lane_id or self.lane.channel != DripLane.Channel.LINKEDIN:
+                raise ValidationError("Frozen media is permitted only on LinkedIn deliveries.")
+            expected_mime_type = {
+                "gif": "image/gif",
+                "video": "video/mp4",
+            }.get(self.frozen_media_kind)
+            if expected_mime_type != self.frozen_media_mime_type:
+                raise ValidationError(
+                    {"frozen_media_mime_type": "Media kind and MIME type do not match."},
+                )
+            if not self.frozen_media_size_bytes or self.frozen_media_size_bytes > 20 * 1024 * 1024:
+                raise ValidationError(
+                    {"frozen_media_size_bytes": "Media size must be between 1 byte and 20 MiB."},
+                )
+            if not re.fullmatch(r"[0-9a-f]{64}", self.frozen_media_sha256):
+                raise ValidationError(
+                    {"frozen_media_sha256": "Media SHA-256 must be 64 lowercase hexadecimal characters."},
+                )
 
     def save(self, *args, **kwargs) -> None:
         self.provider_account = (self.provider_account or "").strip().lower()
+        self.frozen_media_kind = (self.frozen_media_kind or "").strip().lower()
+        self.frozen_media_reference = (self.frozen_media_reference or "").strip()
+        self.frozen_media_mime_type = (self.frozen_media_mime_type or "").strip().lower()
+        self.frozen_media_sha256 = (self.frozen_media_sha256 or "").strip().lower()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {
+                "provider_account",
+                "frozen_media_kind",
+                "frozen_media_reference",
+                "frozen_media_mime_type",
+                "frozen_media_size_bytes",
+                "frozen_media_sha256",
+            }
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.lane_id}:{self.theme_key}:{self.step_index}"
+
+
+class DripTrackedLink(models.Model):
+    delivery = models.ForeignKey(
+        DripDelivery,
+        on_delete=models.PROTECT,
+        related_name="tracked_links",
+    )
+    reference = models.CharField(max_length=25, unique=True)
+    link_key = models.SlugField(max_length=100)
+    destination_url = models.URLField(max_length=2_048)
+    attributed_url = models.URLField(max_length=2_048)
+    created_at = models.DateTimeField(auto_now_add=True, editable=False)
+
+    class Meta:
+        ordering = ("delivery_id", "link_key")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("delivery",),
+                name="drip_one_tracked_link_per_delivery",
+            ),
+            models.UniqueConstraint(
+                fields=("delivery", "link_key"),
+                name="drip_unique_delivery_link_key",
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        from drip.link_attribution import (
+            build_attributed_url,
+            canonical_destination_url,
+            validate_reference,
+        )
+        from drip.exceptions import LinkAttributionError
+
+        try:
+            reference = validate_reference(self.reference)
+            destination = canonical_destination_url(self.destination_url)
+            attributed = build_attributed_url(destination, reference)
+        except LinkAttributionError as exc:
+            raise ValidationError(str(exc)) from exc
+        if destination != self.destination_url:
+            raise ValidationError(
+                {"destination_url": "Tracked-link destination must be canonical."},
+            )
+        if attributed != self.attributed_url:
+            raise ValidationError(
+                {"attributed_url": "Attributed URL does not match its destination and reference."},
+            )
+        if self.delivery_id and self.delivery.lane.channel != DripLane.Channel.GMAIL:
+            raise ValidationError(
+                {"delivery": "Tracked links are permitted only on Gmail deliveries."},
+            )
+
+    def save(self, *args, **kwargs) -> None:
+        self.link_key = (self.link_key or "").strip()
+        self.destination_url = (self.destination_url or "").strip()
+        self.attributed_url = (self.attributed_url or "").strip()
+        if self._state.adding:
+            # Model.save() does not call validation by default. Keep ordinary
+            # ORM creation from bypassing the reference/URL/channel contract,
+            # while leaving database uniqueness enforcement authoritative.
+            self.clean_fields()
+            self.clean()
+        else:
+            original = type(self).objects.get(pk=self.pk)
+            immutable_fields = (
+                "delivery_id",
+                "reference",
+                "link_key",
+                "destination_url",
+                "attributed_url",
+                "created_at",
+            )
+            if any(getattr(original, field) != getattr(self, field) for field in immutable_fields):
+                raise ValidationError("Drip tracked links are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Drip tracked links are immutable.")
+
+    def __str__(self) -> str:
+        return f"{self.reference}: {self.link_key}"
 
 
 class DripDeliveryAttempt(models.Model):

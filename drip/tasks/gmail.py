@@ -5,16 +5,19 @@ import hashlib
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from drip.link_attribution import reserved_references_in_text
 from drip.models import (
     DripCampaign,
     DripDelivery,
     DripDeliveryAttempt,
     DripEnrollment,
     DripLane,
+    DripTrackedLink,
 )
 from gmail.auth import GMAIL_OPERATOR_MAPPING
 from gmail.client import (
@@ -24,6 +27,20 @@ from gmail.client import (
     validated_provider_rfc_message_id,
 )
 from linkedin.tasks.stop_checks import lead_automation_stop_reason
+
+
+@dataclass(frozen=True)
+class _TrackedLinkEvidence:
+    reference: str
+    link_key: str
+    destination_url: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "reference": self.reference,
+            "link_key": self.link_key,
+            "destination_url": self.destination_url,
+        }
 
 
 @dataclass(frozen=True)
@@ -43,6 +60,7 @@ class _Reservation:
     in_reply_to: str
     references: tuple[str, ...]
     rfc_message_id: str
+    tracked_links: tuple[_TrackedLinkEvidence, ...]
 
 
 def _payload_delivery_id(task) -> int:
@@ -241,6 +259,42 @@ def _release_without_attempt(delivery: DripDelivery, task, *, reason: str) -> No
     type(task).objects.filter(pk=task.pk).update(error=reason)
 
 
+def _tracked_link_evidence(delivery: DripDelivery) -> tuple[_TrackedLinkEvidence, ...]:
+    links = list(
+        DripTrackedLink.objects.select_for_update()
+        .filter(delivery=delivery)
+        .order_by("pk"),
+    )
+    if len(links) > 1:
+        raise ValueError("Drip Gmail delivery has more than one tracked link")
+    body_references = reserved_references_in_text(delivery.frozen_body)
+    if not links:
+        if body_references:
+            raise ValueError("Drip Gmail body contains an unexpected tracked-link reference")
+        return ()
+
+    link = links[0]
+    if link.delivery_id != delivery.pk:
+        raise ValueError("Drip Gmail tracked link belongs to another delivery")
+    try:
+        # Revalidate under the reservation lock. This catches direct SQL or
+        # QuerySet.update corruption that bypassed the immutable model path.
+        link.full_clean()
+    except ValidationError as exc:
+        raise ValueError("Drip Gmail tracked-link ledger is invalid") from exc
+    if delivery.frozen_body.count(link.attributed_url) != 1:
+        raise ValueError("Drip Gmail tracked URL must occur exactly once in the frozen body")
+    if body_references != (link.reference,):
+        raise ValueError("Drip Gmail body references do not match the tracked-link ledger")
+    return (
+        _TrackedLinkEvidence(
+            reference=link.reference,
+            link_key=link.link_key,
+            destination_url=link.destination_url,
+        ),
+    )
+
+
 @transaction.atomic
 def _reserve_attempt(task) -> _Reservation | None:
     from linkedin.models import Task
@@ -334,6 +388,7 @@ def _reserve_attempt(task) -> _Reservation | None:
         stop_enrollment_for_reason(enrollment.pk, reason=stop_reason)
         return None
 
+    tracked_links = _tracked_link_evidence(delivery)
     raw_thread_id, subject, parent, references = _delivery_thread_context(
         delivery,
         lane,
@@ -367,6 +422,7 @@ def _reserve_attempt(task) -> _Reservation | None:
             delivery_id=delivery.pk,
             send_as=send_as,
         ),
+        tracked_links=tracked_links,
     )
 
 
@@ -533,6 +589,7 @@ def _record_success(
         "theme_key": delivery.theme_key,
         "theme_index": delivery.theme_index,
         "step_index": delivery.step_index,
+        "tracked_links": [link.as_dict() for link in reservation.tracked_links],
     }
     now = timezone.now()
     message, created = Message.objects.get_or_create(

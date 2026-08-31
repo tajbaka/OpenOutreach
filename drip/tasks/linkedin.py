@@ -54,6 +54,20 @@ class _Reservation:
     recipient_identity: str
     body: str
     action_campaign_id: int
+    media_kind: str = ""
+    media_reference: str = ""
+    media_mime_type: str = ""
+    media_size_bytes: int | None = None
+    media_sha256: str = ""
+
+    def media_identity(self) -> tuple[str, str, str, int | None, str]:
+        return (
+            self.media_kind,
+            self.media_reference,
+            self.media_mime_type,
+            self.media_size_bytes,
+            self.media_sha256,
+        )
 
 
 @dataclass(frozen=True)
@@ -224,6 +238,7 @@ def _execution_guard(
     expected_delivery_status: str,
     expected_member_urn: str = "",
     expected_recipient_identity: str = "",
+    expected_media_identity: tuple[str, str, str, int | None, str] | None = None,
 ) -> _GuardFailure | None:
     if task.task_type != Task.TaskType.DRIP_LINKEDIN:
         raise ValueError(f"Task {task.pk} is not a drip_linkedin task")
@@ -277,6 +292,20 @@ def _execution_guard(
         return _GuardFailure(f"LinkedIn lane is {lane.status}", hold=True)
     if lane.channel != DripLane.Channel.LINKEDIN:
         raise ValueError(f"Drip delivery {delivery.pk} does not belong to LinkedIn")
+    media_identity = (
+        delivery.frozen_media_kind,
+        delivery.frozen_media_reference,
+        delivery.frozen_media_mime_type,
+        delivery.frozen_media_size_bytes,
+        delivery.frozen_media_sha256,
+    )
+    media_presence = tuple(bool(value) for value in media_identity)
+    if any(media_presence) and not all(media_presence):
+        raise ValueError(
+            f"Drip delivery {delivery.pk} has incomplete frozen media metadata",
+        )
+    if expected_media_identity is not None and media_identity != expected_media_identity:
+        return _GuardFailure("frozen LinkedIn media changed after reservation")
     if lane.handed_off_at is None:
         return _GuardFailure("LinkedIn lane has not been handed off")
     if lane.current_sequence_status not in {
@@ -470,6 +499,11 @@ def _reserve_delivery(task: Task, session) -> _Reservation | None:
         recipient_identity=lane.recipient_identity,
         body=delivery.frozen_body,
         action_campaign_id=action_campaign.pk,
+        media_kind=delivery.frozen_media_kind,
+        media_reference=delivery.frozen_media_reference,
+        media_mime_type=delivery.frozen_media_mime_type,
+        media_size_bytes=delivery.frozen_media_size_bytes,
+        media_sha256=delivery.frozen_media_sha256,
     )
 
 
@@ -483,6 +517,22 @@ def _mark_attempt_not_submitted(
     attempt.finished_at = now
     attempt.diagnostic_detail = detail
     attempt.save(update_fields={"outcome", "finished_at", "diagnostic_detail"})
+
+
+def _resolve_reservation_media(reservation: _Reservation):
+    """Revalidate frozen media bytes immediately before browser mutation."""
+    if not any(reservation.media_identity()):
+        return None
+
+    from linkedin.message_media import resolve_linkedin_media
+
+    return resolve_linkedin_media(
+        reservation.media_reference,
+        expected_kind=reservation.media_kind,
+        expected_mime_type=reservation.media_mime_type,
+        expected_size_bytes=reservation.media_size_bytes,
+        expected_sha256=reservation.media_sha256,
+    )
 
 
 def _submission_callback(
@@ -531,6 +581,7 @@ def _submission_callback(
                     expected_delivery_status=DripDelivery.Status.SENDING,
                     expected_member_urn=reservation.member_urn,
                     expected_recipient_identity=reservation.recipient_identity,
+                    expected_media_identity=reservation.media_identity(),
                 )
                 if failure:
                     _mark_attempt_not_submitted(attempt, detail=failure.detail, now=now)
@@ -639,6 +690,25 @@ def _finish_sent(reservation: _Reservation, task_id: int, session) -> None:
         active=True,
     ).first()
     external_id = f"drip-linkedin:{delivery.pk}"
+    raw_evidence = {
+        "kind": "drip_linkedin",
+        "delivery_id": delivery.pk,
+        "attempt_id": attempt.pk,
+        "task_id": task_id,
+        "operator": lane.operator,
+        "action_campaign_id": reservation.action_campaign_id,
+        "linkedin_member_urn": reservation.member_urn,
+        "recipient_identity": reservation.recipient_identity,
+    }
+    if reservation.media_reference:
+        raw_evidence["media"] = {
+            "type": reservation.media_kind,
+            "reference": reservation.media_reference,
+            "mime_type": reservation.media_mime_type,
+            "size_bytes": reservation.media_size_bytes,
+            "sha256": reservation.media_sha256,
+        }
+
     message, created = Message.objects.get_or_create(
         source=Message.Source.LINKEDIN,
         external_id=external_id,
@@ -649,16 +719,7 @@ def _finish_sent(reservation: _Reservation, task_id: int, session) -> None:
             "sender": lane.operator,
             "body": delivery.frozen_body,
             "sent_at": now,
-            "raw": {
-                "kind": "drip_linkedin",
-                "delivery_id": delivery.pk,
-                "attempt_id": attempt.pk,
-                "task_id": task_id,
-                "operator": lane.operator,
-                "action_campaign_id": reservation.action_campaign_id,
-                "linkedin_member_urn": reservation.member_urn,
-                "recipient_identity": reservation.recipient_identity,
-            },
+            "raw": raw_evidence,
         },
     )
     if not created and (
@@ -709,6 +770,7 @@ def _finish_pre_submit_failure(reservation: _Reservation, detail: str) -> None:
     )
     delivery = graph.delivery
     lane = graph.lane
+    enrollment = graph.enrollment
     attempt = graph.attempt
     if attempt.outcome != DripDeliveryAttempt.Outcome.RESERVED or attempt.finished_at is not None:
         return
@@ -722,9 +784,66 @@ def _finish_pre_submit_failure(reservation: _Reservation, detail: str) -> None:
         )
         return
     _mark_attempt_not_submitted(attempt, detail=detail, now=now)
-    delivery.status = DripDelivery.Status.PLANNED
+    controls_stopped = (
+        lane.status in {DripLane.Status.STOPPED, DripLane.Status.COMPLETED}
+        or enrollment.status
+        in {DripEnrollment.Status.STOPPED, DripEnrollment.Status.COMPLETED}
+    )
+    delivery.status = (
+        DripDelivery.Status.STOPPED
+        if controls_stopped
+        else DripDelivery.Status.PLANNED
+    )
     delivery.current_task = None
     delivery.save(update_fields={"status", "current_task", "updated_at"})
+
+
+@transaction.atomic
+def _finish_media_hold(reservation: _Reservation, detail: str) -> None:
+    """Pause a lane whose frozen asset is missing, invalid, or changed."""
+    from drip.services.ownership import lock_delivery_graph
+
+    now = timezone.now()
+    graph = lock_delivery_graph(
+        reservation.delivery_id,
+        attempt_id=reservation.attempt_id,
+    )
+    delivery = graph.delivery
+    lane = graph.lane
+    enrollment = graph.enrollment
+    attempt = graph.attempt
+    if attempt.outcome != DripDeliveryAttempt.Outcome.RESERVED or attempt.finished_at is not None:
+        return
+    if attempt.submission_attempted_at is not None:
+        _finish_unclear_locked(
+            delivery,
+            lane,
+            attempt,
+            detail="media validation failed after submit boundary: " + detail,
+            now=now,
+        )
+        return
+    _mark_attempt_not_submitted(attempt, detail=detail, now=now)
+    controls_stopped = (
+        lane.status in {DripLane.Status.STOPPED, DripLane.Status.COMPLETED}
+        or enrollment.status
+        in {DripEnrollment.Status.STOPPED, DripEnrollment.Status.COMPLETED}
+    )
+    delivery.status = (
+        DripDelivery.Status.STOPPED
+        if controls_stopped
+        else DripDelivery.Status.PLANNED
+    )
+    delivery.current_task = None
+    delivery.save(update_fields={"status", "current_task", "updated_at"})
+    if not controls_stopped and lane.status in NONTERMINAL_LANE_STATUSES:
+        lane.status = DripLane.Status.PAUSED
+        lane.save(update_fields={"status", "updated_at"})
+    logger.error(
+        "drip_linkedin delivery %s paused for frozen media failure: %s",
+        delivery.pk,
+        detail,
+    )
 
 
 def _finish_unclear_locked(
@@ -776,18 +895,32 @@ def handle_drip_linkedin(task: Task, session, qualifiers=None) -> None:
         return
 
     try:
-        result = send_direct_message_once(
-            session,
-            reservation.member_urn,
-            reservation.body,
-            recipient_label=reservation.recipient_identity,
-            on_submit_attempt=lambda: _submission_callback(
+        media = _resolve_reservation_media(reservation)
+        send_kwargs = {
+            "recipient_label": reservation.recipient_identity,
+            "on_submit_attempt": lambda: _submission_callback(
                 task_id=task.pk,
                 reservation=reservation,
                 session=session,
             ),
+        }
+        if media is not None:
+            send_kwargs["media"] = media
+        result = send_direct_message_once(
+            session,
+            reservation.member_urn,
+            reservation.body,
+            **send_kwargs,
         )
     except Exception as exc:
+        from linkedin.exceptions import LinkedInMediaValidationError
+
+        if isinstance(exc, LinkedInMediaValidationError):
+            _finish_media_hold(
+                reservation,
+                f"{type(exc).__name__}: {str(exc)[:900]}",
+            )
+            return
         # The action primitive classifies expected UI failures. Preserve the
         # same duplicate-prevention guarantee if an unexpected exception
         # escapes it: the committed submit timestamp is the authority.
