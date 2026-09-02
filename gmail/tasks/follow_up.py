@@ -15,6 +15,7 @@ from gmail.client import (
     scoped_gmail_id,
     validated_provider_rfc_message_id,
 )
+from gmail.delivery import issue_gmail_delivery_permit
 from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME, enqueue_gmail_follow_up
 from gmail.submission import (
     current_gmail_automation_key,
@@ -435,14 +436,16 @@ def handle_gmail_follow_up(task) -> None:
             "automatic retry is blocked"
         )
 
-    client = GmailClient(operator=operator)
+    mapping = GMAIL_OPERATOR_MAPPING.get(operator)
+    if mapping is None:
+        raise ValueError(f"No Gmail mapping configured for operator {operator!r}")
     context = _thread_context(
         lead=lead,
         operator=operator,
         sequence_name=sequence_name,
         step_index=step_index,
-        account_key=client.account_key,
-        send_as=client.send_as,
+        account_key=mapping["gmail_account"],
+        send_as=mapping["send_as"],
     )
     subject = context.subject or rendered.subject
     automation_key = _gmail_automation_key(
@@ -482,17 +485,38 @@ def handle_gmail_follow_up(task) -> None:
             )
         stamp_submission_attempt(task)
 
-    send_result = client.send_message(
+    rfc_message_id = _rfc_message_id(
+        automation_key=automation_key,
+        send_as=mapping["send_as"],
+    )
+    delivery_permit = issue_gmail_delivery_permit(
+        task=task,
+        operator=operator,
+        account_key=mapping["gmail_account"],
         to=lead.email,
         subject=subject,
         body=rendered.body,
         thread_id=context.raw_thread_id,
         in_reply_to=context.in_reply_to,
         references=context.references,
-        rfc_message_id=_rfc_message_id(
-            automation_key=automation_key,
-            send_as=client.send_as,
-        ),
+        rfc_message_id=rfc_message_id,
+    )
+    client = GmailClient(operator=operator)
+    if (
+        client.account_key != mapping["gmail_account"]
+        or client.send_as != mapping["send_as"].lower()
+        or client.reply_to != mapping["reply_to"].lower()
+    ):
+        raise ValueError("Resolved Gmail client does not match Task ownership")
+    send_result = client.send_message(
+        to=lead.email,
+        subject=subject,
+        body=rendered.body,
+        delivery_permit=delivery_permit,
+        thread_id=context.raw_thread_id,
+        in_reply_to=context.in_reply_to,
+        references=context.references,
+        rfc_message_id=rfc_message_id,
         on_submit_attempt=_recheck_before_submission,
     )
     sent_message = _persist_outbound(

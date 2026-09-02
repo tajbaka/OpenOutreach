@@ -379,9 +379,16 @@ subject/body cells for an otherwise valid ICP row save that sender/ICP's Gmail
 block as an empty list so stale JSON copy cannot keep sending after an operator
 clears the Sheet.
 `manage.py gmail_oauth` creates per-account tokens under `data/gmail/`;
-tokens request Gmail send, compose/draft, settings, and readonly scopes;
-`manage.py gmail_send_test` sends a direct live test message through the mapped
-operator alias.
+tokens request Gmail send, compose/draft, settings, and readonly scopes. The
+send-capable token remains an operational secret shared by the Gmail worker, so
+credential isolation from interactive development is a separate deployment
+boundary. At the application boundary, `GmailClient.send_message()` requires a
+single-use `GmailDeliveryPermit` issued from a persisted, already-claimed
+`gmail_follow_up` or `drip_gmail` Task and bound to the exact operator, mailbox,
+recipient, subject, body, thread metadata, and RFC Message-ID. The client
+consumes that permit before any Gmail provider request. Production tests keep
+the two canonical worker handlers as the only `send_message()` call sites, and
+there is no one-off live-send management command.
 
 `gmail/data_sync.py` is the Gmail-backed replacement for the Gmail-accessible
 parts of the old Claude data-sync workflow. `manage.py sync_gmail_context` uses
