@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -35,6 +36,7 @@ from linkedin.discovery.sources.profile_recommendations import (
 )
 from linkedin.exceptions import (
     AuthenticationError,
+    DiscoveryScreeningError,
     DiscoverySurfaceError,
     SkipProfile,
 )
@@ -71,7 +73,7 @@ class DiscoveryVisitResult:
 
 
 def _canonical_public_identifier(value: str | None) -> str:
-    return (value or "").strip().strip("/").lower()
+    return re.sub(r"[\s\x00-\x1f\x7f]+", "", value or "").strip().strip("/").lower()
 
 
 def _profile_company(profile: dict) -> str:
@@ -603,7 +605,25 @@ def _screen_new_cards(
     def flush_batch() -> bool:
         if not pending_batch:
             return False
-        decisions = screen_cards(pending_batch, targets)
+        try:
+            decisions = screen_cards(pending_batch, targets)
+        except DiscoveryScreeningError as exc:
+            logger.warning(
+                "Discovery screening rejected batch of %d card(s); skipping batch: %s",
+                len(pending_batch),
+                exc,
+            )
+            payload["consecutive_no_matches"] += len(pending_batch)
+            pending_batch.clear()
+            if (
+                payload["consecutive_no_matches"]
+                >= limits.max_consecutive_no_matches
+            ):
+                payload["stop_after_pending"] = (
+                    "consecutive_no_match_limit_reached"
+                )
+                return True
+            return False
         for card in pending_batch:
             public_identifier = _canonical_public_identifier(card.public_identifier)
             decision = decisions[public_identifier]

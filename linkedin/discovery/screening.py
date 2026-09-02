@@ -37,7 +37,7 @@ class DiscoveryScoreBatch(BaseModel):
 
 
 def _canonical_public_identifier(value: str) -> str:
-    return re.sub(r"\s+", "", value or "").strip().strip("/").lower()
+    return re.sub(r"[\s\x00-\x1f\x7f]+", "", value or "").strip().strip("/").lower()
 
 
 def _screening_prompt(

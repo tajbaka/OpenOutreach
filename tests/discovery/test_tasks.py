@@ -5,6 +5,7 @@ import pytest
 from django.utils import timezone
 
 from linkedin import conf, icp_outbound
+from linkedin.exceptions import DiscoveryScreeningError
 from linkedin.discovery.collector import (
     _hard_stop_before_visit,
     _mynetwork_card_budget,
@@ -576,6 +577,33 @@ def test_recommendation_screening_is_batched(
     )
 
     assert batch_sizes == [5, 5, 5, 5, 1]
+
+
+@pytest.mark.django_db
+def test_malformed_screening_batch_is_skipped_fail_closed(
+    fake_session,
+    monkeypatch,
+    tmp_path,
+):
+    _configure(monkeypatch, tmp_path)
+
+    def _screen(cards, targets):
+        raise DiscoveryScreeningError(
+            "Screening returned unknown profile 'not-in-this-batch'",
+        )
+
+    monkeypatch.setattr("linkedin.discovery.collector.screen_cards", _screen)
+    payload = fresh_discovery_payload("testuser@example.com")
+
+    matches = _screen_new_cards(
+        cards=[_card(f"bad-batch-{index}") for index in range(5)],
+        payload=payload,
+        targets=icp_outbound.load_discovery_targets("testuser@example.com"),
+    )
+
+    assert matches == []
+    assert payload["cards_scanned"] == 5
+    assert payload["consecutive_no_matches"] == 5
 
 
 def test_mynetwork_budget_reserves_capacity_for_profile_recommendations(

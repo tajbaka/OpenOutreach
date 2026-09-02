@@ -132,6 +132,36 @@ def test_structured_screen_canonicalizes_wrapped_identifier(monkeypatch):
     assert decisions["jane"].should_visit
 
 
+def test_structured_screen_canonicalizes_control_character_identifier(monkeypatch):
+    monkeypatch.setattr(conf, "DISCOVERY_VISIT_SCORE_THRESHOLD", 70)
+    card = DiscoveryCard(
+        public_identifier="marlon-morand-pmp-sa-05336410b",
+        linkedin_url="https://www.linkedin.com/in/marlon-morand-pmp-sa-05336410b/",
+        name="Marlon Morand",
+        headline="PMP",
+        company_name="Example Cloud",
+    )
+
+    decisions = screen_cards(
+        [card],
+        _targets(),
+        structured_model=_Model(
+            {
+                "scores": [
+                    {
+                        "public_identifier": "marlon-morand-pmp\x08-sa-05336410b",
+                        "best_icp": "CSPs",
+                        "score": 82,
+                        "reason": "Security leadership matches the ICP.",
+                    },
+                ],
+            },
+        ),
+    )
+
+    assert decisions["marlon-morand-pmp-sa-05336410b"].should_visit
+
+
 def test_structured_screen_rejects_invented_icp():
     with pytest.raises(DiscoveryScreeningError, match="disabled ICP"):
         screen_cards(
