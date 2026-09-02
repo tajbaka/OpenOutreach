@@ -173,6 +173,7 @@ def test_private_gmail_discovery_state_round_trips_with_restricted_mode(
     tmp_path,
 ):
     monkeypatch.setattr(sync_gmail_context, "GMAIL_DATA_DIR", tmp_path)
+    monkeypatch.delattr(sync_gmail_context.os, "fchmod", raising=False)
     result = GmailContextSyncResult(
         gmail_processed_thread_versions={"a" * 64: "b" * 64},
         unmapped_external_participants=[{
@@ -197,7 +198,8 @@ def test_private_gmail_discovery_state_round_trips_with_restricted_mode(
     assert state["gmail_unmapped_external_participants"][0]["email"] == (
         "buyer@example.invalid"
     )
-    assert path.stat().st_mode & 0o777 == 0o600
+    if sync_gmail_context.os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_sync_command_suppresses_google_api_request_logs(monkeypatch, caplog):

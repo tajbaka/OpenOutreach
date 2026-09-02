@@ -328,14 +328,20 @@ class Command(BaseCommand):
             suffix=".tmp",
             dir=GMAIL_DATA_DIR,
         )
+        descriptor_open = True
         try:
-            os.fchmod(descriptor, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+            handle = os.fdopen(descriptor, "w", encoding="utf-8")
+            descriptor_open = False
+            with handle:
                 json.dump(payload, handle, indent=2, sort_keys=True)
                 handle.write("\n")
             os.replace(temporary_path, path)
             os.chmod(path, 0o600)
         finally:
+            if descriptor_open:
+                os.close(descriptor)
             if os.path.exists(temporary_path):
                 os.unlink(temporary_path)
 

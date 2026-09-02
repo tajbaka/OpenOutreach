@@ -18,23 +18,47 @@ function Write-Log {
     Add-Content -Path $logPath -Value "[$stamp] $Message"
 }
 
+function Invoke-LoggedPython {
+    param([string[]] $Arguments)
+
+    # Windows PowerShell can promote native stderr to a terminating error when
+    # ErrorActionPreference is Stop, truncating the redirected traceback.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $pythonPath @Arguments *>> $logPath
+        return $(if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE })
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
+
 try {
     Write-Log "starting crm_v2_workflow run_id=$runId"
 
     Write-Log "starting sync_crm_v2_context run_id=$runId"
-    & $pythonPath manage.py sync_crm_v2_context --apply *>> $logPath
-    $contextExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+    $contextExitCode = Invoke-LoggedPython -Arguments @(
+        "manage.py", "sync_crm_v2_context", "--apply"
+    )
     Write-Log "finished sync_crm_v2_context run_id=$runId exit_code=$contextExitCode"
     if ($contextExitCode -ne 0) {
         throw "sync_crm_v2_context exited with code $contextExitCode"
     }
 
     Write-Log "starting refresh_crm_v2 run_id=$runId"
-    & $pythonPath manage.py refresh_crm_v2 --apply --routine `
-        --manual-pin StackArmor `
-        --owner-override Ramp=Arian `
-        --owner-override StackArmor=Arian *>> $logPath
-    $refreshExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+    $refreshExitCode = Invoke-LoggedPython -Arguments @(
+        "manage.py",
+        "refresh_crm_v2",
+        "--apply",
+        "--routine",
+        "--manual-pin",
+        "StackArmor",
+        "--owner-override",
+        "Ramp=Arian",
+        "--owner-override",
+        "StackArmor=Arian"
+    )
     Write-Log "finished refresh_crm_v2 run_id=$runId exit_code=$refreshExitCode"
     if ($refreshExitCode -ne 0) {
         throw "refresh_crm_v2 exited with code $refreshExitCode"
