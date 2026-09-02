@@ -152,25 +152,21 @@ if __name__ == "__main__":
             check_for_updates()
         check_env_vars()
 
-        import psutil
         from linkedin.conf import ROOT_DIR
         from linkedin.notifications.slack import notify_on_error
-        from linkedin.single_instance import SingleInstanceGuard
-
-        def _matches_top_level_daemon(proc) -> bool:
-            try:
-                cmdline = proc.cmdline()
-                if not cmdline or "manage.py" not in cmdline or "listen_realtime" in cmdline:
-                    return False
-                return Path(proc.cwd()) == ROOT_DIR
-            except (psutil.Error, OSError):
-                return False
+        from linkedin.single_instance import (
+            SingleInstanceGuard,
+            matches_top_level_manage_daemon,
+        )
 
         daemon_guard = SingleInstanceGuard(
             pidfile=Path("data") / "daemon.pid",
             marker="manage.py daemon",
             logger=logger,
-            match_process=_matches_top_level_daemon,
+            match_process=lambda proc: matches_top_level_manage_daemon(
+                proc,
+                root_dir=ROOT_DIR,
+            ),
         )
         daemon_guard.acquire()
         try:

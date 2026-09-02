@@ -158,3 +158,22 @@ class SingleInstanceGuard:
             self._marker,
             pid,
         )
+
+
+def matches_top_level_manage_daemon(proc, *, root_dir: Path) -> bool:
+    """Return whether *proc* is the argument-free ``manage.py`` daemon."""
+    try:
+        cmdline = proc.cmdline()
+        manage_index = next(
+            (
+                index
+                for index, argument in enumerate(cmdline)
+                if Path(argument).name.lower() == "manage.py"
+            ),
+            None,
+        )
+        if manage_index is None or cmdline[manage_index + 1:]:
+            return False
+        return Path(proc.cwd()).resolve() == root_dir.resolve()
+    except (psutil.Error, OSError, StopIteration):
+        return False
