@@ -8,6 +8,7 @@ import logging
 
 from linkedin.db.urls import public_id_to_url, url_to_public_id
 from linkedin.enums import ProfileState
+from linkedin.exceptions import SeedImportError
 
 logger = logging.getLogger(__name__)
 
@@ -84,27 +85,33 @@ def _normalize_columns(fieldnames: list[str]) -> dict[str, str]:
     return {name.strip().lower(): name for name in fieldnames}
 
 
-def _normalize_csv_icp(raw: str) -> str:
-    """Map a CSV `ICP` column value to one of `LEAD_ICP_BUCKETS`, or "".
+def _normalize_csv_icp(raw: str, *, audience_keys: frozenset[str]) -> str:
+    """Preserve an exact imported audience key or normalize a legacy alias.
 
-    Case-insensitive. Unknown labels return "" so
-    they don't pollute `Lead.icp` with arbitrary strings \u2014 they'll
-    backfill later via `resolve_icp` at first scrape.
+    Never turn an unknown nonblank selection into an unclassified lead.
     """
     from linkedin.notifications.sheets import CSV_ICP_TO_LEAD_ICP
 
-    key = (raw or "").strip().lower()
-    return CSV_ICP_TO_LEAD_ICP.get(key, "")
+    selected = (raw or "").strip()
+    if not selected or selected in audience_keys:
+        return selected
+    canonical = CSV_ICP_TO_LEAD_ICP.get(selected.lower())
+    if canonical is None:
+        raise SeedImportError(
+            f"Unknown CSV ICP {selected!r}; use an exact audience key from the "
+            "explicitly imported shared message JSON or a recognized legacy ICP."
+        )
+    return canonical
 
 
 def parse_csv_leads(text: str) -> list[dict]:
     """Parse CSV text into a list of lead dicts with url, first_name, last_name, company_name, icp.
 
     Raises ValueError if no LinkedIn profile URL column is present. The `ICP`
-    column is optional \u2014 when present, values are normalized to one of
-    `LEAD_ICP_BUCKETS` and stamped on `Lead.icp` at import. When absent,
-    `icp` field stays "" and `linkedin.icp_outbound.resolve_icp` will
-    fill it on first scrape.
+    column is optional. Exact shared-program audience keys are validated against
+    the explicitly imported JSON; legacy aliases normalize to `LEAD_ICP_BUCKETS`.
+    Unknown nonblank selections raise SeedImportError before any database writes.
+    Missing/blank ICP stays blank; no role-based audience is inferred.
     """
     # Strip BOM if present (common in Excel-exported CSVs)
     text = text.lstrip("\ufeff")
@@ -125,6 +132,16 @@ def parse_csv_leads(text: str) -> list[dict]:
     last_col = col_map.get("last name")
     company_col = col_map.get("company")
     icp_col = col_map.get("icp")
+    audience_keys = frozenset()
+    if icp_col:
+        from linkedin.general_icp_json import load_general_message_programs
+
+        # Read and validate once per CSV, never once per lead or at send time.
+        audience_keys = frozenset(
+            message.audience_key
+            for program in load_general_message_programs()
+            for message in program.messages
+        )
 
     leads = []
     for row in reader:
@@ -141,7 +158,7 @@ def parse_csv_leads(text: str) -> list[dict]:
             "first_name": (row.get(first_col) or "").strip() if first_col else "",
             "last_name": (row.get(last_col) or "").strip() if last_col else "",
             "company_name": (row.get(company_col) or "").strip() if company_col else "",
-            "icp": _normalize_csv_icp(row.get(icp_col) or "") if icp_col else "",
+            "icp": _normalize_csv_icp(row.get(icp_col) or "", audience_keys=audience_keys) if icp_col else "",
         })
     return leads
 

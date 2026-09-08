@@ -6,7 +6,18 @@ import pytest
 
 from gmail.auth import GMAIL_OPERATOR_MAPPING
 from gmail.client import GmailClient, GmailSendResult, scoped_gmail_id
+from gmail.delivery import consume_gmail_delivery_permit
+from gmail.exceptions import GmailDeliveryAuthorizationError
 from linkedin.exceptions import EnrichmentError
+
+
+@pytest.fixture(autouse=True)
+def _allow_client_transport_unit_tests(monkeypatch):
+    """Permit tests live separately; these tests exercise MIME/provider behavior."""
+    monkeypatch.setattr(
+        "gmail.client.consume_gmail_delivery_permit",
+        lambda *args, **kwargs: None,
+    )
 
 
 class _Request:
@@ -87,6 +98,20 @@ def _mime_message(client):
     return BytesParser(policy=policy.default).parsebytes(
         base64.urlsafe_b64decode(raw),
     )
+
+
+def test_send_message_rejects_direct_delivery_before_provider_access(monkeypatch):
+    client = _client({"id": "raw-message-1", "threadId": "raw-thread-1"})
+    monkeypatch.setattr(
+        "gmail.client.consume_gmail_delivery_permit",
+        consume_gmail_delivery_permit,
+    )
+
+    with pytest.raises(GmailDeliveryAuthorizationError, match="Direct Gmail sends"):
+        client.send_message(to="ada@example.com", subject="Subject", body="Body")
+
+    assert client._service.events == []
+    assert client._service.messages.calls == []
 
 
 def test_send_message_returns_distinct_raw_provider_identifiers():

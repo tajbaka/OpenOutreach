@@ -39,6 +39,7 @@ def save_chat_message(
     operator: str = "",
     external_id_kind: str = "daemon-send",
     raw: dict | None = None,
+    delivery_metadata: dict | None = None,
 ):
     """Persist an outbound LinkedIn message to `crm.Message`. Never raises."""
     try:
@@ -88,8 +89,8 @@ def save_chat_message(
             "body": content,
             "sent_at": now,
         }
-        if raw is not None:
-            defaults["raw"] = dict(raw)
+        if raw is not None or delivery_metadata is not None:
+            defaults["raw"] = {**(raw or {}), **(delivery_metadata or {})}
 
         Message.objects.get_or_create(
             source=Message.Source.LINKEDIN,

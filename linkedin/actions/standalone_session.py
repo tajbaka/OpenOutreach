@@ -72,6 +72,8 @@ class StandaloneLinkedInSession:
     Used by one-off scrapers that need to log in as an account distinct from
     the daemon's `LinkedInProfile` rows — current consumers:
       - `manage.py export_sales_list` (Sales Nav → CSV)
+      - `manage.py export_sales_search` (Sales Nav search → CSV)
+      - `manage.py export_sales_saved_searches` (saved-search batch → CSVs)
       - `manage.py import_connections` (Connections page → DB backfill)
 
     Each consumer passes its own env-var names + cookie path so multiple

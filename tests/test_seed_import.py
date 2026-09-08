@@ -1,4 +1,49 @@
+from types import SimpleNamespace
+
+import pytest
+
+from linkedin.exceptions import GeneralICPMessageError, SeedImportError
 from linkedin.setup.seeds import parse_csv_leads
+
+
+def test_parse_csv_preserves_exact_shared_keys_and_loads_once(monkeypatch):
+    key = "reviewed-audience-" + "a" * 100
+    calls = []
+
+    def load():
+        calls.append(True)
+        return (SimpleNamespace(messages=(SimpleNamespace(audience_key=key),)),)
+
+    monkeypatch.setattr("linkedin.general_icp_json.load_general_message_programs", load)
+    rows = parse_csv_leads(
+        "Profile URL,ICP\n"
+        f"https://www.linkedin.com/in/qa-one/, {key} \n"
+        f"https://www.linkedin.com/in/qa-two/,{key}\n"
+        "https://www.linkedin.com/in/qa-three/,\n"
+    )
+    assert [row["icp"] for row in rows] == [key, key, ""]
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("selection", ["typo-audience", "KNOWN-AUDIENCE"])
+def test_parse_csv_rejects_unknown_or_case_changed_audience(monkeypatch, selection):
+    monkeypatch.setattr("linkedin.general_icp_json.load_general_message_programs", lambda: (
+        SimpleNamespace(messages=(SimpleNamespace(audience_key="known-audience"),)),
+    ))
+    with pytest.raises(SeedImportError, match="Unknown CSV ICP"):
+        parse_csv_leads(
+            "Profile URL,ICP\n"
+            f"https://www.linkedin.com/in/qa-one/,{selection}\n"
+        )
+
+
+def test_parse_csv_does_not_mask_invalid_imported_programs(monkeypatch):
+    def invalid():
+        raise GeneralICPMessageError("mismatched shared programs")
+
+    monkeypatch.setattr("linkedin.general_icp_json.load_general_message_programs", invalid)
+    with pytest.raises(GeneralICPMessageError, match="mismatched"):
+        parse_csv_leads("Profile URL,ICP\nhttps://www.linkedin.com/in/qa-one/,known-audience\n")
 
 
 def test_parse_csv_leads_accepts_profile_url_header():

@@ -2,7 +2,7 @@ from unittest.mock import Mock, patch
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from linkedin.browser.nav import goto_page, human_type
+from linkedin.browser.nav import TOP_CARD_SELECTORS, find_top_card, goto_page, human_type
 
 
 def test_goto_page_accepts_action_timeout_when_url_matches():
@@ -56,3 +56,14 @@ def test_human_type_keeps_minimum_timeout_for_short_single_line_text():
         human_type(locator, "short")
 
     locator.type.assert_called_once_with("short", delay=80, timeout=30_000)
+
+
+def test_top_card_prefers_exact_sdui_topcard_container():
+    selector = '[componentkey^="com.linkedin.sdui.profile.card."][componentkey$="Topcard"]'
+    assert TOP_CARD_SELECTORS[0] == selector
+    page = Mock()
+    card = page.locator.return_value
+    card.count.return_value = 1
+    card.first.is_visible.return_value = True
+    assert find_top_card(Mock(page=page)) is card.first
+    page.locator.assert_called_once_with(selector)

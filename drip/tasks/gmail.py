@@ -26,6 +26,7 @@ from gmail.client import (
     scoped_gmail_id,
     validated_provider_rfc_message_id,
 )
+from gmail.delivery import issue_gmail_delivery_permit
 from linkedin.tasks.stop_checks import lead_automation_stop_reason
 
 
@@ -671,6 +672,18 @@ def handle_drip_gmail(task) -> None:
         return
 
     try:
+        delivery_permit = issue_gmail_delivery_permit(
+            task=task,
+            operator=reservation.operator,
+            account_key=reservation.account_key,
+            to=reservation.recipient,
+            subject=reservation.subject,
+            body=reservation.body,
+            thread_id=reservation.raw_thread_id,
+            in_reply_to=reservation.in_reply_to,
+            references=reservation.references,
+            rfc_message_id=reservation.rfc_message_id,
+        )
         client = GmailClient(operator=reservation.operator)
         if (
             client.account_key != reservation.account_key
@@ -682,6 +695,7 @@ def handle_drip_gmail(task) -> None:
             to=reservation.recipient,
             subject=reservation.subject,
             body=reservation.body,
+            delivery_permit=delivery_permit,
             thread_id=reservation.raw_thread_id,
             in_reply_to=reservation.in_reply_to,
             references=reservation.references,

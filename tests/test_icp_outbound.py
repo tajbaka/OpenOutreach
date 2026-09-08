@@ -29,8 +29,64 @@ def test_load_icp_messages_returns_known_buckets():
     under each sender's block."""
     for sender in ("Arian", "Chuka"):
         messages = icp_outbound.load_icp_messages(sender)
-        for icp in icp_outbound.ICP_MESSAGES_SHEET_BUCKETS:
+        for icp in icp_outbound.LEAD_ICP_BUCKETS:
             assert icp in messages, f"{sender} missing {icp}"
+
+
+def test_role_persona_authoring_buckets_are_sheet_supported_but_not_runtime_active():
+    assert icp_outbound.CSP_ROLE_PERSONA_AUTHORING_BUCKETS
+    assert set(icp_outbound.CSP_ROLE_PERSONA_AUTHORING_BUCKETS).issubset(
+        icp_outbound.ICP_MESSAGES_SHEET_BUCKETS,
+    )
+    assert set(icp_outbound.CSP_ROLE_PERSONA_AUTHORING_BUCKETS).isdisjoint(
+        icp_outbound.LEAD_ICP_BUCKETS,
+    )
+    assert all(
+        len(label) <= 64
+        for label in icp_outbound.CSP_ROLE_PERSONA_AUTHORING_BUCKETS
+    )
+
+
+def test_parse_icp_messages_rows_accepts_authoring_only_role_persona():
+    icp = icp_outbound.CSP_ROLE_PERSONA_AUTHORING_BUCKETS[0]
+    rows = [
+        list(icp_outbound.ICP_MESSAGES_HEADERS),
+        [icp, "role connect", "role followup"],
+    ]
+
+    parsed = icp_outbound.parse_icp_messages_rows(rows)
+
+    assert parsed[icp]["linkedin_connect_note"] == ["role connect"]
+
+
+def test_sync_pull_fails_closed_for_authoring_only_role_persona(monkeypatch):
+    from django.core.management.base import CommandError
+
+    from linkedin.management.commands.sync_icp_messages import Command
+    from linkedin.notifications import sheets
+
+    icp = icp_outbound.CSP_ROLE_PERSONA_AUTHORING_BUCKETS[0]
+    rows = [
+        list(icp_outbound.ICP_MESSAGES_HEADERS),
+        [icp, "role connect", "role followup"],
+    ]
+    saves = []
+    monkeypatch.setattr(sheets, "read_icp_messages_tab", lambda _sender: rows)
+    monkeypatch.setattr(
+        icp_outbound,
+        "save_icp_messages",
+        lambda *_args, **_kwargs: saves.append("linkedin"),
+    )
+    monkeypatch.setattr(
+        icp_outbound,
+        "save_gmail_messages",
+        lambda *_args, **_kwargs: saves.append("gmail"),
+    )
+
+    with pytest.raises(CommandError, match="authoring-only role personas"):
+        Command().handle(sender="Arian", push=False, pull=True)
+
+    assert saves == []
 
 
 def test_load_icp_messages_channels_normalize_to_steps():

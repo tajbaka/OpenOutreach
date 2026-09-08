@@ -1,5 +1,11 @@
 # Architecture
 
+Profile header lookup in `linkedin/browser/nav.py` recognizes the exact SDUI `com.linkedin.sdui.profile.card.*Topcard` component on either a div or section before legacy selectors. This keeps connection status and invitation actions scoped to the target profile rather than sidebar recommendations. The private 26-ICP pilot preflight and receipts live under `artifacts/qa/arian-26-pilot-2026-09-08/`; they do not change runtime ICP routing.
+
+The 2026-09-08 preflight cleared 25 connectable candidates and held one ICP's sole candidate because Arian already had a pending invitation. A dead URL was replaced within its original reviewed ICP, without reclassifying leads. The user then approved live launch: Campaign 44 is the only active campaign; older runtime anchors 42/43 are disabled and all other historical statuses are preserved. It freezes MessageProgramVersion 1, 25 enrollments, and initial connection-note deliveries after validating all 125 sequence renders. `runtime.py launch` entered the canonical supervisor with `--no-update`, normal pacing, and process-only discovery/freemium/feed-collector exclusions. The first invitation was confirmed sent. Its private launch/process receipts and `daemon.log` are authoritative; `runtime.py status` is read-only. The thread heartbeat `monitor-arian-25-icp-pilot` checks every 10 minutes through the initial invitation batch, without independently sending or extending the cohort. Subsequent LinkedIn/Gmail delivery QA depends on acceptance and normal schedules. The isolated QA runner now includes navigation/status/connect tests (439 passing under `artifacts/qa/campaigns/20260908T175054599847Z/`). One Gmail startup child was terminated by legacy-daemon detection and automatically restarted; the running workers were verified, but this remains a startup-race diagnostic rather than an invitation failure.
+
+Eddy's 2026-09-08 test preparation is separate from Campaign 44. The private `artifacts/qa/eddy-icp-test-2026-09-08/prepare.py` uses a read-only DB session and existing classification receipts, excludes Arian's exact recipients plus recorded outreach/known live holds, and exports 22 candidate identities with 110 pure template-substitution previews from immutable version 1. It never calls saved-enrollment rendering, creates campaign state, browses, or sends. The portable CSV/handoff is under `outputs/eddy-icp-test-2026-09-08/`; live sender/connection preflight and explicit Chuka-owned enrollment/activation remain outstanding. Cross-laptop DB monitoring exposes shared outcomes and sender heartbeats, not local process logs or screenshots. The generic `import_campaign` command currently picks the first active profile for new ownership and must not be used as an implicit sender selector for this pilot.
+
 Detailed module documentation for OpenOutreach. See `CLAUDE.md` for rules and quick reference.
 
 ## Entry Flow
@@ -38,6 +44,192 @@ checks, both before `_ensure_db()`:
 3. **LLM config** — prompts for `LLM_API_KEY`, `AI_MODEL`, `LLM_API_BASE` → writes to `.env`.
 4. **Legal notice** — per-account acceptance stored as `LinkedInProfile.legal_accepted`.
 
+## Shared Versioned Campaign Messages
+
+### No-send campaign rehearsal
+
+Run `.venv/bin/python scripts/qa_campaigns.py` with local PostgreSQL 17 tools
+on PATH. This is a standalone test launcher, not a management command or daemon
+lane. It refuses a pre-existing output directory and accepts no database URL or
+live-send option. A fresh temporary cluster listens only on its private Unix
+socket; the child has a sanitized environment, no dotenv loading, and guards
+against private credential reads, external sockets, browser subprocesses, and
+libpq connections to anything except that cluster. The exact owned cluster is
+stopped before removal; a shutdown verification failure retains its files.
+
+`tests/campaign_qa/` reads the current imported message JSON and tests each
+audience for both Arian and Chuka. It separates explicit fixture-enrollment
+render/freeze checks from CSV classification, real PostgreSQL lead storage,
+campaign import, enrollment, and connection/acceptance/sequence handlers. A
+recording transport replaces provider boundaries; normal message persistence
+and task handlers remain in the isolated test DB. A simulated clock advances
+through due times. Role-wording variations and pending/already-connected/reply/
+dedup/missing-email/wrong-sender/missing-ICP cases supplement the existing
+message-version, retry/uncertain-delivery, Gmail, and stop-policy regressions.
+An upstream failure prevents downstream verification and remains a failing test;
+the runner never changes production routing or marks failures as expected.
+
+Ignored `artifacts/qa/campaigns/<run>/` contains `case_results.csv`,
+`message_previews.csv`, `report.json`, detailed test output, and `run.json` with
+input hashes and cleanup status. Exit zero means the included assertions passed,
+not that live login, selectors, provider delivery, or inbox placement worked.
+The test does not create production Campaigns/Tasks, alter the Sheet/review
+ledger/message JSON, or start/trigger a production worker.
+
+### Authoring and runtime boundaries
+
+`Lead.icp` stores the operator's selected audience key in the existing field,
+with a 160-character limit matching `CampaignMessageEnrollment.audience_key`
+(`crm.0022_lead_icp_audience_length`). The migration widens storage only; it
+does not reclassify leads or infer a cohort from `role_tag`. CSV seed parsing
+validates shared keys against both explicitly imported JSON stores once per
+CSV, preserves exact keys, retains recognized legacy aliases, and rejects
+unknown nonblank selections before any seed writes. Existing nonblank lead
+classifications are still not overwritten by seed import. Runtime enrollment
+validates the selected key against the campaign's immutable version, not JSON.
+Its Campaign query uses `select_for_update(of=("self",))`: the campaign pointer
+is locked, while the immutable nullable version join is not a PostgreSQL lock
+target. Production migrations are a separate deployment step; no QA command
+migrates the live database or starts a worker.
+
+Automatic LinkedIn follow-up startup skips an absent channel and warns/holds
+a sequence whose step 0 is missing, without materializing later deliveries.
+Blank first copy is unfinished, not authorization to send the second message
+first. QA reports those cohorts separately as copy holds; a safe hold passing
+is not full-sequence completion. Gmail handoff skips an absent channel normally
+and otherwise retains its existing first-effective-step behavior. Explicit
+delivery identities and invalid/missing audiences still fail closed.
+
+`General ICP Messages` is the single shared, mutable authoring surface for
+campaign connection notes, LinkedIn follow-ups, and Gmail steps. It is a draft,
+not a runtime lookup table. Each row shows one complete ICP sequence in exactly
+eight operator-facing columns:
+
+```text
+ICP, Connect Message, Followup Message 1, Email Subject 1, Email Body 1,
+Followup Message 2, Email Subject 2, Email Body 2
+```
+
+`ICP` uses `Role | Company Size | FedRAMP Stage | Revenue Intent`. Revenue
+Intent is one of `Direct agency`, `CSP ecosystem`, `Both`, or `Unclear`.
+Confidence and evidence remain lead research metadata rather than separate
+message audiences. The explicit importer derives the fixed FedRAMP Marketplace
+CSP program identity, stable intent-specific audience key, role persona, and
+FedRAMP segment from that label. General rows are shared copy; sender-specific
+legacy variants are not represented in this tab.
+
+The 2026-09-07 authoring consolidation reduced 266 role/size rows to 37
+grouped ICPs (38 physical Sheet rows including the header): 13 Business
+leaders, 13 Technical, and 11 FedRAMP-adjacent. Labels retain the four-part
+schema, using the group as Role and `Any Size` as Company Size. All existing
+stage/intent combinations remain; no code or database routing was added.
+The ignored `artifacts/messages/icp-consolidation-2026-09-07/` directory holds
+the complete pre-consolidation CSV/metadata/ledger, old-to-new label mapping,
+merge decisions, and verified receipt. Conflicting optional message cells
+were left blank, with their originals preserved for further copy review.
+Identical retained content keeps its hash-matching review history. The four
+business Initial Implementation first follow-ups subsequently replaced
+`companies` with the approved `{role}` placeholder and were hash-reviewed;
+no other business sequence fields were changed by that wording edit. The four
+Initial Implementation adjacent first follow-ups were updated to the
+user-approved customer/partner opportunity wording and hash-reviewed on
+2026-09-07. A structurally valid import preview is not approval to
+import an unfinished sequence. No shared JSON, lead assignments, immutable
+versions, or active campaigns were changed by this consolidation.
+
+`linkedin/general_icp_messages.py` expands each wide row into deterministic
+connect, LinkedIn follow-up, and Gmail routes with canonical delays, then
+validates placeholders, email pairs, audience identity, and route uniqueness
+before producing program payloads and SHA-256 content hashes.
+
+`linkedin/general_icp_review_status.json` is a separate checked-in,
+operator-only review ledger. It keys each reviewed message field by the exact
+four-part ICP label and stores the live cell SHA-256 plus reviewer and review
+time. Exact edit times are recorded when known; date-only historical backfills
+remain explicitly date precision. `review_general_icp_messages` strict-parses
+the live tab and reports current, stale, missing, and untracked fields; its
+explicit `--apply` mode changes only this ledger. Sheet row movement is safe
+because row numbers are never identities. Neither runtime delivery nor the
+Sheet-to-JSON importer reads the ledger.
+The ICP authoring workflow inspects this ledger before every General Sheet task
+and records each touched field only after Sheet readback and strict parsing.
+The review command supplies the exact current modification timestamp for live
+edits, preserves earlier modification data for unchanged approvals, and keeps
+historical date-only backfills visibly lower precision.
+
+The draft lifecycle has two deliberately separate command boundaries:
+
+- `render_general_icp_messages` is a one-time migration/staging helper for the
+  legacy Arian and Chuka role-persona rows. Without `--apply` it previews the
+  wide rows and can write a local review CSV with `--output`. With
+  `--apply` it creates or fills only a missing or completely empty
+  `General ICP Messages` tab, applies the review layout, and refuses to
+  overwrite an existing draft. It never changes the source tabs or the SQL
+  database.
+- `sync_general_icp_messages` is the only General Sheet-to-code boundary. It
+  reads and validates the live tab, previews by default, and on `--apply`
+  replaces `shared_programs` in the existing `linkedin/icp_messages.json` and
+  `gmail/icp_emails.json` v2 stores. Runtime and campaign creation never read
+  Google Sheets.
+- `publish_general_icp_messages` reads only those checked-in JSON stores.
+  Without `--apply` it reports the exact create/reuse/no-change version diff and
+  performs no database writes. `--apply --published-by <reviewer>` creates or
+  reuses content-addressed `MessageProgramVersion` rows inside one transaction.
+
+`import_campaign` accepts an optional `message_program_key`. During campaign
+creation or update it loads the current program from both JSON stores, creates
+or reuses its immutable SQL snapshot, and assigns that exact version to
+`Campaign.active_message_version` in the same transaction. Later Sheet or JSON
+edits cannot change the campaign implicitly.
+
+`MessageProgram` is the stable program identity. Each
+`MessageProgramVersion` is an immutable published payload with its schema
+version, content hash, reviewer, timestamp, and optional predecessor; model
+guards reject updates and deletion. `Campaign.active_message_version` is the
+explicit, separate choice of published copy for new campaign enrollment.
+`CampaignMessageEnrollment` is one-to-one with a Deal and permanently freezes
+that Deal's version, canonical audience, and operator. A later Campaign version
+change does not move an existing enrollment.
+
+`Lead.role_tag` stores operator-reviewed classification independently of the
+long LinkedIn title. It does not construct or select a General ICP audience;
+campaign cohorts remain explicit, manually authored classifications.
+The `{role}` message token resolves that saved tag through the shared
+`linkedin/message_roles.py` wording lookup, for example `CFO/Finance` to
+`finance leaders`. Missing/blank tags use `companies`; unknown nonblank tags
+raise `MessageRoleError`. The lookup never reads a title or audience label and
+does not write lead records. General draft validation, the versioned renderer,
+and legacy LinkedIn/Gmail renderers support this token. Changing a tag or its
+wording affects only future rendering, not an existing frozen delivery.
+Independent drip manifests retain their separate placeholder contract.
+
+`linkedin/message_delivery.py` selects the exact operator-effective route,
+uses a deterministic variant for the enrollment and step, mechanically renders
+the supported lead/company/sender placeholders, and materializes an
+`OutboundDelivery`. That row freezes channel, step key/index, variant, operator,
+scheduled time, subject, body, media, and render hash before a durable Task may
+perform the provider action. Only execution status, Task binding, and send
+timestamps are mutable.
+For Gmail, `{my_name}` uses the configured `GMAIL_OPERATOR_MAPPING.display_name`
+with the canonical operator as fallback, matching the legacy Gmail renderer.
+Chuka therefore signs as Eddy without changing enrollment/delivery ownership,
+sender routing, or LinkedIn rendering. Existing frozen deliveries are reused
+unchanged even if the configured display name changes.
+`linkedin/message_delivery_runtime.py` validates the full Deal/enrollment/
+version/audience/operator/step/variant binding and persists the same stable
+audit identity beside provider messages.
+
+For a Campaign with `active_message_version`, or a Deal with an existing
+enrollment, the LinkedIn connect/follow-up and Gmail handoff/worker paths are
+version-bound. They must use the frozen `OutboundDelivery`; missing, partial, or
+mismatched identity fails closed, retries reuse the same delivery, and later
+steps stay on the enrollment's original version. Bound execution never rereads
+the mutable Sheet, `linkedin/icp_messages.json`, or `gmail/icp_emails.json`.
+Both JSON files use a v2 envelope: generated shared campaign copy lives under
+`shared_programs`, while transitional sender-specific rollback copy lives under
+`sender_icps`. The hidden legacy sender tabs and `sync_icp_messages` manage only
+`sender_icps`; they never read the General tab or alter shared programs.
+
 ## Profile State Machine
 
 `enums.py:ProfileState` (TextChoices) is the legacy per-Lead/per-Campaign outreach automation state machine: QUALIFIED, READY_TO_CONNECT, PENDING, CONNECTED, COMPLETED, FAILED. It is not the canonical sales pipeline. In particular, COMPLETED means an automation sequence finished and never means Closed Won. Pre-Deal states are url_only (no description) and enriched (has description). `Lead.disqualified=True` is permanent account-level exclusion. LLM rejections are FAILED Deals with "Disqualified" closing reason (campaign-scoped). Stale project-sent invitation withdrawals are operational FAILED Deals with closing reason "Failed"; they do not globally disqualify the Lead.
@@ -68,15 +260,19 @@ Low connect-pool notifications are post-action signals. A completed connect task
 
 Task types (handlers in `linkedin/tasks/`, signature: `handle_*(task, session, qualifiers)`):
 
-1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3). The More-menu fallback recognizes native links/buttons and LinkedIn's ARIA-button `<div role="button">` variant; connect issue rows keep the requested lead ID as identity and store the browser's query-bearing URL only in metadata.
+1. **`handle_connect`** — Unified via `ConnectStrategy` dataclass. Regular: `find_candidate()` from `pools.py`; freemium: `find_freemium_candidate()`. Unreachable detection after `MAX_CONNECT_ATTEMPTS` (3). When the selected Deal is version-bound, the handler creates or reloads its `CampaignMessageEnrollment`, materializes the `linkedin_connect` `OutboundDelivery`, waits until its frozen schedule, and uses only its frozen body; connect deliveries reject subjects and media. Missing audience/version routes fail closed, and status changes are recorded on the same delivery. Only an unbound Deal calls the legacy JSON-backed `build_connection_note`. The More-menu fallback recognizes native links/buttons and LinkedIn's ARIA-button `<div role="button">` variant; connect issue rows keep the requested lead ID as identity and store the browser's query-bearing URL only in metadata.
 2. **`handle_sweep_connections`** — Account-wide but sender-scoped by `Task.payload.operator`. Each sender daemon claims only its own sweep row and visits that logged-in account's `mynetwork/invite-connect/connections/` once per `CONNECTION_SWEEP_INTERVAL_HOURS`. The default incremental path derives browser depth from the latest successful sender `WorkflowRun(name="connection-sweep")`, bootstrapping from the most recent legacy completed sweep and applying `CONNECTION_SWEEP_OVERLAP_HOURS`; the oldest PENDING invitation never controls recurring browser depth. The scanner extracts each rendered/virtualized batch in one browser-side call, accumulates by public ID, and stops at the connection-date cutoff, idle end, `CONNECTION_SWEEP_MAX_SECONDS`, or `CONNECTION_SWEEP_MAX_ROUNDS`. The hard budget covers acceptance processing as well (with at most one in-flight acceptance allowed to overrun). Complete runs advance the watermark; incomplete runs write `WorkflowRun(name="connection-sweep-incomplete")`, preserve the target cutoff, and retry after `CONNECTION_SWEEP_INCOMPLETE_RETRY_MINUTES`. Empty selectors are incomplete rather than a false watermark. After Playwright work the handler recycles the DB connection, cross-references all sender PENDING Deals by public ID, and transitions matches to CONNECTED. An active Campaign then receives the normal LinkedIn/Gmail post-accept work; a finished historical Campaign records the acceptance only and every current enqueue/executor boundary refuses to resurrect its retired sequence. `ENABLE_INCREMENTAL_CONNECTION_SWEEP=false` restores the legacy cutoff while keeping hard runtime bounds; `ENABLE_SWEEP_CONNECTIONS=false` disables the lane. Plain accepted invites are not posted individually to Slack; accepted-and-replied leads still post. Sweep completion no longer posts send-count status; that lives in the hourly account-agnostic `status_summary` task.
-3. **`handle_follow_up`** — Per-profile. Sends rigid ICP LinkedIn follow-up sequence steps from `icp_messages.json`, gated by `ENABLE_FOLLOW_UP` and the follow-up rate limit. Queued tasks freeze template routing in `payload.icp`; when that field is absent on legacy tasks, the handler uses `resolve_icp(lead)`, so stamped `Lead.icp` such as `CMMC Buyers` wins before the legacy classifier backfills blanks. Payloads may carry `sequence_name`, `channel`, and `step_index`; missing values default to `linkedin_connect_followup` / same channel / `0`. Owner scoping compares outbound `Message.sender` values through `linkedin.operators.resolve_operator`, so new LinkedIn display variants such as `"athena aghdami"` must be added there. Stop checks are DB-local only via `linkedin.tasks.stop_checks.automation_stop_reason`: inbound LinkedIn/Gmail message, existing `crm.Meeting`, disqualified lead, or suppression. On an ordinary text send failure it re-enqueues the same step in 24h. On non-final success it records `ActionLog`, persists an outbound `crm.Message`, and enqueues the next step after that step's `delay_hours`, calculated from `Deal.connected_at` and normalized into configured active hours/rest days, while keeping the Deal `CONNECTED`; final LinkedIn success marks the Deal `COMPLETED` but does not stop an already-queued Gmail lane. Step-level dedup for a non-final already-sent step keeps the Deal `CONNECTED` and ensures the next step is queued; only a final-step dedup marks `COMPLETED`. Post-send retries only retry the state write so a dead DB connection cannot double-count the action or duplicate the next-step Task. Gmail sequencing is scheduled from post-accept paths (`handle_connect`, `handle_sweep_connections`, and the no-reply backfill command) through `gmail.handoff.maybe_schedule_gmail_sequence`; it queues either `enrich_email` or `gmail_follow_up` when `ENABLE_GMAIL_SEQUENCE=true`, the operator has a Gmail mapping, and no local stop condition exists. LinkedIn and Gmail are fail-open lanes: one failed/skipped task does not block the other, Gmail scheduling exceptions are logged and swallowed at the LinkedIn boundary, and templates must be standalone rather than referencing a previous channel-specific send. ICP blocks can declare a media registry such as `"media": ["demo.gif"]`; `{demo.gif}` and legacy `{add demo.gif}` placeholders attach at most one validated GIF or MP4 from `assets/follow_up/`. Missing, invalid, unsupported, empty, or oversized media fails closed rather than silently becoming text-only. The media branch resolves an exact member URN and uses the strict one-route uploader described below. After attachment readiness and body typing, its final callback rechecks Campaign/Deal state, drip ownership, sender ownership, and the shared persisted stop policy immediately before the only Send click. A proven technical pre-submit failure retains the existing 24-hour retry, a final-guard block does not retry, and post-click ambiguity raises `LinkedInMessageSubmissionUnclearError` so the Task fails without sequence advancement or automatic resend. Confirmed media sends persist the validated media identity in `crm.Message.raw`. The ICP Messages Sheets sync renders multi-step copy as interleaved columns: `Followup Message N`, `Email Subject N`, `Email Body N`. Push flattens each step's first variant into its column and pull rebuilds LinkedIn plus Gmail JSON, preserving existing per-step `delay_hours` because Sheets carries copy, not cadence, and preserving JSON-only fields such as `media`. Editable ICP Messages tabs include `CSPs`, `3PAOs/Assessors`, `Advisors`, `Channel`, `Investor / Portfolio Ops`, `Accelerator / Ecosystem`, `CMMC Buyers`, and `CMMC Advisor/Channel`; the investor-channel values are rows in the existing Arian and Chuka tabs, not new tabs.
+3. **`handle_follow_up`** — Per-profile, gated by `ENABLE_FOLLOW_UP` and the follow-up rate limit. A version-bound Task must name the exact frozen `linkedin_followup` delivery and carry matching enrollment/version/audience/operator/step/variant identity. The handler validates that identity before rate-limit or no-thread rescheduling, uses only `frozen_body` and `frozen_media`, records the delivery audit identity on the persisted `crm.Message`, and creates the next delivery from the same enrollment/version. Retry rebinds the same delivery; missing or mismatched identity fails closed. Only an unbound Task sends rigid ICP sequence steps from `icp_messages.json`; its queued `payload.icp` freezes legacy template routing, and absent legacy values use `resolve_icp(lead)`. Payloads may carry `sequence_name`, `channel`, and `step_index`; missing legacy values default to `linkedin_connect_followup` / same channel / `0`. Owner scoping compares outbound `Message.sender` values through `linkedin.operators.resolve_operator`, so new LinkedIn display variants such as `"athena aghdami"` must be added there. Stop checks are DB-local only via `linkedin.tasks.stop_checks.automation_stop_reason`: inbound LinkedIn/Gmail message, existing `crm.Meeting`, disqualified lead, or suppression. On ordinary text send failure it re-enqueues the same step in 24h. On non-final success it records `ActionLog`, persists an outbound `crm.Message`, and enqueues the next step after that step's `delay_hours`, normalized into configured active hours/rest days, while keeping the Deal `CONNECTED`; final LinkedIn success marks the Deal `COMPLETED` but does not stop an already-queued Gmail lane. Step-level dedup for a non-final already-sent step keeps the Deal `CONNECTED` and ensures the next step is queued; only a final-step dedup marks `COMPLETED`. Post-send retries only retry the state write so a dead DB connection cannot double-count the action or duplicate the next-step Task. Gmail sequencing is scheduled from post-accept paths (`handle_connect`, `handle_sweep_connections`, and the no-reply backfill command) through `gmail.handoff.maybe_schedule_gmail_sequence`; it queues either `enrich_email` or `gmail_follow_up` when `ENABLE_GMAIL_SEQUENCE=true`, the operator has a Gmail mapping, and no local stop condition exists. LinkedIn and Gmail are fail-open lanes: one failed/skipped task does not block the other, Gmail scheduling exceptions are logged and swallowed at the LinkedIn boundary, and templates must be standalone rather than referencing a previous channel-specific send. Versioned LinkedIn media is the frozen JSON-list from General copy and supports at most one validated GIF/MP4 under the same approved root as legacy media. The legacy JSON path retains its `{demo.gif}` / `{add demo.gif}` attachment handling and sender-tab sync. `sync_icp_messages --push/--pull` continues to round-trip only the legacy Arian/Chuka JSON surfaces; it never publishes General copy.
+
+ICP blocks can declare a media registry such as `"media": ["demo.gif"]`; `{demo.gif}` and legacy `{add demo.gif}` placeholders attach at most one validated GIF or MP4 from `assets/follow_up/`. Missing, invalid, unsupported, empty, or oversized media fails closed rather than silently becoming text-only. The media branch resolves an exact member URN and uses the strict one-route uploader described below. After attachment readiness and body typing, its final callback rechecks Campaign/Deal state, drip ownership, sender ownership, and the shared persisted stop policy immediately before the only Send click. A proven technical pre-submit failure retains the existing 24-hour retry, a final-guard block does not retry, and post-click ambiguity raises `LinkedInMessageSubmissionUnclearError` so the Task fails without sequence advancement or automatic resend. Confirmed media sends persist the validated media identity in `crm.Message.raw`.
 
 Current media Tasks also lock the Lead and persist a Task-payload submission marker immediately before that click. The locked callback reruns final stop, ownership, sibling-uncertainty, and sent-evidence guards, so same-operator campaign Tasks cannot cross the boundary concurrently. After LinkedIn confirms the send, the handler re-reads the exact media-bearing Message and refuses action/state/successor advancement if persistence is absent or unverifiable. `heal_tasks` sends stale running markers and failed post-confirmation markers through `linkedin/tasks/follow_up_submission.py`: exact evidence requeues with its marker and sequence payload intact for normal sent-step dedupe/successor bookkeeping, while a marker without evidence becomes failed/unclear and suppresses same-operator catch-up replacement for that Lead. The handler applies the same Lead/operator uncertainty guard to already-pending sibling Tasks; another operator remains independent. Pre-submit stale current Tasks keep the ordinary pending reset.
 4. **`handle_manual_reply`** — Slack-to-LinkedIn reply lane. Slack modal submit inserts a `manual_reply` Task with `lead_id`, `operator`, `message`, Slack message coordinates, and original Slack blocks. The queued Slack status includes a cancel button backed by the Vercel endpoint; cancel deletes only a still-`pending` task, and reports if the daemon already started claiming/sending it. `Task.objects.claim_next()` atomically flips the selected task from `pending` to `running`, so a successfully cancelled reply cannot still be sent by a daemon that had only read the row. The daemon claims manual replies ahead of normal outbound work, scoped by `payload.operator`, and sends through the same logged-in Playwright page via `send_raw_message`. Manual replies use the direct-thread UI composer with human typing and deliberately disable the Voyager API fallback, so a UI send failure fails the task instead of sending instantly. Manual replies bypass active-hours sleeps when due; while no reply is currently due, the daemon caps sleep to `MANUAL_REPLY_POLL_SECONDS` (default 60) during both active and off-hours so newly queued replies are picked up quickly without running normal off-hours automation. Manual replies do not consume connect/follow-up quotas, do not advance sequences, and do not change Deal state; the durable outreach side effect is the outbound `crm.Message` with a `manual-reply:` synthetic external id. Before sending, the handler checks that same `crm.Message` ledger for an existing same lead/operator/body manual reply and skips duplicates, covering the crash-after-send/before-task-complete window. Slack sent/failed acknowledgements are best-effort via `chat.update` on the original notification, falling back to the interaction `response_url`.
 5. **`handle_status_summary`** — Account-agnostic hourly ops summary. Any daemon may claim the `status_summary` task, post one Slack snapshot for every reportable expected sender, and enqueue the next run for one hour later. Each line item is per sender: invites sent today, LinkedIn follow-ups today, email follow-ups today, manual replies today, newly accepted since the previous status task window, connect tasks run today, and qualified remaining. Senders with no heartbeat for the active day, or whose connect lane is blocked by daily/weekly limits, are omitted; if every sender is omitted, the task reschedules without posting Slack. The task is seeded during daemon startup and is allowed through active-hours sleeps like manual replies so status does not depend on a connection sweep, but it suppresses Slack posting when normal outreach is intentionally inactive: outside active hours/rest-day windows and no pacing catch-up lane is open for any sender.
 
 ## Drip Campaigns (`drip/`)
+
+Current version-bound LinkedIn follow-ups and the strict media sender share one submission path: final delivery-identity validation, attachment evidence plus delivery audit metadata in the same Message, and exact identity-matched recovery. Quota deferrals retain the bound delivery, while confirmed-send recovery bypasses quota solely for successor/state repair. The isolated campaign QA suite exercises these interactions alongside drip attribution/media, discovery, and Gmail/supervisor regressions. Legacy Gmail template loading unwraps only `sender_icps` from the v2 JSON envelope; it never interprets `shared_programs` as sender templates or consults them for bound execution.
 
 The drip subsystem is implemented in this repository as a separate Django domain, not as another repository and not as another state inside the current connection/post-connection campaign. It deliberately reuses only the persistent `linkedin.Task` transport and existing provider runtimes. `DripCampaign`, immutable `DripCampaignVersion`, `DripEnrollment`, independent `DripLane` rows, frozen `DripDelivery` rows, immutable Gmail `DripTrackedLink` rows, and `DripDeliveryAttempt` submission-boundary ledgers own the lifecycle. Drip never advances, completes, or fails `Deal.state`. A database constraint permits only one nonterminal drip enrollment per Lead across every drip campaign, one lane per enrollment/channel, and one delivery per lane/theme/step; conditional recipient-owner and LinkedIn-member-URN constraints prevent two nonterminal lanes from owning the same provider recipient, including duplicate Lead rows for the same member.
 
@@ -198,7 +394,7 @@ Three apps in `INSTALLED_APPS`:
 - **`agents/follow_up.py`** — ReAct agent for follow-up conversations. Tools: `read_conversation`, `send_message`, `mark_completed`, `schedule_follow_up`.
 - **`message_media.py`** — approved-root resolver and immutable media identity for one GIF/MP4 attachment: path containment, signature, 20 MiB, MIME, size, and SHA-256 validation plus frozen-metadata drift checks.
 - **`actions/`** — `connect.py` (`send_connection_request`), `status.py` (`get_connection_status`), `message.py` (`send_raw_message` plus exact-URN `send_direct_message_once` with optional attachment readiness polling and one-click outcome classification), `profile.py` (profile extraction), `search.py` (LinkedIn search), `conversations.py` (`get_conversation`).
-- **`notifications/sheets.py`** — durable People publisher. Adds `Lead ID` only at the trailing edge, resolves stable ID before exact legacy LinkedIn URL, detects duplicate/ambiguous identities, indexes same-run appends immediately, and writes only managed changed cells. Rows are never cleared, reordered, or pruned; unknown columns and formula cells are not round-tripped through displayed values. `sync_sheets` is publication-only, shares the CRM v2 cross-process advisory lock, and performs no LLM synthesis or sales eligibility decisions.
+- **`notifications/sheets.py`** — durable People publisher. Adds stable `Lead ID` and canonical `Role Tag` only at the trailing edge, resolves stable ID before exact legacy LinkedIn URL, detects duplicate/ambiguous identities, indexes same-run appends immediately, and writes only managed changed cells. A valid populated Role Tag is human-owned and imported to `Lead.role_tag` on apply; a durable DB tag may fill only a blank cell, and raw `Title` remains independent. Rows are never cleared, reordered, or pruned; unknown columns and formula cells are not round-tripped through displayed values. `sync_sheets` is publication-only, shares the CRM v2 cross-process advisory lock, and performs no LLM synthesis or sales eligibility decisions.
 - **`notifications/crm_sheets.py`** — shared safe Sheet primitives plus retired-surface adapters used only for exact first-cutover import, inventory, backup, and recovery. Legacy Opportunities, Pipeline, Recovery, and sender Followups are not canonical publication targets after v2 activation.
 - **Canonical CRM v2 Sheet projection (`crm_v2_publish.py`, `notifications/crm_v2_sheets.py`)** — the account-first serializer and safe adapters for exactly two concise surfaces: one stable row per admitted `Active Accounts` opportunity and one owner-filterable current `Actions` queue. Admission evidence is explicit (`Why active`, evidence tier, meaningful touch, `Attention`, and `Who owes`); source threads stay out of the working view. Missing projection rows are cleared in place without deleting stable IDs, formulas, operator columns, or worksheets, and human cells retain the conservative three-way merge. Pipeline and Recovery are retired because their useful state is already represented on these two surfaces.
 - **CRM v2 DB reconciliation (`crm_v2_reconcile.py`)** — the transactional write bridge from resolved account evidence to durable Account/primary Opportunity/contact state. Dry-run executes the apply path under rollback. Exact Opportunity/Lead links win; unanchored account domain/name ambiguity fails closed. Only admitted evidence creates rows, exact disqualified Leads remain linkable contacts, blank domains are filled only from one unique business domain, and stale bootstrap/system Opportunities are reversibly deactivated. Manual/Sheet Opportunities and pins are authoritative. The service never creates Actions or changes owner, stage, sales-motion step, value, or probability.
@@ -207,7 +403,9 @@ Three apps in `INSTALLED_APPS`:
 - **Legacy Followup generator** — the former lead/name-based sheet rebuild is retained only behind explicit `generate_followups --legacy` for deliberate recovery. Canonical drafting consumes persisted Actions and publication uses `refresh_crm_v2 --apply --routine`.
 - **`docs/followups-sort-buttons.gs`** — Google Apps Script (paste into the spreadsheet's Extensions → Apps Script). Adds a "Followups" menu with two within-section sort actions on any `<Operator> - Followups` tab: "Sort: Action needed" (both Sent toggles = No first, then PRIORITY desc) and "Sort: Days since (oldest first)". Reads formulas alongside values so HYPERLINK cells survive the sort; writes each section's data rows back as one range so divider merges stay intact. Column order depends on `FU_HEADERS` in `notifications/sheets.py`.
 - **Sales Motion account tracker skill (`skills/boundera-sales-motion/`)** — a repo-portable, non-secret Codex skill and deterministic native-tab clone/verifier for the separate Sales Motion workbook. The live `Template` tab remains authoritative; the helper uses `secrets/sheets-service-account.json` at runtime and preserves merges, dimensions, dropdowns, and conditional formats. `docs/sales-motion-summary.md`, `docs/sales-motion-framework.md`, and `docs/sales-motion-video-transcript.md` provide the concise, exact-task, and timestamped source layers respectively.
-- **Boundera copy skills (`skills/boundera-sales/`, `skills/boundera-icp-messages/`)** — `boundera-sales` is intentionally limited to one-off email, LinkedIn, SMS/Slack, recap, scheduling, and objection copy outside the structured campaign Sheet. `boundera-icp-messages` exclusively authors or reviews sender-specific connection-note, LinkedIn-follow-up, and Gmail copy in the ICP Messages Google Sheet, defaulting authoring work to the exact Chuka tab while preserving the runtime no-fallback rule. Its human-maintained persona angles are separate from deployed JSON copy; it reads current LinkedIn and Gmail JSON and shares the sales skill's official-source 20x/Rev5 and research-backed length references. Neither skill carries a static capability inventory: a named product claim requires targeted evidence from the current FedRampGPT documentation, implementation, and tests, and existing campaign copy is not product evidence. The Sheet skill forbids targeted edits through the full-tab-clearing `--push` path and treats `--pull` as an explicit publication step. Neither skill applies the 15-step sales-motion framework to copy.
+- **Boundera copy skills (`skills/boundera-sales/`, `skills/boundera-icp-messages/`)** — `boundera-sales` is intentionally limited to one-off email, LinkedIn, SMS/Slack, recap, scheduling, and objection copy outside the structured campaign Sheet. `boundera-icp-messages` exclusively authors or reviews the eight visible sequence columns in the shared `General ICP Messages` draft. It reads the live General draft and latest explicitly imported shared JSON when available. The Sheet skill never imports JSON, creates Tasks, activates a Campaign, or treats a Sheet edit as deployed copy without a separate user request.
+- **Legacy sender-tab transition boundary** — Both JSON files use the v2 `shared_programs`/`sender_icps` envelope. The hidden sender-specific tabs and `CSP_ROLE_PERSONA_AUTHORING_BUCKETS` remain only for unbound-campaign transition and rollback. `sync_icp_messages` operates a requested sender-specific surface and `sender_icps`; it never reads the General tab or changes `shared_programs`. Bound Deals resolve the explicit General audience and immutable version created from imported shared JSON.
+- **Explicit Marketplace lead classification** — The one-time reviewed assignment workflow under ignored `artifacts/leads/icp-classification-2026-09-08/` joins exact LinkedIn identities to operator-reviewed ICP audience keys and canonical role tags. Its source snapshot, review plan, and receipts support exact readback; unresolved or excluded profiles are held. It changes only `Lead.icp`/`Lead.role_tag` on existing records and creates missing Lead identities without Deals or Tasks. Existing active-campaign dependencies or frozen enrollments block the import. Marketplace lead-sheet J `Role Tag` retains its strict canonical dropdown, while K `ICP` shows the corresponding readable shared-program label. Sheet cell writes are scoped and source-checked, with native metadata and value readback. This is a manual classification import, not a scheduled sync, runtime audience inference, message-copy edit, or campaign activation. Production rendering still uses the separately imported JSON and version/enrollment boundaries above.
 - **Sales calendar links (`linkedin/calendar_links.py`)** — canonical Arian Cal.com URLs for first-time introductions, established-opportunity next steps, technical/product deep dives, general calls, and quick chats. Sales drafting should select from the named constants instead of embedding remembered URLs.
 - **`notifications/synthesis.py`** — retained legacy/manual helper only. The People publisher no longer invokes it, so publication cannot make sales decisions or mutate Lead/Deal synthesis state.
 - **`api/client.py`** — `PlaywrightLinkedinAPI`: browser-context fetch (runs JS `fetch()` inside Playwright page for authentic headers). `get_profile()` with tenacity retry.
@@ -219,7 +417,7 @@ Three apps in `INSTALLED_APPS`:
 - **`setup/freemium.py`** — `import_freemium_campaign()`, `seed_profiles()`.
 - **`setup/gdpr.py`** — `apply_gdpr_newsletter_override()`.
 - **`setup/self_profile.py`** — `ensure_self_profile()`.
-- **`setup/seeds.py`** — User-provided seed profiles: parse URLs, create Leads + QUALIFIED Deals.
+- **`setup/seeds.py`** — User-provided seed profiles: parse URLs and create Leads + QUALIFIED Deals.
 - **`management/commands/discover_inbox_leads.py`** — Standalone LinkedIn Messaging inbox lead discovery. Uses the same env-backed `StandaloneLinkedInSession` account slots as message backfill (`LINKEDIN_USERNAME`/`LINKEDIN_PASSWORD` and `BACKFILL_LINKEDIN_USERNAME`/`BACKFILL_LINKEDIN_PASSWORD`). After login it opens the visible browser to `/messaging/`, then crawls Voyager messaging conversations from that authenticated browser context. The first batch uses LinkedIn's recent-conversation query; older pages use the same `lastUpdatedBefore` / `nextCursor` category query emitted by scrolling the conversation list in the UI, stopping at the 90-day default window or `--max-pages`. It skips existing leads by canonical LinkedIn URL, `Lead.public_identifier`, stored profile URN, or existing `crm.Message.thread_external_id`, and classifies non-duplicate 1:1 threads with the Boundera FedRAMP/CMMC `inbox_lead_relevance.j2` prompt. Campaign objective/docs are deliberately ignored for relevance; `--campaign` only chooses the destination Deal campaign. Full Voyager profile enrichment is preferred; when LinkedIn returns private/restricted 403s, the command falls back to the inbox participant payload (name, headline, profile URL / `fsd_profile` URN). Default mode is dry-run; `--apply` creates `Lead` + `Deal(state=CONNECTED)` rows, stamps canonical `Lead.icp` (`CSPs`, `3PAOs/Assessors`, `Advisors`, `Channel`, `CMMC Buyers`, `CMMC Advisor/Channel`), stores the LinkedIn thread through `persist_thread`, and stamps `Deal.last_reply_at` from newest inbound. It does not enqueue `Task` rows.
 - **`management/commands/sync_gmail_context.py`** — Direct Gmail relationship/context command. `--dry-run` previews writes; `--operator` / `--account` scope the Gmail OAuth account; `--campaign`, `--lead-id`, and positive `--limit` are explicit diagnostics, while `--all-leads` is a deprecated no-op because all email identities are eligible by default. `--skip-unmapped-discovery` disables the bounded email-first candidate scan; its window/candidate caps have positive CLI overrides. Apply-mode default discovery atomically stores opaque thread-version checkpoints and structured candidates in private mode-0600 `data/gmail/<account>-context-state.json`; the direct API remains the programmatic result path. `--skip-threads` runs only Gemini/Meet note ingestion; `--skip-notes` runs only prospect email-thread ingestion. Google API request/response logging is suppressed and console output is aggregate-only by default. Non-dry-runs write aggregate `WorkflowRun(name="data-sync")` rows for all operators that share the synced Gmail account.
 - **`management/commands/granola_notes.py` / `granola_sync.py`** — standalone lookup remains read-only; canonical refresh uses one incremental metadata scan, fetches details/transcripts only when needed, caches unmatched/ambiguous notes, and rematches them after Opportunity links exist. Matching is deterministic and loose note-body matching is impossible. Granola failure preserves cache/watermark and selects stored Gemini without aborting other CRM surfaces.
@@ -229,7 +427,7 @@ Three apps in `INSTALLED_APPS`:
 - **`management/commands/refresh_crm_v2.py`** — canonical locked reconciler/publisher. Default mode runs the exact DB mutation path under rollback and performs zero Sheet writes. First apply requires a recent matching reviewed preview, publishes People as a preservation-checked prerequisite, imports only exact stable-ID human state, creates a full private workbook backup, stages and verifies both v2 tabs, and activates them atomically. Routine apply requires both canonical v2 tabs and no legacy canonical titles. DB failure after title activation invokes exact title compensation; post-commit cleanup removes obsolete archives except unresolved legacy material deliberately retained for review.
 - **`management/commands/refresh_crm.py`** — retired legacy publisher. It refuses to run once either `Active Accounts` or `Actions` exists and must not be scheduled or used as a fallback.
 - **`management/commands/generate_followups.py`** — canonical Codex draft queue by default. Export contains persisted, explicitly owned current Actions plus bounded conversation/context after eligibility. Apply validates Action/Opportunity/Lead IDs and the full semantic fingerprint atomically, fills only a blank draft/channel, and republishes through routine CRM v2; it never sends. The former lead/name tab rebuild requires explicit `--legacy`.
-- **`management/commands/export_sales_search.py` / `export_sales_list.py`** — Sales Navigator people-search/list exporters using the dedicated `SALES_NAV_LINKEDIN_USERNAME` / `SALES_NAV_LINKEDIN_PASSWORD` session. The exported CSV remains compatible with `add_seeds --csv` and includes review metadata: `Profile URL`, `First Name`, `Last Name`, `Company`, `Title`, `Geo Region`, `Degree`. Prefer writing exploratory exports under ignored `artifacts/leads/`; keep `leads/` for intentional import-ready inputs.
+- **Sales Navigator exports (`management/commands/export_sales_search.py`, `export_sales_list.py`, `export_sales_saved_searches.py`)** — Read-only people-search/list exporters using the dedicated `SALES_NAV_LINKEDIN_USERNAME` / `SALES_NAV_LINKEDIN_PASSWORD` session. `export_sales_saved_searches` opens the live Saved searches panel, validates and scopes lead-search links by an explicit non-blank name prefix (default `FMKT |`) plus an optional exact name suffix, and exports every match in one authenticated session without saving leads or changing LinkedIn state. `linkedin/actions/sales_nav_saved_searches.py` owns UI discovery and fail-closed link validation; `sales_nav_list.py` binds the captured XHR to the exact saved-search ID and, because LinkedIn emits an earlier unfiltered response with that same ID, accepts only the structurally valid response whose non-empty `query` clause carries the active filters. It also validates pagination and fails on repeated or structurally malformed pages. `sales_nav_export.py` owns shared profile resolution and atomic `<name>.partial.csv` → final CSV publication. A private mode-0600 JSON manifest records each search ID, source URL, output file, filters, per-search limit, counts, status, and error. Limited runs are `limited_complete`; `--resume` requires the same account, prefix, optional suffix, saved-search inventory, and limit, then skips only manifest-verified completed CSVs with unchanged row counts. All exported CSVs remain compatible with `add_seeds --csv` and include review metadata: `Profile URL`, `First Name`, `Last Name`, `Company`, `Title`, `Geo Region`, `Degree`. Prefer ignored `artifacts/leads/` for exploratory exports and keep `leads/` for intentional import-ready inputs.
 - **`management/setup_crm.py`** — Idempotent CRM bootstrap (Site creation).
 - **`admin.py`** — Django Admin: Campaign, LinkedInProfile, SearchKeyword, ActionLog, Task, ChatMessage.
 - **`django_settings.py`** — requires Postgres through `DATABASE_URL` for every non-test runtime and fails closed when it is absent; pytest alone receives in-memory SQLite. Apps: crm, chat, linkedin.
@@ -347,45 +545,57 @@ is on, with the same per-`(lead, provider)` dedup. Either path writes
 **Post-accept Gmail trigger.** When a lead reaches `CONNECTED`, the connect
 path, sweep path, and no-reply backfill command call
 `gmail.handoff.maybe_schedule_gmail_sequence`. The helper checks DB-local stop
-conditions, suppression, Gmail enablement, operator Gmail mapping, and sender/ICP
-email templates. Gmail template routing uses `resolve_icp(lead)`, so a stamped
-`Lead.icp` such as `Channel` wins before the legacy classifier backfills blanks.
-If the lead already has `Lead.email`, it queues durable
-`gmail_follow_up` step 0; otherwise it queues `enrich_email`. Gmail and LinkedIn
+conditions, suppression, Gmail enablement, and operator Gmail mapping. For a
+version-bound Deal it creates or reloads the immutable enrollment, materializes
+the first `gmail` delivery from that version, and puts its delivery/version
+identity on either `gmail_follow_up` or `enrich_email`; email enrichment carries
+the same identity forward after it finds an address. The Gmail worker validates
+the exact Deal/enrollment/operator/version/step binding, reads only the frozen
+subject/body, rejects versioned media because attachments are unsupported, and
+materializes each successor from the same enrollment. For an unbound Deal only,
+the helper uses `resolve_icp(lead)` and legacy sender JSON. Gmail and LinkedIn
 steps use independent `delay_hours`; Gmail step 0 is anchored to
 `Deal.connected_at`, while later Gmail steps are anchored to the previous Gmail
-send time so catch-up runs cannot send multiple Gmail steps back-to-back. A
-failed or skipped Gmail task does not block later LinkedIn steps, and a failed
-LinkedIn step does not block Gmail. Both lanes stop on any inbound LinkedIn or
-Gmail reply. Default post-accept cadence is LinkedIn at Day 0, Gmail at +0.33
-hours, LinkedIn at Day 4, and Gmail at Day 8; later added Gmail steps default to
-weekly spacing after Day 8. `delay_hours` supports fractional values, so roughly
-20-minute Gmail offsets are valid.
+send time so catch-up runs cannot compress the sequence. A failed or skipped
+Gmail task does not block later LinkedIn steps, and a failed LinkedIn step does
+not block Gmail. Both lanes stop on any persisted inbound LinkedIn or Gmail
+reply. Fractional `delay_hours` remain valid.
 
 **Gmail package.** The top-level `gmail/` package owns the Gmail post-accept lane:
 OAuth/token loading (`auth.py`), Gmail API send/search (`client.py`), scheduling
 (`handoff.py`), the worker loop (`worker.py`), task handlers
 (`tasks/enrich_email.py`, `tasks/follow_up.py`), and email sequence copy
-(`icp_emails.json` via `templates.py`). Gmail templates are separate from
-`linkedin/icp_messages.json`, which remains LinkedIn/connect/follow-up copy.
+(`icp_emails.json` via `templates.py`) for the legacy unbound path. That legacy
+Gmail store remains separate from legacy `linkedin/icp_messages.json`; neither
+is consulted by a version-bound Deal.
 `gmail/auth.py` maps Arian and Leili to `arian_boundera`, while Athena, Eddy,
 and Chuka use `eddy_boundera`; Chuka sends as `eddy@getboundera.com`, which is a
 verified alias on that OAuth account.
-Missing Gmail copy for a sender/ICP/step is treated as that lane being disabled
-for the lead and skips cleanly; malformed template rows still fail loudly.
-Gmail subjects/bodies are parsed against an explicit placeholder allowlist
+On the unbound path, missing Gmail copy for a sender/ICP/step is treated as that
+lane being disabled for the lead and skips cleanly; malformed template rows
+still fail loudly. Legacy Gmail subjects/bodies are parsed against an explicit
+placeholder allowlist
 (`first_name`, `last_name`, `company_name`, `my_name`, `our_company_name`,
 `our_website_url`) before rendering, `company_name` uses the same safe
 `Unknown Company` fallback as LinkedIn copy, and
 `manage.py validate_gmail_templates` renders every checked-in Gmail step with a
-fake lead as a pre-send guard. In the ICP Messages Sheet pull path, blank email
+fake lead as a pre-send guard. In the legacy sender-tab pull path, blank email
 subject/body cells for an otherwise valid ICP row save that sender/ICP's Gmail
 block as an empty list so stale JSON copy cannot keep sending after an operator
-clears the Sheet.
+clears the Sheet. Bound sends instead persist the delivery, enrollment, version,
+audience, step, and variant identifiers in `crm.Message.raw`, so deduplication
+and audit do not depend on mutable copy.
 `manage.py gmail_oauth` creates per-account tokens under `data/gmail/`;
-tokens request Gmail send, compose/draft, settings, and readonly scopes;
-`manage.py gmail_send_test` sends a direct live test message through the mapped
-operator alias.
+tokens request Gmail send, compose/draft, settings, and readonly scopes. The
+send-capable token remains an operational secret shared by the Gmail worker, so
+credential isolation from interactive development is a separate deployment
+boundary. At the application boundary, `GmailClient.send_message()` requires a
+single-use `GmailDeliveryPermit` issued from a persisted, already-claimed
+`gmail_follow_up` or `drip_gmail` Task and bound to the exact operator, mailbox,
+recipient, subject, body, thread metadata, and RFC Message-ID. The client
+consumes that permit before any Gmail provider request. Production tests keep
+the two canonical worker handlers as the only `send_message()` call sites, and
+there is no one-off live-send management command.
 
 `gmail/data_sync.py` is the Gmail-backed replacement for the Gmail-accessible
 parts of the old Claude data-sync workflow. `manage.py sync_gmail_context` uses
@@ -597,13 +807,13 @@ Self-hosted Postgres testing is separate from the app container: `compose/selfho
 
 `requirements/` files. DjangoCRM's `mysqlclient` excluded via `--no-deps`. `uv pip install` for fast installs.
 
-White-label outreach uses four canonical `Lead.icp` values across CSV normalization, LinkedIn templates, Gmail templates, and the ICP Messages tabs: `White Label Product/Executive`, `White Label Partnerships`, `White Label Delivery`, and `White Label Champions`. Sender copy is populated for Arian and Chuka only, champion rows use an introduction/routing ask, and each LinkedIn connection-note bucket carries two short variants for within-sender message testing.
+The legacy unbound white-label path uses four canonical `Lead.icp` values across CSV normalization, LinkedIn templates, Gmail templates, and the Arian/Chuka tabs: `White Label Product/Executive`, `White Label Partnerships`, `White Label Delivery`, and `White Label Champions`. Sender JSON copy is populated for Arian and Chuka only, champion rows use an introduction/routing ask, and each LinkedIn connection-note bucket carries two short variants for within-sender message testing. A version-bound white-label campaign instead needs explicit audiences and routes in its published General program.
 
 A1 FedRAMP Ready outreach uses the canonical `Lead.icp` value `Rev5 Ready`. CSV aliases normalize into that value, while Arian and Chuka route LinkedIn and post-accept Gmail copy around carrying Ready work forward after the July 28, 2026 transition to legacy status.
 
 Stage-aware direct-buyer outreach uses four additional composite `Lead.icp` values without a schema migration: `20x Initial Implementation`, `Active FedRAMP Path`, `FedRAMP Mature`, and `CSP Stage Verify`. Together with `Rev5 Ready`, these route current Arian/Chuka LinkedIn and Gmail copy through the existing one-key template path. CSV normalization collapses Agency/FedRAMP In Process into `Active FedRAMP Path`, certified or mature programs into `FedRAMP Mature`, and unverified federal portfolios into `CSP Stage Verify`; the last bucket asks for the owner or exact stage rather than asserting one.
 
-Investor-channel outreach uses two canonical `Lead.icp` values across CSV normalization, LinkedIn templates, Gmail templates, and the existing sender ICP Messages tabs: `Investor / Portfolio Ops` and `Accelerator / Ecosystem`. The former routes investor-platform and portfolio-support contacts; the latter routes private cohort and startup-program operators. Arian and Chuka carry the active copy. No schema migration or additional Sheet tab is required, and inbox classification remains unchanged.
+The legacy unbound investor-channel path uses two canonical `Lead.icp` values across CSV normalization, LinkedIn templates, Gmail templates, and the existing sender tabs: `Investor / Portfolio Ops` and `Accelerator / Ecosystem`. The former routes investor-platform and portfolio-support contacts; the latter routes private cohort and startup-program operators. Arian and Chuka carry that JSON copy. A version-bound campaign instead publishes explicit General audiences; inbox classification remains unchanged.
 
 Core: `playwright`, `playwright-stealth`, `Django`, `django-crm-admin`, `pandas`, `langchain`/`langchain-openai`, `jinja2`, `pydantic`, `jsonpath-ng`, `tendo`, `termcolor`, `tenacity`, `requests`
 ML: `scikit-learn`, `numpy`, `fastembed`, `joblib`

@@ -6,6 +6,7 @@ from chat.models import ChatMessage
 from linkedin.models import (
     ActionLog,
     Campaign,
+    CampaignMessageEnrollment,
     ConnectIssueLog,
     FedRAMPMarketplaceSignal,
     FedRAMPMarketplaceSourceState,
@@ -16,6 +17,9 @@ from linkedin.models import (
     LinkedInFeedPost,
     LinkedInDiscoveryLead,
     LinkedInProfile,
+    MessageProgram,
+    MessageProgramVersion,
+    OutboundDelivery,
     OutreachSuppression,
     SearchKeyword,
     Task,
@@ -25,10 +29,71 @@ from linkedin.models import (
 @admin.register(Campaign)
 class CampaignAdmin(admin.ModelAdmin):
     list_display = (
-        "name", "user", "status", "booking_link", "is_freemium", "action_fraction",
+        "name", "user", "status", "active_message_version", "booking_link",
+        "is_freemium", "action_fraction",
     )
     list_filter = ("status", "is_freemium")
-    raw_id_fields = ("user",)
+    raw_id_fields = ("user", "active_message_version")
+
+
+@admin.register(MessageProgram)
+class MessageProgramAdmin(admin.ModelAdmin):
+    list_display = ("key", "name", "updated_at")
+    search_fields = ("key", "name")
+    readonly_fields = ("created_at", "updated_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class _ReadOnlyMessageAuditAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MessageProgramVersion)
+class MessageProgramVersionAdmin(_ReadOnlyMessageAuditAdmin):
+    list_display = ("program", "version", "schema_version", "content_hash", "published_at")
+    list_filter = ("schema_version", "published_at")
+    search_fields = ("program__key", "program__name", "content_hash", "published_by")
+    readonly_fields = tuple(field.name for field in MessageProgramVersion._meta.fields)
+
+
+@admin.register(CampaignMessageEnrollment)
+class CampaignMessageEnrollmentAdmin(_ReadOnlyMessageAuditAdmin):
+    list_display = ("deal", "message_version", "audience_key", "operator", "created_at")
+    list_filter = ("operator", "created_at")
+    search_fields = (
+        "deal__lead__first_name", "deal__lead__last_name", "audience_key",
+        "message_version__program__key",
+    )
+    readonly_fields = tuple(field.name for field in CampaignMessageEnrollment._meta.fields)
+
+
+@admin.register(OutboundDelivery)
+class OutboundDeliveryAdmin(_ReadOnlyMessageAuditAdmin):
+    list_display = (
+        "enrollment", "channel", "step_key", "variant_key", "operator", "status",
+        "scheduled_at", "sent_at",
+    )
+    list_filter = ("channel", "status", "operator")
+    search_fields = (
+        "enrollment__audience_key", "enrollment__message_version__program__key",
+        "step_key", "variant_key", "render_hash",
+    )
+    readonly_fields = tuple(field.name for field in OutboundDelivery._meta.fields)
 
 
 @admin.register(OutreachSuppression)

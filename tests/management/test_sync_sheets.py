@@ -40,6 +40,9 @@ class _Worksheet:
             values.append(cells)
         return values
 
+    def get_all_values(self, **_kwargs):
+        return [list(row) for row in self.rows]
+
 
 def _configure_people_index(monkeypatch, index):
     loaded_with = []
@@ -159,6 +162,498 @@ def test_apply_sync_appends_one_lead_once_when_it_has_two_deals(
     assert appended[index.actual_index_0[sheets.COL_OUTREACH_STATUS]] == (
         sheets.STATUS_CONNECTED
     )
+
+
+def test_apply_sync_imports_operator_role_tag_without_touching_title(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        last_name="Doe",
+        company_name="Acme",
+        linkedin_url="https://www.linkedin.com/in/jane-role-tag/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_NAME: "Jane Doe",
+        sheets.COL_FIRST_NAME: "Jane",
+        sheets.COL_LAST_NAME: "Doe",
+        sheets.COL_COMPANY: "Acme",
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_TITLE: "SVP Finance and Chief Accounting Officer",
+        sheets.COL_ROLE_TAG: "cfo/finance",
+        sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+    })
+    original_title = existing[sheets.COL_TITLE]
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+
+    result = run_people_sync(
+        dry_run=False,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == Lead.RoleTag.CFO_FINANCE
+    assert result["role_tags_imported"] == 1
+    assert index.rows[1][index.actual_index_0[sheets.COL_TITLE]] == original_title
+    assert index.rows[1][index.actual_index_0[sheets.COL_ROLE_TAG]] == "cfo/finance"
+
+
+def test_apply_sync_treats_whitespace_only_role_tag_as_blank(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-whitespace/",
+        role_tag=Lead.RoleTag.GRC_ENGINEER,
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_NAME: "Jane",
+        sheets.COL_FIRST_NAME: "Jane",
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "   ",
+        sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+
+    result = run_people_sync(
+        dry_run=False,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == Lead.RoleTag.GRC_ENGINEER
+    assert result["role_tags_imported"] == 0
+    assert index.rows[1][index.actual_index_0[sheets.COL_ROLE_TAG]] == (
+        Lead.RoleTag.GRC_ENGINEER
+    )
+
+
+def test_dry_run_reports_role_tag_import_without_mutating_lead(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-dry-run/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "GRC Engineer",
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+
+    result = run_people_sync(
+        dry_run=True,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == ""
+    assert result["role_tags_to_import"] == 1
+    assert result["role_tags_imported"] == 0
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_invalid_operator_role_tag_is_reported_and_not_imported(
+    fake_session,
+    monkeypatch,
+    dry_run,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-invalid/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "Finance-ish",
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+    stderr = StringIO()
+
+    result = run_people_sync(
+        dry_run=dry_run,
+        stdout=StringIO(),
+        stderr=stderr,
+    )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == ""
+    assert result["errored"] == 1
+    assert "unknown Role Tag" in stderr.getvalue()
+
+
+def test_apply_sync_does_not_import_role_tag_when_people_flush_fails(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-flush-error/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "CFO/Finance",
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+
+    def fail_flush(*, dry_run=False):
+        raise sheets.SheetsError("simulated publication failure")
+
+    monkeypatch.setattr(index, "flush", fail_flush)
+
+    with pytest.raises(CommandError, match="People flush failed"):
+        run_people_sync(
+            dry_run=False,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == ""
+
+
+def test_apply_sync_rejects_role_tag_changed_after_sheet_load(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-concurrent-sheet/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_NAME: "Jane",
+        sheets.COL_FIRST_NAME: "Jane",
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "CFO/Finance",
+        sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+    real_flush = index.flush
+
+    def concurrent_edit_then_flush(*, dry_run=False):
+        worksheet.rows[1][index.actual_index_0[sheets.COL_ROLE_TAG]] = "Founder/CEO"
+        return real_flush(dry_run=dry_run)
+
+    monkeypatch.setattr(index, "flush", concurrent_edit_then_flush)
+
+    with pytest.raises(CommandError, match="People flush failed"):
+        run_people_sync(
+            dry_run=False,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == ""
+
+
+def test_apply_sync_rejects_people_row_reorder_after_sheet_load(
+    fake_session,
+    monkeypatch,
+):
+    leads = [
+        Lead.objects.create(
+            first_name=first_name,
+            linkedin_url=f"https://www.linkedin.com/in/{first_name.lower()}-role-sort/",
+        )
+        for first_name in ("Jane", "John")
+    ]
+    rows = [list(sheets.HEADERS)]
+    for lead in leads:
+        existing = {header: "" for header in sheets.HEADERS}
+        existing.update({
+            sheets.COL_NAME: lead.first_name,
+            sheets.COL_FIRST_NAME: lead.first_name,
+            sheets.COL_LEAD_ID: str(lead.pk),
+            sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+            sheets.COL_ROLE_TAG: "CFO/Finance",
+            sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+        })
+        rows.append([existing[header] for header in sheets.HEADERS])
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(worksheet, rows)
+    _configure_people_index(monkeypatch, index)
+    real_flush = index.flush
+
+    def concurrent_sort_then_flush(*, dry_run=False):
+        worksheet.rows[1], worksheet.rows[2] = worksheet.rows[2], worksheet.rows[1]
+        return real_flush(dry_run=dry_run)
+
+    monkeypatch.setattr(index, "flush", concurrent_sort_then_flush)
+
+    with pytest.raises(CommandError, match="People flush failed"):
+        run_people_sync(
+            dry_run=False,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+    assert list(
+        Lead.objects.filter(pk__in=[lead.pk for lead in leads])
+        .order_by("pk")
+        .values_list("role_tag", flat=True)
+    ) == ["", ""]
+
+
+def test_apply_sync_rejects_row_reorder_before_blank_role_tag_fill(
+    fake_session,
+    monkeypatch,
+):
+    leads = [
+        Lead.objects.create(
+            first_name="Jane",
+            linkedin_url="https://www.linkedin.com/in/jane-role-fill-sort/",
+            role_tag=Lead.RoleTag.CFO_FINANCE,
+        ),
+        Lead.objects.create(
+            first_name="John",
+            linkedin_url="https://www.linkedin.com/in/john-role-fill-sort/",
+            role_tag=Lead.RoleTag.GRC_ENGINEER,
+        ),
+    ]
+    rows = [list(sheets.HEADERS)]
+    for lead in leads:
+        existing = {header: "" for header in sheets.HEADERS}
+        existing.update({
+            sheets.COL_NAME: lead.first_name,
+            sheets.COL_FIRST_NAME: lead.first_name,
+            sheets.COL_LEAD_ID: str(lead.pk),
+            sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+            sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+        })
+        rows.append([existing[header] for header in sheets.HEADERS])
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(worksheet, rows)
+    _configure_people_index(monkeypatch, index)
+    real_flush = index.flush
+
+    def concurrent_sort_then_flush(*, dry_run=False):
+        worksheet.rows[1], worksheet.rows[2] = worksheet.rows[2], worksheet.rows[1]
+        return real_flush(dry_run=dry_run)
+
+    monkeypatch.setattr(index, "flush", concurrent_sort_then_flush)
+
+    with pytest.raises(CommandError, match="People flush failed"):
+        run_people_sync(
+            dry_run=False,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+    assert worksheet.updated == []
+
+
+def test_apply_sync_does_not_overwrite_concurrent_database_role_tag(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-concurrent-db/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_NAME: "Jane",
+        sheets.COL_FIRST_NAME: "Jane",
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "CFO/Finance",
+        sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+    real_flush = index.flush
+
+    def concurrent_database_edit_after_flush(*, dry_run=False):
+        counts = real_flush(dry_run=dry_run)
+        Lead.objects.filter(pk=lead.pk).update(
+            role_tag=Lead.RoleTag.FOUNDER_CEO,
+        )
+        return counts
+
+    monkeypatch.setattr(index, "flush", concurrent_database_edit_after_flush)
+
+    with pytest.raises(CommandError, match="target changed during publication"):
+        run_people_sync(
+            dry_run=False,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == Lead.RoleTag.FOUNDER_CEO
+
+
+def test_apply_sync_does_not_import_role_tag_from_an_errored_people_row(
+    fake_session,
+    monkeypatch,
+):
+    lead = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-upsert-error/",
+    )
+    existing = {header: "" for header in sheets.HEADERS}
+    existing.update({
+        sheets.COL_LEAD_ID: str(lead.pk),
+        sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+        sheets.COL_ROLE_TAG: "CFO/Finance",
+    })
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(
+        worksheet,
+        [
+            list(sheets.HEADERS),
+            [existing[header] for header in sheets.HEADERS],
+        ],
+    )
+    _configure_people_index(monkeypatch, index)
+
+    def fail_upsert(_payload):
+        raise sheets.SheetsError("simulated row conflict")
+
+    monkeypatch.setattr(index, "upsert_row", fail_upsert)
+
+    result = run_people_sync(
+        dry_run=False,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    lead.refresh_from_db()
+    assert lead.role_tag == ""
+    assert result["ambiguous_existing"] == 1
+    assert result["role_tags_to_import"] == 0
+    assert result["role_tags_imported"] == 0
+
+
+def test_apply_sync_rolls_back_all_role_tag_imports_on_database_failure(
+    fake_session,
+    monkeypatch,
+):
+    from django.db.models.query import QuerySet
+
+    first = Lead.objects.create(
+        first_name="Jane",
+        linkedin_url="https://www.linkedin.com/in/jane-role-db-error/",
+    )
+    second = Lead.objects.create(
+        first_name="John",
+        linkedin_url="https://www.linkedin.com/in/john-role-db-error/",
+    )
+    rows = [list(sheets.HEADERS)]
+    for lead, role_tag in (
+        (first, "CFO/Finance"),
+        (second, "GRC Engineer"),
+    ):
+        existing = {header: "" for header in sheets.HEADERS}
+        existing.update({
+            sheets.COL_NAME: lead.first_name,
+            sheets.COL_FIRST_NAME: lead.first_name,
+            sheets.COL_LEAD_ID: str(lead.pk),
+            sheets.COL_LINKEDIN_URL: lead.linkedin_url,
+            sheets.COL_ROLE_TAG: role_tag,
+            sheets.COL_CREATED_AT: lead.creation_date.date().isoformat(),
+        })
+        rows.append([existing[header] for header in sheets.HEADERS])
+    worksheet = _Worksheet()
+    index = sheets.SheetIndex(worksheet, rows)
+    _configure_people_index(monkeypatch, index)
+    real_update = QuerySet.update
+    role_tag_updates = 0
+
+    def fail_second_role_tag_update(queryset, **kwargs):
+        nonlocal role_tag_updates
+        if "role_tag" in kwargs:
+            role_tag_updates += 1
+            if role_tag_updates == 2:
+                raise RuntimeError("simulated database failure")
+        return real_update(queryset, **kwargs)
+
+    monkeypatch.setattr(QuerySet, "update", fail_second_role_tag_update)
+
+    with pytest.raises(RuntimeError, match="simulated database failure"):
+        run_people_sync(
+            dry_run=False,
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.role_tag == ""
+    assert second.role_tag == ""
 
 
 def test_sync_includes_no_deal_id_only_and_pre_funnel_contacts(

@@ -57,6 +57,7 @@ def find_first_visible(page, selectors: list[str]):
 
 
 TOP_CARD_SELECTORS = [
+    '[componentkey^="com.linkedin.sdui.profile.card."][componentkey$="Topcard"]',
     'section:has(div.top-card-background-hero-image)',
     'section[data-member-id]',
     'section.artdeco-card:has(> div.pv-top-card)',

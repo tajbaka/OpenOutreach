@@ -49,6 +49,28 @@ def persisted_submission_evidence(payload) -> bool:
         direction=Message.Direction.OUTBOUND,
         external_id__startswith=prefix,
     ).only("raw")
+    # A bound Task must recover from its own frozen delivery, not merely a
+    # legacy Message with the same sequence prefix and attachment evidence.
+    if "delivery_id" in payload:
+        delivery_id = payload["delivery_id"]
+        if isinstance(delivery_id, bool) or not isinstance(delivery_id, int) or delivery_id <= 0:
+            return False
+        identity_fields = {
+            "outbound_delivery_id": "delivery_id",
+            "message_enrollment_id": "message_enrollment_id",
+            "message_version_id": "message_version_id",
+            "audience_key": "audience_key",
+            "message_channel": "channel",
+            "message_step_key": "step_key",
+            "message_step_index": "step_index",
+            "message_variant_key": "variant_key",
+        }
+        if any(payload.get(key) is None for key in identity_fields.values()):
+            return False
+        candidates = candidates.filter(**{
+            f"raw__{raw_key}": payload[payload_key]
+            for raw_key, payload_key in identity_fields.items()
+        })
     return any(
         isinstance(message.raw, dict)
         and isinstance(message.raw.get("media"), dict)

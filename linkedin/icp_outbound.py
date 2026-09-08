@@ -11,8 +11,10 @@ the high-volume Connected/No-Reply cohort the daemon DMs rigidly via
 only the first name filled in.
 
 This module is the rigid alternative. Templates live in
-`linkedin/icp_messages.json` (checked into the repo). The legacy channel
-shape is `{sender: {icp: {channel: [variant1, variant2, ...]}}}`. Follow-up
+`linkedin/icp_messages.json` (checked into the repo). Schema v2 keeps shared
+campaign programs under `shared_programs` and transitional sender copy under
+`sender_icps`. The legacy channel shape inside `sender_icps` is
+`{sender: {icp: {channel: [variant1, variant2, ...]}}}`. Follow-up
 channels can also use step objects:
 `{channel: [{"delay_hours": 0, "variants": [...]}, ...]}`. An ICP block can
 declare `"media": ["demo.gif"]`; templates in that block may reference
@@ -60,6 +62,7 @@ from linkedin.exceptions import (
     SheetsError,
 )
 from linkedin.name_utils import greeting_first_name
+from linkedin.message_roles import role_wording
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP, LEAD_ICP_BUCKETS
 from linkedin.operators import resolve_operator
 
@@ -76,7 +79,44 @@ _GMAIL_MESSAGES_PATH = ROOT_DIR / "gmail" / "icp_emails.json"
 # closed before any browser mutation.
 _ATTACH_RE = re.compile(r"\{\s*add\s+([^\}]+?)\s*\}")
 ICP_MESSAGES_BASE_HEADERS = ["ICP", "Connect Message"]
-ICP_MESSAGES_SHEET_BUCKETS = LEAD_ICP_BUCKETS
+# Role/size personas that operators can author and review in the Sheet before
+# campaign routing is activated.  They are intentionally separate from
+# ``LEAD_ICP_BUCKETS``: adding a Sheet row must not make an imported lead
+# eligible for a template that has not been explicitly published into the
+# checked-in LinkedIn and Gmail stores.
+CSP_ROLE_PERSONA_AUTHORING_BUCKETS = (
+    "CSP Small | Founder/CEO",
+    "CSP Small | CFO/Finance",
+    "CSP Small | COO/Operations",
+    "CSP Small | CRO/Revenue",
+    "CSP Small | Product Executive",
+    "CSP Small | Technology/Engineering Executive",
+    "CSP Small | Security/Trust Executive",
+    "CSP Mid-Market | Product Executive",
+    "CSP Mid-Market | Technology/Engineering Executive",
+    "CSP Mid-Market | CIO/Internal IT Executive",
+    "CSP Mid-Market | Security/Trust Executive",
+    "CSP Enterprise | Product Executive",
+    "CSP Enterprise | Technology/Engineering Executive",
+    "CSP Enterprise | CIO/Internal IT Executive",
+    "CSP Enterprise | Security/Trust Executive",
+    "CSP Mid/Enterprise | Product/Engineering N-1",
+    "CSP Mid/Enterprise | Security/Compliance N-1",
+    "CSP Any Size | Compliance/Risk/Privacy Executive",
+    "CSP Any Size | FedRAMP Owner/Operator",
+    "CSP Any Size | GRC Manager/Lead",
+    "CSP Any Size | GRC Engineer",
+    "CSP Any Size | GRC Analyst/Practitioner",
+    "CSP Any Size | Federal/Public Sector Executive",
+    "CSP Any Size | Federal Sales/BD IC",
+    "CSP Any Size | Federal Solutions Engineer/Architect",
+    "CSP Any Size | Public Sector Partnerships/Alliances/CS",
+    "CSP Any Size | Field CTO/CISO/Technical Evangelist",
+)
+ICP_MESSAGES_SHEET_BUCKETS = (
+    *LEAD_ICP_BUCKETS,
+    *CSP_ROLE_PERSONA_AUTHORING_BUCKETS,
+)
 # Follow-up sequences are arbitrary-length: the sheet grows one
 # `Followup Message N` column per step, sized per sender to the longest
 # sequence across its ICP buckets (always at least one column).
@@ -179,6 +219,22 @@ class DiscoveryTarget:
 
     icp: str
     profile: str
+
+
+def _sender_blocks(store: object) -> tuple[dict[str, object], bool]:
+    """Return sender blocks plus whether the checked-in v2 envelope is present.
+
+    The unenveloped shape remains accepted only for the isolated legacy sender
+    helpers and their rollback fixtures. Shared campaign programs require v2.
+    """
+    if not isinstance(store, dict):
+        raise SheetsError("ICP message JSON must contain an object")
+    if store.get("schema_version") == 2:
+        blocks = store.get("sender_icps")
+        if not isinstance(blocks, dict):
+            raise SheetsError("ICP message JSON sender_icps must contain an object")
+        return blocks, True
+    return store, False
 
 
 def is_unknown_company_name(company_name: str | None) -> bool:
@@ -287,7 +343,7 @@ def classify_role(lead) -> str:
 def load_icp_messages(sender: str) -> dict[str, dict[str, object]]:
     """Return one sender's `{icp: {channel: [variant, ...], media: [...]}}` block.
 
-    The JSON file is `{sender: {icp: {channel: [...]}}}` — each operator
+    The JSON file keeps this map under `sender_icps` — each operator
     (canonical handle from `linkedin.operators.resolve_operator`) gets a
     full, independent template block. There is no shared default: an
     unknown `sender` raises `SheetsError` per the project's no-silent-
@@ -297,7 +353,8 @@ def load_icp_messages(sender: str) -> dict[str, dict[str, object]]:
     Loaded fresh on every call so an operator edit of the file takes
     effect on the next followup run without needing a process restart.
     """
-    by_sender = json.loads(_MESSAGES_PATH.read_text())
+    store = json.loads(_MESSAGES_PATH.read_text())
+    by_sender, _is_v2 = _sender_blocks(store)
     if sender not in by_sender:
         raise SheetsError(
             f"icp_outbound: sender {sender!r} has no template block in "
@@ -368,18 +425,21 @@ def load_gmail_messages(sender: str) -> dict[str, list[dict[str, object]]]:
     """Return one sender's Gmail template block, or `{}` when absent."""
     if not _GMAIL_MESSAGES_PATH.exists():
         return {}
-    by_sender = json.loads(_GMAIL_MESSAGES_PATH.read_text())
+    store = json.loads(_GMAIL_MESSAGES_PATH.read_text())
+    by_sender, _is_v2 = _sender_blocks(store)
     return by_sender.get(sender, {})
 
 
 def known_senders() -> set[str]:
     """Return the set of operator handles with a block in icp_messages.json.
 
-    Just the top-level keys of the JSON file. Used by the daemon's
+    These are the keys under `sender_icps`. Used by the daemon's
     startup check to verify a LinkedIn account has templates before the
     task loop begins.
     """
-    return set(json.loads(_MESSAGES_PATH.read_text()))
+    store = json.loads(_MESSAGES_PATH.read_text())
+    by_sender, _is_v2 = _sender_blocks(store)
+    return set(by_sender)
 
 
 def icp_messages_rows(sender: str) -> list[list[str]]:
@@ -594,7 +654,8 @@ def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> No
     its text while preserving the existing JSON cadence, and a legacy
     single-cell pull never flattens a real multi-step sequence.
     """
-    by_sender = json.loads(_MESSAGES_PATH.read_text())
+    store = json.loads(_MESSAGES_PATH.read_text())
+    by_sender, is_v2 = _sender_blocks(store)
     existing = by_sender.get(sender, {})
     merged = dict(existing)
     for icp, channels in block.items():
@@ -606,7 +667,10 @@ def save_icp_messages(sender: str, block: dict[str, dict[str, list[str]]]) -> No
             merged_channels[channel] = value
         merged[icp] = merged_channels
     by_sender[sender] = merged
-    _MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
+    output = store if is_v2 else by_sender
+    if is_v2:
+        output["sender_icps"] = by_sender
+    _MESSAGES_PATH.write_text(json.dumps(output, indent=2) + "\n")
 
 
 def save_gmail_messages(sender: str, block: dict[str, list[dict[str, object]]]) -> None:
@@ -616,9 +680,16 @@ def save_gmail_messages(sender: str, block: dict[str, list[dict[str, object]]]) 
     for that sender/ICP; preserve it so stale JSON does not keep sending.
     """
     if not _GMAIL_MESSAGES_PATH.exists():
+        store = {
+            "schema_version": 2,
+            "shared_programs": {},
+            "sender_icps": {},
+        }
         by_sender = {}
+        is_v2 = True
     else:
-        by_sender = json.loads(_GMAIL_MESSAGES_PATH.read_text())
+        store = json.loads(_GMAIL_MESSAGES_PATH.read_text())
+        by_sender, is_v2 = _sender_blocks(store)
     existing = by_sender.get(sender, {})
     merged = dict(existing)
     for icp, value in block.items():
@@ -627,7 +698,10 @@ def save_gmail_messages(sender: str, block: dict[str, list[dict[str, object]]]) 
         else:
             merged[icp] = _reconcile_gmail_followup(existing.get(icp), value)
     by_sender[sender] = merged
-    _GMAIL_MESSAGES_PATH.write_text(json.dumps(by_sender, indent=2) + "\n")
+    output = store if is_v2 else by_sender
+    if is_v2:
+        output["sender_icps"] = by_sender
+    _GMAIL_MESSAGES_PATH.write_text(json.dumps(output, indent=2) + "\n")
 
 
 def _reconcile_followup(current, new):
@@ -779,10 +853,13 @@ def fill_message(
     lead_id: int | None = None,
     variant_index: int | None = None,
     step_index: int = 0,
+    role_tag: str = "",
 ) -> FilledMessage:
     """Pick a variant from the rigid template and substitute placeholders.
 
     Mechanical substitutions only (no LLM generation):
+      - `{role}` — wording from the saved role tag, or "companies" if blank;
+        it never selects or changes the ICP.
       - `{first_name}` — lead's first name
       - `{last_name}`  — lead's last name (rarely used in current templates)
       - `{company_name}` — lead's company (CSP template uses this)
@@ -830,6 +907,7 @@ def fill_message(
         template,
         media_names=_media_names_for_icp(sender=sender, icp=icp),
     )
+    role_values = {"role": role_wording(role_tag)} if "{role}" in stripped else {}
     body = stripped.format(
         first_name=greeting_first_name(first_name),
         last_name=last_name or "",
@@ -837,6 +915,7 @@ def fill_message(
         my_name=my_name or "",
         our_company_name=OUR_COMPANY_NAME,
         our_website_url=OUR_WEBSITE_URL,
+        **role_values,
     )
     # Collapse the blank line the stripped placeholder leaves behind.
     body = re.sub(r"\n{3,}", "\n\n", body).strip()
@@ -935,4 +1014,5 @@ def fill_for_lead(
         my_name=my_name,
         lead_id=getattr(lead, "id", None),
         step_index=step_index,
+        role_tag=getattr(lead, "role_tag", ""),
     )

@@ -384,6 +384,7 @@ def send_raw_message(
     step_index: int | None = None,
     operator: str = "",
     external_id_kind: str = "daemon-send",
+    delivery_metadata: dict | None = None,
     prefer_direct: bool = False,
     allow_api_fallback: bool = True,
     raise_on_failure: bool = False,
@@ -423,6 +424,7 @@ def send_raw_message(
         step_index=step_index,
         operator=operator,
         external_id_kind=external_id_kind,
+        delivery_metadata=delivery_metadata,
     )
     logger.info("Message sent to %s: %s", public_identifier, message)
     return True

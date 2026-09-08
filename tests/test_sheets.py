@@ -96,7 +96,7 @@ def test_headers_match_expected_schema():
         "Name", "First name", "Last name", "Company", "Title",
         "LinkedIn URL", "Email addresses", "Outreach status", "Stage",
         "Priority", "Primary location", "AI Notes", "Notes",
-        "Created at", "Last synced", "Lead ID",
+        "Created at", "Last synced", "Lead ID", "Role Tag",
     ]
 
 
@@ -439,6 +439,18 @@ def test_build_row_payload_preserves_human_text_exactly():
     assert payload[sheets.COL_PRIMARY_LOCATION] == " Toronto "
     assert payload[sheets.COL_NOTES] == "  note\n"
     assert payload[sheets.COL_AI_NOTES] == "  ai note  "
+
+
+def test_build_row_payload_publishes_durable_role_tag():
+    payload = sheets.build_row_payload(
+        lead=_make_lead(role_tag="CFO/Finance"),
+        title="SVP Finance and Chief Accounting Officer",
+        emails=[], outreach_status="", stage="", priority="",
+        primary_location="", notes="", ai_notes="", last_synced="",
+    )
+
+    assert payload[sheets.COL_TITLE] == "SVP Finance and Chief Accounting Officer"
+    assert payload[sheets.COL_ROLE_TAG] == "CFO/Finance"
 
 
 def test_build_row_payload_serializes_created_at_as_iso_date():
@@ -957,14 +969,14 @@ def test_stable_lead_id_can_resolve_one_row_inside_legacy_url_duplicates():
     assert row[sheets.COL_LEAD_ID] == "123"
 
 
-def test_load_read_only_plans_additive_lead_id_header(monkeypatch):
+def test_load_read_only_plans_additive_role_tag_header(monkeypatch):
     ws = _FakeWorksheet()
     ws.rows = [list(sheets.HEADERS[:-1])]
     monkeypatch.setattr(sheets, "get_worksheet", lambda *, apply_schema=True: ws)
 
     idx = sheets.SheetIndex.load(apply_schema=False)
 
-    assert idx.plan().header_additions == (sheets.COL_LEAD_ID,)
+    assert idx.plan().header_additions == (sheets.COL_ROLE_TAG,)
     assert ws.updated_values is None
     assert ws.get_all_values_options == [
         {"value_render_option": sheets.ValueRenderOption.formula}
@@ -1263,6 +1275,32 @@ def test_upsert_row_preserves_human_owned_notes_field():
         update["range"] != f"{notes_col}2:{notes_col}2"
         for update in idx._pending_updates
     )
+
+
+def test_upsert_row_fills_blank_role_tag_but_preserves_populated_role_tag():
+    blank = _index_with_existing_row()
+    payload = sheets.build_row_payload(
+        lead=_make_lead(role_tag="CFO/Finance"),
+        title="", emails=[], outreach_status=sheets.STATUS_HAD_MEETING,
+        stage=sheets.STAGE_MEETING, priority=sheets.PRIORITY_LOW,
+        primary_location="", notes="", ai_notes="", last_synced="2026-05-05",
+    )
+
+    was_new, changed = blank.upsert_row(payload)
+
+    assert was_new is False
+    assert sheets.COL_ROLE_TAG in changed
+
+    populated = _index_with_existing_row(**{
+        sheets.COL_ROLE_TAG: "Founder/CEO",
+    })
+    _was_new, changed = populated.upsert_row(payload)
+
+    assert sheets.COL_ROLE_TAG not in changed
+    assert populated.get_row(
+        payload[sheets.COL_LINKEDIN_URL],
+        lead_id=payload[sheets.COL_LEAD_ID],
+    )[sheets.COL_ROLE_TAG] == "Founder/CEO"
 
 
 def test_upsert_row_no_op_when_payload_matches_existing():

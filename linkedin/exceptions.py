@@ -41,6 +41,20 @@ class SheetsError(Exception):
     pass
 
 
+class GeneralICPMessageError(Exception):
+    """General ICP message draft or publication data is invalid."""
+
+    pass
+
+
+class SeedImportError(ValueError):
+    """A supplied seed classification cannot be imported without losing intent."""
+
+
+class MessageRoleError(Exception):
+    """A nonblank lead role tag has no approved message wording."""
+
+
 class EnrichmentError(Exception):
     """A phone-enrichment provider returned a valid-JSON but unexpected
     response (missing required keys). Transport failures use HttpError and
@@ -113,6 +127,12 @@ class DiscoverySurfaceError(Exception):
 
 class DiscoverySessionConflictError(Exception):
     """A standalone discovery command conflicts with a live sender daemon."""
+
+    pass
+
+
+class SalesNavigatorSurfaceError(Exception):
+    """A supported Sales Navigator search/list surface could not be read safely."""
 
     pass
 

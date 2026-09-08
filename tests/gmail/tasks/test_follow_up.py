@@ -79,7 +79,7 @@ def _deal(lead):
     return Deal.objects.create(lead=lead, campaign=campaign, state=ProfileState.CONNECTED)
 
 
-def _task(lead, deal=None, **payload):
+def _task(lead, deal=None, *, status=Task.Status.RUNNING, **payload):
     base = {
         "lead_id": lead.id,
         "operator": "Arian",
@@ -91,7 +91,8 @@ def _task(lead, deal=None, **payload):
     base.update(payload)
     return Task.objects.create(
         task_type=Task.TaskType.GMAIL_FOLLOW_UP,
-        status=Task.Status.PENDING,
+        status=status,
+        started_at=timezone.now() if status == Task.Status.RUNNING else None,
         scheduled_at=timezone.now() - timedelta(seconds=1),
         payload=base,
     )
@@ -302,6 +303,9 @@ def test_gmail_follow_up_continues_real_thread_and_retains_subject(monkeypatch):
         task_type=Task.TaskType.GMAIL_FOLLOW_UP,
         payload__step_index=1,
     )
+    step_one_task.status = Task.Status.RUNNING
+    step_one_task.started_at = timezone.now()
+    step_one_task.save(update_fields={"status", "started_at"})
     handle_gmail_follow_up(step_one_task)
 
     assert len(FakeGmailClient.calls) == 2

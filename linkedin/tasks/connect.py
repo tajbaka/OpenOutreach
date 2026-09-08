@@ -38,6 +38,7 @@ from linkedin.models import ActionLog, ConnectIssueLog, Task, log_connect_issue
 from linkedin.enums import ProfileState
 from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
 from linkedin.name_utils import greeting_first_name
+from linkedin.message_roles import role_wording
 from linkedin.operators import resolve_operator
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,9 @@ def build_connection_note(lead_id: int | None, sender: str) -> str:
             variants = bucket.get("linkedin_connect_note") or []
             if variants:
                 template = random.choice(variants)
+                role_values = (
+                    {"role": role_wording(lead.role_tag)} if "{role}" in template else {}
+                )
                 try:
                     return template.format(
                         first_name=first_name,
@@ -101,6 +105,7 @@ def build_connection_note(lead_id: int | None, sender: str) -> str:
                         company_name=safe_company_name(lead.company_name),
                         our_company_name=OUR_COMPANY_NAME,
                         our_website_url=OUR_WEBSITE_URL,
+                        **role_values,
                     )
                 except KeyError as e:
                     # Unknown placeholder in template → log the offender
@@ -114,6 +119,49 @@ def build_connection_note(lead_id: int | None, sender: str) -> str:
                     )
 
     return ""
+
+
+def _deal_uses_message_program(deal) -> bool:
+    """Return whether this Deal is already or currently version-bound."""
+    from linkedin.models import CampaignMessageEnrollment
+
+    return bool(
+        deal.campaign.active_message_version_id
+        or CampaignMessageEnrollment.objects.filter(deal_id=deal.pk).exists()
+    )
+
+
+def _versioned_connection_delivery(*, deal, operator: str):
+    """Freeze the exact connection note for a version-bound Deal."""
+    from linkedin.icp_outbound import resolve_icp
+    from linkedin.message_delivery import (
+        MessageDeliveryError,
+        ensure_message_enrollment,
+        get_or_create_delivery,
+    )
+    from linkedin.models import OutboundDelivery
+
+    audience_input = resolve_icp(deal.lead)
+    if not audience_input:
+        raise MessageDeliveryError(
+            f"Deal {deal.pk} has no audience/ICP for message enrollment"
+        )
+    enrollment = ensure_message_enrollment(
+        deal=deal,
+        audience_key=audience_input,
+        operator=operator,
+    )
+    delivery, _created = get_or_create_delivery(
+        enrollment=enrollment,
+        channel=OutboundDelivery.Channel.LINKEDIN_CONNECT,
+        step_index=0,
+        reference_at=enrollment.created_at,
+    )
+    if delivery.frozen_media:
+        raise MessageDeliveryError(
+            "LinkedIn connection-note deliveries cannot include media"
+        )
+    return delivery
 
 
 @dataclass
@@ -429,6 +477,7 @@ def handle_connect(task, session, qualifiers):
     logger.info("[%s] %s", campaign, colored("\u25b6 connect", "cyan", attrs=["bold"]))
     logger.info("[%s] %s (%s) — %s", campaign, public_id, stats, reason or "")
 
+    connection_delivery = None
     try:
         status = get_connection_status(session, profile)
 
@@ -471,21 +520,55 @@ def handle_connect(task, session, qualifiers):
             enqueue_connect(campaign_id, delay_seconds=10)
             return
 
-        note = build_connection_note(
-            candidate.get("lead_id"),
-            sender=operator,
-        )
+        if deal is not None and _deal_uses_message_program(deal):
+            connection_delivery = _versioned_connection_delivery(
+                deal=deal,
+                operator=operator,
+            )
+            remaining = (
+                connection_delivery.scheduled_at - timezone.now()
+            ).total_seconds()
+            if remaining > 0:
+                enqueue_connect(campaign_id, delay_seconds=remaining)
+                return
+            note = connection_delivery.frozen_body
+        else:
+            note = build_connection_note(
+                candidate.get("lead_id"),
+                sender=operator,
+            )
         # `get_connection_status` and template preparation may take long enough
         # for listener/backfill persistence to add a reply after the candidate
         # was selected. Recheck local persisted state at the mutation boundary.
         if deal is not None and _stop_current_connect_if_needed(
             session, deal, public_id,
         ):
+            if connection_delivery is not None:
+                from linkedin.message_delivery_runtime import mark_delivery_status
+                from linkedin.models import OutboundDelivery
+
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.STOPPED,
+                )
             enqueue_connect(campaign_id, delay_seconds=0)
             return
+        if connection_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                connection_delivery,
+                OutboundDelivery.Status.SENDING,
+            )
         new_state = send_connection_request(session=session, profile=profile, note=note)
 
         if new_state == ProfileState.QUALIFIED:
+            if connection_delivery is not None:
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.FAILED,
+                )
             # No Connect button found — track attempt, disqualify after MAX_CONNECT_ATTEMPTS
             attempts = increment_connect_attempts(session, public_id)
             if attempts >= MAX_CONNECT_ATTEMPTS:
@@ -499,6 +582,11 @@ def handle_connect(task, session, qualifiers):
             enqueue_connect(campaign_id, delay_seconds=0)
             return
         else:
+            if connection_delivery is not None:
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.SENT,
+                )
             set_profile_state(session, public_id, new_state.value)
             session.linkedin_profile.record_action(
                 ActionLog.ActionType.CONNECT, session.campaign,
@@ -542,11 +630,27 @@ def handle_connect(task, session, qualifiers):
                     maybe_schedule_gmail_sequence(deal=deal, operator=operator)
 
     except ReachedConnectionLimit as e:
+        if connection_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                connection_delivery,
+                OutboundDelivery.Status.FAILED,
+            )
         logger.warning("Rate limited: %s", e)
         session.linkedin_profile.mark_exhausted(ActionLog.ActionType.CONNECT)
         enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
         return
     except ExistingPendingInvite:
+        if connection_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                connection_delivery,
+                OutboundDelivery.Status.STOPPED,
+            )
         logger.info("%s PENDING (existing invite)", public_id)
         set_profile_state(session, public_id, ProfileState.PENDING.value)
         enqueue_sweep_connections(
@@ -555,6 +659,14 @@ def handle_connect(task, session, qualifiers):
         enqueue_connect(campaign_id, delay_seconds=10)
         return
     except SkipProfile as e:
+        if connection_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                connection_delivery,
+                OutboundDelivery.Status.FAILED,
+            )
         logger.warning("Skipping %s: %s", public_id, e)
         log_connect_issue(
             linkedin_profile=session.linkedin_profile,
@@ -590,16 +702,16 @@ def _enqueue_task(task_type: "Task.TaskType", payload: dict, delay_seconds: floa
 
     existing = Task.objects.filter(**filter_kwargs).order_by("scheduled_at").first()
     if existing is None:
-        Task.objects.create(
+        return Task.objects.create(
             task_type=task_type,
             scheduled_at=timezone.now() + timedelta(seconds=delay_seconds),
             payload=payload,
         )
-        return
 
     if existing.payload != payload:
         existing.payload = payload
         existing.save(update_fields=["payload"])
+    return existing
 
 
 def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
@@ -634,6 +746,7 @@ def enqueue_follow_up(
     channel: str | None = None,
     step_index: int | None = None,
     icp: str | None = None,
+    delivery_id: int | None = None,
 ):
     """Enqueue a follow_up Task.
 
@@ -655,10 +768,11 @@ def enqueue_follow_up(
     from linkedin.models import Campaign
     from linkedin.tasks.stop_checks import automation_stop_reason
 
-    if not Campaign.objects.filter(
+    campaign = Campaign.objects.filter(
         pk=campaign_id,
         status=Campaign.Status.ACTIVE,
-    ).exists():
+    ).first()
+    if campaign is None:
         logger.info(
             "follow_up enqueue skipped for %s: campaign %s is not active",
             public_id,
@@ -674,7 +788,7 @@ def enqueue_follow_up(
             Q(lead__public_identifier=public_id)
             | Q(lead__linkedin_url=public_id_to_url(public_id)),
         )
-        .select_related("lead")
+        .select_related("lead", "campaign")
         .first()
     )
     if deal is not None:
@@ -703,6 +817,14 @@ def enqueue_follow_up(
             )
             return
 
+    if deal is None and campaign.active_message_version_id:
+        from linkedin.message_delivery import MessageDeliveryError
+
+        raise MessageDeliveryError(
+            f"campaign {campaign_id} is message-version bound but no Deal exists "
+            f"for {public_id!r}"
+        )
+
     payload = {"campaign_id": campaign_id, "public_id": public_id, "operator": operator}
     if sequence_name is not None:
         payload["sequence_name"] = sequence_name
@@ -712,9 +834,98 @@ def enqueue_follow_up(
         payload["step_index"] = step_index
     if icp:
         payload["icp"] = icp
-    _enqueue_task(
+    delivery = None
+    if deal is not None and _deal_uses_message_program(deal):
+        from linkedin.icp_outbound import resolve_icp
+        from linkedin.message_delivery import (
+            MessageDeliveryError,
+            ensure_message_enrollment,
+            get_or_create_delivery,
+            index_message_version,
+        )
+        from linkedin.message_delivery_runtime import task_payload_for_delivery
+        from linkedin.models import OutboundDelivery
+        from linkedin.operators import resolve_operator
+
+        canonical_operator = resolve_operator(operator)
+        if delivery_id is not None:
+            delivery = (
+                OutboundDelivery.objects.select_related(
+                    "enrollment__message_version__program",
+                    "enrollment__deal",
+                )
+                .filter(pk=delivery_id)
+                .first()
+            )
+            if delivery is None:
+                raise MessageDeliveryError(
+                    f"outbound delivery {delivery_id} does not exist"
+                )
+            if (
+                delivery.enrollment.deal_id != deal.pk
+                or delivery.channel != OutboundDelivery.Channel.LINKEDIN_FOLLOWUP
+                or delivery.operator != canonical_operator
+                or (
+                    step_index is not None
+                    and delivery.step_index != int(step_index)
+                )
+            ):
+                raise MessageDeliveryError(
+                    f"delivery {delivery.pk} does not match the requested LinkedIn follow-up"
+                )
+        else:
+            audience_input = (icp or resolve_icp(deal.lead) or "").strip()
+            if not audience_input:
+                raise MessageDeliveryError(
+                    f"Deal {deal.pk} has no audience/ICP for message enrollment"
+                )
+            enrollment = ensure_message_enrollment(
+                deal=deal,
+                audience_key=audience_input,
+                operator=canonical_operator,
+            )
+            if step_index is None or step_index == 0:
+                routes = index_message_version(enrollment.message_version).effective_routes(
+                    audience_key=enrollment.audience_key,
+                    operator=enrollment.operator,
+                    channel=OutboundDelivery.Channel.LINKEDIN_FOLLOWUP,
+                )
+                if not routes:
+                    logger.info("follow_up enqueue skipped for %s: no configured LinkedIn follow-ups", public_id)
+                    return None
+                if routes[0][0].step_index != 0:
+                    # A blank first message is unfinished copy, not permission
+                    # to start at a later follow-up or use another ICP's copy.
+                    logger.warning("follow_up held for %s: audience %s is missing its first LinkedIn follow-up",
+                                   public_id, enrollment.audience_key)
+                    return None
+            delivery, _created = get_or_create_delivery(
+                enrollment=enrollment,
+                channel=OutboundDelivery.Channel.LINKEDIN_FOLLOWUP,
+                step_index=int(step_index or 0),
+                reference_at=deal.connected_at or enrollment.created_at,
+            )
+            delay_seconds = max(
+                (delivery.scheduled_at - timezone.now()).total_seconds(),
+                0.0,
+            )
+        payload["sequence_name"] = sequence_name or "linkedin_connect_followup"
+        payload["channel"] = OutboundDelivery.Channel.LINKEDIN_FOLLOWUP
+        payload["operator"] = canonical_operator
+        payload.update(task_payload_for_delivery(delivery))
+
+    task = _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,
         payload=payload,
         delay_seconds=delay_seconds,
-        dedup_keys=[key for key in payload if key != "icp"],
+        dedup_keys=(
+            ["delivery_id"]
+            if delivery is not None
+            else [key for key in payload if key != "icp"]
+        ),
     )
+    if delivery is not None:
+        from linkedin.message_delivery_runtime import bind_delivery_task
+
+        bind_delivery_task(delivery=delivery, task=task)
+    return task

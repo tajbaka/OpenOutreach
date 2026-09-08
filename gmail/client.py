@@ -19,6 +19,7 @@ from gmail.auth import (
     SCOPES,
     token_path,
 )
+from gmail.delivery import GmailDeliveryPermit, consume_gmail_delivery_permit
 from linkedin.exceptions import EnrichmentError
 
 
@@ -160,19 +161,32 @@ class GmailClient:
         to: str,
         subject: str,
         body: str,
+        delivery_permit: GmailDeliveryPermit | None = None,
         thread_id: str = "",
         in_reply_to: str = "",
         references: Iterable[str] = (),
         rfc_message_id: str = "",
         on_submit_attempt: Callable[[], None] | None = None,
     ) -> GmailSendResult:
-        """Open or continue one Gmail thread and return all provider IDs."""
-        self.validate_send_as()
+        """Submit one exact, Task-authorized Gmail automation message."""
         reply_thread_id = (thread_id or "").strip()
         reply_to_id = (in_reply_to or "").strip()
         reference_ids = tuple(
             value.strip() for value in references if (value or "").strip()
         )
+        consume_gmail_delivery_permit(
+            delivery_permit,
+            operator=self.operator,
+            account_key=self.account_key,
+            to=to,
+            subject=subject,
+            body=body,
+            thread_id=reply_thread_id,
+            in_reply_to=reply_to_id,
+            references=reference_ids,
+            rfc_message_id=rfc_message_id,
+        )
+        self.validate_send_as()
         if bool(reply_thread_id) != bool(reply_to_id):
             raise ValueError(
                 "Gmail thread continuation requires both thread_id and in_reply_to"

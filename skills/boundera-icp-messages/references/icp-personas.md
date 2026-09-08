@@ -21,6 +21,43 @@ conversation evidence.
 | DevSecOps / Cloud security | `CSPs`, `20x Initial Implementation`, `FedRAMP Mature` | Reliable checks, implementation drift, actionable findings, and minimal manual evidence handling | Lead with visible measure failures and evidence generated from authoritative implementation sources |
 | Federal / Public Sector leader | `CSPs`, `CSP Stage Verify`, `Active FedRAMP Path`, `FedRAMP Mature` | A credible federal-market plan, customer confidence, and alignment between sales commitments and security execution | Lead with knowing the program's real readiness and making the next federal conversation easier to support |
 
+### Role/size authoring rows
+
+These exact Sheet labels are intentionally stage-neutral and pre-publication.
+Use them when role and company size materially change the attention angle. Do
+not infer a FedRAMP path from the label, and do not treat these rows as runtime
+routing until they are explicitly promoted.
+
+| Exact label | Primary attention angle |
+| --- | --- |
+| `CSP Small | Founder/CEO` | Federal-market opportunity, concentrated ownership, and a bounded execution path |
+| `CSP Small | CFO/Finance` | Predictability of internal effort, outside spend, and timing without asserting savings |
+| `CSP Small | COO/Operations` | Cross-functional ownership, milestones, and fewer stalled handoffs |
+| `CSP Small | CRO/Revenue` | Credible federal commitments and alignment between pipeline and delivery readiness |
+| `CSP Small | Product Executive` | Roadmap tradeoffs and keeping compliance work connected to product decisions |
+| `CSP Small | Technology/Engineering Executive` | Engineering capacity, source evidence, and clear remediation ownership |
+| `CSP Small | Security/Trust Executive` | Risk visibility, current evidence, and confidence in what is presented for review |
+| `CSP Mid-Market | Product Executive` | Repeatable product/security coordination as the organization scales |
+| `CSP Mid-Market | Technology/Engineering Executive` | Repeatable technical ownership without a parallel compliance process |
+| `CSP Mid-Market | CIO/Internal IT Executive` | Clear boundaries, internal ownership, and coordination across business systems |
+| `CSP Mid-Market | Security/Trust Executive` | Program visibility, control ownership, and consistent evidence across teams |
+| `CSP Enterprise | Product Executive` | Portfolio-level prioritization and consistent operating expectations across products |
+| `CSP Enterprise | Technology/Engineering Executive` | Distributed ownership, evidence consistency, and remediation across engineering groups |
+| `CSP Enterprise | CIO/Internal IT Executive` | Governance across platforms, internal systems, and shared operating boundaries |
+| `CSP Enterprise | Security/Trust Executive` | Enterprise risk visibility and defensible evidence across a distributed organization |
+| `CSP Mid/Enterprise | Product/Engineering N-1` | Day-to-day cross-functional execution, ownership, and escalation paths |
+| `CSP Mid/Enterprise | Security/Compliance N-1` | Program control, handoffs, and keeping findings tied to responsible owners |
+| `CSP Any Size | Compliance/Risk/Privacy Executive` | Governance clarity, defensible oversight, and alignment among risk functions |
+| `CSP Any Size | FedRAMP Owner/Operator` | Current evidence, measures, findings, assessor coordination, and daily program control |
+| `CSP Any Size | GRC Manager/Lead` | Repeatable workflows, ownership, and fewer manual coordination gaps |
+| `CSP Any Size | GRC Engineer` | Traceability from implementation and checks to evidence and remediation |
+| `CSP Any Size | GRC Analyst/Practitioner` | Evidence freshness, manual workload, and clear next actions |
+| `CSP Any Size | Federal/Public Sector Executive` | A credible federal-market plan supported by security execution |
+| `CSP Any Size | Federal Sales/BD IC` | Customer questions, internal routing, and an easy reason to introduce the program owner |
+| `CSP Any Size | Federal Solutions Engineer/Architect` | Technical credibility, customer proof, and alignment with security owners |
+| `CSP Any Size | Public Sector Partnerships/Alliances/CS` | Partner or customer patterns and a clear internal route to the relevant owner |
+| `CSP Any Size | Field CTO/CISO/Technical Evangelist` | Cross-customer patterns, informed product feedback, and useful introductions |
+
 ## Independent Assessors
 
 | Persona | Common Sheet ICP labels | What matters most | Attention angle |
@@ -62,6 +99,8 @@ conversation evidence.
 - Keep each cell to one sentence where possible.
 - Do not add actual connection notes, follow-ups, email copy, or booking links.
 - Do not encode a current FedRAMP deadline or rule status here.
-- Keep exact deployed copy in the sender JSON and the ICP Messages Sheet.
+- Keep draft copy in `General ICP Messages`; explicitly import reviewed copy to
+  the checked-in JSON stores, then let campaign creation snapshot that JSON as
+  an immutable SQL version frozen per Deal.
 - CMMC personas require their own current regulatory and product grounding; do
   not derive them from the FedRAMP 20x references.

@@ -1,7 +1,25 @@
 # Template Variables Reference
 
-This document describes the variables available in the follow-up agent's system prompt template
-(`linkedin/templates/prompts/follow_up_agent.j2`) and the data structures from LinkedIn's Voyager API.
+This document covers campaign message placeholders, the follow-up agent's
+system prompt (`linkedin/templates/prompts/follow_up_agent.j2`), and the data
+structures from LinkedIn's Voyager API.
+
+## Campaign Message Placeholders
+
+General ICP Messages uses single-brace placeholders, separately from the
+agent prompt below: `{first_name}`, `{last_name}`, `{company_name}`, `{my_name}`,
+`{our_company_name}`, `{our_website_url}`, and `{role}`.
+
+`{role}` renders the existing saved `Lead.role_tag` through
+`linkedin/message_roles.py`: `CFO/Finance` becomes `finance leaders`,
+`Founder/CEO` becomes `founders`, and an empty tag becomes `companies`.
+Use it as a plural noun phrase, for example `I work with {role}`. Unknown
+nonblank tags are errors, not a request to infer the person's role. The lookup
+changes wording only; it never assigns an ICP or alters stored classifications.
+Already materialized deliveries keep their frozen text. The Sheet still
+requires an explicit JSON import before campaign publication; this token does
+not introduce runtime Sheet reads. Independent drip manifests use their own
+placeholder contract.
 
 ## Agent System Prompt Variables
 

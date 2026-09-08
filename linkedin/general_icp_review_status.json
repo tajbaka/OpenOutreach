@@ -1,0 +1,1893 @@
+{
+  "rows": {
+    "Business leaders | Any Size | 20x Initial Implementation | Both": {
+      "connect_message": {
+        "change_kind": "reviewed_unchanged",
+        "content_sha256": "51b2b2a35b0f912bfe305ee3ef804f1a701ee7da17b1ea41287a05ffa95c8ee5",
+        "last_modified_at": null,
+        "reviewed_at": "2026-09-03T20:29:17+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "e9d4a8932fac94e4d2e4866551cc0f035f792803f0c509b6684c15daa013588c",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "fa0a180ed70069c6789d71e8ce0665873efce11102e5c2a83313e8788037ee9f",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7974b7d2205e47125bb407af06813116f7056e9b64c94a5f34f11eaebed0127a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "16f2eb98d1cfd5dfb696c35dd4b71b8e0c0a385931610d56b71c663516046478",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "82d1e0d4e431133136c0083ce22dfb625609e8b79681feee271d9ecfd329e719",
+        "last_modified_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ac72e738ef25dade7eca3d2e4b0aaf6e705a2c8d2807c0f92b9b4661647d79d",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | 20x Initial Implementation | CSP ecosystem": {
+      "connect_message": {
+        "change_kind": "reviewed_unchanged",
+        "content_sha256": "0430790468c819dc57a8cca3303f67a44ac93b61e6398fbcc4fa2c159fe72bf2",
+        "last_modified_at": null,
+        "reviewed_at": "2026-09-03T20:29:17+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "e9d4a8932fac94e4d2e4866551cc0f035f792803f0c509b6684c15daa013588c",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "fa0a180ed70069c6789d71e8ce0665873efce11102e5c2a83313e8788037ee9f",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7974b7d2205e47125bb407af06813116f7056e9b64c94a5f34f11eaebed0127a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "16f2eb98d1cfd5dfb696c35dd4b71b8e0c0a385931610d56b71c663516046478",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "82d1e0d4e431133136c0083ce22dfb625609e8b79681feee271d9ecfd329e719",
+        "last_modified_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ac72e738ef25dade7eca3d2e4b0aaf6e705a2c8d2807c0f92b9b4661647d79d",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | 20x Initial Implementation | Direct agency": {
+      "connect_message": {
+        "change_kind": "reviewed_unchanged",
+        "content_sha256": "292507f5a03852515e7131df0f395514731d753c4bedf8ac43e358388328a988",
+        "last_modified_at": null,
+        "reviewed_at": "2026-09-03T20:29:17+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "e9d4a8932fac94e4d2e4866551cc0f035f792803f0c509b6684c15daa013588c",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "fa0a180ed70069c6789d71e8ce0665873efce11102e5c2a83313e8788037ee9f",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7974b7d2205e47125bb407af06813116f7056e9b64c94a5f34f11eaebed0127a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "16f2eb98d1cfd5dfb696c35dd4b71b8e0c0a385931610d56b71c663516046478",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "82d1e0d4e431133136c0083ce22dfb625609e8b79681feee271d9ecfd329e719",
+        "last_modified_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ac72e738ef25dade7eca3d2e4b0aaf6e705a2c8d2807c0f92b9b4661647d79d",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | 20x Initial Implementation | Unclear": {
+      "connect_message": {
+        "change_kind": "reviewed_unchanged",
+        "content_sha256": "bdc5aa347f2b18733249937628d2f7a71ec406dd061dee7fb5b863383109fee9",
+        "last_modified_at": null,
+        "reviewed_at": "2026-09-03T20:29:17+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "e9d4a8932fac94e4d2e4866551cc0f035f792803f0c509b6684c15daa013588c",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "fa0a180ed70069c6789d71e8ce0665873efce11102e5c2a83313e8788037ee9f",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7974b7d2205e47125bb407af06813116f7056e9b64c94a5f34f11eaebed0127a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "16f2eb98d1cfd5dfb696c35dd4b71b8e0c0a385931610d56b71c663516046478",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "82d1e0d4e431133136c0083ce22dfb625609e8b79681feee271d9ecfd329e719",
+        "last_modified_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_at": "2026-09-07T20:46:49-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ac72e738ef25dade7eca3d2e4b0aaf6e705a2c8d2807c0f92b9b4661647d79d",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Authorized → 20x | Both": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "0e3c50d04997b00f1dcaa13bb3aa73d5c59764ffdf16308fec2a66ea2103001a",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "f1ea6325ddd8a37b7ea7db24cee4f4cce768f8e8684947b5aa746d7047dfaeae",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "b92ad642c7d2fb4aacbd4a48882da4afe7d71c1b6c059c767b07e8924ec02e13",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "c14c06fa8e6bbeb8ab5aaff6dd6c92af5ce7facaa29f504a1e8bf0aecb36e6d4",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "63d4de0546d5f73c7b2490a75b19a44f672333fd681c2ee2f71e8686df52630b",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "3856158970d9abafd8e86b58ecb1abdb1e298ac1d6d2aa97ba9d182b33d7c7a6",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Authorized → 20x | CSP ecosystem": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "efa0cc48b34a92212875e2d5ef24bb5b1c515999a6095c7dae6bea464f9a7888",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "f1ea6325ddd8a37b7ea7db24cee4f4cce768f8e8684947b5aa746d7047dfaeae",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "b92ad642c7d2fb4aacbd4a48882da4afe7d71c1b6c059c767b07e8924ec02e13",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "c14c06fa8e6bbeb8ab5aaff6dd6c92af5ce7facaa29f504a1e8bf0aecb36e6d4",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "63d4de0546d5f73c7b2490a75b19a44f672333fd681c2ee2f71e8686df52630b",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "3856158970d9abafd8e86b58ecb1abdb1e298ac1d6d2aa97ba9d182b33d7c7a6",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Authorized → 20x | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "6815ae85f72b11e754027af8291cef8bb65611068d12bfce82c8a022902b7655",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "f1ea6325ddd8a37b7ea7db24cee4f4cce768f8e8684947b5aa746d7047dfaeae",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "b92ad642c7d2fb4aacbd4a48882da4afe7d71c1b6c059c767b07e8924ec02e13",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "c14c06fa8e6bbeb8ab5aaff6dd6c92af5ce7facaa29f504a1e8bf0aecb36e6d4",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "63d4de0546d5f73c7b2490a75b19a44f672333fd681c2ee2f71e8686df52630b",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "3856158970d9abafd8e86b58ecb1abdb1e298ac1d6d2aa97ba9d182b33d7c7a6",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Authorized → 20x | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "03cd20168fb9bf3a09f2f7a7abfa5ca0a4f1e4c5180031aa1ab6ca8c84fab78f",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "f1ea6325ddd8a37b7ea7db24cee4f4cce768f8e8684947b5aa746d7047dfaeae",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "b92ad642c7d2fb4aacbd4a48882da4afe7d71c1b6c059c767b07e8924ec02e13",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "c14c06fa8e6bbeb8ab5aaff6dd6c92af5ce7facaa29f504a1e8bf0aecb36e6d4",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "63d4de0546d5f73c7b2490a75b19a44f672333fd681c2ee2f71e8686df52630b",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "3856158970d9abafd8e86b58ecb1abdb1e298ac1d6d2aa97ba9d182b33d7c7a6",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Ready (Continuing Rev5) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "bdc5aa347f2b18733249937628d2f7a71ec406dd061dee7fb5b863383109fee9",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "d6c9a6642cfadef31e227cef774ca7b1ef841632e93493edd1a1fa804621fd09",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "7e4b03332e35791292ad660d9d61741ec97882b64404dede3f86c99c11e67969",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "b9c3a041bbd2750513b1a05031a24870632e4b52330602e912b617e2d7fef73d",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "633b375057df4d1eb616430337c72986684ff4737366ae054d2cf437f16d4558",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "7adee4ab198f6fa45e08e794eea6b0d6129a97f70d37eb6ad90918810bd68d63",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "24adc5203172d462e4ee6f63ab7b6132ccc666df5ceb85f04f5899e207889949",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Ready (Likely 20x) | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "292507f5a03852515e7131df0f395514731d753c4bedf8ac43e358388328a988",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "6c5a028a41a8d7fd694a48d23271075ea82760289b8d2b0661b11a1d9730242b",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ff3a4a09bb8affa770d69ecf2f7a243bc9d1aca8e747dd3491d0c68a8360e09",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "1fa1a33cdbbb5d9967e7aac4c8bf80514548d64210bf3ed6133abd85eceab8ba",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "1a823e4af3c84e1071b3dd53016d4f0e0d0cc04ea7b429a6151716857e8ae44a",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "15d13e6aac2fe92f03290ba9f0eb325c948fd410374a0c145064e23f79bec813",
+        "last_modified_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "24adc5203172d462e4ee6f63ab7b6132ccc666df5ceb85f04f5899e207889949",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Ready (Likely 20x) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "bdc5aa347f2b18733249937628d2f7a71ec406dd061dee7fb5b863383109fee9",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "6c5a028a41a8d7fd694a48d23271075ea82760289b8d2b0661b11a1d9730242b",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ff3a4a09bb8affa770d69ecf2f7a243bc9d1aca8e747dd3491d0c68a8360e09",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "1fa1a33cdbbb5d9967e7aac4c8bf80514548d64210bf3ed6133abd85eceab8ba",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "1a823e4af3c84e1071b3dd53016d4f0e0d0cc04ea7b429a6151716857e8ae44a",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "15d13e6aac2fe92f03290ba9f0eb325c948fd410374a0c145064e23f79bec813",
+        "last_modified_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "24adc5203172d462e4ee6f63ab7b6132ccc666df5ceb85f04f5899e207889949",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Ready (Path Unclear) | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "292507f5a03852515e7131df0f395514731d753c4bedf8ac43e358388328a988",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "d2e40798e18548c88ee15097f82748e6e4483c660ce5f09d2bcb606618927086",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "fb78c4563159078c05a6151f15fbbb3dec0c77ed726aa4a4d359a029d7bd8943",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "70d2cf64260095dd61609840f167294994840a80ee325bfee9b75ddb63d89b6a",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "4e665afba50ceb193d8f1e325a29e16f402a977faf25db3ffe3e41a43a6584cf",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "8fe58c12410f4bd52d1d351c7721a6eae59e5d65376d94938cb749d13038b256",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "24adc5203172d462e4ee6f63ab7b6132ccc666df5ceb85f04f5899e207889949",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Business leaders | Any Size | Rev5 Ready (Path Unclear) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "bdc5aa347f2b18733249937628d2f7a71ec406dd061dee7fb5b863383109fee9",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "e139c6fc35de2e5f72281907a48cf95926a12e462ec4abe4f3dd174f8eb0d30c",
+        "last_modified_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "0ff3a4a09bb8affa770d69ecf2f7a243bc9d1aca8e747dd3491d0c68a8360e09",
+        "last_modified_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "ce33d969f9bee9520860d32bf26cb02f5a687aa3ce30f81161cd51bb14245abe",
+        "last_modified_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "1a823e4af3c84e1071b3dd53016d4f0e0d0cc04ea7b429a6151716857e8ae44a",
+        "last_modified_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "6a616131e4e2a9a64b1c3cc01542d39394de8a8a755fe2c4fdd24cb0889342be",
+        "last_modified_at": "2026-09-08T13:21:14+00:00",
+        "reviewed_at": "2026-09-08T13:21:14+00:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "24adc5203172d462e4ee6f63ab7b6132ccc666df5ceb85f04f5899e207889949",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | 20x Initial Implementation | Both": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "e0bfadec08c259f62d01a2d967aa7020aab84ea452108f85008d2420e127a83c",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "3ba97e901362b7cf71b8091f996aae8e109551d3376f86ab4caefebc417ddf3a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8f55d0ddeca1590489373870d591860880bb8d167cb9cc6a2adb685482f5dce2",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d64167bfa512614283bd697c4c0778b69a0c2eea9ba3325bce3566d0843cd7f7",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b32258d2a73c47b01780d886e19ab2e74fec7fd8756204eaffac5a62f2cab302",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "0164cd0311133668382b0d7c6014607a514d4441309010003079ddad666fc9f6",
+        "last_modified_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "6318bbf35b22c0c9290256d20b36d38ebedd3436776a724b3074fc4d244f6afa",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | 20x Initial Implementation | CSP ecosystem": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "be5878a86a8459134fe2e28589a3621d2ca462c769b5cd7964bbde8268bee9ae",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "3ba97e901362b7cf71b8091f996aae8e109551d3376f86ab4caefebc417ddf3a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8f55d0ddeca1590489373870d591860880bb8d167cb9cc6a2adb685482f5dce2",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d64167bfa512614283bd697c4c0778b69a0c2eea9ba3325bce3566d0843cd7f7",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b32258d2a73c47b01780d886e19ab2e74fec7fd8756204eaffac5a62f2cab302",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "0164cd0311133668382b0d7c6014607a514d4441309010003079ddad666fc9f6",
+        "last_modified_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "6318bbf35b22c0c9290256d20b36d38ebedd3436776a724b3074fc4d244f6afa",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | 20x Initial Implementation | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "78174175f5cec971fc080a2666487b77d9d36ff7dc63e193d8e6658201fcf7d4",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "3ba97e901362b7cf71b8091f996aae8e109551d3376f86ab4caefebc417ddf3a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8f55d0ddeca1590489373870d591860880bb8d167cb9cc6a2adb685482f5dce2",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d64167bfa512614283bd697c4c0778b69a0c2eea9ba3325bce3566d0843cd7f7",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b32258d2a73c47b01780d886e19ab2e74fec7fd8756204eaffac5a62f2cab302",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "0164cd0311133668382b0d7c6014607a514d4441309010003079ddad666fc9f6",
+        "last_modified_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "6318bbf35b22c0c9290256d20b36d38ebedd3436776a724b3074fc4d244f6afa",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | 20x Initial Implementation | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "fa7c11b079aabe0c0fb7386feb48e7e8fab14775ca7bfa5198da4701c6037c19",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "3ba97e901362b7cf71b8091f996aae8e109551d3376f86ab4caefebc417ddf3a",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8f55d0ddeca1590489373870d591860880bb8d167cb9cc6a2adb685482f5dce2",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d64167bfa512614283bd697c4c0778b69a0c2eea9ba3325bce3566d0843cd7f7",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b32258d2a73c47b01780d886e19ab2e74fec7fd8756204eaffac5a62f2cab302",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "0164cd0311133668382b0d7c6014607a514d4441309010003079ddad666fc9f6",
+        "last_modified_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_at": "2026-09-07T20:26:43-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "6318bbf35b22c0c9290256d20b36d38ebedd3436776a724b3074fc4d244f6afa",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | Both": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "e0bfadec08c259f62d01a2d967aa7020aab84ea452108f85008d2420e127a83c",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "83907246af52870d27711c91f438d2717d47addd0ac26cd359225088fce4773e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "82cc3ac857edeb27e02713d8c74fbb251926aae071c85e4c96200644b4d4511c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "02e9a629e70fd3b0f0d393a96eba520b1222fa12d7e43ecf00865e02c9a4f905",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "47890c77ec7bbd6fe459c3adbbc6dd31d0bb9b17bc30a9771306728b756cd4ac",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "4ac8a63a9109ba37de8de44302e93455f6f35e55ec3a4bfc67bd0ac0dbd5e848",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | CSP ecosystem": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "be5878a86a8459134fe2e28589a3621d2ca462c769b5cd7964bbde8268bee9ae",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "83907246af52870d27711c91f438d2717d47addd0ac26cd359225088fce4773e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "82cc3ac857edeb27e02713d8c74fbb251926aae071c85e4c96200644b4d4511c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "02e9a629e70fd3b0f0d393a96eba520b1222fa12d7e43ecf00865e02c9a4f905",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "47890c77ec7bbd6fe459c3adbbc6dd31d0bb9b17bc30a9771306728b756cd4ac",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "4ac8a63a9109ba37de8de44302e93455f6f35e55ec3a4bfc67bd0ac0dbd5e848",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "78174175f5cec971fc080a2666487b77d9d36ff7dc63e193d8e6658201fcf7d4",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "83907246af52870d27711c91f438d2717d47addd0ac26cd359225088fce4773e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "82cc3ac857edeb27e02713d8c74fbb251926aae071c85e4c96200644b4d4511c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "02e9a629e70fd3b0f0d393a96eba520b1222fa12d7e43ecf00865e02c9a4f905",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "47890c77ec7bbd6fe459c3adbbc6dd31d0bb9b17bc30a9771306728b756cd4ac",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "4ac8a63a9109ba37de8de44302e93455f6f35e55ec3a4bfc67bd0ac0dbd5e848",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "fa7c11b079aabe0c0fb7386feb48e7e8fab14775ca7bfa5198da4701c6037c19",
+        "last_modified_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_at": "2026-09-03T21:42:55+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "83907246af52870d27711c91f438d2717d47addd0ac26cd359225088fce4773e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "82cc3ac857edeb27e02713d8c74fbb251926aae071c85e4c96200644b4d4511c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d154fb8082736d3505d7969dd6fe746d5303653ed49b841eccc06f4263e8c4e0",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "02e9a629e70fd3b0f0d393a96eba520b1222fa12d7e43ecf00865e02c9a4f905",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "47890c77ec7bbd6fe459c3adbbc6dd31d0bb9b17bc30a9771306728b756cd4ac",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "4ac8a63a9109ba37de8de44302e93455f6f35e55ec3a4bfc67bd0ac0dbd5e848",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Ready (Likely 20x) | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "78174175f5cec971fc080a2666487b77d9d36ff7dc63e193d8e6658201fcf7d4",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "9fc3299bd86ef1bdaa4a809a70c9aa7b305ef36beddc3e1fa582a16b65a10c86",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "9f59226839987a540802624cb959b20e3b908f21cd467eaefd5428ea9215229b",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "1fa1a33cdbbb5d9967e7aac4c8bf80514548d64210bf3ed6133abd85eceab8ba",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "8e067013a6366d80915f3859b55c5a64412c43d2127d5c77cbd64450dc3f8c05",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "a8fa00ece1b0854b02fdd6037d5ce50dda4e56e42df084b86bbaf71189ccb691",
+        "last_modified_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "21f7cbb6aae3734787b58d78b93ed8779165283685b82bc11c2a7646e49ef207",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Ready (Likely 20x) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "fa7c11b079aabe0c0fb7386feb48e7e8fab14775ca7bfa5198da4701c6037c19",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "9fc3299bd86ef1bdaa4a809a70c9aa7b305ef36beddc3e1fa582a16b65a10c86",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "9f59226839987a540802624cb959b20e3b908f21cd467eaefd5428ea9215229b",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "1fa1a33cdbbb5d9967e7aac4c8bf80514548d64210bf3ed6133abd85eceab8ba",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "8e067013a6366d80915f3859b55c5a64412c43d2127d5c77cbd64450dc3f8c05",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "a8fa00ece1b0854b02fdd6037d5ce50dda4e56e42df084b86bbaf71189ccb691",
+        "last_modified_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "21f7cbb6aae3734787b58d78b93ed8779165283685b82bc11c2a7646e49ef207",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "FedRAMP-adjacent | Any Size | Rev5 Ready (Path Unclear) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "fa7c11b079aabe0c0fb7386feb48e7e8fab14775ca7bfa5198da4701c6037c19",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "4089e423eb9b1c51abe64a75e7c51ca302caf48374b74105ed0736f4a6c20c07",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "d2ec9a951ae6fb31ba3b7234c3ecab55db30115866ea2822b0d436898c48d342",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "70d2cf64260095dd61609840f167294994840a80ee325bfee9b75ddb63d89b6a",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "5c3de52509b825ac66aa214cb96241dce2c22f4e1057da6b3c5abc3e3cb6b192",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "c6dff195663e8214537b0305fdf602194a770f4a97b2017bf44ec3322260bfda",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "21f7cbb6aae3734787b58d78b93ed8779165283685b82bc11c2a7646e49ef207",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | 20x Initial Implementation | Both": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "8154a88d29d60543ce5d1d9f63c15f620c774ab4bab0d72ec0c69f4a91e2162d",
+        "last_modified_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "d9961482db2cd7ff919ee3323e9a410c2e53eda8b1df95da3bd9e33fbd19543e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "4d0fa8f9435d3b0a5ff31ac0c205094513de4c4302c6501d0d1497abb5124d3a",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7ae67cc9f2ce5d34d80d9262e08f062d922e3d751bb4ee1ed229da6481c90666",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "579019b95fa319e6c54590629b2b27f9f3a4fddd8d0ec039dfb7bc0bdebdf821",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "da6c7b62e9490a0020031760ce106636ea58c6c71299ef2a3f4b591055c3781f",
+        "last_modified_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "26c26635f5f67ab91529055ca9a45d34911d92a9a05fdc9e995de0bdc65ecd56",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | 20x Initial Implementation | CSP ecosystem": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "8154a88d29d60543ce5d1d9f63c15f620c774ab4bab0d72ec0c69f4a91e2162d",
+        "last_modified_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "d9961482db2cd7ff919ee3323e9a410c2e53eda8b1df95da3bd9e33fbd19543e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "4d0fa8f9435d3b0a5ff31ac0c205094513de4c4302c6501d0d1497abb5124d3a",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7ae67cc9f2ce5d34d80d9262e08f062d922e3d751bb4ee1ed229da6481c90666",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "579019b95fa319e6c54590629b2b27f9f3a4fddd8d0ec039dfb7bc0bdebdf821",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "da6c7b62e9490a0020031760ce106636ea58c6c71299ef2a3f4b591055c3781f",
+        "last_modified_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "26c26635f5f67ab91529055ca9a45d34911d92a9a05fdc9e995de0bdc65ecd56",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | 20x Initial Implementation | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "8154a88d29d60543ce5d1d9f63c15f620c774ab4bab0d72ec0c69f4a91e2162d",
+        "last_modified_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "d9961482db2cd7ff919ee3323e9a410c2e53eda8b1df95da3bd9e33fbd19543e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "4d0fa8f9435d3b0a5ff31ac0c205094513de4c4302c6501d0d1497abb5124d3a",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7ae67cc9f2ce5d34d80d9262e08f062d922e3d751bb4ee1ed229da6481c90666",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "579019b95fa319e6c54590629b2b27f9f3a4fddd8d0ec039dfb7bc0bdebdf821",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "da6c7b62e9490a0020031760ce106636ea58c6c71299ef2a3f4b591055c3781f",
+        "last_modified_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "26c26635f5f67ab91529055ca9a45d34911d92a9a05fdc9e995de0bdc65ecd56",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | 20x Initial Implementation | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "8154a88d29d60543ce5d1d9f63c15f620c774ab4bab0d72ec0c69f4a91e2162d",
+        "last_modified_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_at": "2026-09-03T20:50:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "d9961482db2cd7ff919ee3323e9a410c2e53eda8b1df95da3bd9e33fbd19543e",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "4d0fa8f9435d3b0a5ff31ac0c205094513de4c4302c6501d0d1497abb5124d3a",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7ae67cc9f2ce5d34d80d9262e08f062d922e3d751bb4ee1ed229da6481c90666",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "579019b95fa319e6c54590629b2b27f9f3a4fddd8d0ec039dfb7bc0bdebdf821",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "da6c7b62e9490a0020031760ce106636ea58c6c71299ef2a3f4b591055c3781f",
+        "last_modified_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_at": "2026-09-07T19:46:26-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "26c26635f5f67ab91529055ca9a45d34911d92a9a05fdc9e995de0bdc65ecd56",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Authorized → 20x | Both": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "ae80aec98ba8e8082fae65c3b7baa4bd648b0e722a248da55ae972cbae31a9d6",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "481d0a98353d32b9970d198ca6007d73631fc5aead00b0a6030065455e44bae3",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "bf4ec592e0fcc549bab713f550677c54595230d2513dffd904e93d5649be796c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "00aa76d213bb773de250d80a38d3caa23776f8c854951b4d67468b4eae872efd",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b39c42d62675da0041c2db8467f1a67f06cbe069853a691d96042342d739e521",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "d22bb16b5d0d0a9300d11b3137feb57165e5fc779f6d1ed890252118b989194d",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "f196ad18cc3e6cf8f02d443c49b8bea417042a3c369963a438eb8acf6975adfd",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Authorized → 20x | CSP ecosystem": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "ae80aec98ba8e8082fae65c3b7baa4bd648b0e722a248da55ae972cbae31a9d6",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "481d0a98353d32b9970d198ca6007d73631fc5aead00b0a6030065455e44bae3",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "bf4ec592e0fcc549bab713f550677c54595230d2513dffd904e93d5649be796c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "00aa76d213bb773de250d80a38d3caa23776f8c854951b4d67468b4eae872efd",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b39c42d62675da0041c2db8467f1a67f06cbe069853a691d96042342d739e521",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "d22bb16b5d0d0a9300d11b3137feb57165e5fc779f6d1ed890252118b989194d",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "f196ad18cc3e6cf8f02d443c49b8bea417042a3c369963a438eb8acf6975adfd",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Authorized → 20x | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "ae80aec98ba8e8082fae65c3b7baa4bd648b0e722a248da55ae972cbae31a9d6",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "481d0a98353d32b9970d198ca6007d73631fc5aead00b0a6030065455e44bae3",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "bf4ec592e0fcc549bab713f550677c54595230d2513dffd904e93d5649be796c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "00aa76d213bb773de250d80a38d3caa23776f8c854951b4d67468b4eae872efd",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b39c42d62675da0041c2db8467f1a67f06cbe069853a691d96042342d739e521",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "d22bb16b5d0d0a9300d11b3137feb57165e5fc779f6d1ed890252118b989194d",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "f196ad18cc3e6cf8f02d443c49b8bea417042a3c369963a438eb8acf6975adfd",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Authorized → 20x | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "ae80aec98ba8e8082fae65c3b7baa4bd648b0e722a248da55ae972cbae31a9d6",
+        "last_modified_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_at": "2026-09-07T19:07:51-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "481d0a98353d32b9970d198ca6007d73631fc5aead00b0a6030065455e44bae3",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "bf4ec592e0fcc549bab713f550677c54595230d2513dffd904e93d5649be796c",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "00aa76d213bb773de250d80a38d3caa23776f8c854951b4d67468b4eae872efd",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b39c42d62675da0041c2db8467f1a67f06cbe069853a691d96042342d739e521",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "d22bb16b5d0d0a9300d11b3137feb57165e5fc779f6d1ed890252118b989194d",
+        "last_modified_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_at": "2026-09-07T21:09:10-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "f196ad18cc3e6cf8f02d443c49b8bea417042a3c369963a438eb8acf6975adfd",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Ready (Continuing Rev5) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "03d0d77bc0eb76a5ff100c8137ced59d9ed0c4c0ad4a0605da2bbb4795ec5a26",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "91e01717f1918a85cd9ef260a8b5f610aac376345ba2f9c15412f0a6423212d5",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "0641e54ebf1b1c92622e4b919471ce1e9fb8cb036d9e678241c9aad197d3c09a",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "7dfdc71a3ebf45ea002fb4c2dcd530992f7ce76258d8db1ca7b3a1f61cea2ebe",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "e77422ac898ea68088a6f17131b4cac95c932bcd1309c4f04ce4c72a853317dc",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "4913b3639476e4ce7a89ab1a774ceb1110608bc69602aabc38c599b785aabe36",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "34449dddd0e8f4af0430cc002b76eae3f6e9a43d91df940f486f2dc560e4ba45",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Ready (Likely 20x) | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "03d0d77bc0eb76a5ff100c8137ced59d9ed0c4c0ad4a0605da2bbb4795ec5a26",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "ce38db99d9a9e6c6c6a57235f0700b66bbff71ccfc403dfd04019b7bd04ff966",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8a951009dc874cdf517d2b43111485d2b6002be12295da88a911c78ecd0306fb",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "3d1673fc14a9c4e30a4314ebaaa71f505ae2461d6456e23ef2ce1a1f2dc26969",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b2a460b6a31cf50016e8b797e613441ce6b9cf268e4793e26f791de9e7ea1118",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "74f76cbf30ce795866b5266133d4871227c415fc3710e62761c4aa60846c1aaf",
+        "last_modified_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "34449dddd0e8f4af0430cc002b76eae3f6e9a43d91df940f486f2dc560e4ba45",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Ready (Likely 20x) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "03d0d77bc0eb76a5ff100c8137ced59d9ed0c4c0ad4a0605da2bbb4795ec5a26",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "ce38db99d9a9e6c6c6a57235f0700b66bbff71ccfc403dfd04019b7bd04ff966",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8a951009dc874cdf517d2b43111485d2b6002be12295da88a911c78ecd0306fb",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "3d1673fc14a9c4e30a4314ebaaa71f505ae2461d6456e23ef2ce1a1f2dc26969",
+        "last_modified_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_at": "2026-09-07T23:29:30-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b2a460b6a31cf50016e8b797e613441ce6b9cf268e4793e26f791de9e7ea1118",
+        "last_modified_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_at": "2026-09-07T23:59:35-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "74f76cbf30ce795866b5266133d4871227c415fc3710e62761c4aa60846c1aaf",
+        "last_modified_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_at": "2026-09-07T21:29:54-04:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "34449dddd0e8f4af0430cc002b76eae3f6e9a43d91df940f486f2dc560e4ba45",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Ready (Path Unclear) | Direct agency": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "03d0d77bc0eb76a5ff100c8137ced59d9ed0c4c0ad4a0605da2bbb4795ec5a26",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "caacf32f7d4c0be4fb2161542da705c5349d55612e4b89d2b32ae2ef5fa7b6c8",
+        "last_modified_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8a951009dc874cdf517d2b43111485d2b6002be12295da88a911c78ecd0306fb",
+        "last_modified_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d64167bfa512614283bd697c4c0778b69a0c2eea9ba3325bce3566d0843cd7f7",
+        "last_modified_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b2a460b6a31cf50016e8b797e613441ce6b9cf268e4793e26f791de9e7ea1118",
+        "last_modified_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "589abe13975d9d3d659adee6a2bc0d72d45a02f47c14f856e2f59723ed1f5549",
+        "last_modified_at": "2026-09-08T13:21:14+00:00",
+        "reviewed_at": "2026-09-08T13:21:14+00:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "34449dddd0e8f4af0430cc002b76eae3f6e9a43d91df940f486f2dc560e4ba45",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    },
+    "Technical | Any Size | Rev5 Ready (Path Unclear) | Unclear": {
+      "connect_message": {
+        "change_kind": "edited",
+        "content_sha256": "03d0d77bc0eb76a5ff100c8137ced59d9ed0c4c0ad4a0605da2bbb4795ec5a26",
+        "last_modified_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_at": "2026-09-03T22:50:11-04:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_1": {
+        "change_kind": "edited",
+        "content_sha256": "caacf32f7d4c0be4fb2161542da705c5349d55612e4b89d2b32ae2ef5fa7b6c8",
+        "last_modified_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_body_2": {
+        "change_kind": "edited",
+        "content_sha256": "8a951009dc874cdf517d2b43111485d2b6002be12295da88a911c78ecd0306fb",
+        "last_modified_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_1": {
+        "change_kind": "edited",
+        "content_sha256": "d64167bfa512614283bd697c4c0778b69a0c2eea9ba3325bce3566d0843cd7f7",
+        "last_modified_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_at": "2026-09-08T13:30:06+00:00",
+        "reviewed_by": "Arian"
+      },
+      "email_subject_2": {
+        "change_kind": "edited",
+        "content_sha256": "b2a460b6a31cf50016e8b797e613441ce6b9cf268e4793e26f791de9e7ea1118",
+        "last_modified_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_at": "2026-09-08T13:35:15+00:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_1": {
+        "change_kind": "edited",
+        "content_sha256": "589abe13975d9d3d659adee6a2bc0d72d45a02f47c14f856e2f59723ed1f5549",
+        "last_modified_at": "2026-09-08T13:21:14+00:00",
+        "reviewed_at": "2026-09-08T13:21:14+00:00",
+        "reviewed_by": "Arian"
+      },
+      "followup_message_2": {
+        "change_kind": "edited",
+        "content_sha256": "34449dddd0e8f4af0430cc002b76eae3f6e9a43d91df940f486f2dc560e4ba45",
+        "last_modified_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_at": "2026-09-07T22:50:35-04:00",
+        "reviewed_by": "Arian"
+      }
+    }
+  },
+  "schema_version": 1,
+  "worksheet": "General ICP Messages"
+}

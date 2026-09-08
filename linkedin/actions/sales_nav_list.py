@@ -18,10 +18,15 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Iterator
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import parse_qs, quote, urlparse, urlunparse
+
+from linkedin.exceptions import SalesNavigatorSurfaceError
 
 logger = logging.getLogger(__name__)
+
+_PEOPLE_SEARCH_ENDPOINTS = {"salesApiLeadSearch", "salesApiPeopleSearch"}
 
 # Encoded member URN sits between `(` and the first `,` of a sales profile URN:
 #   urn:li:fs_salesProfile:(ACwAA...,NAME_SEARCH,xxxx)
@@ -40,6 +45,36 @@ DEFAULT_URL_TEMPLATE = (
 )
 
 PAGE_SIZE = 25
+
+
+def _wait_for_captured_response(page, captured: list[str], timeout_ms: int) -> None:
+    """Wait only for the target XHR, not Sales Navigator's never-idle page."""
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while not captured and time.monotonic() < deadline:
+        page.wait_for_timeout(100)
+
+
+def _parameterize_pagination_url(captured_url: str) -> str:
+    """Replace the live paging values while preserving LinkedIn's encoding."""
+    parsed = urlparse(captured_url)
+    new_parts = []
+    found_start = False
+    found_count = False
+    for part in parsed.query.split("&"):
+        if part.startswith("start="):
+            new_parts.append("start={start}")
+            found_start = True
+        elif part.startswith("count="):
+            new_parts.append("count={count}")
+            found_count = True
+        else:
+            new_parts.append(part)
+    if not found_start or not found_count:
+        raise SalesNavigatorSurfaceError(
+            "Captured Sales Navigator endpoint has no complete start/count "
+            "pagination controls."
+        )
+    return urlunparse(parsed._replace(query="&".join(new_parts)))
 
 
 def extract_member_urn(entity_urn: str) -> str | None:
@@ -104,10 +139,7 @@ def discover_list_url_template(session, list_id: str, *, timeout_ms: int = 20_00
     try:
         page.goto(f"https://www.linkedin.com/sales/lists/people/{list_id}")
         page.wait_for_load_state("load")
-        try:
-            page.wait_for_load_state("networkidle", timeout=timeout_ms)
-        except Exception:
-            pass
+        _wait_for_captured_response(page, captured, timeout_ms)
     finally:
         try:
             page.remove_listener("response", on_response)
@@ -127,17 +159,7 @@ def discover_list_url_template(session, list_id: str, *, timeout_ms: int = 20_00
     # query string manually rather than via parse_qsl — the latter URL-decodes
     # values, and re-encoding can subtly differ from LinkedIn's original
     # encoding (which the server validates strictly, returning 400).
-    parsed = urlparse(captured_url)
-    new_parts = []
-    for part in parsed.query.split("&"):
-        if part.startswith("start="):
-            new_parts.append("start={start}")
-        elif part.startswith("count="):
-            new_parts.append("count={count}")
-        else:
-            new_parts.append(part)
-    rebuilt_query = "&".join(new_parts)
-    return urlunparse(parsed._replace(query=rebuilt_query))
+    return _parameterize_pagination_url(captured_url)
 
 
 def discover_search_url_template(session, search_url: str, *, timeout_ms: int = 20_000) -> str:
@@ -146,27 +168,53 @@ def discover_search_url_template(session, search_url: str, *, timeout_ms: int = 
     Same shape as `discover_list_url_template`, but for search URLs (e.g.
     `linkedin.com/sales/search/people?query=...`) instead of saved-list pages.
     The captured XHR uses `salesApiPeopleSearch` with a `query=(...)` clause
-    that bakes in the active filter selections.
+    that bakes in the active filter selections. Saved-search pages emit an
+    earlier unfiltered request with the same `savedSearchId`; for those pages,
+    only a response carrying a non-empty `query` clause is authoritative.
     """
     page = session.page
     captured: list[str] = []
+    expected_saved_search_ids = parse_qs(urlparse(search_url).query).get(
+        "savedSearchId", []
+    )
+    expected_saved_search_id = (
+        expected_saved_search_ids[0]
+        if len(expected_saved_search_ids) == 1
+        else None
+    )
 
     def on_response(response):
         url = response.url
-        if "salesApi" not in url:
+        parsed_response_url = urlparse(url)
+        endpoint = parsed_response_url.path.rsplit("/", 1)[-1]
+        if endpoint not in _PEOPLE_SEARCH_ENDPOINTS:
             return
+        response_params = parse_qs(
+            parsed_response_url.query,
+            keep_blank_values=True,
+        )
+        if expected_saved_search_id:
+            response_ids = response_params.get("savedSearchId", [])
+            if response_ids != [expected_saved_search_id]:
+                return
+            response_queries = response_params.get("query", [])
+            if len(response_queries) != 1 or not response_queries[0].strip():
+                return
         if response.status != 200:
             return
         try:
             data = response.json()
         except Exception:
             return
-        # The search XHR is distinguishable from sibling salesApi calls
-        # (Lego widgets, Identity, etc.) by having a populated paging.total.
+        # The search XHR is distinguishable from sibling salesApi calls (Lego
+        # widgets, Identity, etc.) by a structurally valid result collection
+        # and paging total.
+        elements = data.get("elements") if isinstance(data, dict) else None
         paging = data.get("paging") if isinstance(data, dict) else None
-        if not isinstance(paging, dict) or paging.get("total") is None:
+        total = paging.get("total") if isinstance(paging, dict) else None
+        if not isinstance(elements, list):
             return
-        if "elements" not in data:
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
             return
         captured.append(url)
 
@@ -174,10 +222,7 @@ def discover_search_url_template(session, search_url: str, *, timeout_ms: int = 
     try:
         page.goto(search_url)
         page.wait_for_load_state("load")
-        try:
-            page.wait_for_load_state("networkidle", timeout=timeout_ms)
-        except Exception:
-            pass
+        _wait_for_captured_response(page, captured, timeout_ms)
     finally:
         try:
             page.remove_listener("response", on_response)
@@ -193,17 +238,7 @@ def discover_search_url_template(session, search_url: str, *, timeout_ms: int = 
     captured_url = captured[0]
     logger.info("Discovered Sales Nav search XHR URL: %s", captured_url)
 
-    parsed = urlparse(captured_url)
-    new_parts = []
-    for part in parsed.query.split("&"):
-        if part.startswith("start="):
-            new_parts.append("start={start}")
-        elif part.startswith("count="):
-            new_parts.append("count={count}")
-        else:
-            new_parts.append(part)
-    rebuilt_query = "&".join(new_parts)
-    return urlunparse(parsed._replace(query=rebuilt_query))
+    return _parameterize_pagination_url(captured_url)
 
 
 def iter_sales_nav_list(
@@ -225,9 +260,15 @@ def iter_sales_nav_list(
         url_template: Format string with `{list_id}`, `{start}`, `{count}`
             placeholders. Override if the default decoration ID is stale.
     """
+    if "{start}" not in url_template or "{count}" not in url_template:
+        raise SalesNavigatorSurfaceError(
+            "Sales Navigator URL template must contain both {start} and {count}."
+        )
+
     encoded_list_urn = quote(f"urn:li:salesList:{list_id}", safe="")
     start = 0
     yielded = 0
+    page_signatures: set[tuple[str, ...]] = set()
 
     # Sales Nav API expects plain JSON; the Voyager-specific normalized
     # accept header on the client default returns a different shape (or
@@ -250,22 +291,52 @@ def iter_sales_nav_list(
             )
 
         data = res.json()
-        elements = data.get("elements") or []
-        paging = data.get("paging") or {}
-        total = paging.get("total", 0)
+        if not isinstance(data, dict):
+            raise SalesNavigatorSurfaceError(
+                f"Sales Navigator returned a non-object page at start={start}."
+            )
+        elements = data.get("elements")
+        paging = data.get("paging")
+        if not isinstance(elements, list) or not isinstance(paging, dict):
+            raise SalesNavigatorSurfaceError(
+                f"Sales Navigator returned a malformed page at start={start}."
+            )
+        total = paging.get("total")
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise SalesNavigatorSurfaceError(
+                f"Sales Navigator returned an invalid paging total at start={start}."
+            )
+        if elements and (total == 0 or start >= total or start + len(elements) > total):
+            raise SalesNavigatorSurfaceError(
+                f"Sales Navigator returned contradictory paging data at start={start}."
+            )
 
         if not elements:
-            logger.warning(
-                "Sales Nav list %s: no elements at start=%d. Response keys=%s, "
-                "body preview=%s",
-                list_id, start, list(data.keys()), res.text()[:300],
-            )
+            if start < total:
+                raise SalesNavigatorSurfaceError(
+                    f"Sales Navigator promised {total} results but returned an "
+                    f"empty page at start={start}."
+                )
             return
 
-        for elem in elements:
+        if any(not isinstance(elem, dict) for elem in elements):
+            raise SalesNavigatorSurfaceError(
+                f"Sales Navigator returned a malformed result at start={start}."
+            )
+        signature = tuple(str(elem.get("entityUrn", "")) for elem in elements)
+        if signature in page_signatures:
+            raise SalesNavigatorSurfaceError(
+                f"Sales Navigator repeated a result page at start={start}."
+            )
+        page_signatures.add(signature)
+
+        for element_index, elem in enumerate(elements):
             row = normalize_element(elem)
             if row is None:
-                continue
+                raise SalesNavigatorSurfaceError(
+                    f"Sales Navigator result has no resolvable member URN at "
+                    f"start={start}, index={element_index}."
+                )
             yield row
             yielded += 1
             if max_results is not None and yielded >= max_results:

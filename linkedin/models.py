@@ -68,6 +68,103 @@ def active_week_start():
     return timezone.make_aware(monday, timezone=tz)
 
 
+class MessageProgram(models.Model):
+    """Stable identity for one reusable, versioned outbound message program."""
+
+    key = models.SlugField(max_length=160, unique=True)
+    name = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+        ordering = ("key",)
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.key})"
+
+
+class MessageProgramVersion(models.Model):
+    """Immutable, published snapshot of a message program."""
+
+    program = models.ForeignKey(
+        MessageProgram,
+        on_delete=models.PROTECT,
+        related_name="versions",
+    )
+    version = models.PositiveIntegerField()
+    schema_version = models.PositiveIntegerField(default=1)
+    payload = models.JSONField()
+    content_hash = models.CharField(max_length=64)
+    published_by = models.CharField(max_length=150)
+    published_at = models.DateTimeField(default=timezone.now, editable=False)
+    based_on_version = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="derived_versions",
+    )
+
+    class Meta:
+        app_label = "linkedin"
+        ordering = ("program_id", "version")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("program", "version"),
+                name="linkedin_unique_msg_program_version",
+            ),
+            models.UniqueConstraint(
+                fields=("program", "content_hash"),
+                name="linkedin_unique_msg_program_content",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(version__gte=1),
+                name="linkedin_msg_program_version_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(schema_version__gte=1),
+                name="linkedin_msg_schema_version_positive",
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        if not self.based_on_version_id:
+            return
+        if self.based_on_version.program_id != self.program_id:
+            raise ValidationError(
+                {"based_on_version": "The base version belongs to another message program."},
+            )
+        if self.based_on_version.version >= self.version:
+            raise ValidationError(
+                {"based_on_version": "The base version must precede this version."},
+            )
+
+    def save(self, *args, **kwargs) -> None:
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            immutable_fields = (
+                "program_id",
+                "version",
+                "schema_version",
+                "payload",
+                "content_hash",
+                "published_by",
+                "published_at",
+                "based_on_version_id",
+            )
+            if any(getattr(original, field) != getattr(self, field) for field in immutable_fields):
+                raise ValidationError("Published message program versions are immutable.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Published message program versions are immutable.")
+
+    def __str__(self) -> str:
+        return f"{self.program.key} v{self.version}"
+
+
 class Campaign(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -93,12 +190,206 @@ class Campaign(models.Model):
     action_fraction = models.FloatField(default=0.2)
     seed_public_ids = models.JSONField(default=list, blank=True)
     model_blob = models.BinaryField(null=True, blank=True)
+    active_message_version = models.ForeignKey(
+        MessageProgramVersion,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="active_for_campaigns",
+    )
 
     def __str__(self):
         return self.name
 
     class Meta:
         app_label = "linkedin"
+
+
+class CampaignMessageEnrollment(models.Model):
+    """Frozen message-version selection for one campaign Deal."""
+
+    deal = models.OneToOneField(
+        "crm.Deal",
+        on_delete=models.PROTECT,
+        related_name="message_enrollment",
+    )
+    message_version = models.ForeignKey(
+        MessageProgramVersion,
+        on_delete=models.PROTECT,
+        related_name="enrollments",
+    )
+    audience_key = models.CharField(max_length=160)
+    operator = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "linkedin"
+        ordering = ("-created_at",)
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(audience_key=""),
+                name="linkedin_msg_enrollment_audience_nonblank",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(operator=""),
+                name="linkedin_msg_enrollment_operator_nonblank",
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        self.audience_key = (self.audience_key or "").strip()
+        self.operator = (self.operator or "").strip()
+        errors = {}
+        if not self.audience_key:
+            errors["audience_key"] = "An enrollment requires a non-empty audience key."
+        if not self.operator:
+            errors["operator"] = "An enrollment requires a non-empty operator."
+        if errors:
+            raise ValidationError(errors)
+        if not self._state.adding or not self.deal_id or not self.message_version_id:
+            return
+        active_version_id = self.deal.campaign.active_message_version_id
+        if active_version_id is None:
+            raise ValidationError(
+                {"message_version": "The Deal campaign has no active message version."},
+            )
+        if active_version_id != self.message_version_id:
+            raise ValidationError(
+                {"message_version": "The message version is not active for the Deal campaign."},
+            )
+
+    def save(self, *args, **kwargs) -> None:
+        self.audience_key = (self.audience_key or "").strip()
+        self.operator = (self.operator or "").strip()
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            immutable_fields = (
+                "deal_id",
+                "message_version_id",
+                "audience_key",
+                "operator",
+            )
+            if any(getattr(original, field) != getattr(self, field) for field in immutable_fields):
+                raise ValidationError("Campaign message enrollments are immutable.")
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"Deal {self.deal_id}: {self.audience_key} ({self.message_version})"
+
+
+class OutboundDelivery(models.Model):
+    """Frozen rendered copy and execution state for one enrollment step."""
+
+    class Channel(models.TextChoices):
+        LINKEDIN_CONNECT = "linkedin_connect", "LinkedIn connection"
+        LINKEDIN_FOLLOWUP = "linkedin_followup", "LinkedIn follow-up"
+        GMAIL = "gmail", "Gmail"
+
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        QUEUED = "queued", "Queued"
+        SENDING = "sending", "Sending"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        UNCLEAR = "unclear", "Unclear"
+        STOPPED = "stopped", "Stopped"
+
+    enrollment = models.ForeignKey(
+        CampaignMessageEnrollment,
+        on_delete=models.PROTECT,
+        related_name="deliveries",
+    )
+    channel = models.CharField(max_length=32, choices=Channel.choices)
+    step_key = models.CharField(max_length=160)
+    step_index = models.PositiveIntegerField()
+    variant_key = models.CharField(max_length=160)
+    operator = models.CharField(max_length=64)
+    scheduled_at = models.DateTimeField()
+    frozen_subject = models.CharField(max_length=998, blank=True, default="")
+    frozen_body = models.TextField()
+    frozen_media = models.JSONField(default=list, blank=True)
+    render_hash = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PLANNED,
+        db_index=True,
+    )
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    task = models.OneToOneField(
+        "Task",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="outbound_delivery",
+    )
+
+    class Meta:
+        app_label = "linkedin"
+        ordering = ("enrollment_id", "channel", "step_index")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("enrollment", "channel", "step_key"),
+                name="linkedin_unique_msg_delivery_step_key",
+            ),
+            models.UniqueConstraint(
+                fields=("enrollment", "channel", "step_index"),
+                name="linkedin_unique_msg_delivery_step_index",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(step_index__gte=0),
+                name="linkedin_msg_delivery_step_nonnegative",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("status", "scheduled_at"),
+                name="linkedin_msg_delivery_due_idx",
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        normalized_operator = (self.operator or "").strip()
+        if self.enrollment_id and normalized_operator != self.enrollment.operator:
+            raise ValidationError(
+                {"operator": "The delivery operator must match its enrollment."},
+            )
+        if self.channel in {
+            self.Channel.LINKEDIN_CONNECT,
+            self.Channel.LINKEDIN_FOLLOWUP,
+        } and self.frozen_subject:
+            raise ValidationError(
+                {"frozen_subject": "LinkedIn deliveries do not have subjects."},
+            )
+
+    def save(self, *args, **kwargs) -> None:
+        self.step_key = (self.step_key or "").strip()
+        self.variant_key = (self.variant_key or "").strip()
+        self.operator = (self.operator or "").strip()
+        if self.pk:
+            original = type(self).objects.get(pk=self.pk)
+            immutable_fields = (
+                "enrollment_id",
+                "channel",
+                "step_key",
+                "step_index",
+                "variant_key",
+                "operator",
+                "frozen_subject",
+                "frozen_body",
+                "frozen_media",
+                "render_hash",
+            )
+            if any(getattr(original, field) != getattr(self, field) for field in immutable_fields):
+                raise ValidationError("Frozen outbound delivery content is immutable.")
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.enrollment_id}/{self.channel}/{self.step_key}"
 
 
 class OutreachSuppression(models.Model):

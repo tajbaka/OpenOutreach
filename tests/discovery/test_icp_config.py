@@ -100,7 +100,7 @@ def test_sheet_save_preserves_discovery_metadata(tmp_path, monkeypatch):
 def test_checked_in_json_enables_all_non_cmmc_icps_for_every_sender():
     payload = json.loads(icp_outbound._MESSAGES_PATH.read_text())
 
-    for sender, blocks in payload.items():
+    for sender, blocks in payload["sender_icps"].items():
         for icp, channels in blocks.items():
             discovery = channels.get("discovery")
             if icp.startswith("CMMC"):

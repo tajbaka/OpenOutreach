@@ -8,6 +8,27 @@ from gmail.templates import render_for_icp, render_for_lead, steps_for_lead, val
 from linkedin.exceptions import SheetsError
 
 
+def test_v2_legacy_renderer_reads_only_sender_icps(tmp_path, monkeypatch):
+    path = tmp_path / "icp_emails.json"
+    path.write_text(json.dumps({
+        "schema_version": 2,
+        "shared_programs": {"Arian": {"CSPs": "not legacy sender copy"}},
+        "sender_icps": {"Arian": {"CSPs": [{
+            "delay_hours": 0,
+            "subject_variants": ["Legacy subject"],
+            "body_variants": ["Hi {first_name}, I work with {role}."],
+        }]}},
+    }))
+    monkeypatch.setattr("gmail.templates.TEMPLATES_PATH", path)
+    rendered = render_for_icp(
+        sender="Arian", icp="CSPs", step_index=0,
+        lead=SimpleNamespace(first_name="Ada", role_tag="CFO/Finance"),
+    )
+    assert rendered.subject == "Legacy subject"
+    assert rendered.body == "Hi Ada, I work with finance leaders."
+    assert validate_all_templates().enabled_steps == 1
+
+
 def test_render_for_lead_uses_gmail_templates():
     lead = SimpleNamespace(
         id=7,
@@ -156,8 +177,9 @@ def test_render_for_icp_uses_gmail_sender_display_name_override():
 def test_icp_emails_uses_direct_icp_step_arrays():
     data = json.loads(TEMPLATES_PATH.read_text())
 
-    assert isinstance(data["Arian"]["CSPs"], list)
-    assert "gmail_fallback" not in data["Arian"]["CSPs"]
+    assert data["schema_version"] == 2
+    assert isinstance(data["sender_icps"]["Arian"]["CSPs"], list)
+    assert "gmail_fallback" not in data["sender_icps"]["Arian"]["CSPs"]
 
 
 def test_steps_for_lead_accepts_decimal_delay_hours(tmp_path, monkeypatch):
