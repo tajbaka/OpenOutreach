@@ -12,10 +12,12 @@ from linkedin.conf import OUR_COMPANY_NAME, OUR_WEBSITE_URL
 from linkedin.exceptions import SheetsError
 from linkedin.icp_outbound import safe_company_name
 from linkedin.name_utils import greeting_first_name
+from linkedin.message_roles import role_wording
 from linkedin.notifications.sheets import FU_ROLE_TO_ICP
 
 TEMPLATES_PATH = Path(__file__).with_name("icp_emails.json")
 ALLOWED_PLACEHOLDERS = frozenset({
+    "role",
     "first_name",
     "last_name",
     "company_name",
@@ -203,6 +205,8 @@ def render_for_icp(
         "our_company_name": OUR_COMPANY_NAME,
         "our_website_url": OUR_WEBSITE_URL,
     }
+    if "{role}" in subject or "{role}" in body:
+        values["role"] = role_wording(getattr(lead, "role_tag", ""))
     return FilledEmail(
         subject=subject.format(**values).strip(),
         body=body.format(**values).strip(),

@@ -4,7 +4,86 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 
+class LeadRoleTag(models.TextChoices):
+    """Operator-reviewed normalized role classifications."""
+
+    FOUNDER_CEO = "Founder/CEO", _("Founder/CEO")
+    CFO_FINANCE = "CFO/Finance", _("CFO/Finance")
+    COO_OPERATIONS = "COO/Operations", _("COO/Operations")
+    CRO_REVENUE = "CRO/Revenue", _("CRO/Revenue")
+    PRODUCT_EXECUTIVE = "Product Executive", _("Product Executive")
+    TECHNOLOGY_ENGINEERING_EXECUTIVE = (
+        "Technology/Engineering Executive",
+        _("Technology/Engineering Executive"),
+    )
+    CIO_INTERNAL_IT_EXECUTIVE = (
+        "CIO/Internal IT Executive",
+        _("CIO/Internal IT Executive"),
+    )
+    SECURITY_TRUST_EXECUTIVE = (
+        "Security/Trust Executive",
+        _("Security/Trust Executive"),
+    )
+    PRODUCT_ENGINEERING_N1 = "Product/Engineering N-1", _("Product/Engineering N-1")
+    SECURITY_COMPLIANCE_N1 = (
+        "Security/Compliance N-1",
+        _("Security/Compliance N-1"),
+    )
+    COMPLIANCE_RISK_PRIVACY_EXECUTIVE = (
+        "Compliance/Risk/Privacy Executive",
+        _("Compliance/Risk/Privacy Executive"),
+    )
+    FEDRAMP_OWNER_OPERATOR = (
+        "FedRAMP Owner/Operator",
+        _("FedRAMP Owner/Operator"),
+    )
+    GRC_MANAGER_LEAD = "GRC Manager/Lead", _("GRC Manager/Lead")
+    GRC_ENGINEER = "GRC Engineer", _("GRC Engineer")
+    GRC_ANALYST_PRACTITIONER = (
+        "GRC Analyst/Practitioner",
+        _("GRC Analyst/Practitioner"),
+    )
+    FEDERAL_PUBLIC_SECTOR_EXECUTIVE = (
+        "Federal/Public Sector Executive",
+        _("Federal/Public Sector Executive"),
+    )
+    FEDERAL_SALES_BD_IC = "Federal Sales/BD IC", _("Federal Sales/BD IC")
+    FEDERAL_SOLUTIONS_ENGINEER_ARCHITECT = (
+        "Federal Solutions Engineer/Architect",
+        _("Federal Solutions Engineer/Architect"),
+    )
+    PUBLIC_SECTOR_PARTNERSHIPS_ALLIANCES_CS = (
+        "Public Sector Partnerships/Alliances/CS",
+        _("Public Sector Partnerships/Alliances/CS"),
+    )
+    FIELD_CTO_CISO_TECHNICAL_EVANGELIST = (
+        "Field CTO/CISO/Technical Evangelist",
+        _("Field CTO/CISO/Technical Evangelist"),
+    )
+
+
+LEAD_ROLE_TAG_VALUES = tuple(LeadRoleTag.values)
+_LEAD_ROLE_TAG_BY_CASEFOLD = {value.casefold(): value for value in LEAD_ROLE_TAG_VALUES}
+
+
+def normalize_lead_role_tag(value: object) -> str:
+    """Return one canonical role tag, or raise for an unknown nonblank value."""
+
+    cleaned = " ".join(str(value or "").split())
+    if not cleaned:
+        return ""
+    canonical = _LEAD_ROLE_TAG_BY_CASEFOLD.get(cleaned.casefold())
+    if canonical is None:
+        raise ValueError(
+            f"unknown Role Tag {cleaned!r}; expected one of "
+            f"{list(LEAD_ROLE_TAG_VALUES)!r}"
+        )
+    return canonical
+
+
 class Lead(models.Model):
+    RoleTag = LeadRoleTag
+
     class Meta:
         verbose_name = _("Lead")
         verbose_name_plural = _("Leads")
@@ -13,6 +92,11 @@ class Lead(models.Model):
                 fields=["linkedin_url"],
                 condition=~models.Q(linkedin_url=""),
                 name="unique_nonblank_lead_linkedin_url",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(role_tag="")
+                | models.Q(role_tag__in=LEAD_ROLE_TAG_VALUES),
+                name="lead_role_tag_is_canonical",
             ),
         ]
 
@@ -43,8 +127,19 @@ class Lead(models.Model):
     # the connect-note picker and the follow-up template path read it.
     # Populated at import (CSV `ICP` column via `add_seeds`) or at first
     # scrape (lazy backfill via `linkedin.icp_outbound.resolve_icp`).
-    # See `linkedin.notifications.sheets.LEAD_ICP_BUCKETS` for the vocab.
-    icp = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    # Also holds an explicitly selected shared-program audience key. Match
+    # CampaignMessageEnrollment.audience_key's limit; never derive it from role.
+    icp = models.CharField(max_length=160, blank=True, default="", db_index=True)
+    # Human-reviewed normalized role classification. The raw LinkedIn title
+    # remains separate in the operator-maintained People sheet.
+    role_tag = models.CharField(
+        max_length=64,
+        choices=LeadRoleTag.choices,
+        blank=True,
+        default="",
+        db_default="",
+        db_index=True,
+    )
     disqualified = models.BooleanField(default=False)
     creation_date = models.DateTimeField(default=timezone.now)
     update_date = models.DateTimeField(auto_now=True)

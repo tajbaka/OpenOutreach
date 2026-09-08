@@ -20,6 +20,7 @@ from collections import defaultdict
 from contextlib import nullcontext
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 from django.db.models import Exists, OuterRef, Prefetch
 from django.utils import timezone
 
@@ -79,6 +80,8 @@ class Command(BaseCommand):
             "duplicate_keys": 0,
             "duplicate_lead_ids": 0,
             "duplicate_linkedin_urls": 0,
+            "role_tags_to_import": 0,
+            "role_tags_imported": 0,
         }
 
         if not GOOGLE_SHEETS_ID or not GOOGLE_SHEETS_CREDENTIALS_PATH:
@@ -147,6 +150,7 @@ class Command(BaseCommand):
         last_synced = timezone.localdate().isoformat()
 
         skipped = errored = ambiguous_existing = unchanged = 0
+        pending_role_tag_updates: dict[int, tuple[str, str]] = {}
         for lead in leads:
             full = f"{lead.first_name} {lead.last_name}".strip()
             company = (lead.company_name or "").strip()
@@ -200,6 +204,57 @@ class Command(BaseCommand):
             if lead.email and lead.email.casefold() not in seen_emails:
                 merged_emails.append(lead.email)
 
+            existing_role_tag = existing.get(sheets.COL_ROLE_TAG, "") or ""
+            pending_role_tag: tuple[str, str] | None = None
+            if existing_role_tag.strip():
+                from crm.models.lead import normalize_lead_role_tag
+
+                try:
+                    canonical_role_tag = normalize_lead_role_tag(existing_role_tag)
+                except ValueError as exc:
+                    self.stderr.write(
+                        f"  ! role tag {full or 'unnamed lead'}: {exc}"
+                    )
+                    errored += 1
+                    continue
+                if canonical_role_tag != lead.role_tag:
+                    pending_role_tag = (lead.role_tag, canonical_role_tag)
+                # Preserve the operator's exact cell text. The durable Lead
+                # stores the canonical equivalent after a successful apply.
+                target_role_tag = existing_role_tag
+            else:
+                target_role_tag = lead.role_tag or ""
+
+            # Role Tag moves in both directions: a populated human cell may
+            # update the DB, while a durable value may fill an empty cell.
+            # Guard the source row's stable identities for either direction so
+            # a concurrent Sheet sort cannot apply the classification to a
+            # different person. The exact source cell is guarded as well.
+            if existing and (
+                pending_role_tag is not None
+                or target_role_tag != existing_role_tag
+            ):
+                try:
+                    idx.expect_existing_row_unchanged(
+                        lead.linkedin_url,
+                        lead_id=lead.pk,
+                        expected_cells={
+                            sheets.COL_LEAD_ID: existing.get(
+                                sheets.COL_LEAD_ID, ""
+                            ) or "",
+                            sheets.COL_LINKEDIN_URL: existing.get(
+                                sheets.COL_LINKEDIN_URL, ""
+                            ) or "",
+                            sheets.COL_ROLE_TAG: existing_role_tag,
+                        },
+                    )
+                except SheetsError as e:
+                    self.stderr.write(
+                        f"  ! role tag identity {full or 'unnamed lead'}: {e}"
+                    )
+                    errored += 1
+                    continue
+
             payload = sheets.build_row_payload(
                 lead=lead,
                 title=existing.get(sheets.COL_TITLE, "") or "",
@@ -211,6 +266,7 @@ class Command(BaseCommand):
                 notes=existing.get(sheets.COL_NOTES, "") or "",
                 ai_notes=existing.get(sheets.COL_AI_NOTES, "") or "",
                 last_synced=last_synced,
+                role_tag=target_role_tag,
             )
 
             try:
@@ -225,6 +281,13 @@ class Command(BaseCommand):
                 else:
                     errored += 1
                 continue
+
+            # A Sheet value becomes durable only when this exact Lead row was
+            # processed without an identity/upsert error.  Keeping the pending
+            # import local until here prevents an errored row from mutating the
+            # Lead ledger later when other valid rows are flushed.
+            if pending_role_tag is not None:
+                pending_role_tag_updates[lead.pk] = pending_role_tag
 
             if was_new:
                 self.stdout.write(
@@ -271,6 +334,7 @@ class Command(BaseCommand):
                 "duplicate_keys": len(plan.duplicate_keys),
                 "duplicate_lead_ids": duplicate_lead_ids,
                 "duplicate_linkedin_urls": duplicate_linkedin_urls,
+                "role_tags_to_import": len(pending_role_tag_updates),
             })
             self.stdout.write(
                 "Exact People plan — "
@@ -309,6 +373,23 @@ class Command(BaseCommand):
         except SheetsError as e:
             raise CommandError(f"People flush failed: {e}") from e
 
+        # Existing nonblank Role Tag cells are operator-owned classification
+        # inputs. Persist them only after the Sheet plan has applied cleanly;
+        # dry-runs never mutate the Lead ledger.
+        with transaction.atomic():
+            for lead_id, (expected_role_tag, role_tag) in (
+                pending_role_tag_updates.items()
+            ):
+                updated = Lead.objects.filter(
+                    pk=lead_id,
+                    role_tag=expected_role_tag,
+                ).update(role_tag=role_tag)
+                if updated != 1:
+                    raise CommandError(
+                        "People Role Tag import target changed during publication; "
+                        "the database import was rolled back"
+                    )
+
         self.result.update({
             "appended": counts["appended"],
             "updated": counts["updated"],
@@ -322,6 +403,8 @@ class Command(BaseCommand):
             "duplicate_keys": len(plan.duplicate_keys),
             "duplicate_lead_ids": duplicate_lead_ids,
             "duplicate_linkedin_urls": duplicate_linkedin_urls,
+            "role_tags_to_import": len(pending_role_tag_updates),
+            "role_tags_imported": len(pending_role_tag_updates),
         })
 
         self.stdout.write(self.style.SUCCESS(

@@ -74,8 +74,27 @@ def _step_external_id_prefix(*, operator: str, deal_id: int, sequence_name: str,
     return f"daemon-send:{operator}:{deal_id}:{sequence_name}:step-{step_index}:"
 
 
-def _has_sent_sequence_step(*, deal, operator: str, sequence_name: str, step_index: int) -> bool:
+def _has_sent_sequence_step(
+    *,
+    deal,
+    operator: str,
+    sequence_name: str,
+    step_index: int,
+    delivery=None,
+) -> bool:
     from crm.models import Message
+
+    if delivery is not None:
+        from linkedin.models import OutboundDelivery
+
+        if delivery.status == OutboundDelivery.Status.SENT:
+            return True
+        return Message.objects.filter(
+            lead=deal.lead,
+            source=Message.Source.LINKEDIN,
+            direction=Message.Direction.OUTBOUND,
+            raw__outbound_delivery_id=delivery.pk,
+        ).exists()
 
     return Message.objects.filter(
         lead=deal.lead,
@@ -204,19 +223,6 @@ def handle_follow_up(task, session, qualifiers):
 
     our_operator = resolve_operator(session.linkedin_profile.linkedin_username)
 
-    # Rate limit check — defer to tomorrow if we've hit today's cap.
-    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
-        enqueue_follow_up(
-            campaign_id, public_id,
-            operator=our_operator,
-            icp=queued_icp or None,
-            delay_seconds=_seconds_until_tomorrow(),
-            sequence_name=sequence_name,
-            channel=channel,
-            step_index=step_index,
-        )
-        return
-
     profile_dict = get_profile_dict_for_public_id(session, public_id)
     if profile_dict is None:
         logger.warning("follow_up: no Deal for %s — skipping", public_id)
@@ -228,7 +234,7 @@ def handle_follow_up(task, session, qualifiers):
             lead__linkedin_url=public_id_to_url(public_id),
             campaign=session.campaign,
         )
-        .select_related("lead")
+        .select_related("lead", "campaign")
         .first()
     )
     if not deal:
@@ -289,6 +295,35 @@ def handle_follow_up(task, session, qualifiers):
         )
         return
 
+    from linkedin.tasks.connect import _deal_uses_message_program
+
+    bound_delivery = None
+    if _deal_uses_message_program(deal):
+        from linkedin.message_delivery_runtime import delivery_for_task
+        from linkedin.models import OutboundDelivery
+
+        bound_delivery = delivery_for_task(
+            task=task,
+            deal=deal,
+            channel=OutboundDelivery.Channel.LINKEDIN_FOLLOWUP,
+            operator=our_operator,
+        )
+
+    # Preserve the legacy rate-limit ordering while requiring immutable
+    # delivery validation first for every version-bound Task.
+    if not session.linkedin_profile.can_execute(ActionLog.ActionType.FOLLOW_UP):
+        enqueue_follow_up(
+            campaign_id, public_id,
+            operator=our_operator,
+            icp=queued_icp or None,
+            delivery_id=(bound_delivery.pk if bound_delivery is not None else None),
+            delay_seconds=_seconds_until_tomorrow(),
+            sequence_name=sequence_name,
+            channel=channel,
+            step_index=step_index,
+        )
+        return
+
     # No-thread guard. A follow-up presumes there's an existing LinkedIn DM
     # thread to nudge — typically seeded by the connect lane's connection-
     # note send. If `crm.Message` has zero outbound on this lead, there's
@@ -337,6 +372,7 @@ def handle_follow_up(task, session, qualifiers):
         operator=our_operator,
         sequence_name=sequence_name,
         step_index=step_index,
+        delivery=bound_delivery,
     )
 
     prior_followup_senders = (
@@ -350,7 +386,19 @@ def handle_follow_up(task, session, qualifiers):
         .values_list("sender", flat=True)
         .distinct()
     )
-    if step_index == 0 and our_operator in {resolve_operator(s) for s in prior_followup_senders}:
+    if (
+        step_index == 0
+        and (bound_delivery is None or not step_already_sent)
+        and our_operator in {resolve_operator(s) for s in prior_followup_senders}
+    ):
+        if bound_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                bound_delivery,
+                OutboundDelivery.Status.STOPPED,
+            )
         set_profile_state(
             session, public_id, "Completed",
             reason="Follow-up already sent by this operator (deduped across campaigns)",
@@ -361,25 +409,66 @@ def handle_follow_up(task, session, qualifiers):
     # can complete old rows without needing a sender template block; step-
     # aware dedup needs the sequence length to know whether this step is
     # final or whether the next step must stay queued.
-    resolved_icp = resolve_icp(deal.lead)
-    icp = queued_icp or resolved_icp
-    if queued_icp and resolved_icp and queued_icp != resolved_icp:
-        logger.info(
-            "follow_up using queued ICP %s for %s; current Lead.icp resolves to %s",
-            queued_icp, public_id, resolved_icp,
+    if bound_delivery is not None:
+        from linkedin.message_delivery import list_message_steps
+        from linkedin.models import OutboundDelivery
+
+        enrollment = bound_delivery.enrollment
+        icp = enrollment.audience_key
+        steps = list_message_steps(
+            enrollment=enrollment,
+            channel=OutboundDelivery.Channel.LINKEDIN_FOLLOWUP,
         )
-    steps = channel_steps(sender=our_operator, icp=icp, channel=channel)
+    else:
+        resolved_icp = resolve_icp(deal.lead)
+        icp = queued_icp or resolved_icp
+        if queued_icp and resolved_icp and queued_icp != resolved_icp:
+            logger.info(
+                "follow_up using queued ICP %s for %s; current Lead.icp resolves to %s",
+                queued_icp, public_id, resolved_icp,
+            )
+        steps = channel_steps(sender=our_operator, icp=icp, channel=channel)
+
+    if bound_delivery is not None:
+        current_positions = [
+            index
+            for index, message_step in enumerate(steps)
+            if message_step.step_index == bound_delivery.step_index
+            and message_step.step_key == bound_delivery.step_key
+        ]
+        if len(current_positions) != 1:
+            raise ValueError(
+                f"frozen delivery {bound_delivery.pk} is absent or ambiguous in its version"
+            )
+        current_position = current_positions[0]
+        next_step = (
+            steps[current_position + 1]
+            if current_position + 1 < len(steps)
+            else None
+        )
+        next_step_index = next_step.step_index if next_step is not None else None
+    else:
+        legacy_next_index = step_index + 1
+        next_step = steps[legacy_next_index] if legacy_next_index < len(steps) else None
+        next_step_index = legacy_next_index if next_step is not None else None
 
     if step_already_sent:
-        next_step_index = step_index + 1
-        if next_step_index < len(steps):
+        if bound_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                bound_delivery,
+                OutboundDelivery.Status.SENT,
+            )
+        if next_step is not None:
             enqueue_follow_up(
                 campaign_id,
                 public_id,
                 operator=our_operator,
                 icp=icp,
                 delay_seconds=_delay_seconds_to_active_due(
-                    steps[next_step_index].delay_hours,
+                    next_step.delay_hours,
                     reference_time=deal.connected_at,
                 ),
                 sequence_name=sequence_name,
@@ -403,21 +492,54 @@ def handle_follow_up(task, session, qualifiers):
     # also embed `{add <filename>}` placeholders to attach a media file
     # (looked up in assets/followup/ then ROOT_DIR) — handled in
     # `_send_with_attachments_or_text` below.
-    filled = fill_message(
-        sender=our_operator,
-        icp=icp,
-        channel=channel,
-        first_name=deal.lead.first_name or "",
-        last_name=deal.lead.last_name or "",
-        company_name=deal.lead.company_name or "",
-        my_name=our_operator,
-        lead_id=deal.lead_id,
-        step_index=step_index,
-    )
+    delivery_metadata = None
+    if bound_delivery is not None:
+        from linkedin.icp_outbound import FilledMessage, _resolve_attachment
+        from linkedin.message_delivery import MessageDeliveryError
+        from linkedin.message_delivery_runtime import delivery_audit_metadata
+
+        if len(bound_delivery.frozen_media) > 1:
+            raise MessageDeliveryError(
+                "LinkedIn follow-up deliveries support at most one media attachment"
+            )
+        attachments = []
+        for filename in bound_delivery.frozen_media:
+            attachment = _resolve_attachment(filename)
+            if attachment is None:
+                raise MessageDeliveryError(
+                    f"frozen delivery media {filename!r} does not exist"
+                )
+            attachments.append(attachment)
+        filled = FilledMessage(
+            body=bound_delivery.frozen_body,
+            attachments=attachments,
+        )
+        delivery_metadata = delivery_audit_metadata(bound_delivery)
+    else:
+        filled = fill_message(
+            sender=our_operator,
+            icp=icp,
+            channel=channel,
+            first_name=deal.lead.first_name or "",
+            last_name=deal.lead.last_name or "",
+            company_name=deal.lead.company_name or "",
+            my_name=our_operator,
+            lead_id=deal.lead_id,
+            step_index=step_index,
+            role_tag=deal.lead.role_tag,
+        )
     # Profile/template work can outlive an earlier listener or backfill write.
     # Recheck persisted state at the external mutation boundary without adding
     # a live conversation dependency.
     if _drip_owns_linkedin(deal.lead_id):
+        if bound_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                bound_delivery,
+                OutboundDelivery.Status.STOPPED,
+            )
         logger.info(
             "follow_up: %s handed off before send - skipping",
             public_id,
@@ -425,8 +547,25 @@ def handle_follow_up(task, session, qualifiers):
         return
     stop_reason = _sequence_stop_reason(deal)
     if stop_reason:
+        if bound_delivery is not None:
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            mark_delivery_status(
+                bound_delivery,
+                OutboundDelivery.Status.STOPPED,
+            )
         _finish_sequence_for_stop(session, deal, public_id, stop_reason)
         return
+
+    if bound_delivery is not None:
+        from linkedin.message_delivery_runtime import mark_delivery_status
+        from linkedin.models import OutboundDelivery
+
+        mark_delivery_status(
+            bound_delivery,
+            OutboundDelivery.Status.SENDING,
+        )
 
     # If the template included {add <filename>} placeholders, send via
     # the media path (first attachment only — LinkedIn's message form
@@ -440,6 +579,7 @@ def handle_follow_up(task, session, qualifiers):
             sequence_name=sequence_name,
             step_index=step_index,
             operator=our_operator,
+            delivery_metadata=delivery_metadata,
         )
     else:
         sent = send_raw_message(
@@ -450,19 +590,32 @@ def handle_follow_up(task, session, qualifiers):
             sequence_name=sequence_name,
             step_index=step_index,
             operator=our_operator,
+            delivery_metadata=delivery_metadata,
         )
     if not sent:
+        if bound_delivery is not None:
+            mark_delivery_status(
+                bound_delivery,
+                OutboundDelivery.Status.FAILED,
+            )
         logger.warning("follow_up send failed for %s — re-enqueuing in 24h", public_id)
         enqueue_follow_up(
             campaign_id, public_id,
             operator=our_operator,
             icp=icp,
+            delivery_id=(bound_delivery.pk if bound_delivery is not None else None),
             delay_seconds=24 * 3600,
             sequence_name=sequence_name,
             channel=channel,
             step_index=step_index,
         )
         return
+
+    if bound_delivery is not None:
+        mark_delivery_status(
+            bound_delivery,
+            OutboundDelivery.Status.SENT,
+        )
 
     def _record_action():
         session.linkedin_profile.record_action(ActionLog.ActionType.FOLLOW_UP, session.campaign)
@@ -483,10 +636,9 @@ def handle_follow_up(task, session, qualifiers):
         connections.close_all()
         _record_action()
 
-    next_step_index = step_index + 1
-    if next_step_index < len(steps):
+    if next_step is not None:
         delay_seconds = _delay_seconds_to_active_due(
-            steps[next_step_index].delay_hours,
+            next_step.delay_hours,
             reference_time=deal.connected_at,
         )
         enqueue_follow_up(
@@ -501,7 +653,7 @@ def handle_follow_up(task, session, qualifiers):
         )
 
     def _record_success_state():
-        if next_step_index < len(steps):
+        if next_step is not None:
             set_profile_state(
                 session, public_id, "Connected",
                 reason=f"Sent ICP-{icp} follow-up step {step_index}",

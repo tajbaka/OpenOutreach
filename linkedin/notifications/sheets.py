@@ -16,8 +16,9 @@ Deals from being appended twice in a single run.
 
 Don't-downgrade rules from Airtable carry over for Outreach status + Stage:
 human edits in the sheet survive the next auto-sync. Notes, AI Notes,
-Priority, Primary location, Title — sheet wins on subsequent syncs (they're
-not auto-derived; what's in the sheet is more recent than Attio's snapshot).
+Priority, Primary location, Title, and Role Tag are operator-owned. A valid,
+nonblank Role Tag is imported into the Lead ledger; the publisher never
+replaces an existing operator value.
 
 Operator-managed columns (anything in the sheet not in HEADERS, e.g.
 "Apollo Email") are left untouched on every write — addressing is by
@@ -269,6 +270,7 @@ COL_AI_NOTES = "AI Notes"
 COL_CREATED_AT = "Created at"
 COL_LAST_SYNCED = "Last synced"
 COL_LEAD_ID = "Lead ID"
+COL_ROLE_TAG = "Role Tag"
 
 HEADERS = [
     COL_NAME,
@@ -289,6 +291,7 @@ HEADERS = [
     # Added at the end so the live People schema evolves additively.  Never
     # insert managed columns into an operator's existing layout.
     COL_LEAD_ID,
+    COL_ROLE_TAG,
 ]
 
 # These columns are owned by the operator after a row is first created. The
@@ -301,7 +304,12 @@ PEOPLE_HUMAN_OWNED_COLUMNS = frozenset({
     COL_PRIMARY_LOCATION,
     COL_AI_NOTES,
     COL_NOTES,
+    COL_ROLE_TAG,
 })
+# Role Tag is operator-owned once populated, but the durable Lead value may
+# fill an otherwise empty cell. Clearing it in Sheets does not erase the Lead
+# value; reclassification uses another canonical tag.
+PEOPLE_FILL_BLANK_COLUMNS = frozenset({COL_ROLE_TAG})
 
 # Column index in the sheet (1-based for A1 notation, 0-based for list indexing).
 HEADER_INDEX_0 = {h: i for i, h in enumerate(HEADERS)}
@@ -630,6 +638,7 @@ def capture_people_preservation_snapshot(
         protected_cells = tuple(
             (header, cell(header))
             for header in protected_headers
+            if header not in PEOPLE_FILL_BLANK_COLUMNS or cell(header).strip()
         )
         formula_cells = tuple(
             (header, row[index])
@@ -1051,6 +1060,40 @@ class SheetIndex:
         }
         self._pending_update_rows.add(row_idx)
 
+    def expect_existing_row_unchanged(
+        self,
+        linkedin_url: str,
+        *,
+        lead_id: str | int | None,
+        expected_cells: dict[str, str],
+    ) -> None:
+        """Add optimistic read guards for a Sheet-sourced DB import.
+
+        Human-owned values are normally not Sheet writes, so they would not
+        otherwise participate in the flush preflight.  Guarding both identity
+        and imported source cells prevents a stale snapshot or row reorder
+        from being committed to the durable Lead ledger.
+        """
+        row_idx = self._resolve_row_idx(linkedin_url, str(lead_id or ""))
+        if row_idx is None:
+            raise SheetsError("People import row disappeared during planning")
+        for column, expected_value in expected_cells.items():
+            if column not in self.actual_index_0:
+                raise SheetsError(
+                    f"People import guard references missing column {column!r}"
+                )
+            key = (row_idx, column)
+            expected = "" if expected_value is None else str(expected_value)
+            if (
+                key in self._pending_expected_by_cell
+                and self._pending_expected_by_cell[key] != expected
+            ):
+                raise SheetsError(
+                    f"People row {row_idx}, column {column!r} has conflicting "
+                    "publication expectations"
+                )
+            self._pending_expected_by_cell[key] = expected
+
     def upsert_row(self, payload: dict[str, str]) -> tuple[bool, list[str]]:
         """Stage an append or cell-owned update for one People identity."""
         url = canonical_linkedin_url(payload.get(COL_LINKEDIN_URL) or "")
@@ -1105,6 +1148,12 @@ class SheetIndex:
                 # Google formula rendering is used when loading the index, so
                 # this protects formulas even inside otherwise managed cells.
                 should_write = False
+            elif column in PEOPLE_FILL_BLANK_COLUMNS:
+                # The operator owns any populated classification. A blank is
+                # safely fillable from durable Lead metadata.
+                should_write = (
+                    is_pending_append or not current.strip()
+                ) and target != current
             elif column in PEOPLE_HUMAN_OWNED_COLUMNS:
                 # A row staged during this run has never been operator-owned;
                 # coalesce duplicate inputs before the one append. Once a row
@@ -1163,8 +1212,8 @@ class SheetIndex:
         return str(value) if value is not None else ""
 
     def _preflight_pending_updates(self) -> None:
-        """Fail closed if any existing People cell changed after planning."""
-        if not self._pending_update_by_cell:
+        """Fail closed if any read or write source changed after planning."""
+        if not self._pending_expected_by_cell:
             return
 
         # A first migration may update tens of thousands of cells. Supplying
@@ -1188,8 +1237,8 @@ class SheetIndex:
             )
 
         live_headers = live_rows[0]
-        for (row_idx, column), _update in sorted(
-            self._pending_update_by_cell.items(),
+        for (row_idx, column), expected in sorted(
+            self._pending_expected_by_cell.items(),
             key=lambda item: (
                 item[0][0],
                 self.actual_index_0[item[0][1]],
@@ -1209,7 +1258,6 @@ class SheetIndex:
                 if isinstance(live_row, (list, tuple)) and column_0 < len(live_row):
                     value = live_row[column_0]
                     current = "" if value is None else str(value)
-            expected = self._pending_expected_by_cell[(row_idx, column)]
             if current != expected:
                 # Report only structural location, never either cell value.
                 raise SheetsError(
@@ -1339,8 +1387,8 @@ class SheetIndex:
             except APIError as e:
                 raise SheetsError(f"failed batch_update: {e}") from e
             self._pending_update_by_cell = {}
-            self._pending_expected_by_cell = {}
             self._pending_update_rows = set()
+        self._pending_expected_by_cell = {}
         self._changed_columns = Counter()
         return counts
 
@@ -1362,6 +1410,7 @@ def build_row_payload(
     notes: str,
     ai_notes: str,
     last_synced: str,
+    role_tag: str | None = None,
 ) -> dict[str, str]:
     """Assemble the full per-row payload from the supplied data.
 
@@ -1398,6 +1447,11 @@ def build_row_payload(
         COL_LEAD_ID: str(
             getattr(lead, "pk", None) or getattr(lead, "id", None) or ""
         ),
+        COL_ROLE_TAG: (
+            getattr(lead, "role_tag", "")
+            if role_tag is None
+            else role_tag
+        ) or "",
     }
 
 

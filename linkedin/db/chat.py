@@ -38,6 +38,7 @@ def save_chat_message(
     step_index: int | None = None,
     operator: str = "",
     external_id_kind: str = "daemon-send",
+    delivery_metadata: dict | None = None,
 ):
     """Persist an outbound LinkedIn message to `crm.Message`. Never raises."""
     try:
@@ -89,6 +90,7 @@ def save_chat_message(
                 "sender": sender,
                 "body": content,
                 "sent_at": now,
+                "raw": dict(delivery_metadata or {}),
             },
         )
         logger.debug("Saved outbound LinkedIn message for %s", public_identifier)

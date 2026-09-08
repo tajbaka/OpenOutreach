@@ -1,946 +1,2233 @@
 {
-  "Arian": {
-    "Investor / Portfolio Ops": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Are portfolio founders asking about FedRAMP?"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw your portfolio work at {company_name}. I'm trying to understand whether cloud founders are exploring FedRAMP certification as a way to reach federal agencies and strengthen their next fundraising story.\n\nWith 20x, the path is more approachable for eligible cloud services.\n\nIs this coming up across your portfolio?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "FedRAMP marketplace visibility for the portfolio"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nOne practical 20x opportunity: eligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find companies already pursuing certification.\n\nWould a short readiness session help {company_name}'s portfolio identify which companies could fit?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Accelerator / Ecosystem": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP as a startup growth channel"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw your founder programs at {company_name}. I'm trying to understand whether government-facing startups see FedRAMP certification as a way to open federal sales conversations.\n\nWith 20x, eligible cloud services have a more approachable path to certification and the FedRAMP marketplace.\n\nAre founders asking your team about this yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Helping founders enter the FedRAMP marketplace"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find startups already doing the work.\n\nWould a practical 20x readiness session fit an upcoming {company_name} cohort?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "White Label Product/Executive": [
-      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
-    ],
-    "White Label Partnerships": [
-      {"delay_hours": 0.33, "subject_variants": ["Are vendors asking about 20x yet?"], "body_variants": ["Hi {first_name},\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["Who owns the 20x partner side?"], "body_variants": ["Hi {first_name},\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with the 20x certification data workflow. The firm would keep the relationship, while Boundera handles the data work.\n\nIs that your lane at {company_name}, or is there someone better internally?\n\nBest,\n{my_name}"]}
-    ],
-    "White Label Delivery": [
-      {"delay_hours": 0.33, "subject_variants": ["Where does 20x delivery get awkward?"], "body_variants": ["Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
-    ],
-    "White Label Champions": [
-      {"delay_hours": 0.33, "subject_variants": ["Who is closest to 20x at {company_name}?"], "body_variants": ["Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["20x delivery owner"], "body_variants": ["Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"]}
-    ],
-    "20x Initial Implementation": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "20x implementation at {company_name}",
-          "Keeping 20x evidence current"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} in 20x initial implementation. I'm with Boundera, where we focus on keeping certification data current as implementation changes.\n\nIs maintaining the validation evidence already handled, or is that workflow still taking shape?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed {company_name}'s initial implementation listing and was curious how the operating model is coming together behind it.\n\nHas the team found a repeatable way to keep measures and validation evidence current?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "The operating work behind 20x",
-          "20x validation evidence"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that process is still taking shape at {company_name}, would comparing notes be useful?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been comparing how initial implementation teams turn their first evidence pass into something repeatable.\n\nWould it be useful to compare what we're seeing with the process at {company_name}?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Active FedRAMP Path": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "20x alongside the current path",
-          "Active FedRAMP work at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} is already on an active FedRAMP path. I'm trying to understand how teams evaluate 20x without disrupting work already underway.\n\nHas 20x changed the evidence model there yet?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the current effort yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Keeping evidence current through change",
-          "20x and an active certification effort"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "FedRAMP Mature": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Maintaining certification data at {company_name}",
-          "The maintenance side of FedRAMP"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw the established federal cloud work at {company_name}. I'm trying to understand where recurring FedRAMP work stays heavy after a program is established.\n\nIs keeping certification data current still a meaningful burden?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change.\n\nDoes evidence maintenance still create friction there?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Keeping validation evidence current",
-          "New products and existing evidence"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CSP Stage Verify": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Who owns 20x at {company_name}?",
-          "FedRAMP 20x owner"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally.\n\nIs that close to your team?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed your public-sector cloud work at {company_name}. I don't want to guess at the company's current marketplace path.\n\nAre you the right person for a 20x conversation?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "The operating work behind 20x",
-          "Right owner for 20x"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI'm with Boundera, where we focus on the operating work behind 20x and speak with the people responsible for keeping certification data current.\n\nWould you point me toward the right owner at {company_name}?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI may have the ownership wrong at {company_name}.\n\nWho is closest to the 20x work internally?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Rev5 Ready": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Carrying ready work into 20x",
-          "The path after ready status"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how teams plan to carry that work into class A or another 20x path.\n\nHas the team decided what can be reused?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams trying to preserve the work already completed.\n\nDoes {company_name} have a transition plan yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Reusing existing FedRAMP work",
-          "Moving forward from ready"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we work on translating existing evidence into measures and current validation evidence for 20x.\n\nIf that transition is live at {company_name}, would comparing notes help?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been comparing how ready teams approach the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CSPs": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence question at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x measures and validation"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Advisors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x questions from CSP clients"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x readiness workflow for clients"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "3PAOs/Assessors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence review"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x assessor question"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x vendor readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x evidence ownership"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Buyers": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Advisor/Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ]
+  "schema_version": 2,
+  "sender_icps": {
+    "Arian": {
+      "20x Initial Implementation": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw {company_name} in 20x initial implementation. I'm with Boundera, where we focus on keeping certification data current as implementation changes.\n\nIs maintaining the validation evidence already handled, or is that workflow still taking shape?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed {company_name}'s initial implementation listing and was curious how the operating model is coming together behind it.\n\nHas the team found a repeatable way to keep measures and validation evidence current?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "20x implementation at {company_name}",
+            "Keeping 20x evidence current"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that process is still taking shape at {company_name}, would comparing notes be useful?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been comparing how initial implementation teams turn their first evidence pass into something repeatable.\n\nWould it be useful to compare what we're seeing with the process at {company_name}?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "The operating work behind 20x",
+            "20x validation evidence"
+          ]
+        }
+      ],
+      "3PAOs/Assessors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence review"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x assessor question"
+          ]
+        }
+      ],
+      "Accelerator / Ecosystem": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your founder programs at {company_name}. I'm trying to understand whether government-facing startups see FedRAMP certification as a way to open federal sales conversations.\n\nWith 20x, eligible cloud services have a more approachable path to certification and the FedRAMP marketplace.\n\nAre founders asking your team about this yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP as a startup growth channel"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find startups already doing the work.\n\nWould a practical 20x readiness session fit an upcoming {company_name} cohort?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Helping founders enter the FedRAMP marketplace"
+          ]
+        }
+      ],
+      "Active FedRAMP Path": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw {company_name} is already on an active FedRAMP path. I'm trying to understand how teams evaluate 20x without disrupting work already underway.\n\nHas 20x changed the evidence model there yet?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the current effort yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "20x alongside the current path",
+            "Active FedRAMP work at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Keeping evidence current through change",
+            "20x and an active certification effort"
+          ]
+        }
+      ],
+      "Advisors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x questions from CSP clients"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x readiness workflow for clients"
+          ]
+        }
+      ],
+      "CMMC Advisor/Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CMMC Buyers": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CSP Stage Verify": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally.\n\nIs that close to your team?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed your public-sector cloud work at {company_name}. I don't want to guess at the company's current marketplace path.\n\nAre you the right person for a 20x conversation?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Who owns 20x at {company_name}?",
+            "FedRAMP 20x owner"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI'm with Boundera, where we focus on the operating work behind 20x and speak with the people responsible for keeping certification data current.\n\nWould you point me toward the right owner at {company_name}?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI may have the ownership wrong at {company_name}.\n\nWho is closest to the 20x work internally?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "The operating work behind 20x",
+            "Right owner for 20x"
+          ]
+        }
+      ],
+      "CSPs": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence question at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x measures and validation"
+          ]
+        }
+      ],
+      "Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x vendor readiness"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x evidence ownership"
+          ]
+        }
+      ],
+      "FedRAMP Mature": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw the established federal cloud work at {company_name}. I'm trying to understand where recurring FedRAMP work stays heavy after a program is established.\n\nIs keeping certification data current still a meaningful burden?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change.\n\nDoes evidence maintenance still create friction there?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Maintaining certification data at {company_name}",
+            "The maintenance side of FedRAMP"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Keeping validation evidence current",
+            "New products and existing evidence"
+          ]
+        }
+      ],
+      "Investor / Portfolio Ops": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your portfolio work at {company_name}. I'm trying to understand whether cloud founders are exploring FedRAMP certification as a way to reach federal agencies and strengthen their next fundraising story.\n\nWith 20x, the path is more approachable for eligible cloud services.\n\nIs this coming up across your portfolio?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Are portfolio founders asking about FedRAMP?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne practical 20x opportunity: eligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find companies already pursuing certification.\n\nWould a short readiness session help {company_name}'s portfolio identify which companies could fit?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "FedRAMP marketplace visibility for the portfolio"
+          ]
+        }
+      ],
+      "Rev5 Ready": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how teams plan to carry that work into class A or another 20x path.\n\nHas the team decided what can be reused?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams trying to preserve the work already completed.\n\nDoes {company_name} have a transition plan yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Carrying ready work into 20x",
+            "The path after ready status"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we work on translating existing evidence into measures and current validation evidence for 20x.\n\nIf that transition is live at {company_name}, would comparing notes help?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been comparing how ready teams approach the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Reusing existing FedRAMP work",
+            "Moving forward from ready"
+          ]
+        }
+      ],
+      "White Label Champions": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Who is closest to 20x at {company_name}?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x delivery owner"
+          ]
+        }
+      ],
+      "White Label Delivery": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Where does 20x delivery get awkward?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Keeping 20x validation current"
+          ]
+        }
+      ],
+      "White Label Partnerships": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Are vendors asking about 20x yet?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with the 20x certification data workflow. The firm would keep the relationship, while Boundera handles the data work.\n\nIs that your lane at {company_name}, or is there someone better internally?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Who owns the 20x partner side?"
+          ]
+        }
+      ],
+      "White Label Product/Executive": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Are customers asking about 20x?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "White-label 20x support"
+          ]
+        }
+      ]
+    },
+    "Athena": {
+      "3PAOs/Assessors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence review"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x assessor question"
+          ]
+        }
+      ],
+      "Advisors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x questions from CSP clients"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x readiness workflow for clients"
+          ]
+        }
+      ],
+      "CMMC Advisor/Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CMMC Buyers": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CSPs": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence question at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x measures and validation"
+          ]
+        }
+      ],
+      "Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x vendor readiness"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x evidence ownership"
+          ]
+        }
+      ]
+    },
+    "Chuka": {
+      "20x Initial Implementation": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw {company_name} in 20x initial implementation. I'm with Boundera, where we focus on keeping certification data current as implementation changes.\n\nIs maintaining the validation evidence already handled, or is that workflow still taking shape?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed {company_name}'s initial implementation listing and was curious how the operating model is coming together behind it.\n\nHas the team found a repeatable way to keep measures and validation evidence current?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "20x implementation at {company_name}",
+            "Keeping 20x evidence current"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that process is still taking shape at {company_name}, would comparing notes be useful?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been comparing how initial implementation teams turn their first evidence pass into something repeatable.\n\nWould it be useful to compare what we're seeing with the process at {company_name}?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "The operating work behind 20x",
+            "20x validation evidence"
+          ]
+        }
+      ],
+      "3PAOs/Assessors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence review"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x assessor question"
+          ]
+        }
+      ],
+      "Accelerator / Ecosystem": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your founder programs at {company_name}. I'm trying to understand whether government-facing startups see FedRAMP certification as a way to open federal sales conversations.\n\nWith 20x, eligible cloud services have a more approachable path to certification and the FedRAMP marketplace.\n\nAre founders asking your team about this yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP as a startup growth channel"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find startups already doing the work.\n\nWould a practical 20x readiness session fit an upcoming {company_name} cohort?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Helping founders enter the FedRAMP marketplace"
+          ]
+        }
+      ],
+      "Active FedRAMP Path": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw {company_name} is already on an active FedRAMP path. I'm trying to understand how teams evaluate 20x without disrupting work already underway.\n\nHas 20x changed the evidence model there yet?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the current effort yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "20x alongside the current path",
+            "Active FedRAMP work at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Keeping evidence current through change",
+            "20x and an active certification effort"
+          ]
+        }
+      ],
+      "Advisors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x questions from CSP clients"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x readiness workflow for clients"
+          ]
+        }
+      ],
+      "CMMC Advisor/Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CMMC Buyers": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CSP Stage Verify": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally.\n\nIs that close to your team?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed your public-sector cloud work at {company_name}. I don't want to guess at the company's current marketplace path.\n\nAre you the right person for a 20x conversation?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Who owns 20x at {company_name}?",
+            "FedRAMP 20x owner"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI'm with Boundera, where we focus on the operating work behind 20x and speak with the people responsible for keeping certification data current.\n\nWould you point me toward the right owner at {company_name}?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI may have the ownership wrong at {company_name}.\n\nWho is closest to the 20x work internally?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "The operating work behind 20x",
+            "Right owner for 20x"
+          ]
+        }
+      ],
+      "CSPs": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence question at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x measures and validation"
+          ]
+        }
+      ],
+      "Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x vendor readiness"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x evidence ownership"
+          ]
+        }
+      ],
+      "FedRAMP Mature": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw the established federal cloud work at {company_name}. I'm trying to understand where recurring FedRAMP work stays heavy after a program is established.\n\nIs keeping certification data current still a meaningful burden?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change.\n\nDoes evidence maintenance still create friction there?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Maintaining certification data at {company_name}",
+            "The maintenance side of FedRAMP"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Keeping validation evidence current",
+            "New products and existing evidence"
+          ]
+        }
+      ],
+      "Investor / Portfolio Ops": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your portfolio work at {company_name}. I'm trying to understand whether cloud founders are exploring FedRAMP certification as a way to reach federal agencies and strengthen their next fundraising story.\n\nWith 20x, the path is more approachable for eligible cloud services.\n\nIs this coming up across your portfolio?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Are portfolio founders asking about FedRAMP?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne practical 20x opportunity: eligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find companies already pursuing certification.\n\nWould a short readiness session help {company_name}'s portfolio identify which companies could fit?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "FedRAMP marketplace visibility for the portfolio"
+          ]
+        }
+      ],
+      "Rev5 Ready": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how teams plan to carry that work into class A or another 20x path.\n\nHas the team decided what can be reused?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams trying to preserve the work already completed.\n\nDoes {company_name} have a transition plan yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Carrying ready work into 20x",
+            "The path after ready status"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we work on translating existing evidence into measures and current validation evidence for 20x.\n\nIf that transition is live at {company_name}, would comparing notes help?\n\nBest,\n{my_name}",
+            "Hi {first_name},\n\nI've been comparing how ready teams approach the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Reusing existing FedRAMP work",
+            "Moving forward from ready"
+          ]
+        }
+      ],
+      "White Label Champions": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Who is closest to 20x at {company_name}?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x delivery owner"
+          ]
+        }
+      ],
+      "White Label Delivery": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Where does 20x delivery get awkward?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Keeping 20x validation current"
+          ]
+        }
+      ],
+      "White Label Partnerships": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Are vendors asking about 20x yet?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with the 20x certification data workflow. The firm would keep the relationship, while Boundera handles the data work.\n\nIs that your lane at {company_name}, or is there someone better internally?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "Who owns the 20x partner side?"
+          ]
+        }
+      ],
+      "White Label Product/Executive": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Are customers asking about 20x?"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "White-label 20x support"
+          ]
+        }
+      ]
+    },
+    "Eddy": {
+      "3PAOs/Assessors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious how you are thinking about FedRAMP 20x from the assessor side. If more CSPs explore 20x instead of the traditional Rev 5 path, the hard part may become whether validation evidence is current, understandable, and easy to trace back to remediation ownership.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence review"
+          ]
+        }
+      ],
+      "Advisors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are hearing from CSP clients around FedRAMP 20x. A lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x questions from CSP clients"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nThe partner angle we are trying to validate is simple: advisors can help CSPs figure out whether 20x is worth pursuing before the client commits to a larger authorization motion.\n\nThe useful first step is a light readiness check: evidence mapped to KSIs, obvious gaps, remediation ownership, and whether Low or Moderate equivalents are realistic.\n\nDoes that fit conversations you are having with CSP clients?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x readiness workflow for clients"
+          ]
+        }
+      ],
+      "CMMC Advisor/Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWe are adapting Boundera's evidence automation workflow for CMMC advisor/channel teams: repeatable SSP/POA&M workflows, client evidence tracking, and assessment package prep around NIST 800-171.\n\nWhere does client work bog down most for you: evidence collection, POA&M tracking, or getting teams assessment-ready?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "CMMC client evidence workflows"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nQuick follow-up.\n\nA lot of CMMC delivery work seems to turn into repeated evidence chasing across similar client environments. We are trying to make that workflow more reusable for advisors, C3PAO/RPO-style teams, MSPs, and partners supporting DIB clients.\n\nIf useful, happy to compare notes on where tooling would actually help your team.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC delivery bottlenecks"
+          ]
+        }
+      ],
+      "CMMC Buyers": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nI have been talking with security/compliance teams in the DIB and asking a simple question: how are you thinking about CMMC evidence now that it is showing up more in customer and contract conversations?\n\nIs {company_name} actively preparing, or mostly watching how customers/primes handle rollout?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "CMMC evidence question at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne more note in case useful.\n\nThe part of CMMC that seems under-discussed is not the checklist itself. It is whether teams can show current evidence, know who owns gaps, and explain what is assessment-ready without a last-minute scramble.\n\nIf useful, happy to compare notes on what we are hearing from DIB teams right now.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC evidence and readiness"
+          ]
+        }
+      ],
+      "CSPs": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nA lot of CSPs that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a faster, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence to KSIs, find gaps, and turn remediation into owned work before a bigger authorization push.\n\nIs {company_name} actively evaluating 20x, or staying with the traditional Rev 5 path for now?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x path at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nOne more note in case useful.\n\nThe first practical question we usually help answer is not whether to buy tooling. It is whether the 20x path is realistic: which KSIs already have evidence, where remediation is needed, and whether the team can keep validation current without rebuilding another spreadsheet-heavy process.\n\nWorth a quick compare-notes conversation?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x evidence readiness"
+          ]
+        }
+      ],
+      "Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are seeing from vendors around FedRAMP 20x now that it is becoming a more real path alongside Rev 5. My read is that many CSPs are still trying to understand whether 20x changes how they get marketplace-ready.\n\nHow are you thinking about vendors who may pursue 20x instead of the traditional Rev 5 path?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x vendor readiness"
+          ]
+        }
+      ]
+    },
+    "Leili": {
+      "3PAOs/Assessors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence review"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x assessor question"
+          ]
+        }
+      ],
+      "Advisors": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x questions from CSP clients"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x readiness workflow for clients"
+          ]
+        }
+      ],
+      "CMMC Advisor/Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CMMC Buyers": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "Quick CMMC question"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "CMMC automation before the C3PAO"
+          ]
+        }
+      ],
+      "CSPs": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x evidence question at {company_name}"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x measures and validation"
+          ]
+        }
+      ],
+      "Channel": [
+        {
+          "body_variants": [
+            "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 0.33,
+          "subject_variants": [
+            "FedRAMP 20x vendor readiness"
+          ]
+        },
+        {
+          "body_variants": [
+            "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
+          ],
+          "delay_hours": 192,
+          "subject_variants": [
+            "20x evidence ownership"
+          ]
+        }
+      ]
+    }
   },
-  "Leili": {
-    "CSPs": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence question at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
-        ]
+  "shared_programs": {
+    "fedramp-marketplace-csp": {
+      "icp_labels": {
+        "csp-any-size-business-leaders-20x-initial-implementation-both": "Business leaders | Any Size | 20x Initial Implementation | Both",
+        "csp-any-size-business-leaders-20x-initial-implementation-csp-ecosystem": "Business leaders | Any Size | 20x Initial Implementation | CSP ecosystem",
+        "csp-any-size-business-leaders-20x-initial-implementation-direct-agency": "Business leaders | Any Size | 20x Initial Implementation | Direct agency",
+        "csp-any-size-business-leaders-20x-initial-implementation-unclear": "Business leaders | Any Size | 20x Initial Implementation | Unclear",
+        "csp-any-size-business-leaders-rev5-authorized-to-20x-both": "Business leaders | Any Size | Rev5 Authorized → 20x | Both",
+        "csp-any-size-business-leaders-rev5-authorized-to-20x-csp-ecosystem": "Business leaders | Any Size | Rev5 Authorized → 20x | CSP ecosystem",
+        "csp-any-size-business-leaders-rev5-authorized-to-20x-direct-agency": "Business leaders | Any Size | Rev5 Authorized → 20x | Direct agency",
+        "csp-any-size-business-leaders-rev5-authorized-to-20x-unclear": "Business leaders | Any Size | Rev5 Authorized → 20x | Unclear",
+        "csp-any-size-business-leaders-rev5-ready-continuing-rev5-unclear": "Business leaders | Any Size | Rev5 Ready (Continuing Rev5) | Unclear",
+        "csp-any-size-business-leaders-rev5-ready-likely-20x-direct-agency": "Business leaders | Any Size | Rev5 Ready (Likely 20x) | Direct agency",
+        "csp-any-size-business-leaders-rev5-ready-likely-20x-unclear": "Business leaders | Any Size | Rev5 Ready (Likely 20x) | Unclear",
+        "csp-any-size-business-leaders-rev5-ready-path-unclear-direct-agency": "Business leaders | Any Size | Rev5 Ready (Path Unclear) | Direct agency",
+        "csp-any-size-business-leaders-rev5-ready-path-unclear-unclear": "Business leaders | Any Size | Rev5 Ready (Path Unclear) | Unclear",
+        "csp-any-size-fedramp-adjacent-20x-initial-implementation-both": "FedRAMP-adjacent | Any Size | 20x Initial Implementation | Both",
+        "csp-any-size-fedramp-adjacent-20x-initial-implementation-csp-ecosystem": "FedRAMP-adjacent | Any Size | 20x Initial Implementation | CSP ecosystem",
+        "csp-any-size-fedramp-adjacent-20x-initial-implementation-direct-agency": "FedRAMP-adjacent | Any Size | 20x Initial Implementation | Direct agency",
+        "csp-any-size-fedramp-adjacent-20x-initial-implementation-unclear": "FedRAMP-adjacent | Any Size | 20x Initial Implementation | Unclear",
+        "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-both": "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | Both",
+        "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-csp-ecosystem": "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | CSP ecosystem",
+        "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-direct-agency": "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | Direct agency",
+        "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-unclear": "FedRAMP-adjacent | Any Size | Rev5 Authorized → 20x | Unclear",
+        "csp-any-size-fedramp-adjacent-rev5-ready-likely-20x-direct-agency": "FedRAMP-adjacent | Any Size | Rev5 Ready (Likely 20x) | Direct agency",
+        "csp-any-size-fedramp-adjacent-rev5-ready-likely-20x-unclear": "FedRAMP-adjacent | Any Size | Rev5 Ready (Likely 20x) | Unclear",
+        "csp-any-size-fedramp-adjacent-rev5-ready-path-unclear-unclear": "FedRAMP-adjacent | Any Size | Rev5 Ready (Path Unclear) | Unclear",
+        "csp-any-size-technical-20x-initial-implementation-both": "Technical | Any Size | 20x Initial Implementation | Both",
+        "csp-any-size-technical-20x-initial-implementation-csp-ecosystem": "Technical | Any Size | 20x Initial Implementation | CSP ecosystem",
+        "csp-any-size-technical-20x-initial-implementation-direct-agency": "Technical | Any Size | 20x Initial Implementation | Direct agency",
+        "csp-any-size-technical-20x-initial-implementation-unclear": "Technical | Any Size | 20x Initial Implementation | Unclear",
+        "csp-any-size-technical-rev5-authorized-to-20x-both": "Technical | Any Size | Rev5 Authorized → 20x | Both",
+        "csp-any-size-technical-rev5-authorized-to-20x-csp-ecosystem": "Technical | Any Size | Rev5 Authorized → 20x | CSP ecosystem",
+        "csp-any-size-technical-rev5-authorized-to-20x-direct-agency": "Technical | Any Size | Rev5 Authorized → 20x | Direct agency",
+        "csp-any-size-technical-rev5-authorized-to-20x-unclear": "Technical | Any Size | Rev5 Authorized → 20x | Unclear",
+        "csp-any-size-technical-rev5-ready-continuing-rev5-unclear": "Technical | Any Size | Rev5 Ready (Continuing Rev5) | Unclear",
+        "csp-any-size-technical-rev5-ready-likely-20x-direct-agency": "Technical | Any Size | Rev5 Ready (Likely 20x) | Direct agency",
+        "csp-any-size-technical-rev5-ready-likely-20x-unclear": "Technical | Any Size | Rev5 Ready (Likely 20x) | Unclear",
+        "csp-any-size-technical-rev5-ready-path-unclear-direct-agency": "Technical | Any Size | Rev5 Ready (Path Unclear) | Direct agency",
+        "csp-any-size-technical-rev5-ready-path-unclear-unclear": "Technical | Any Size | Rev5 Ready (Path Unclear) | Unclear"
       },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x measures and validation"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Advisors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x questions from CSP clients"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x readiness workflow for clients"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "3PAOs/Assessors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence review"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x assessor question"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x vendor readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x evidence ownership"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Buyers": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Advisor/Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ]
-  },
-  "Athena": {
-    "CSPs": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence question at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x measures and validation"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Advisors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x questions from CSP clients"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x readiness workflow for clients"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "3PAOs/Assessors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence review"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x assessor question"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x vendor readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x evidence ownership"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Buyers": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Advisor/Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ]
-  },
-  "Eddy": {
-    "CSPs": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x path at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nA lot of CSPs that assumed FedRAMP meant the traditional Rev 5 package-heavy route are now trying to understand whether 20x gives them a faster, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence to KSIs, find gaps, and turn remediation into owned work before a bigger authorization push.\n\nIs {company_name} actively evaluating 20x, or staying with the traditional Rev 5 path for now?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x evidence readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nOne more note in case useful.\n\nThe first practical question we usually help answer is not whether to buy tooling. It is whether the 20x path is realistic: which KSIs already have evidence, where remediation is needed, and whether the team can keep validation current without rebuilding another spreadsheet-heavy process.\n\nWorth a quick compare-notes conversation?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Advisors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x questions from CSP clients"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are hearing from CSP clients around FedRAMP 20x. A lot of vendors that assumed FedRAMP meant the traditional Rev 5 route are now trying to understand whether 20x gives them a more automated, lower-friction path.\n\nBoundera helps teams check if 20x is viable, map existing evidence, find gaps, and turn remediation into owned work.\n\nAre clients asking you about 20x yet, or is it still mostly too early?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x readiness workflow for clients"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nThe partner angle we are trying to validate is simple: advisors can help CSPs figure out whether 20x is worth pursuing before the client commits to a larger authorization motion.\n\nThe useful first step is a light readiness check: evidence mapped to KSIs, obvious gaps, remediation ownership, and whether Low or Moderate equivalents are realistic.\n\nDoes that fit conversations you are having with CSP clients?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "3PAOs/Assessors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence review"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious how you are thinking about FedRAMP 20x from the assessor side. If more CSPs explore 20x instead of the traditional Rev 5 path, the hard part may become whether validation evidence is current, understandable, and easy to trace back to remediation ownership.\n\nAre CSPs asking you about 20x yet, or is most work still Rev 5?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x vendor readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier for this, so I wanted to send a quick note here.\n\nCurious what you are seeing from vendors around FedRAMP 20x now that it is becoming a more real path alongside Rev 5. My read is that many CSPs are still trying to understand whether 20x changes how they get marketplace-ready.\n\nHow are you thinking about vendors who may pursue 20x instead of the traditional Rev 5 path?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Buyers": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "CMMC evidence question at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nI have been talking with security/compliance teams in the DIB and asking a simple question: how are you thinking about CMMC evidence now that it is showing up more in customer and contract conversations?\n\nIs {company_name} actively preparing, or mostly watching how customers/primes handle rollout?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC evidence and readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nOne more note in case useful.\n\nThe part of CMMC that seems under-discussed is not the checklist itself. It is whether teams can show current evidence, know who owns gaps, and explain what is assessment-ready without a last-minute scramble.\n\nIf useful, happy to compare notes on what we are hearing from DIB teams right now.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Advisor/Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "CMMC client evidence workflows"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWe are adapting Boundera's evidence automation workflow for CMMC advisor/channel teams: repeatable SSP/POA&M workflows, client evidence tracking, and assessment package prep around NIST 800-171.\n\nWhere does client work bog down most for you: evidence collection, POA&M tracking, or getting teams assessment-ready?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC delivery bottlenecks"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nQuick follow-up.\n\nA lot of CMMC delivery work seems to turn into repeated evidence chasing across similar client environments. We are trying to make that workflow more reusable for advisors, C3PAO/RPO-style teams, MSPs, and partners supporting DIB clients.\n\nIf useful, happy to compare notes on where tooling would actually help your team.\n\nBest,\n{my_name}"
-        ]
-      }
-    ]
-  },
-  "Chuka": {
-    "Investor / Portfolio Ops": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Are portfolio founders asking about FedRAMP?"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw your portfolio work at {company_name}. I'm trying to understand whether cloud founders are exploring FedRAMP certification as a way to reach federal agencies and strengthen their next fundraising story.\n\nWith 20x, the path is more approachable for eligible cloud services.\n\nIs this coming up across your portfolio?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "FedRAMP marketplace visibility for the portfolio"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nOne practical 20x opportunity: eligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find companies already pursuing certification.\n\nWould a short readiness session help {company_name}'s portfolio identify which companies could fit?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Accelerator / Ecosystem": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP as a startup growth channel"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw your founder programs at {company_name}. I'm trying to understand whether government-facing startups see FedRAMP certification as a way to open federal sales conversations.\n\nWith 20x, eligible cloud services have a more approachable path to certification and the FedRAMP marketplace.\n\nAre founders asking your team about this yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Helping founders enter the FedRAMP marketplace"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEligible cloud companies preparing for FedRAMP certification can apply for an initial implementation listing in the FedRAMP marketplace. That gives agencies a way to find startups already doing the work.\n\nWould a practical 20x readiness session fit an upcoming {company_name} cohort?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "White Label Product/Executive": [
-      {"delay_hours": 0.33, "subject_variants": ["Are customers asking about 20x?"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we help vendors keep their 20x validation evidence current over time.\n\nAre customers asking {company_name} for help with that yet?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["White-label 20x support"], "body_variants": ["Hi {first_name},\n\nWe're looking at a white-label setup where firms keep the client relationship and use Boundera for the ongoing 20x evidence work.\n\nWould that be useful at {company_name}?\n\nBest,\n{my_name}"]}
-    ],
-    "White Label Partnerships": [
-      {"delay_hours": 0.33, "subject_variants": ["Are vendors asking about 20x yet?"], "body_variants": ["Hi {first_name},\n\nWith 20x, vendors have to keep validation evidence and certification data current after the initial work. I'm curious how that lands with partner teams.\n\nAre vendors bringing that to {company_name} yet?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["Who owns the 20x partner side?"], "body_variants": ["Hi {first_name},\n\nWe're exploring whether Boundera could sit behind the scenes for firms helping vendors with the 20x certification data workflow. The firm would keep the relationship, while Boundera handles the data work.\n\nIs that your lane at {company_name}, or is there someone better internally?\n\nBest,\n{my_name}"]}
-    ],
-    "White Label Delivery": [
-      {"delay_hours": 0.33, "subject_variants": ["Where does 20x delivery get awkward?"], "body_variants": ["Hi {first_name},\n\nOne thing I'm curious about from delivery teams is what happens after the first 20x review.\n\nIs keeping the certification data current where the work starts to get messy at {company_name}?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["Keeping 20x validation current"], "body_variants": ["Hi {first_name},\n\nAt Boundera, we focus on a 20x operating loop that keeps measures and validation evidence current after the first review.\n\nInterested in comparing notes on how {company_name} would run that with clients?\n\nBest,\n{my_name}"]}
-    ],
-    "White Label Champions": [
-      {"delay_hours": 0.33, "subject_variants": ["Who is closest to 20x at {company_name}?"], "body_variants": ["Hi {first_name},\n\nI saw your federal cloud/security work and thought you might have a useful perspective. I'm trying to understand who inside firms like {company_name} is thinking about validation evidence and keeping certification data current under 20x.\n\nIs that close to your world, or does it sit with someone else?\n\nBest,\n{my_name}"]},
-      {"delay_hours": 192, "subject_variants": ["20x delivery owner"], "body_variants": ["Hi {first_name},\n\nOne more question. Who is closest to the 20x delivery or product side internally? I'd love to compare notes on how partners might support the new certification data workflow without turning it back into a static package exercise.\n\nBest,\n{my_name}"]}
-    ],
-    "20x Initial Implementation": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "20x implementation at {company_name}",
-          "Keeping 20x evidence current"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} in 20x initial implementation. I'm with Boundera, where we focus on keeping certification data current as implementation changes.\n\nIs maintaining the validation evidence already handled, or is that workflow still taking shape?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed {company_name}'s initial implementation listing and was curious how the operating model is coming together behind it.\n\nHas the team found a repeatable way to keep measures and validation evidence current?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "The operating work behind 20x",
-          "20x validation evidence"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we focus on keeping 20x certification data and validation evidence current as implementation changes.\n\nIf that process is still taking shape at {company_name}, would comparing notes be useful?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been comparing how initial implementation teams turn their first evidence pass into something repeatable.\n\nWould it be useful to compare what we're seeing with the process at {company_name}?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Active FedRAMP Path": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "20x alongside the current path",
-          "Active FedRAMP work at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} is already on an active FedRAMP path. I'm trying to understand how teams evaluate 20x without disrupting work already underway.\n\nHas 20x changed the evidence model there yet?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed the current FedRAMP work at {company_name} and was curious how the team is treating 20x alongside it.\n\nIs the new model affecting the current effort yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Keeping evidence current through change",
-          "20x and an active certification effort"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we focus on keeping certification data and validation evidence current while implementation changes.\n\nIf {company_name} is evaluating 20x alongside its active path, would comparing notes be useful?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been comparing notes with teams that want to understand 20x without disturbing an active certification effort.\n\nWould it be useful to share what we're seeing around evidence continuity?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "FedRAMP Mature": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Maintaining certification data at {company_name}",
-          "The maintenance side of FedRAMP"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw the established federal cloud work at {company_name}. I'm trying to understand where recurring FedRAMP work stays heavy after a program is established.\n\nIs keeping certification data current still a meaningful burden?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed the mature FedRAMP program at {company_name}. I'm comparing notes with teams maintaining evidence as products and boundaries change.\n\nDoes evidence maintenance still create friction there?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Keeping validation evidence current",
-          "New products and existing evidence"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we focus on keeping validation evidence current as products and boundaries change.\n\nIf {company_name} has a recurring maintenance gap there, would a quick comparison be useful?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been looking at the maintenance side of mature FedRAMP programs, especially when a new product changes the evidence boundary.\n\nWould comparing approaches be useful?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CSP Stage Verify": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Who owns 20x at {company_name}?",
-          "FedRAMP 20x owner"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw your federal security work at {company_name}. I'm trying to understand who owns the 20x operating model internally.\n\nIs that close to your team?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed your public-sector cloud work at {company_name}. I don't want to guess at the company's current marketplace path.\n\nAre you the right person for a 20x conversation?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "The operating work behind 20x",
-          "Right owner for 20x"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI'm with Boundera, where we focus on the operating work behind 20x and speak with the people responsible for keeping certification data current.\n\nWould you point me toward the right owner at {company_name}?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI may have the ownership wrong at {company_name}.\n\nWho is closest to the 20x work internally?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Rev5 Ready": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Carrying ready work into 20x",
-          "The path after ready status"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nI saw {company_name} reached FedRAMP ready before the status became legacy. I'm curious how teams plan to carry that work into class A or another 20x path.\n\nHas the team decided what can be reused?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI noticed {company_name} was listed as FedRAMP ready. With ready now legacy, I'm comparing notes with teams trying to preserve the work already completed.\n\nDoes {company_name} have a transition plan yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "Reusing existing FedRAMP work",
-          "Moving forward from ready"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nAt Boundera, we work on translating existing evidence into measures and current validation evidence for 20x.\n\nIf that transition is live at {company_name}, would comparing notes help?\n\nBest,\n{my_name}",
-          "Hi {first_name},\n\nI've been comparing how ready teams approach the new certification paths without losing the work already completed.\n\nWould a quick conversation about the evidence transition be useful?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CSPs": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence question at {company_name}"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nFedRAMP's June 24 consolidated rules update made the 20x conversation more concrete: CSPs need to explain the measures behind each KSI, show persistence where applicable, and support verification/validation of the evidence.\n\nI am curious how {company_name} is reading this. Are you actively assessing 20x fit, or staying focused on the Rev 5 route for now?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x measures and validation"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe 20x question I keep hearing is less \"what tool should we buy?\" and more \"can we prove current implementation without recreating the old package work in a new format?\"\n\nThat usually comes down to current evidence, KSI gaps, remediation ownership, and a validation loop that can survive changes.\n\nWorth comparing notes for 15-20 minutes?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Advisors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x questions from CSP clients"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are hearing from CSP clients after FedRAMP's June 24 consolidated rules update. The practical question seems to be whether a client can explain its KSI measures, prove they persist, and support verification/validation without turning 20x into another spreadsheet exercise.\n\nAre clients asking about 20x yet, or mostly staying with Rev 5 because it is better understood?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x readiness workflow for clients"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more note in case useful.\n\nThe advisor angle I am trying to validate is whether 20x readiness becomes a useful pre-authorization workflow: current evidence, KSI gaps, remediation owners, and validation cadence before the client commits to a larger path.\n\nIs that coming up with CSP clients yet?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "3PAOs/Assessors": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x evidence review"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious how you are reading FedRAMP's June 24 consolidated rules from the assessor side. The part that stands out to me is the emphasis on explaining measures, verifying automation sufficiency, and validating that evidence is in place and working.\n\nAre you seeing CSPs prepare for that kind of review yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x assessor question"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more question.\n\nDo you think 20x will make assessment easier because evidence is more current, or harder because reviewers will need sharper context around evidence quality, automation boundaries, and validation?\n\nI am trying to pressure-test this with people close to assessment work.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "FedRAMP 20x vendor readiness"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nCurious what you are seeing from vendors around FedRAMP 20x after the June consolidated rules update. The operational question seems to be how evidence gets shared, verified, and kept current across CSPs, assessors, and agency stakeholders.\n\nAre vendors asking your team about 20x yet?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "20x evidence ownership"
-        ],
-        "body_variants": [
-          "{first_name},\n\nOne more thought.\n\nThe 20x conversation seems to be moving from \"what is changing?\" to \"who owns the evidence, validation, and routing work?\"\n\nIf this is coming up with vendors or agency teams you work with, I would be curious what you are hearing.\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Buyers": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ],
-    "CMMC Advisor/Channel": [
-      {
-        "delay_hours": 0.33,
-        "subject_variants": [
-          "Quick CMMC question"
-        ],
-        "body_variants": [
-          "Hi {first_name},\n\nEmail may be easier than LinkedIn.\n\nWith Boundera, we've built a CMMC automation tool. It helps companies move much faster before their evaluation with a C3PAO. As an advisor in the space, I think it could be useful for you, and we may be able to work together.\n\nInterested in learning more?\n\nBest,\n{my_name}"
-        ]
-      },
-      {
-        "delay_hours": 192,
-        "subject_variants": [
-          "CMMC automation before the C3PAO"
-        ],
-        "body_variants": [
-          "{first_name},\n\nJust circling back on this. I know I get busy with my inbox too.\n\nWe've been helping clients move through the process faster. Are you free for a quick 15-minute call?\n\nBest,\n{my_name}"
-        ]
-      }
-    ]
+      "messages": [
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-both",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with {role} trying to get through FedRAMP faster and for less so they can grow their revenue.\n\nWant me to send a short breakdown of how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Federal growth",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-both",
+          "body": "Hi {first_name},\n\nDelays in getting authorized can mean waiting longer to win customers who require FedRAMP.\n\nWe help companies work through what's standing between them and that business.\n\nWant me to outline what we'd tackle first for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Authorization timing",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-csp-ecosystem",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with {role} trying to get through FedRAMP faster and for less so they can grow their revenue.\n\nWant me to send a short breakdown of how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Federal growth",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-csp-ecosystem",
+          "body": "Hi {first_name},\n\nDelays in getting authorized can mean waiting longer to win customers who require FedRAMP.\n\nWe help companies work through what's standing between them and that business.\n\nWant me to outline what we'd tackle first for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Authorization timing",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with {role} trying to get through FedRAMP faster and for less so they can grow their revenue.\n\nWant me to send a short breakdown of how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Federal growth",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-direct-agency",
+          "body": "Hi {first_name},\n\nDelays in getting authorized can mean waiting longer to win customers who require FedRAMP.\n\nWe help companies work through what's standing between them and that business.\n\nWant me to outline what we'd tackle first for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Authorization timing",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with {role} trying to get through FedRAMP faster and for less so they can grow their revenue.\n\nWant me to send a short breakdown of how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Federal growth",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-20x-initial-implementation-unclear",
+          "body": "Hi {first_name},\n\nDelays in getting authorized can mean waiting longer to win customers who require FedRAMP.\n\nWe help companies work through what's standing between them and that business.\n\nWant me to outline what we'd tackle first for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Authorization timing",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-both",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with {role} trying to keep their FedRAMP authorization current without letting the new requirements drive up costs or put federal revenue at risk.\n\nWant me to send a short breakdown of what's changing and where we can help?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-both",
+          "body": "Hi {first_name},\n\nA FedRAMP issue becomes a business issue when it gets in the way of a renewal or new contract.\n\nWe help companies stay ahead of the changing requirements.\n\nWant a simple deadline checklist your team can use to protect that business?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Federal renewals",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-csp-ecosystem",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with {role} trying to keep their FedRAMP authorization current without letting the new requirements drive up costs or put federal revenue at risk.\n\nWant me to send a short breakdown of what's changing and where we can help?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-csp-ecosystem",
+          "body": "Hi {first_name},\n\nA FedRAMP issue becomes a business issue when it gets in the way of a renewal or new contract.\n\nWe help companies stay ahead of the changing requirements.\n\nWant a simple deadline checklist your team can use to protect that business?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Federal renewals",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with {role} trying to keep their FedRAMP authorization current without letting the new requirements drive up costs or put federal revenue at risk.\n\nWant me to send a short breakdown of what's changing and where we can help?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-direct-agency",
+          "body": "Hi {first_name},\n\nA FedRAMP issue becomes a business issue when it gets in the way of a renewal or new contract.\n\nWe help companies stay ahead of the changing requirements.\n\nWant a simple deadline checklist your team can use to protect that business?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Federal renewals",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with {role} trying to keep their FedRAMP authorization current without letting the new requirements drive up costs or put federal revenue at risk.\n\nWant me to send a short breakdown of what's changing and where we can help?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-authorized-to-20x-unclear",
+          "body": "Hi {first_name},\n\nA FedRAMP issue becomes a business issue when it gets in the way of a renewal or new contract.\n\nWe help companies stay ahead of the changing requirements.\n\nWant a simple deadline checklist your team can use to protect that business?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Federal renewals",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-continuing-rev5-unclear",
+          "body": "Hi {first_name},\n\nIt appears {company_name} is continuing through Rev5 rather than moving to 20x. For a Ready team, the business challenge is completing certification while updating the package and operating process for the Consolidated Rules for 2026.\n\nIs Rev5 still the confirmed path for the team?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Continuing Rev5)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Rev5 path",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-continuing-rev5-unclear",
+          "body": "Hi {first_name},\n\nBoundera helps cloud providers keep FedRAMP security evidence, validation, and remediation work current and easier to review. For a Ready team continuing through Rev5, that can make the remaining assessment work and 2026 rule updates easier to manage.\n\nWould a short map of the remaining work and rule changes be useful?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Continuing Rev5)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "2026 rules",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-likely-20x-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed as FedRAMP Ready. There's a newer route to getting authorized on the FedRAMP Marketplace.\n\nAt Boundera, I work with {role} trying to get there faster and for less so they can grow their revenue.\n\nWant me to send a short breakdown of how that could work for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP next steps",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-likely-20x-direct-agency",
+          "body": "Hi {first_name},\n\nFor a buyer that requires FedRAMP authorization, a Ready listing still leaves a hurdle to clear.\n\nWe help companies work through that next step so they can compete for the business.\n\nWant me to outline how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Beyond Ready",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-likely-20x-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed as FedRAMP Ready. There's a newer route to getting authorized on the FedRAMP Marketplace.\n\nAt Boundera, I work with {role} trying to get there faster and for less so they can grow their revenue.\n\nWant me to send a short breakdown of how that could work for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP next steps",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-likely-20x-unclear",
+          "body": "Hi {first_name},\n\nFor a buyer that requires FedRAMP authorization, a Ready listing still leaves a hurdle to clear.\n\nWe help companies work through that next step so they can compete for the business.\n\nWant me to outline how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Beyond Ready",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-path-unclear-direct-agency",
+          "body": "Hi {first_name},\n\n{company_name} is already FedRAMP Ready, but its next certification path is not public. The business decision is how to reach certification efficiently while preserving the useful Rev5 investment already made.\n\nHas the team decided whether to continue through Rev5 or move to 20x?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Ready path",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-path-unclear-direct-agency",
+          "body": "Hi {first_name},\n\nBoundera helps cloud providers keep FedRAMP security evidence, validation, and remediation work current and easier to review. For a Ready team still choosing a path, the first step is separating reusable work from work that changes under Rev5 or 20x.\n\nWould a short comparison be useful?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Path comparison",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-path-unclear-unclear",
+          "body": "Hi {first_name},\n\nAt Boundera, I work with {role} trying to get through FedRAMP faster and for less so they can grow their revenue.\n\nIf {company_name} is still weighing how to move forward, want me to send a short breakdown of the options and what each would involve for your team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP options",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-business-leaders-rev5-ready-path-unclear-unclear",
+          "body": "Hi {first_name},\n\nFor a buyer that requires FedRAMP authorization, a Ready listing still leaves a hurdle to clear.\n\nWe help companies work through that next step so they can compete for the business.\n\nWant me to outline how we'd approach that for {company_name}?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Business leaders",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Beyond Ready",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-both",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with companies trying to get through FedRAMP faster and for less so they can move more customer and partner opportunities forward.\n\nWant me to send a short breakdown of the assessment prep we can help take off your FedRAMP team's plate?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP assessment prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-both",
+          "body": "Hi {first_name},\n\nIf a customer is waiting on FedRAMP before moving forward, we'd like to help your program team work through what's holding that up.\n\nIs authorization coming up as a blocker in your customer or partner conversations?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Customer requirements",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-csp-ecosystem",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with companies trying to get through FedRAMP faster and for less so they can move more customer and partner opportunities forward.\n\nWant me to send a short breakdown of the assessment prep we can help take off your FedRAMP team's plate?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP assessment prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-csp-ecosystem",
+          "body": "Hi {first_name},\n\nIf a customer is waiting on FedRAMP before moving forward, we'd like to help your program team work through what's holding that up.\n\nIs authorization coming up as a blocker in your customer or partner conversations?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Customer requirements",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with companies trying to get through FedRAMP faster and for less so they can move more customer and partner opportunities forward.\n\nWant me to send a short breakdown of the assessment prep we can help take off your FedRAMP team's plate?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP assessment prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-direct-agency",
+          "body": "Hi {first_name},\n\nIf a customer is waiting on FedRAMP before moving forward, we'd like to help your program team work through what's holding that up.\n\nIs authorization coming up as a blocker in your customer or partner conversations?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Customer requirements",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is working toward FedRAMP authorization.\n\nAt Boundera, I work with companies trying to get through FedRAMP faster and for less so they can move more customer and partner opportunities forward.\n\nWant me to send a short breakdown of the assessment prep we can help take off your FedRAMP team's plate?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP assessment prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-20x-initial-implementation-unclear",
+          "body": "Hi {first_name},\n\nIf a customer is waiting on FedRAMP before moving forward, we'd like to help your program team work through what's holding that up.\n\nIs authorization coming up as a blocker in your customer or partner conversations?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Customer requirements",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-both",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with companies trying to keep their FedRAMP authorization current as requirements change, without disrupting customer or partner business.\n\nWant me to send a short breakdown of what's changing and where we can help, for you to share with your FedRAMP team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-both",
+          "body": "Hi {first_name},\n\nI'd like to help keep FedRAMP changes from becoming a last-minute issue in a renewal or partner deal.\n\nAre customers asking your team how you're handling the new requirements yet?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Renewals and FedRAMP",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-csp-ecosystem",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with companies trying to keep their FedRAMP authorization current as requirements change, without disrupting customer or partner business.\n\nWant me to send a short breakdown of what's changing and where we can help, for you to share with your FedRAMP team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-csp-ecosystem",
+          "body": "Hi {first_name},\n\nI'd like to help keep FedRAMP changes from becoming a last-minute issue in a renewal or partner deal.\n\nAre customers asking your team how you're handling the new requirements yet?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Renewals and FedRAMP",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with companies trying to keep their FedRAMP authorization current as requirements change, without disrupting customer or partner business.\n\nWant me to send a short breakdown of what's changing and where we can help, for you to share with your FedRAMP team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-direct-agency",
+          "body": "Hi {first_name},\n\nI'd like to help keep FedRAMP changes from becoming a last-minute issue in a renewal or partner deal.\n\nAre customers asking your team how you're handling the new requirements yet?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Renewals and FedRAMP",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with companies trying to keep their FedRAMP authorization current as requirements change, without disrupting customer or partner business.\n\nWant me to send a short breakdown of what's changing and where we can help, for you to share with your FedRAMP team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP changes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-authorized-to-20x-unclear",
+          "body": "Hi {first_name},\n\nI'd like to help keep FedRAMP changes from becoming a last-minute issue in a renewal or partner deal.\n\nAre customers asking your team how you're handling the new requirements yet?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Renewals and FedRAMP",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-ready-likely-20x-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed as FedRAMP Ready. There's a newer route to FedRAMP authorization.\n\nAt Boundera, I work with companies trying to get there faster and for less so customer and partner opportunities can move forward.\n\nWant me to send a short breakdown you can share with your FedRAMP team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP next steps",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-ready-likely-20x-direct-agency",
+          "body": "Hi {first_name},\n\nA Ready listing may not give a buyer the timeline they need to move forward. We help FedRAMP teams get clear on the remaining work.\n\nAre customers asking you when authorization is expected?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Authorization timeline",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-ready-likely-20x-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed as FedRAMP Ready. There's a newer route to FedRAMP authorization.\n\nAt Boundera, I work with companies trying to get there faster and for less so customer and partner opportunities can move forward.\n\nWant me to send a short breakdown you can share with your FedRAMP team?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP next steps",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-ready-likely-20x-unclear",
+          "body": "Hi {first_name},\n\nA Ready listing may not give a buyer the timeline they need to move forward. We help FedRAMP teams get clear on the remaining work.\n\nAre customers asking you when authorization is expected?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Authorization timeline",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-ready-path-unclear-unclear",
+          "body": "Hi {first_name},\n\n{company_name} is already FedRAMP Ready, but I could not tell whether the team is continuing through Rev5 or moving to 20x. For someone carrying federal pipeline, the immediate issue is having a credible answer when an agency asks about the path and timing.\n\nHas the team settled on its answer?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Ready path",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-fedramp-adjacent-rev5-ready-path-unclear-unclear",
+          "body": "Hi {first_name},\n\nI am building Boundera around a current view of the evidence, validation, and remediation work behind a provider's FedRAMP path. I am trying to understand whether that would help federal teams answer buyer questions while the certification route is being decided.\n\nWould you be open to giving feedback?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | FedRAMP-adjacent",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Buyer questions",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-both",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed for FedRAMP 20x Initial Implementation.\n\nAt Boundera, I work with FedRAMP teams trying to spend less time gathering evidence, fixing gaps and keeping up with VDR/VER. We help automate parts of that work, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of the remediation and reporting workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-both",
+          "body": "Hi {first_name},\n\nOne workflow we can show is taking a failed KSI check through a draft fix your engineers review, then checking fresh evidence after deployment.\n\nThat gives your team something concrete to show an assessor.\n\nWant me to send that example?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "From KSI to fix",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-csp-ecosystem",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed for FedRAMP 20x Initial Implementation.\n\nAt Boundera, I work with FedRAMP teams trying to spend less time gathering evidence, fixing gaps and keeping up with VDR/VER. We help automate parts of that work, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of the remediation and reporting workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-csp-ecosystem",
+          "body": "Hi {first_name},\n\nOne workflow we can show is taking a failed KSI check through a draft fix your engineers review, then checking fresh evidence after deployment.\n\nThat gives your team something concrete to show an assessor.\n\nWant me to send that example?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "From KSI to fix",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed for FedRAMP 20x Initial Implementation.\n\nAt Boundera, I work with FedRAMP teams trying to spend less time gathering evidence, fixing gaps and keeping up with VDR/VER. We help automate parts of that work, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of the remediation and reporting workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-direct-agency",
+          "body": "Hi {first_name},\n\nOne workflow we can show is taking a failed KSI check through a draft fix your engineers review, then checking fresh evidence after deployment.\n\nThat gives your team something concrete to show an assessor.\n\nWant me to send that example?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "From KSI to fix",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed for FedRAMP 20x Initial Implementation.\n\nAt Boundera, I work with FedRAMP teams trying to spend less time gathering evidence, fixing gaps and keeping up with VDR/VER. We help automate parts of that work, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of the remediation and reporting workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-20x-initial-implementation-unclear",
+          "body": "Hi {first_name},\n\nOne workflow we can show is taking a failed KSI check through a draft fix your engineers review, then checking fresh evidence after deployment.\n\nThat gives your team something concrete to show an assessor.\n\nWant me to send that example?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "20x Initial Implementation",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "From KSI to fix",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-both",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with FedRAMP teams trying to meet the new VDR/VER requirements without adding more manual work. We help automate parts of evidence collection, remediation and reporting, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of that workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "VDR/VER prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-both",
+          "body": "Hi {first_name},\n\nMarking a vulnerability fixed isn't the same as confirming the fix.\n\nBoundera keeps that confirmation separate from the status label so your team can see what still needs verification.\n\nWant me to send an example of how that fits into VDR/VER?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Verifying fixes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-csp-ecosystem",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with FedRAMP teams trying to meet the new VDR/VER requirements without adding more manual work. We help automate parts of evidence collection, remediation and reporting, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of that workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "VDR/VER prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-csp-ecosystem",
+          "body": "Hi {first_name},\n\nMarking a vulnerability fixed isn't the same as confirming the fix.\n\nBoundera keeps that confirmation separate from the status label so your team can see what still needs verification.\n\nWant me to send an example of how that fits into VDR/VER?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Verifying fixes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with FedRAMP teams trying to meet the new VDR/VER requirements without adding more manual work. We help automate parts of evidence collection, remediation and reporting, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of that workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "VDR/VER prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-direct-agency",
+          "body": "Hi {first_name},\n\nMarking a vulnerability fixed isn't the same as confirming the fix.\n\nBoundera keeps that confirmation separate from the status label so your team can see what still needs verification.\n\nWant me to send an example of how that fits into VDR/VER?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Verifying fixes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is already FedRAMP Authorized.\n\nAt Boundera, I work with FedRAMP teams trying to meet the new VDR/VER requirements without adding more manual work. We help automate parts of evidence collection, remediation and reporting, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of that workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "VDR/VER prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-authorized-to-20x-unclear",
+          "body": "Hi {first_name},\n\nMarking a vulnerability fixed isn't the same as confirming the fix.\n\nBoundera keeps that confirmation separate from the status label so your team can see what still needs verification.\n\nWant me to send an example of how that fits into VDR/VER?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Authorized → 20x",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Verifying fixes",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-continuing-rev5-unclear",
+          "body": "Hi {first_name},\n\nIt appears {company_name} is continuing through Rev5. For a Ready team on that path, the operational challenge is completing the existing package and assessment while incorporating the Consolidated Rules for 2026.\n\nWhich part of that transition is creating the most work?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Continuing Rev5)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Rev5 updates",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-continuing-rev5-unclear",
+          "body": "Hi {first_name},\n\nBoundera helps cloud providers keep FedRAMP security evidence, validation, and remediation work current and easier to review. For a Ready team continuing through Rev5, the goal is to keep the remaining package work and newer operating requirements connected.\n\nWould a sample workflow map be useful?\n\n{my_name}",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Continuing Rev5)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Rev5 workflow",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-likely-20x-direct-agency",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed as FedRAMP Ready.\n\nAt Boundera, I work with FedRAMP teams considering 20x who want to build on their Rev5 work and get ready for VDR/VER. We help automate parts of evidence collection, remediation and reporting, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of that workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Building on Rev5",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-likely-20x-direct-agency",
+          "body": "Hi {first_name},\n\nFor {company_name}'s FedRAMP work, I'd start with the evidence you already have and separate what's current from what needs updating or filling in.\n\nThe aim is to avoid making your team recreate useful work.\n\nWant me to send an example of how we'd review one requirement?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Existing FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-likely-20x-unclear",
+          "body": "Hi {first_name},\n\nSaw {company_name} is listed as FedRAMP Ready.\n\nAt Boundera, I work with FedRAMP teams considering 20x who want to build on their Rev5 work and get ready for VDR/VER. We help automate parts of evidence collection, remediation and reporting, with your team reviewing the fixes.\n\nWant me to send a short walkthrough of that workflow?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "Building on Rev5",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-likely-20x-unclear",
+          "body": "Hi {first_name},\n\nFor {company_name}'s FedRAMP work, I'd start with the evidence you already have and separate what's current from what needs updating or filling in.\n\nThe aim is to avoid making your team recreate useful work.\n\nWant me to send an example of how we'd review one requirement?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Likely 20x)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Existing FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-path-unclear-direct-agency",
+          "body": "Hi {first_name},\n\nAt Boundera, I work with FedRAMP teams trying to cut down the manual work around evidence, validation and remediation. The aim is to make that work easier to keep current and review.\n\nWant me to send a short breakdown of how we could help {company_name} prepare for its next assessment?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP assessment prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-path-unclear-direct-agency",
+          "body": "Hi {first_name},\n\nFor {company_name}'s FedRAMP work, I'd start with the evidence you already have and separate what's current from what needs updating or filling in.\n\nThe aim is to avoid making your team recreate useful work.\n\nWant me to send an example of how we'd review one requirement?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Existing FedRAMP evidence",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-path-unclear-unclear",
+          "body": "Hi {first_name},\n\nAt Boundera, I work with FedRAMP teams trying to cut down the manual work around evidence, validation and remediation. The aim is to make that work easier to keep current and review.\n\nWant me to send a short breakdown of how we could help {company_name} prepare for its next assessment?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 0.33,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 0,
+          "step_key": "email-1",
+          "subject": "FedRAMP assessment prep",
+          "variant_key": "primary"
+        },
+        {
+          "audience_key": "csp-any-size-technical-rev5-ready-path-unclear-unclear",
+          "body": "Hi {first_name},\n\nFor {company_name}'s FedRAMP work, I'd start with the evidence you already have and separate what's current from what needs updating or filling in.\n\nThe aim is to avoid making your team recreate useful work.\n\nWant me to send an example of how we'd review one requirement?\n\n{my_name}\nBoundera",
+          "channel": "gmail",
+          "delay_hours": 192,
+          "fedramp_segment": "Rev5 Ready (Path Unclear)",
+          "media": [],
+          "notes": "",
+          "role_persona": "CSP Any Size | Technical",
+          "sender_override": "",
+          "step_index": 1,
+          "step_key": "email-2",
+          "subject": "Existing FedRAMP evidence",
+          "variant_key": "primary"
+        }
+      ],
+      "program_name": "FedRAMP Marketplace CSP Outreach"
+    }
   }
 }

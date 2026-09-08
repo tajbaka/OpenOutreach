@@ -51,6 +51,16 @@ class Command(BaseCommand):
 
             rows = read_icp_messages_tab(sender)
             block, gmail_block = parse_icp_messages_sheet_rows(rows)
+            from linkedin.notifications.sheets import LEAD_ICP_BUCKETS
+
+            authoring_only = sorted(set(block) - set(LEAD_ICP_BUCKETS))
+            if authoring_only:
+                raise SheetsError(
+                    "ICP Messages contains authoring-only role personas that "
+                    "have not been activated for runtime routing: "
+                    f"{authoring_only}. Promote the reviewed labels into "
+                    "LEAD_ICP_BUCKETS and both sender JSON stores before pull."
+                )
             save_icp_messages(sender, block)
             save_gmail_messages(sender, gmail_block)
             self.stdout.write(self.style.SUCCESS(
