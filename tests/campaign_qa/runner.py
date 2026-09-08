@@ -52,6 +52,8 @@ def main():
         'tests/management/test_import_campaign_message_program.py',
         'tests/management/test_publish_general_icp_messages.py',
         'tests/tasks/test_stop_policy.py',
+        'tests/test_browser_nav.py', 'tests/test_status_action.py',
+        'tests/test_connect_action.py',
     ])
 
 

@@ -1,6 +1,6 @@
 ---
 name: boundera-sales-motion
-description: Create, populate, update, or verify account-specific Boundera sales-motion tabs by duplicating the canonical Template tab in the Sales Motion Google Sheet. Use when the user asks to create, clone, map, organize, or maintain a 15-step sales-motion tracker for an opportunity. Do not use for ordinary sales-message drafting that does not involve this tracker.
+description: Create, populate, update, or verify account-specific Boundera sales-motion tabs by duplicating the canonical Template tab in the Sales Motion Google Sheet. Use when the user asks to create, clone, map, organize, or maintain a 15-step sales-motion tracker for an opportunity, including current FedRAMP Marketplace grounding for software-vendor and CSP accounts. Do not use for ordinary sales-message drafting that does not involve this tracker.
 ---
 
 # Boundera Sales Motion
@@ -49,6 +49,33 @@ Use the newest available evidence in this order:
 Separate confirmed facts, reasonable interpretations, and open questions. Do not mark a task `Complete` from an inference. Do not invent stakeholders, authority, pain, timing, procurement, or next steps.
 
 When the user asks for context retrieval from OpenOutreach, Gmail, Gemini, or another source, use only the relevant accessible source. A missing connector or record is an unknown, not evidence that the event did not happen.
+
+#### Ground software vendors in the current FedRAMP Marketplace
+
+When the account is a cloud software vendor or CSP, check the live, official
+[FedRAMP Marketplace](https://www.fedramp.gov/marketplace/products/) before
+writing discovery questions or updating its motion. This lookup is not a
+default buyer-status check for a 3PAO/assessor, advisor, channel partner, or
+other partnership account.
+
+- Search by both company and product name. A company can have multiple cloud
+  service offerings; do not transfer one offering's status to another.
+- Capture the exact offering name, package ID, phase, status, certification
+  type, path, class, certified-since date, and authorization count when shown.
+- Treat the live Marketplace as current evidence and record the product-page
+  URL with the supporting context. If no exact match exists, preserve the
+  status as unknown rather than inferring it from company copy or an old note.
+- Put already-known Marketplace facts into the account recap. Replace
+  questions that merely ask for those facts with confirmation and scoping
+  questions.
+- For an already-certified Rev5 offering, do not ask as though the vendor is
+  beginning FedRAMP or choosing its first path and class. Ask whether the
+  evaluation concerns ongoing operation of that package, another offering,
+  future 20x work, or some combination; then explore the relevant operational
+  burden at the opportunity's current step.
+- Marketplace status does not prove which product is in scope, current pain,
+  urgency, budget, assessor, procurement path, stakeholder authority, or
+  Boundera fit. Discover those separately and at the appropriate sales step.
 
 ### 3. Create safely by native duplication
 
