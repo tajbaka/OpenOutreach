@@ -507,7 +507,8 @@ class TestHealTasks:
             payload__campaign_id=fake_session.campaign.pk,
         ).count() == 1
 
-    def test_connect_recovery_does_not_create_without_work(self, fake_session):
+    def test_connect_recovery_does_not_create_without_work(self, fake_session, monkeypatch):
+        monkeypatch.setattr("linkedin.daemon.ENABLE_AUTO_DISCOVERY", False)
         created = _ensure_connect_task_for_campaign(fake_session.campaign, delay_seconds=0)
 
         assert created is False
@@ -540,6 +541,7 @@ class TestHealTasks:
         fake_session,
         monkeypatch,
     ):
+        monkeypatch.setattr("linkedin.daemon.ENABLE_AUTO_DISCOVERY", False)
         task = Task.objects.create(
             task_type=Task.TaskType.CONNECT,
             status=Task.Status.RUNNING,
@@ -570,6 +572,7 @@ class TestHealTasks:
         fake_session,
         monkeypatch,
     ):
+        monkeypatch.setattr("linkedin.daemon.ENABLE_AUTO_DISCOVERY", False)
         task = Task.objects.create(
             task_type=Task.TaskType.CONNECT,
             status=Task.Status.RUNNING,

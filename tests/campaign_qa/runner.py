@@ -48,6 +48,7 @@ def main():
         'tests/test_message_program_models.py',
         'tests/test_seed_import.py', 'tests/test_seeds.py',
         'tests/tasks/test_message_program_runtime.py',
+        'tests/tasks/test_follow_up_schedule.py', 'tests/test_heal.py',
         'tests/gmail/test_versioned_delivery.py',
         'tests/management/test_import_campaign_message_program.py',
         'tests/management/test_publish_general_icp_messages.py',

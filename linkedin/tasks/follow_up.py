@@ -581,6 +581,38 @@ def handle_follow_up(task, session, qualifiers):
             operator=our_operator,
         )
 
+        confirmed = submission_evidence_persisted or _has_sent_sequence_step(
+            deal=deal,
+            operator=our_operator,
+            sequence_name=sequence_name,
+            step_index=step_index,
+            delivery=bound_delivery,
+        )
+        if not confirmed:
+            if bound_delivery.status == OutboundDelivery.Status.SENDING:
+                from linkedin.message_delivery import MessageDeliveryError
+
+                raise MessageDeliveryError(
+                    f"delivery {bound_delivery.pk} was already sending without a "
+                    "confirmed receipt; manual reconciliation is required"
+                )
+            # A mistakenly early Task must not override the delivery schedule.
+            # Also retain any later Task-only pacing/quota deferral. Queue the
+            # same frozen step; the daemon completes this claimed Task normally.
+            due_at = max(task.scheduled_at, bound_delivery.scheduled_at)
+            if due_at > timezone.now():
+                enqueue_follow_up(
+                    campaign_id, public_id,
+                    operator=our_operator,
+                    icp=queued_icp or None,
+                    delivery_id=bound_delivery.pk,
+                    delay_seconds=(due_at - timezone.now()).total_seconds(),
+                    sequence_name=sequence_name,
+                    channel=channel,
+                    step_index=step_index,
+                )
+                return
+
     # Check uncertainty and immutable delivery identity before deferring work.
     # Recovered confirmed media only repairs bookkeeping, so it needs no quota.
     if (

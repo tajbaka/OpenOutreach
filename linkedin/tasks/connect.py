@@ -913,6 +913,12 @@ def enqueue_follow_up(
         payload["channel"] = OutboundDelivery.Channel.LINKEDIN_FOLLOWUP
         payload["operator"] = canonical_operator
         payload.update(task_payload_for_delivery(delivery))
+        # Explicit-delivery retries may defer a send, never pull its due date
+        # forward. Startup and quota recovery must preserve the sequence floor.
+        delay_seconds = max(
+            delay_seconds,
+            (delivery.scheduled_at - timezone.now()).total_seconds(),
+        )
 
     task = _enqueue_task(
         task_type=Task.TaskType.FOLLOW_UP,

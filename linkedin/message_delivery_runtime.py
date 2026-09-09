@@ -49,6 +49,11 @@ def bind_delivery_task(
     locked.task = task
     update_fields = {"task", "updated_at"}
     if locked.status != OutboundDelivery.Status.SENT:
+        # An existing pending Task may predate the frozen delivery's due time.
+        # Binding it must repair that Task, not erase the delivery's delay.
+        if task.scheduled_at < locked.scheduled_at:
+            task.scheduled_at = locked.scheduled_at
+            task.save(update_fields=["scheduled_at"])
         locked.status = OutboundDelivery.Status.QUEUED
         locked.scheduled_at = task.scheduled_at
         update_fields.update({"status", "scheduled_at"})
@@ -77,6 +82,14 @@ def mark_delivery_status(
         )
     if locked.status == OutboundDelivery.Status.STOPPED and status != locked.status:
         raise MessageDeliveryError(f"stopped delivery {locked.pk} cannot be resumed")
+    if (
+        status == OutboundDelivery.Status.SENDING
+        and locked.channel == OutboundDelivery.Channel.LINKEDIN_FOLLOWUP
+        and locked.scheduled_at > timezone.now()
+    ):
+        raise MessageDeliveryError(
+            f"delivery {locked.pk} cannot send before its scheduled time"
+        )
     locked.status = status
     update_fields = {"status", "updated_at"}
     if status == OutboundDelivery.Status.SENT:

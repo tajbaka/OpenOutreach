@@ -525,14 +525,16 @@ def heal_tasks(session):
         logger.info("Task queue healed: %d pending tasks", pending_count)
         return
 
-    # Follow_up tasks for CONNECTED profiles. If the worker was down when a
-    # lead accepted, make sure those follow-ups get a prompt retry on startup.
+    # Recover missing post-accept work, not future sequence steps. Existing
+    # follow-up Tasks retain their cadence/quota deferrals across restarts.
     # Tasks owned by other operators are skipped so the catch-up only enqueues
     # work this daemon's account can actually do.
     from linkedin.db.messages import lead_outbound_operators
     from linkedin.icp_outbound import resolve_icp
     from linkedin.tasks.follow_up_submission import unresolved_submission_keys
     from linkedin.tasks.stop_checks import automation_stop_reason
+    from linkedin.tasks.connect import enqueue_follow_up
+    from linkedin.models import OutboundDelivery
 
     unresolved_media_keys = unresolved_submission_keys()
     for campaign in _active_campaigns(session):
@@ -543,7 +545,6 @@ def heal_tasks(session):
         ).select_related("lead").order_by("update_date", "id")
 
         created = 0
-        rescheduled = 0
         skipped_other_operator = 0
         skipped_stopped = 0
         skipped_drip_owned = 0
@@ -581,21 +582,38 @@ def heal_tasks(session):
                 if automation_stop_reason(deal):
                     skipped_stopped += 1
                     continue
+                if Task.objects.filter(
+                    task_type=Task.TaskType.FOLLOW_UP,
+                    status__in=[Task.Status.PENDING, Task.Status.RUNNING],
+                    payload__campaign_id=campaign.pk,
+                    payload__public_id=public_id,
+                    payload__operator=our_operator,
+                ).exists():
+                    continue
+                # Never recreate a Task around held or interrupted deliveries.
+                # Missing send receipts require reconciliation, not a new bind.
+                if OutboundDelivery.objects.filter(
+                    enrollment__deal=deal,
+                    operator=our_operator,
+                    channel=OutboundDelivery.Channel.LINKEDIN_FOLLOWUP,
+                    status__in=[
+                        OutboundDelivery.Status.SENDING,
+                        OutboundDelivery.Status.UNCLEAR,
+                        OutboundDelivery.Status.STOPPED,
+                    ],
+                ).exists():
+                    continue
                 target_time = base_time + timedelta(seconds=index * 30)
-                was_created, was_rescheduled = _bring_task_forward(
-                    Task.TaskType.FOLLOW_UP,
-                    {
-                        "campaign_id": campaign.pk,
-                        "public_id": public_id,
-                        "operator": our_operator,
-                        "icp": resolve_icp(deal.lead),
-                    },
-                    target_time,
-                    dedup_keys=["campaign_id", "public_id", "operator"],
-                    preserve_existing_payload=True,
+                # The canonical enqueue path preserves versioned identity and
+                # derives missing deliveries' due times from the frozen program.
+                recovered_task = enqueue_follow_up(
+                    campaign.pk,
+                    public_id,
+                    operator=our_operator,
+                    icp=resolve_icp(deal.lead),
+                    delay_seconds=max(0, (target_time - timezone.now()).total_seconds()),
                 )
-            created += int(was_created)
-            rescheduled += int(was_rescheduled)
+            created += int(recovered_task is not None)
         if skipped_other_operator:
             logger.info(
                 "[%s] follow-up catch-up: skipped %d lead(s) owned by other operators",
@@ -619,12 +637,11 @@ def heal_tasks(session):
                 campaign,
                 skipped_uncertain_media,
             )
-        if created or rescheduled:
+        if created:
             logger.info(
-                "[%s] follow-up catch-up queued: %d created, %d rescheduled",
+                "[%s] follow-up catch-up queued: %d missing tasks recovered",
                 campaign,
                 created,
-                rescheduled,
             )
 
     pending_count = Task.objects.pending().count()
