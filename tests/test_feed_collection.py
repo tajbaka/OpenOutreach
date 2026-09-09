@@ -10,6 +10,7 @@ from linkedin.feed_collection import (
     CollectionResult,
     FeedPostRecord,
     _collect_from_page,
+    _retry_feed_startup,
     claim_due_collection_job,
     catchup_start_date,
     collection_cutoff_for_job,
@@ -31,6 +32,33 @@ from linkedin.models import (
     LinkedInFeedObservation,
     LinkedInFeedPost,
 )
+
+
+def test_retry_feed_startup_recovers_from_transient_failures(monkeypatch):
+    attempts = []
+    monkeypatch.setattr("linkedin.feed_collection.time.sleep", lambda seconds: None)
+
+    def operation():
+        attempts.append(True)
+        if len(attempts) < 3:
+            raise RuntimeError("transient")
+        return "connected"
+
+    assert _retry_feed_startup(operation, label="test") == "connected"
+    assert len(attempts) == 3
+
+
+def test_retry_feed_startup_raises_after_bound(monkeypatch):
+    attempts = []
+    monkeypatch.setattr("linkedin.feed_collection.time.sleep", lambda seconds: None)
+
+    def operation():
+        attempts.append(True)
+        raise RuntimeError("still unavailable")
+
+    with pytest.raises(RuntimeError, match="still unavailable"):
+        _retry_feed_startup(operation, label="test")
+    assert len(attempts) == 3
 
 
 def _record(**overrides) -> FeedPostRecord:

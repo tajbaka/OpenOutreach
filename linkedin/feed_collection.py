@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, time as dt_time, timedelta, timezone as dt_timezone
 from urllib.parse import urlsplit, urlunsplit
@@ -36,6 +37,10 @@ from linkedin.models import (
 logger = logging.getLogger(__name__)
 
 FEED_URL = "https://www.linkedin.com/feed/"
+_FEED_STARTUP_ATTEMPTS = 3
+_FEED_STARTUP_RETRY_SECONDS = 3
+_CDP_CONNECT_TIMEOUT_MS = 30_000
+_FEED_NAVIGATION_TIMEOUT_MS = 45_000
 _ACTIVITY_RE = re.compile(r"urn:li:(?:activity|share):\d+")
 _RELATIVE_TIME_RE = re.compile(r"\b(now|(\d+)\s*(mo|yr|s|m|h|d|w|y))\b", re.IGNORECASE)
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -332,7 +337,13 @@ def collect_feed_for_job(
     )
 
     with sync_playwright() as pw:
-        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
+        browser = _retry_feed_startup(
+            lambda: pw.chromium.connect_over_cdp(
+                f"http://127.0.0.1:{cdp_port}",
+                timeout=_CDP_CONNECT_TIMEOUT_MS,
+            ),
+            label="CDP attach",
+        )
         if not browser.contexts:
             raise RuntimeError("no shared browser context available over CDP")
         context = browser.contexts[0]
@@ -366,7 +377,14 @@ def _collect_from_page(
     scroll_pause_seconds: float,
     window_end_at: datetime | None = None,
 ) -> CollectionResult:
-    page.goto(FEED_URL, wait_until="commit", timeout=45_000)
+    _retry_feed_startup(
+        lambda: page.goto(
+            FEED_URL,
+            wait_until="commit",
+            timeout=_FEED_NAVIGATION_TIMEOUT_MS,
+        ),
+        label="feed navigation",
+    )
     page.wait_for_timeout(2000)
 
     processed: set[str] = set()
@@ -429,6 +447,23 @@ def _collect_from_page(
         observations_created=observations_created,
         repeated_observations=repeated_observations,
     )
+
+
+def _retry_feed_startup(operation, *, label: str):
+    for attempt in range(1, _FEED_STARTUP_ATTEMPTS + 1):
+        try:
+            return operation()
+        except Exception:
+            if attempt == _FEED_STARTUP_ATTEMPTS:
+                raise
+            logger.warning(
+                "LinkedIn feed %s failed (%d/%d); retrying in %ss",
+                label,
+                attempt,
+                _FEED_STARTUP_ATTEMPTS,
+                _FEED_STARTUP_RETRY_SECONDS,
+            )
+            time.sleep(_FEED_STARTUP_RETRY_SECONDS)
 
 
 def _scroll_feed_page(page) -> None:
