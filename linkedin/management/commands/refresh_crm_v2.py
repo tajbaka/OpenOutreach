@@ -48,7 +48,7 @@ class _CutoverState:
 
 class Command(BaseCommand):
     help = (
-        "Reconcile and publish only Active Accounts and Actions. Defaults to "
+        "Reconcile Active Accounts and Actions, then publish accepted connections awaiting a reply. Defaults to "
         "a no-write, rollback-only dry-run and never sends outreach."
     )
 
@@ -150,6 +150,13 @@ class Command(BaseCommand):
                     )
                     report["publication"]["archive_cleanup"] = cleanup
                     self._pending_cutover = None
+                # Reporting-only projection, independent of CRM human-state
+                # reconciliation. Publish after its DB/cutover commit so a
+                # failure here cannot roll back a verified CRM title swap.
+                # A failed projection still fails the overall scheduled job.
+                from linkedin.notifications.accepted_connections_sheet import sync_accepted_connections
+
+                report["accepted_connections"] = sync_accepted_connections(dry_run=not apply)
         except CrmRefreshAlreadyRunning as exc:
             raise CommandError(str(exc)) from exc
         except SheetsError as exc:

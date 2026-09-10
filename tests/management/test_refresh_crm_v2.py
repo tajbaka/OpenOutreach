@@ -47,6 +47,13 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture(autouse=True)
 def _stub_people_publisher(monkeypatch):
     from linkedin.management.commands import sync_sheets
+    from linkedin.notifications import accepted_connections_sheet
+
+    monkeypatch.setattr(
+        accepted_connections_sheet,
+        "sync_accepted_connections",
+        lambda *, dry_run: {"status": "planned" if dry_run else "published"},
+    )
 
     monkeypatch.setattr(
         sync_sheets,
@@ -366,6 +373,7 @@ def test_existing_dry_run_imports_reconciles_and_replans_inside_rollback(monkeyp
     payload = json.loads(stdout.getvalue())
     assert payload["publication"]["mode"] == "in_place"
     assert payload["human_imports"]["active_account_edits"] == 1
+    assert payload["accepted_connections"]["status"] == "planned"
     assert payload["sheet_plan"]["imports"] == 0
     opportunity.refresh_from_db()
     assert opportunity.owner_id == arian.id
@@ -820,6 +828,7 @@ def test_routine_apply_stages_both_tabs_then_swaps_and_cleans_after_db_commit(
     payload = json.loads(stdout.getvalue())
     assert payload["publication"]["mode"] == "in_place"
     assert payload["publication"]["gate"] == "routine"
+    assert payload["accepted_connections"]["status"] == "published"
     assert payload["publication"]["atomic_cutover"] is True
     assert payload["publication"]["archive_cleanup"] == {
         "attempted": True,

@@ -15,6 +15,15 @@ Google Sheets. `manage.py sync_crm_v2_context` is the scheduled context phase;
 | Drive-only Gemini notes | Interactive connector workflow | `crm.Meeting.gemini_notes_raw` | Secondary meeting context |
 | Granola notes | `sync_crm_v2_context` batch sync | `crm.MeetingNote` and match state | Primary meeting context |
 | LinkedIn messages | `backfill_messages` / daemon listeners | `crm.Message(source=linkedin)` | Communication timeline |
+| LinkedIn connection observations | Daemon connection sweep / explicit historical import | `crm.Deal.connected_at` | Sender-specific accepted/no-reply reporting |
+
+The publication phase (`refresh_crm_v2`) also maintains the five-column
+`Accepted — Awaiting Reply` tab, newest recorded connection first. It removes
+only the matching Lead/sender row once a human inbound LinkedIn or Gmail Message
+has been ingested, not when we send a follow-up. This changes only the generated
+view, never database history or the People ledger. See
+[`crm-refresh-workflow.md`](crm-refresh-workflow.md#accepted-connections-awaiting-a-reply)
+for timestamp limits, sender attribution, and standalone preview/apply commands.
 
 Granola is primary when a deterministic match exists. Stored Gemini content is
 the fallback. Meeting context is attached only after an Action is otherwise

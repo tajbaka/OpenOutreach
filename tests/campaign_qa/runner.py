@@ -39,9 +39,18 @@ def main():
 
     psycopg.connect = local_connect
     import pytest
-    return pytest.main([
+    common = [
         '-p', 'pytest_django.plugin', '-p', 'pytest_mock', '-p', 'tests.campaign_qa.reporting',
         '-q', '--tb=short', '-p', 'no:cacheprovider', '--strict-markers',
+    ]
+    if os.environ.get('CAMPAIGN_QA_SUITE') == 'accepted-connections':
+        return pytest.main(common + [
+            'tests/test_accepted_connections.py', 'tests/test_accepted_connections_sheet.py',
+            'tests/management/test_refresh_crm_v2.py', 'tests/management/test_sync_sheets.py',
+            'tests/management/test_notify_sync_sheets_health.py', 'tests/management/test_generate_followups.py',
+            'tests/test_crm_v2_evidence.py', 'tests/test_crm_lock.py',
+        ])
+    return pytest.main(common + [
         'tests/campaign_qa/test_imported_campaigns.py',
         'tests/test_general_icp_json.py', 'tests/test_general_icp_messages.py',
         'tests/test_message_roles.py', 'tests/test_message_delivery.py',
@@ -67,6 +76,8 @@ def main():
         'tests/test_lead_role_tag.py', 'tests/test_sales_nav_saved_search_exports.py',
         'tests/management/test_review_general_icp_messages.py',
         'tests/management/test_sync_sheets.py', 'tests/test_sheets.py',
+        'tests/test_accepted_connections.py', 'tests/test_accepted_connections_sheet.py',
+        'tests/management/test_refresh_crm_v2.py', 'tests/test_crm_lock.py',
         'tests/management/test_sync_gmail_context_failures.py',
     ])
 

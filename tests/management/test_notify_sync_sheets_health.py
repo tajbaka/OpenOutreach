@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import re
 
 from linkedin.management.commands import notify_sync_sheets_health as health
 
@@ -118,11 +119,13 @@ def test_scheduled_wrapper_runs_context_then_routine_v2_refresh():
     root = Path(__file__).resolve().parents[2]
     wrapper = (root / "scripts" / "run_sync_sheets.ps1").read_text(encoding="utf-8")
 
-    context = "manage.py sync_crm_v2_context --apply"
-    refresh = "manage.py refresh_crm_v2 --apply --routine"
-    assert wrapper.index(context) < wrapper.index(refresh)
-    assert "--manual-pin StackArmor" in wrapper
-    assert "--owner-override Ramp=Arian" in wrapper
-    assert "--owner-override StackArmor=Arian" in wrapper
+    # The runner passes native argument arrays, not a shell command string.
+    commands = [re.findall(r'"([^"\n]*)"', block) for block in
+                re.findall(r'Invoke-LoggedPython -Arguments @\((.*?)\)', wrapper, re.S)]
+    assert commands == [
+        ["manage.py", "sync_crm_v2_context", "--apply"],
+        ["manage.py", "refresh_crm_v2", "--apply", "--routine", "--manual-pin",
+         "StackArmor", "--owner-override", "Ramp=Arian", "--owner-override", "StackArmor=Arian"],
+    ]
     assert '"crm_v2_task.log"' in wrapper
     assert "manage.py refresh_crm --apply" not in wrapper

@@ -23,6 +23,8 @@ INPUTS = (ROOT / 'linkedin/icp_messages.json', ROOT / 'gmail/icp_emails.json')
 def run() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, help='New directory for QA reports; never overwritten')
+    parser.add_argument('--suite', choices=('campaigns', 'accepted-connections'), default='campaigns',
+                        help='Full campaign QA or the focused accepted-connections/CRM sync regression suite')
     args = parser.parse_args()
     expected_python = ROOT / '.venv/bin/python'
     if Path(sys.prefix).resolve() != (ROOT / '.venv').resolve():
@@ -61,6 +63,7 @@ def run() -> int:
                'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1', 'PYTHONDONTWRITEBYTECODE': '1',
                'DJANGO_SETTINGS_MODULE': 'tests.campaign_qa.settings',
                'CAMPAIGN_QA_SOCKET': str(socket_dir), 'CAMPAIGN_QA_RUN': run_id,
+               'CAMPAIGN_QA_SUITE': args.suite,
                'CAMPAIGN_QA_OUTPUT': str(output)}
         print(f'Campaign QA: {version}; private socket; all external delivery blocked.\nReports: {output}', flush=True)
         with (output / 'test-output.log').open('w', encoding='utf-8') as log:
@@ -87,6 +90,7 @@ def run() -> int:
         shutil.rmtree(cluster)
         unchanged = fingerprints == {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in INPUTS}
         receipt = {'run_id': run_id, 'postgres_version': version, 'exit_code': result,
+                   'suite': args.suite,
                    'input_sha256': fingerprints, 'input_files_unchanged': unchanged,
                    'private_cluster_started': started, 'private_cluster_stopped_and_removed': stopped,
                    'live_sending': False, 'production_database_access': False}
