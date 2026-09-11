@@ -9,7 +9,8 @@ from django.db import InterfaceError, OperationalError, connection, connections,
 
 from crm.models import Deal
 from linkedin.models import Campaign, LinkedInProfile, Task
-from linkedin.supervisor_control import consume_sender_restart
+from linkedin.exceptions import SupervisorControlError
+from linkedin.supervisor_control import consume_sender_restart, read_sender_stop
 from tests.factories import UserFactory
 
 
@@ -56,6 +57,58 @@ def test_false_flag_does_not_restart():
     assert consume_sender_restart(linkedin_username="local@example.com", restart=callback) is False
 
     callback.assert_not_called()
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+def test_stop_read_is_exact_sender_scoped_and_never_clears_flags(stopped):
+    local = _profile(active=False)
+    other = _profile("other@example.com")
+    LinkedInProfile.objects.filter(pk=local.pk).update(stop_requested=stopped)
+    LinkedInProfile.objects.filter(pk=other.pk).update(stop_requested=not stopped)
+    before = list(LinkedInProfile.objects.order_by("pk").values())
+
+    assert read_sender_stop(linkedin_username=" LOCAL@example.com ") is stopped
+    assert read_sender_stop(linkedin_username=" LOCAL@example.com ") is stopped
+    assert list(LinkedInProfile.objects.order_by("pk").values()) == before
+
+
+@pytest.mark.parametrize("username", ["", "   ", "missing@example.com"])
+def test_stop_read_fails_closed_on_missing_identity(username):
+    _profile()
+    with pytest.raises(SupervisorControlError):
+        read_sender_stop(linkedin_username=username)
+
+
+def test_stop_read_never_uses_django_identity_or_operator_alias():
+    local = _profile("ariantajbakh@gmail.com")
+    for username in (local.user.username, "Arian", "arian@boundera.io"):
+        with pytest.raises(SupervisorControlError, match="matches no profiles"):
+            read_sender_stop(linkedin_username=username)
+
+
+def test_stop_read_fails_closed_on_case_insensitive_duplicate_even_if_inactive():
+    local = _profile()
+    _profile("LOCAL@example.com", active=False)
+    with pytest.raises(SupervisorControlError, match="matches multiple profiles"):
+        read_sender_stop(linkedin_username=local.linkedin_username)
+
+
+def test_stop_read_database_error_propagates():
+    with patch.object(LinkedInProfile.objects, "filter", side_effect=OperationalError("unavailable")):
+        with pytest.raises(OperationalError, match="unavailable"):
+            read_sender_stop(linkedin_username="local@example.com")
+
+
+def test_stop_latch_prevents_restart_and_is_never_consumed():
+    local = _profile()
+    LinkedInProfile.objects.filter(pk=local.pk).update(stop_requested=True)
+    before = LinkedInProfile.objects.values().get(pk=local.pk)
+    callback = Mock(return_value=True)
+
+    assert consume_sender_restart(linkedin_username=local.linkedin_username, restart=callback) is False
+
+    callback.assert_not_called()
+    assert LinkedInProfile.objects.values().get(pk=local.pk) == before
 
 
 @pytest.mark.parametrize("username", ["", "   ", "missing@example.com"])

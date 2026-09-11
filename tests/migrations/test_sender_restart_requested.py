@@ -34,7 +34,7 @@ def test_restart_migration_defaults_false_and_preserves_existing_profile_fields(
         old_profile = old_apps.get_model("linkedin", "LinkedInProfile")
         assert "restart_requested" not in {field.name for field in old_profile._meta.fields}
         assert list(old_profile.objects.order_by("pk").values()) == [
-            {key: value for key, value in profile.items() if key != "restart_requested"}
+            {key: value for key, value in profile.items() if key not in {"restart_requested", "stop_requested"}}
             for profile in expected
         ]
 

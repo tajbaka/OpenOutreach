@@ -3,6 +3,18 @@ class AuthenticationError(Exception):
     pass
 
 
+class SupervisorControlError(Exception):
+    """The local sender cannot be resolved safely for supervisor controls."""
+
+
+class SupervisorStopped(Exception):
+    """An emergency stop prevents the supervisor from launching workers."""
+
+
+class SupervisorShutdownError(Exception):
+    """Owned processes survived the supervisor's terminate/kill deadlines."""
+
+
 class TerminalStateError(Exception):
     """Profile is already done or dead — caller must skip it"""
     pass

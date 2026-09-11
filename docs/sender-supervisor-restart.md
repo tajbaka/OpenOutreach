@@ -4,6 +4,12 @@ Set `LinkedInProfile.restart_requested` to true to request replacement of that
 sender's supervisor-managed workers. It defaults false and is available as a
 checkbox on the LinkedIn Profiles admin page.
 
+The emergency-stop extension adds a persistent `stop_requested` latch that takes
+priority over restart and a completed-trigger alert in the same ops Slack channel
+as Git-pull updates. Stop alerts use the replies channel instead. See
+[sender emergency stop](sender-supervisor-stop.md) for its separate deployment
+and verification status; this extension is not yet live-tested.
+
 ## Requesting a restart
 
 ```bash

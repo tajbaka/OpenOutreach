@@ -550,6 +550,13 @@ class LinkedInProfile(models.Model):
         default=False,
         help_text="Request a one-shot sender worker restart at the next supervisor poll.",
     )
+    stop_requested = models.BooleanField(
+        default=False,
+        help_text=(
+            "Latch an emergency stop for this sender's supervised workers. "
+            "Remains set until explicitly cleared; clearing does not restart workers."
+        ),
+    )
     connect_daily_limit = models.PositiveIntegerField(default=20)
     connect_weekly_limit = models.PositiveIntegerField(default=100)
     follow_up_daily_limit = models.PositiveIntegerField(default=30)

@@ -16,6 +16,30 @@ Detailed module documentation for OpenOutreach. See `CLAUDE.md` for rules and qu
 
 ## Entry Flow
 
+`supervisor_safety.py` adds a persistent emergency-stop lane using the exact
+local sender's `LinkedInProfile.stop_requested` (migration 0033). Startup requires
+a known-clear flag before workers launch. A separate watchdog polls about every
+15 seconds using its own bounded thread-local DB connection, independently of
+Git and the restart timer. All supervisor subprocesses pass through a shared
+launch gate and owned-process registry, including Git/install/migration commands;
+stop latches cancellation, snapshots known descendants, terminates/escalates only
+owned identities, then notifies. New launches are refused even during crash or
+Git recovery. A persistent stop blocks future supervisor starts until explicitly
+cleared; clearing alone never starts anything. Runtime transient DB outages are
+unknown/retry states, not stop acknowledgements; unexpected control failures stop
+owned work and propagate. Unobserved pre-existing orphans and unrelated processes
+are intentionally outside ownership. `request_sender_stop` arms only an exact
+sender and cancels pending restart, while `--clear --apply` clears only the latch.
+Restart requests and consumption refuse a latched stop; Admin preserves concurrent
+flag edits through locked selective saves and hidden original checkbox values.
+Restart acknowledgement alerts use ops Slack, emergency shutdown uses the replies
+channel (ops fallback); notification failure cannot delay process termination.
+See `docs/sender-supervisor-stop.md` for deployment and live-proof requirements.
+The extension's isolated QA passed 1,704 tests plus 1,148 message previews
+(`artifacts/qa/campaigns/20260911T025222371756Z/`). A separate synthetic macOS
+owned-process shutdown smoke also passed; neither exercise verifies deployed
+remote Windows supervisors, the production migration, or live Slack delivery.
+
 `daemon_supervisor.py` is the canonical normal process entrypoint. `make run`,
 `make run-awake`, `run-openoutreach-awake.ps1`, and the Docker start script all
 launch it. It supervises two independent children: the browser-backed LinkedIn

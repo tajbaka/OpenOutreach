@@ -11,6 +11,11 @@ from django.db import InterfaceError, OperationalError, ProgrammingError, connec
 import daemon_supervisor as supervisor
 
 
+@pytest.fixture(autouse=True)
+def no_live_restart_notification(monkeypatch):
+    monkeypatch.setattr(supervisor, "_notify_restart_trigger", Mock())
+
+
 def _args(**overrides):
     values = dict(once=False, no_update=True, no_install=True, no_migrate=True,
                   requirements="requirements/local.txt", poll_seconds=300, restart_delay=10)
@@ -284,6 +289,11 @@ def test_child_crashes_do_not_reset_or_starve_control_timer(monkeypatch):
 
     monkeypatch.setattr(supervisor, "_start_daemon", start)
     monkeypatch.setattr(supervisor, "_poll_runtime_controls", poll)
-    assert supervisor.supervise(_args(poll_seconds=30)) == 0
+    stopped = Event()
+    safety = SimpleNamespace(
+        stopped=stopped, raise_if_failed=lambda: None,
+        request_stop=lambda **kwargs: stopped.set(),
+    )
+    assert supervisor._supervise_workers(_args(poll_seconds=30), safety) == 0
     assert polls == [30]
     assert len(starts) == 4

@@ -1,6 +1,6 @@
 """Slack notifications via incoming webhook.
 
-Eleven surfaces:
+Thirteen surfaces:
 
 1. `notify_connection_accepted` — fires when a connection invite gets
    accepted *and* the lead replied during the sweep. Single Block Kit message
@@ -36,19 +36,25 @@ Eleven surfaces:
 11. `notify_feed_comment_*` — edits the original high-signal feed alert after
     a human-approved public LinkedIn comment task is sent, skipped, uncertain,
     or failed.
+12. `notify_supervisor_restart` — confirms a sender-triggered worker process
+    relaunch, without claiming authenticated or healthy outbound workers.
+13. `notify_supervisor_stop` — reports an operator-triggered emergency stop.
 
 Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
     + `notify_status_summary` + `notify_sweep_summary` + `notify_connect_button_missing`
-    + `notify_connect_send_failed`
+    + `notify_connect_send_failed` + `notify_supervisor_restart`
     → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
     (replies: a lead replied, and the enrichment results that follow).
   - LinkedIn feed intent and FedRAMP marketplace signals → SLACK_HIGH_SIGNAL_URL.
+  - `notify_supervisor_stop` → SLACK_REPLIES_WEBHOOK_URL, with ops fallback
+    only when the replies webhook is missing or posting fails.
 
 Each surface no-ops when its target webhook is unset, so callers don't need
 to guard. The two webhooks are independent — an unset SLACK_REPLIES_WEBHOOK_URL
 silently drops reply/enrichment notifications rather than routing them to ops.
+Emergency-stop alerts are the explicit exception because they are safety alerts.
 """
 from __future__ import annotations
 
@@ -1207,6 +1213,65 @@ def notify_degraded(*, sender: str, title: str, detail: str) -> None:
     ]
     payload = {"text": f":warning: {title}", "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"degraded ({sender})")
+
+
+def _supervisor_control_payload(
+    *, sender: str, title: str, detail: str, context: str,
+) -> dict:
+    """Build a bounded control alert with escaped Slack mentions and links."""
+    safe_sender = _escape_slack_text(sender)[:200]
+    safe_detail = _escape_slack_text(detail)[:_SLACK_MESSAGE_BODY_LIMIT]
+    return {
+        "text": f"{title} — {safe_sender}",
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*{title}*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": safe_detail or context}},
+            {"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f"*Node:* {safe_sender}"},
+                {"type": "mrkdwn", "text": context},
+            ]},
+        ],
+    }
+
+
+def notify_supervisor_restart(*, sender: str, detail: str) -> bool:
+    """Report a completed restart trigger to the same ops channel as Git pulls.
+
+    Call only after the supervisor has relaunched its managed worker processes.
+    The result records Slack delivery, not worker authentication or health.
+    Missing or failed ops posting never falls back to the replies channel.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return False
+    payload = _supervisor_control_payload(
+        sender=sender,
+        title="Sender restart trigger completed",
+        detail=detail,
+        context="Worker process launch only; login and sending health are not confirmed.",
+    )
+    return _post_to_slack(SLACK_WEBHOOK_URL, payload, "sender-restart-trigger")
+
+
+def notify_supervisor_stop(*, sender: str, detail: str) -> bool:
+    """Report an operator stop trigger to replies, falling back to ops if needed.
+
+    The caller supplies the actual shutdown outcome in ``detail``. This helper
+    neither changes control flags nor claims an unexpected crash occurred.
+    Return whether an alert was delivered to either configured channel.
+    """
+    payload = _supervisor_control_payload(
+        sender=sender,
+        title="Emergency stop activated",
+        detail=detail,
+        context="Supervisor safety shutdown. Scope: this sender's managed workers.",
+    )
+    if SLACK_REPLIES_WEBHOOK_URL and _post_to_slack(
+        SLACK_REPLIES_WEBHOOK_URL, payload, "sender-emergency-stop",
+    ):
+        return True
+    if SLACK_WEBHOOK_URL and SLACK_WEBHOOK_URL != SLACK_REPLIES_WEBHOOK_URL:
+        return _post_to_slack(SLACK_WEBHOOK_URL, payload, "sender-emergency-stop-ops-fallback")
+    return False
 
 
 def notify_sweep_summary(

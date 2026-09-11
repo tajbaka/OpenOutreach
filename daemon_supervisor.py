@@ -22,6 +22,9 @@ from pathlib import Path
 from shutil import which
 from zoneinfo import ZoneInfo
 
+from linkedin.exceptions import SupervisorStopped
+from supervisor_safety import SupervisorSafety
+
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_POLL_SECONDS = 300
@@ -34,6 +37,14 @@ REQUIREMENT_PATHS = (
 )
 
 logger = logging.getLogger("daemon_supervisor")
+_safety: SupervisorSafety | None = None
+
+
+def _launch(args, **kwargs):
+    """Register every supervisor child, including Git, behind the stop gate."""
+    if _safety is not None:
+        return _safety.launch(args, **kwargs)
+    return subprocess.Popen(args, **kwargs)
 
 
 def _load_env() -> None:
@@ -71,14 +82,17 @@ class CommandResult:
 def _run(args: list[str], *, check: bool = False) -> CommandResult:
     args = [_resolve_executable(args[0]), *args[1:]]
     logger.debug("$ %s", " ".join(args))
-    proc = subprocess.run(
+    proc = _launch(
         args,
         cwd=ROOT_DIR,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
     )
-    result = CommandResult(proc.returncode, proc.stdout or "", proc.stderr or "")
+    stdout, stderr = proc.communicate()
+    if _safety is not None and _safety.stopped.is_set():
+        raise SupervisorStopped("Supervisor stop interrupted its command")
+    result = CommandResult(proc.returncode, stdout or "", stderr or "")
     if check and result.returncode != 0:
         raise RuntimeError(
             f"{' '.join(args)} failed with exit {result.returncode}\n"
@@ -100,6 +114,36 @@ def _notify(title: str, detail: str) -> None:
         notify_degraded(sender=sender, title=title, detail=detail[:2800])
     except Exception as exc:
         logger.debug("Slack supervisor notification failed: %s", exc)
+
+
+def _notify_restart_trigger() -> None:
+    from linkedin.notifications.slack import notify_supervisor_restart
+    from linkedin.operators import resolve_operator
+
+    sender = resolve_operator(os.getenv("LINKEDIN_USERNAME", "").strip()) or "supervisor"
+    notify_supervisor_restart(
+        sender=sender,
+        detail="The database restart trigger was acknowledged after replacement worker processes launched. The restart flag is now cleared.",
+    )
+
+
+def _notify_emergency_stop(reason: str) -> None:
+    from linkedin.notifications.slack import notify_supervisor_stop
+    from linkedin.operators import resolve_operator
+
+    sender = resolve_operator(os.getenv("LINKEDIN_USERNAME", "").strip()) or "supervisor"
+    if reason == "sender_stop":
+        detail = (
+            "The sender's emergency-stop flag is active. This supervisor's owned process trees "
+            "have been stopped and new launches are blocked. The stop flag stays set until explicitly "
+            "cleared; clearing it alone does not restart the supervisor."
+        )
+    else:
+        detail = (
+            f"Supervisor safety shutdown encountered `{reason}`. New launches are blocked; "
+            "check the supervisor terminal and confirm all owned processes stopped before restarting."
+        )
+    notify_supervisor_stop(sender=sender, detail=detail)
 
 
 def _is_git_checkout() -> bool:
@@ -247,6 +291,8 @@ def _pull_update(*, install: bool, migrate: bool, requirements_file: str) -> boo
             f"Pulled {behind} commit(s) from `{upstream}` and restarted daemon.",
         )
         return True
+    except SupervisorStopped:
+        raise
     except Exception as exc:
         if stash_message and not stash_popped:
             try:
@@ -316,8 +362,45 @@ def _maybe_consume_sender_restart(restart) -> bool:
         connection.close()
 
 
+def _read_sender_stop_state() -> bool | None:
+    """Thread-local bounded control read; None means unavailable, not cleared."""
+    import django
+    from django.db import InterfaceError, OperationalError, ProgrammingError, connection
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
+    django.setup()
+    from linkedin.supervisor_control import read_sender_stop
+
+    identity = os.getenv("LINKEDIN_USERNAME", "").strip()
+    options = connection.settings_dict.setdefault("OPTIONS", {})
+    options.update(
+        connect_timeout=5, keepalives=1, keepalives_idle=5,
+        keepalives_interval=5, keepalives_count=2, tcp_user_timeout=15000,
+    )
+    limits = "-c statement_timeout=5000 -c lock_timeout=1000"
+    extra = options.get("options", "").strip()
+    if not extra.endswith(limits):
+        options["options"] = f"{extra} {limits}".strip()
+    try:
+        connection.close()
+        return read_sender_stop(linkedin_username=identity)
+    except (OperationalError, InterfaceError) as exc:
+        logger.warning("Emergency-stop check unavailable (%s)", type(exc).__name__)
+        return None
+    except ProgrammingError as exc:
+        cause = exc.__cause__
+        if getattr(cause, "sqlstate", None) == "42703" and "stop_requested" in str(cause):
+            logger.error("Emergency-stop schema is missing; install migration 0033 before starting workers")
+            return None
+        raise
+    finally:
+        connection.close()
+
+
 def _poll_runtime_controls(args: argparse.Namespace, restart) -> bool:
     """Coalesce a code update and a sender request into one child restart."""
+    if _safety is not None and not _safety.preflight():
+        return False
     updated = _maybe_pull_update(args)
     attempted = False
     restarted = False
@@ -328,10 +411,14 @@ def _poll_runtime_controls(args: argparse.Namespace, restart) -> bool:
         restarted = restart("git_pull" if updated else "sender_restart")
         return restarted
 
-    _maybe_consume_sender_restart(perform_restart)
+    acknowledged = _maybe_consume_sender_restart(perform_restart)
+    if acknowledged:
+        _notify_restart_trigger()
     # If acknowledgement failed after children started, do not restart them a
     # second time in this same poll. The unacknowledged flag remains retryable.
     if updated and not attempted:
+        if _safety is not None and not _safety.preflight():
+            return False
         perform_restart()
     return restarted
 
@@ -344,14 +431,14 @@ def _start_daemon(*, restart_reason: str = "") -> subprocess.Popen:
     else:
         env.pop("OPENOUTREACH_RESTART_REASON", None)
     logger.warning("Starting daemon child")
-    return subprocess.Popen([sys.executable, "manage.py"], cwd=ROOT_DIR, env=env)
+    return _launch([sys.executable, "manage.py"], cwd=ROOT_DIR, env=env)
 
 
 def _start_feed_collector() -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
     logger.warning("Starting LinkedIn feed collector child")
-    return subprocess.Popen(
+    return _launch(
         [sys.executable, "manage.py", "collect_linkedin_feed"],
         cwd=ROOT_DIR,
         env=env,
@@ -375,7 +462,7 @@ def _start_gmail_worker(account_key: str) -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
     logger.warning("Starting Gmail worker child for %s", account_key)
-    return subprocess.Popen(
+    return _launch(
         [
             sys.executable,
             "manage.py",
@@ -561,9 +648,32 @@ def _feed_collection_retry_seconds() -> int:
 
 
 def supervise(args: argparse.Namespace) -> int:
+    """Run no workers until the persistent stop latch has been read safely."""
+    global _safety
     if args.once:
         updated = _maybe_pull_update(args)
         return 0 if updated else 1
+
+    safety = SupervisorSafety(check_stop=_read_sender_stop_state, on_stop=_notify_emergency_stop)
+    _safety = safety
+    try:
+        if not safety.preflight():
+            logger.warning("Supervisor startup blocked by emergency stop or unavailable control state")
+            return 0 if safety.emergency else 1
+        safety.start()
+        return _supervise_workers(args, safety)
+    except SupervisorStopped:
+        safety.raise_if_failed()
+        return 0
+    finally:
+        try:
+            safety.request_stop(emergency=False)
+        finally:
+            safety.close()
+            _safety = None
+
+
+def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> int:
 
     stop = False
     child: subprocess.Popen | None = None
@@ -577,12 +687,7 @@ def supervise(args: argparse.Namespace) -> int:
         nonlocal stop
         logger.warning("Received signal %s; stopping supervisor", signum)
         stop = True
-        if child is not None:
-            _stop_daemon(child)
-        if gmail_child is not None:
-            _stop_process(gmail_child, label="Gmail worker")
-        if feed_child is not None:
-            _stop_process(feed_child, label="LinkedIn feed collector")
+        safety.request_stop(emergency=False)
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -591,7 +696,8 @@ def supervise(args: argparse.Namespace) -> int:
         nonlocal child, gmail_child, feed_child, feed_retry_after
         result = _restart_managed_children(
             child=child, gmail_child=gmail_child, feed_child=feed_child,
-            gmail_account=gmail_account, reason=reason, should_stop=lambda: stop,
+            gmail_account=gmail_account, reason=reason,
+            should_stop=lambda: stop or safety.stopped.is_set(),
         )
         if result is None:
             return False
@@ -600,9 +706,12 @@ def supervise(args: argparse.Namespace) -> int:
             feed_child = None
             feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
         logger.warning("Restarted this sender's managed workers: %s", reason)
-        return not stop
+        return not stop and not safety.stopped.is_set()
 
     initial_updated = _maybe_pull_update(args)
+    safety.raise_if_failed()
+    if safety.stopped.is_set():
+        return 0
     child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
     if gmail_account is None:
         logger.warning(
@@ -614,13 +723,14 @@ def supervise(args: argparse.Namespace) -> int:
     next_poll = time.monotonic() + args.poll_seconds
     next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
 
-    while not stop:
+    while not stop and not safety.stopped.is_set():
+        safety.raise_if_failed()
         # Child exits must not keep resetting/starving the five-minute control
         # timer. --no-update only disables Git; DB restart requests still work.
         if time.monotonic() >= next_poll:
             _poll_runtime_controls(args, restart_children)
             next_poll = time.monotonic() + args.poll_seconds
-            if stop:
+            if stop or safety.stopped.is_set():
                 break
 
         if gmail_child is not None:
@@ -636,7 +746,7 @@ def supervise(args: argparse.Namespace) -> int:
                     f"Account `{gmail_account}` exited with status `{gmail_code}`. Restarting.",
                 )
                 time.sleep(args.restart_delay)
-                if stop:
+                if stop or safety.stopped.is_set():
                     break
                 gmail_child = _start_gmail_worker(gmail_account)
 
@@ -649,7 +759,7 @@ def supervise(args: argparse.Namespace) -> int:
             else:
                 logger.warning("Daemon exited cleanly; restarting in %ss", args.restart_delay)
                 time.sleep(args.restart_delay)
-            if stop:
+            if stop or safety.stopped.is_set():
                 break
             if feed_child is not None and feed_child.poll() is None:
                 _stop_process(feed_child, label="LinkedIn feed collector")
@@ -688,6 +798,7 @@ def supervise(args: argparse.Namespace) -> int:
 
         time.sleep(1)
 
+    safety.raise_if_failed()
     if child is not None:
         _stop_daemon(child)
     if gmail_child is not None:
@@ -733,6 +844,7 @@ def main() -> int:
             args.requirements,
         )
     logger.warning("Supervisor polling sender restart requests every %ss", args.poll_seconds)
+    logger.warning("Supervisor emergency-stop watchdog checks every 15s, independently of Git")
     return supervise(args)
 
 

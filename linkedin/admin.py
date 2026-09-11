@@ -2,6 +2,7 @@
 from django.contrib import admin
 from django import forms
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
 from chat.models import ChatMessage
 
@@ -141,23 +142,75 @@ class OutreachSuppressionAdmin(admin.ModelAdmin):
         apply_suppression_to_existing_leads(obj)
 
 
+class LinkedInProfileAdminForm(forms.ModelForm):
+    class Meta:
+        model = LinkedInProfile
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Preserve the rendered flag values across GET/POST. Without these
+        # hidden initial values Django compares a stale checkbox submission to
+        # the new DB snapshot and mistakes a concurrent flag for a human edit.
+        for field in ("restart_requested", "stop_requested"):
+            if field in self.fields:
+                self.fields[field].show_hidden_initial = True
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance._state.adding:
+            stop = cleaned.get("stop_requested", False)
+        else:
+            stop = (
+                cleaned.get("stop_requested", False)
+                if "stop_requested" in self.changed_data
+                else self.initial.get("stop_requested", False)
+            )
+        arming_stop = "stop_requested" in self.changed_data and cleaned.get("stop_requested")
+        if (
+            stop and not arming_stop
+            and "restart_requested" in self.changed_data
+            and cleaned.get("restart_requested")
+        ):
+            self.add_error("restart_requested", "Clear the emergency stop before requesting a restart.")
+        return cleaned
+
+
 @admin.register(LinkedInProfile)
 class LinkedInProfileAdmin(admin.ModelAdmin):
+    form = LinkedInProfileAdminForm
     list_display = (
-        "user", "linkedin_username", "active", "restart_requested",
+        "user", "linkedin_username", "active", "restart_requested", "stop_requested",
         "legal_accepted",
     )
-    list_filter = ("active", "restart_requested")
-    list_editable = ("active", "restart_requested")
+    list_filter = ("active", "restart_requested", "stop_requested")
+    list_editable = ("active", "restart_requested", "stop_requested")
     raw_id_fields = ("user",)
+
+    def get_changelist_form(self, request, **kwargs):
+        return super().get_changelist_form(request, form=self.form, **kwargs)
 
     def save_model(self, request, obj, form, change):
         if not change:
+            if obj.stop_requested:
+                obj.restart_requested = False
             super().save_model(request, obj, form, change)
         elif form.changed_data:
-            # The supervisor can consume a request while this form is open.
-            # Save only edited fields, never a stale whole-profile snapshot.
-            obj.save(update_fields=form.changed_data)
+            with transaction.atomic():
+                current = LinkedInProfile.objects.select_for_update().only(
+                    "pk", "stop_requested", "restart_requested",
+                ).get(pk=obj.pk)
+                fields = set(form.changed_data)
+                stop = obj.stop_requested if "stop_requested" in fields else current.stop_requested
+                if "stop_requested" in fields and stop:
+                    # Arming a stop always wins over a pending/new restart.
+                    obj.restart_requested = False
+                    fields.add("restart_requested")
+                elif stop and "restart_requested" in fields and obj.restart_requested:
+                    raise ValidationError("Clear the emergency stop before requesting a restart.")
+                # Save only intentional edits under the same lock used by the
+                # commands/consumer; unrelated edits cannot erase either flag.
+                obj.save(update_fields=fields)
 
 
 @admin.register(LinkedInDiscoveryLead)
