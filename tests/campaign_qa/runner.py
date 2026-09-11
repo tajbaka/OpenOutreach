@@ -79,6 +79,8 @@ def main():
         'tests/test_single_instance.py', 'tests/test_daemon_supervisor_gmail.py',
         'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',
         'tests/test_supervisor_control.py',
+        'tests/realtime/test_listener.py', 'tests/realtime/test_supervisor.py',
+        'tests/realtime/test_listener_command.py',
         'tests/test_daemon_resilience.py',
         'tests/gmail/test_delivery.py', 'tests/gmail/test_client.py',
         'tests/gmail/test_templates.py',

@@ -8,8 +8,10 @@ by hand in normal operation, though it can be for debugging.
 from __future__ import annotations
 
 import logging
+import signal
 import sys
 from pathlib import Path
+from threading import Event
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -62,8 +64,19 @@ class Command(BaseCommand):
         )
         guard.acquire()
         logger.info("listen_realtime: starting for operator=%s (%s)", operator, username)
+        stop_event = Event()
+
+        def request_stop(_signum, _frame):
+            stop_event.set()
+
+        previous_handlers = {
+            signum: signal.signal(signum, request_stop)
+            for signum in (signal.SIGTERM, signal.SIGINT)
+        }
         try:
-            code = run_listener(operator=operator, username=username)
+            code = run_listener(operator=operator, username=username, stop_event=stop_event)
         finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
             guard.release()
         sys.exit(code)
