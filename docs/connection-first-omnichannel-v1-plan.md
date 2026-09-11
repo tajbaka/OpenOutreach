@@ -1,16 +1,18 @@
 # Connection-first omnichannel v1
 
 Status: sections 3–6 and sender restart control implemented and verified in
-isolated no-send QA. The user subsequently authorized pushing the finished code
-and testing sender restart flags. Feature-branch publication is the current
-release step; main/live rollout is held for one-time supervisor bootstrap
-coordination. Section 7's new omnichannel campaign pilot has not started.
+isolated no-send QA. The user explicitly authorized merging and pushing the
+finished code to `main`, superseding the earlier feature-branch-only hold.
+Implementation commit `ef7aa6fc` is merged into local `main` for publication.
+Remote rollout and one-time full supervisor bootstrap still need verification
+before the requested flag test. Section 7's new omnichannel pilot has not started.
 Updated: 2026-09-10.
 
 Implementation branch: `codex/connection-first-omnichannel-v1`, created from
 `main` at `b7ea7952`. The subsequent push authorization supersedes the original
 uncommitted-work gate for this release. Preserve the tested drip-role work.
-Publishing the feature branch does not deploy it to main-tracking machines.
+Publishing `main` makes the reviewed code available to main-tracking machines;
+publication alone is not evidence that either remote machine loaded it.
 Before the requested live flag test, install the schema and code and verify a
 full supervisor restart on both selected machines; Git's child-only restarts
 cannot load the new checker into an already running supervisor. Leave flags
@@ -346,11 +348,11 @@ Latest code-source SHA-256:
 Both imported JSON stores stayed unchanged. Private PostgreSQL was stopped and
 removed; no live DB access, provider calls, flags, migrations or restarts were used.
 
-The add-on is not deployed. The user subsequently authorized pushing the code
-and testing the flags after rollout. The release review found no blocker and
-the source fingerprint still matches the passing combined QA. Main/live rollout
-is held for coordination of the schema installation and full supervisor bootstrap
-on selected machines; an older running supervisor cannot load the new polling
+The user explicitly authorized merging and pushing the code to `main` and
+testing the flags after rollout. The release review found no blocker and the
+source fingerprint still matches the passing combined QA. Remote deployment,
+schema installation and full supervisor bootstrap must still be verified on
+selected machines; an older running supervisor cannot load the new polling
 behavior by restarting only its children. No live flag has been set. The new
 omnichannel campaign pilot below remains separately approval-gated and unverified.
 

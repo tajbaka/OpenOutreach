@@ -1,10 +1,11 @@
 # Connection-first v1: review and rollout packet
 
 This is a no-send handoff on `codex/connection-first-omnichannel-v1`, based on
-`b7ea7952`. The user subsequently authorized pushing the finished code and
-testing the sender restart flags. Feature-branch publication is the current
-release step; main/live rollout is held for coordination of the one-time full
-supervisor bootstrap described below. This restart-control test does not
+`b7ea7952`. The user explicitly authorized merging and pushing the finished code
+to `main` and testing the sender restart flags after rollout. Implementation
+commit `ef7aa6fc` is merged into local `main` for publication. Remote code/schema
+pickup and the one-time full supervisor bootstrap described below remain
+unverified; publication alone does not establish either. This restart-control test does not
 authorize creating or activating a new omnichannel campaign. This document is
 an operating reference, not independent authorization for live actions.
 

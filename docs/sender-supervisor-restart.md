@@ -45,10 +45,11 @@ supervisor per sender; this flag is not a distributed worker-ownership system.
 
 ## Deployment and verification
 
-The user authorized pushing the finished code and testing the flags after
-rollout. The release is being published on
-`codex/connection-first-omnichannel-v1`; main/live rollout is held for bootstrap
-coordination. No live flag has been set by implementation or isolated QA.
+The user explicitly authorized merging and pushing the finished code to `main`
+and testing the flags after rollout. Implementation commit `ef7aa6fc` is merged
+into local `main` for publication. Remote code/schema pickup and full supervisor
+bootstrap still need verification. No live flag has been set by implementation
+or isolated QA.
 Migration `0032_linkedinprofile_restart_requested`
 adds the false-default Boolean; it depends on the feature branch's migration 0031.
 
