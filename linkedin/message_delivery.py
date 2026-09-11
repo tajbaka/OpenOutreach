@@ -373,13 +373,18 @@ def ensure_message_enrollment(
     )
 
     from crm.models import Deal
+    from drip.services.ownership import lock_lead_outbound_ownership
 
     with transaction.atomic():
+        lead_id = Deal.objects.values_list("lead_id", flat=True).get(pk=deal.pk)
+        lock_lead_outbound_ownership(lead_id)
         locked_deal = (
-            Deal.objects.select_for_update()
+            Deal.objects.select_for_update(of=("self",))
             .select_related("lead")
             .get(pk=deal.pk)
         )
+        if locked_deal.lead_id != lead_id:
+            raise MessageDeliveryError("Deal Lead changed while acquiring message ownership lock")
         campaign = (
             # Only the campaign pointer is mutable. Locking the nullable
             # version join is invalid on PostgreSQL; versions are immutable.
@@ -389,7 +394,7 @@ def ensure_message_enrollment(
         )
         locked_deal.campaign = campaign
         existing = (
-            CampaignMessageEnrollment.objects.select_for_update()
+            CampaignMessageEnrollment.objects.select_for_update(of=("self",))
             .select_related("message_version__program", "deal__lead", "deal__campaign")
             .filter(deal_id=locked_deal.pk)
             .first()
@@ -575,12 +580,18 @@ def get_or_create_delivery(
 ) -> tuple[OutboundDelivery, bool]:
     """Materialize one immutable delivery, or return its existing frozen row."""
     enrollment = _require_saved_enrollment(enrollment)
+    from drip.services.ownership import lock_lead_outbound_ownership
+
     with transaction.atomic():
+        lead_id = enrollment.deal.lead_id
+        lock_lead_outbound_ownership(lead_id)
         locked = (
-            CampaignMessageEnrollment.objects.select_for_update()
+            CampaignMessageEnrollment.objects.select_for_update(of=("self",))
             .select_related("message_version__program", "deal__lead", "deal__campaign")
             .get(pk=enrollment.pk)
         )
+        if locked.deal.lead_id != lead_id:
+            raise MessageDeliveryError("Enrollment Lead changed while acquiring message ownership lock")
         selected = select_message(
             enrollment=locked,
             channel=channel,

@@ -4,7 +4,8 @@
 Runs the browser-backed LinkedIn daemon and the mapped browserless Gmail worker
 as independent child processes, optionally polls the current Git upstream for
 new commits, and restarts the children after applying updates. This is
-intentionally OS-agnostic: run it in a terminal on macOS, Windows, or Linux.
+also where a sender's database restart request is consumed, independently of
+Git updates. Run it in a terminal on macOS, Windows, or Linux.
 """
 from __future__ import annotations
 
@@ -268,6 +269,73 @@ def _maybe_pull_update(args: argparse.Namespace) -> bool:
     )
 
 
+def _maybe_consume_sender_restart(restart) -> bool:
+    """Read this checkout's exact sender flag without interrupting on DB outages."""
+    identity = os.getenv("LINKEDIN_USERNAME", "").strip()
+    if not identity:
+        logger.warning("Sender restart check skipped: LINKEDIN_USERNAME is not configured")
+        return False
+
+    import django
+    from django.db import InterfaceError, OperationalError, ProgrammingError, connection
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
+    django.setup()
+    from linkedin.supervisor_control import consume_sender_restart
+
+    # This supervisor owns its connection, not the child workers' connections.
+    # Reconnect per poll with a bounded timeout instead of hanging on an idle
+    # connection while child health checks wait behind the DB control read.
+    options = connection.settings_dict.setdefault("OPTIONS", {})
+    options.update(
+        connect_timeout=5, keepalives=1, keepalives_idle=5,
+        keepalives_interval=5, keepalives_count=2, tcp_user_timeout=15000,
+    )
+    # SKIP LOCKED handles competing row consumers, not schema/table locks.
+    # Bound SQL waits too. Preserve other connection options, appending once.
+    limits = "-c statement_timeout=5000 -c lock_timeout=1000"
+    extra_options = options.get("options", "").strip()
+    if not extra_options.endswith(limits):
+        options["options"] = f"{extra_options} {limits}".strip()
+    try:
+        connection.close()
+        return consume_sender_restart(linkedin_username=identity, restart=restart)
+    except (OperationalError, InterfaceError) as exc:
+        logger.warning(
+            "Sender restart check unavailable (%s); request stays pending for the next poll",
+            type(exc).__name__,
+        )
+        return False
+    except ProgrammingError as exc:
+        cause = exc.__cause__
+        if getattr(cause, "sqlstate", None) == "42703" and "restart_requested" in str(cause):
+            logger.warning("Sender restart control migration is not installed; request check skipped")
+            return False
+        raise
+    finally:
+        connection.close()
+
+
+def _poll_runtime_controls(args: argparse.Namespace, restart) -> bool:
+    """Coalesce a code update and a sender request into one child restart."""
+    updated = _maybe_pull_update(args)
+    attempted = False
+    restarted = False
+
+    def perform_restart():
+        nonlocal attempted, restarted
+        attempted = True
+        restarted = restart("git_pull" if updated else "sender_restart")
+        return restarted
+
+    _maybe_consume_sender_restart(perform_restart)
+    # If acknowledgement failed after children started, do not restart them a
+    # second time in this same poll. The unacknowledged flag remains retryable.
+    if updated and not attempted:
+        perform_restart()
+    return restarted
+
+
 def _start_daemon(*, restart_reason: str = "") -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
@@ -350,6 +418,50 @@ def _stop_process(proc: subprocess.Popen, *, label: str, timeout_seconds: int = 
         return
     proc.kill()
     proc.wait(timeout=10)
+
+
+def _restart_managed_children(
+    *, child, gmail_child, feed_child, gmail_account, reason: str, should_stop,
+):
+    """Replace only this supervisor's children; return None on cancellation.
+
+    Successfully launching processes is not a claim that auth or outbound work
+    is healthy. Normal child-exit supervision continues after acknowledgement.
+    """
+    if should_stop():
+        return None
+    if gmail_child is not None:
+        _stop_process(gmail_child, label="Gmail worker")
+    if feed_child is not None:
+        _stop_process(feed_child, label="LinkedIn feed collector")
+    _stop_daemon(child)
+    if should_stop():
+        return None
+
+    replacement = _start_daemon(restart_reason=reason)
+    replacement_gmail = None
+    complete = False
+    try:
+        if should_stop():
+            return None
+        if gmail_account is not None:
+            replacement_gmail = _start_gmail_worker(gmail_account)
+        if should_stop():
+            return None
+        if replacement.poll() is not None or (
+            replacement_gmail is not None and replacement_gmail.poll() is not None
+        ):
+            logger.error("Replacement worker exited during launch; restart request remains pending")
+            return None
+        if should_stop():
+            return None
+        complete = True
+        return replacement, replacement_gmail
+    finally:
+        if not complete:
+            if replacement_gmail is not None:
+                _stop_process(replacement_gmail, label="Gmail worker")
+            _stop_daemon(replacement)
 
 
 def _env_bool(name: str, default: str = "false") -> bool:
@@ -475,6 +587,21 @@ def supervise(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
+    def restart_children(reason: str) -> bool:
+        nonlocal child, gmail_child, feed_child, feed_retry_after
+        result = _restart_managed_children(
+            child=child, gmail_child=gmail_child, feed_child=feed_child,
+            gmail_account=gmail_account, reason=reason, should_stop=lambda: stop,
+        )
+        if result is None:
+            return False
+        child, gmail_child = result
+        if feed_child is not None:
+            feed_child = None
+            feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
+        logger.warning("Restarted this sender's managed workers: %s", reason)
+        return not stop
+
     initial_updated = _maybe_pull_update(args)
     child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
     if gmail_account is None:
@@ -488,6 +615,14 @@ def supervise(args: argparse.Namespace) -> int:
     next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
 
     while not stop:
+        # Child exits must not keep resetting/starving the five-minute control
+        # timer. --no-update only disables Git; DB restart requests still work.
+        if time.monotonic() >= next_poll:
+            _poll_runtime_controls(args, restart_children)
+            next_poll = time.monotonic() + args.poll_seconds
+            if stop:
+                break
+
         if gmail_child is not None:
             gmail_code = gmail_child.poll()
             if gmail_code is not None:
@@ -521,7 +656,6 @@ def supervise(args: argparse.Namespace) -> int:
                 feed_child = None
                 feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
             child = _start_daemon(restart_reason="process_exit")
-            next_poll = time.monotonic() + args.poll_seconds
             continue
 
         if feed_child is not None:
@@ -541,23 +675,6 @@ def supervise(args: argparse.Namespace) -> int:
                         f"Exit status `{feed_code}`. Supervisor will retry later.",
                     )
                 feed_child = None
-
-        if time.monotonic() >= next_poll:
-            if _maybe_pull_update(args):
-                if gmail_child is not None:
-                    _stop_process(gmail_child, label="Gmail worker")
-                    gmail_child = None
-                if feed_child is not None and feed_child.poll() is None:
-                    _stop_process(feed_child, label="LinkedIn feed collector")
-                    feed_child = None
-                    feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
-                _stop_daemon(child)
-                if stop:
-                    break
-                child = _start_daemon(restart_reason="git_pull")
-                if gmail_account is not None:
-                    gmail_child = _start_gmail_worker(gmail_account)
-            next_poll = time.monotonic() + args.poll_seconds
 
         if time.monotonic() >= next_feed_check:
             local_now = _feed_collection_local_now()
@@ -615,6 +732,7 @@ def main() -> int:
             args.poll_seconds,
             args.requirements,
         )
+    logger.warning("Supervisor polling sender restart requests every %ss", args.poll_seconds)
     return supervise(args)
 
 

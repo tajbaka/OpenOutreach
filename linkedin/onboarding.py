@@ -102,6 +102,11 @@ def _onboard_campaign(user):
     """Create a Campaign via interactive prompts. Returns the Campaign instance."""
     from linkedin.management.setup_crm import DEFAULT_CAMPAIGN_NAME
     from linkedin.models import Campaign
+    from django.db import transaction
+    from linkedin.campaign_setup import (
+        exact_campaign_owner, message_program_draft, prompt_gmail_start_mode,
+        snapshot_campaign_program,
+    )
 
     print()
     print("=" * 60)
@@ -110,6 +115,13 @@ def _onboard_campaign(user):
     print()
 
     campaign_name = _prompt("Campaign name", default=DEFAULT_CAMPAIGN_NAME)
+    gmail_start_mode = prompt_gmail_start_mode()
+    print(f"Current account: {user.username}. Confirm the exact sender for this new campaign.")
+    user = exact_campaign_owner(_prompt("Exact sender User.username (required)"))
+    draft = None
+    if gmail_start_mode == Campaign.GmailStartMode.INVITATION_SENT:
+        program_key = _prompt("Published message program key (required for pre-acceptance email)")
+        draft = message_program_draft(program_key)
 
     # Load defaults from files
     default_product = ""
@@ -168,13 +180,18 @@ def _onboard_campaign(user):
     print()
     booking_link = _prompt("Booking link (optional, e.g. https://cal.com/you)", default="")
 
-    campaign = Campaign.objects.create(
-        name=campaign_name,
-        user=user,
-        product_docs=product_docs,
-        campaign_objective=objective,
-        booking_link=booking_link,
-    )
+    print(f"Campaign preview: {campaign_name}; sender={user.username}; email timing={gmail_start_mode}")
+    with transaction.atomic():
+        version = snapshot_campaign_program(draft, campaign_name=campaign_name) if draft else None
+        campaign = Campaign.objects.create(
+            name=campaign_name,
+            user=user,
+            product_docs=product_docs,
+            campaign_objective=objective,
+            booking_link=booking_link,
+            gmail_start_mode=gmail_start_mode,
+            active_message_version=version,
+        )
 
     logger.info("Created campaign: %s", campaign_name)
     print()

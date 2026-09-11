@@ -1,17 +1,12 @@
 """EnrichmentWorker — the daemon's HTTP-only enrichment task loop.
 
-Runs as a SINGLE background thread spawned by run_daemon. Claims
-ENRICH_PHONE / ENRICH_EMAIL tasks (the outbound loop excludes them), runs the
-appropriate provider handler, and sets each task's final status.
+Each sender daemon starts one background thread. Email work belongs to that
+exact canonical operator; the legacy phone queue remains shared. A row-locking
+claim makes concurrent workers safe without changing Task or provider identity.
 
-Single-threaded by design: Task.objects.next_enrichment is a plain ordered
-read, not a locking claim — a second worker would double-process tasks (and
-double-bill providers). Do not scale this without select_for_update.
-
-Crash recovery: the daemon has no clean SIGTERM shutdown, so a killed worker
-leaves its task RUNNING. `start()` reclaims stale RUNNING enrichment tasks back
-to PENDING — that, plus the persisted BetterContact request id, is the real
-crash-safety net.
+Startup only reclaims age-qualified RUNNING work in the same scope. Fresh work
+and another sender's email stay untouched; recovery retains BetterContact's
+persisted request id rather than purchasing a new lookup.
 """
 from __future__ import annotations
 
@@ -19,6 +14,11 @@ import json
 import logging
 import threading
 import traceback
+from datetime import timedelta
+
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,8 @@ from linkedin.notifications.slack import notify_degraded
 from linkedin.monitoring.degraded import _should_alert
 from gmail.tasks.enrich_email import handle_enrich_email
 from linkedin.tasks.enrich_phone import handle_enrich_phone
+from linkedin.conf import TASK_RUNNING_STALE_MINUTES
+from linkedin.operators import CANONICAL_OPERATOR_HANDLES
 
 
 def _api_failure_detail(result) -> dict:
@@ -73,7 +75,10 @@ def _notify_api_failure(*, task, result) -> None:
 
 
 class EnrichmentWorker:
-    def __init__(self, poll_interval: float = 10.0):
+    def __init__(self, *, operator: str, poll_interval: float = 10.0):
+        if not isinstance(operator, str) or operator not in CANONICAL_OPERATOR_HANDLES:
+            raise ValueError("EnrichmentWorker requires a canonical operator")
+        self.operator = operator
         self._poll_interval = poll_interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -85,10 +90,10 @@ class EnrichmentWorker:
         self._reclaim_stale()
         self._stop.clear()
         self._thread = threading.Thread(
-            target=self._run, name="enrichment-worker", daemon=True,
+            target=self._run, name=f"enrichment-worker-{self.operator}", daemon=True,
         )
         self._thread.start()
-        logger.info("Enrichment worker started")
+        logger.info("Enrichment worker started for %s", self.operator)
 
     def stop(self, timeout: float = 5.0) -> None:
         """Signal the loop to exit and join the thread. Idempotent, never raises."""
@@ -96,22 +101,45 @@ class EnrichmentWorker:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             self._thread = None
-            logger.info("Enrichment worker stopped")
+            logger.info("Enrichment worker stopped for %s", self.operator)
+
+    def _owned_tasks(self):
+        from linkedin.models import Task
+
+        return Task.objects.filter(
+            Q(task_type=Task.TaskType.ENRICH_PHONE)
+            | Q(task_type=Task.TaskType.ENRICH_EMAIL, payload__operator=self.operator),
+        )
 
     def _reclaim_stale(self) -> None:
         from linkedin.models import Task
 
-        reclaimed = Task.objects.filter(
-            task_type__in=[
-                Task.TaskType.ENRICH_PHONE,
-                Task.TaskType.ENRICH_EMAIL,
-            ],
-            status=Task.Status.RUNNING,
-        ).update(status=Task.Status.PENDING)
+        stale_before = timezone.now() - timedelta(minutes=TASK_RUNNING_STALE_MINUTES)
+        reclaimed = self._owned_tasks().filter(status=Task.Status.RUNNING).filter(
+            Q(started_at__lt=stale_before)
+            | Q(started_at__isnull=True, created_at__lt=stale_before),
+        ).update(status=Task.Status.PENDING, started_at=None)
         if reclaimed:
             logger.info(
-                "Enrichment worker reclaimed %d stale running task(s)", reclaimed,
+                "Enrichment worker reclaimed %d stale running task(s) for %s",
+                reclaimed, self.operator,
             )
+
+    @transaction.atomic
+    def _claim_next(self):
+        """Atomically claim one due owned email or shared legacy phone Task."""
+        from linkedin.models import Task
+
+        task = (
+            self._owned_tasks()
+            .filter(status=Task.Status.PENDING, scheduled_at__lte=timezone.now())
+            .select_for_update(skip_locked=True)
+            .order_by("scheduled_at", "pk")
+            .first()
+        )
+        if task is not None:
+            task.mark_running()
+        return task
 
     def _run(self) -> None:
         from django.db import connection
@@ -134,11 +162,10 @@ class EnrichmentWorker:
         from linkedin.enrichment.base import EnrichmentStatus
         from linkedin.models import Task
 
-        task = Task.objects.next_enrichment()
+        task = self._claim_next()
         if task is None:
             return False
 
-        task.mark_running()
         try:
             if task.task_type == Task.TaskType.ENRICH_EMAIL:
                 result = handle_enrich_email(task)

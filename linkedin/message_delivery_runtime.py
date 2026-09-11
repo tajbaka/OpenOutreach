@@ -84,7 +84,10 @@ def mark_delivery_status(
         raise MessageDeliveryError(f"stopped delivery {locked.pk} cannot be resumed")
     if (
         status == OutboundDelivery.Status.SENDING
-        and locked.channel == OutboundDelivery.Channel.LINKEDIN_FOLLOWUP
+        and locked.channel in {
+            OutboundDelivery.Channel.LINKEDIN_FOLLOWUP,
+            OutboundDelivery.Channel.GMAIL,
+        }
         and locked.scheduled_at > timezone.now()
     ):
         raise MessageDeliveryError(

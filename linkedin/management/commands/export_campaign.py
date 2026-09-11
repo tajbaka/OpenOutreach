@@ -35,12 +35,17 @@ class Command(BaseCommand):
 
         payload = {
             "name": campaign.name,
+            "owner_username": campaign.user.username,
+            "gmail_start_mode": campaign.gmail_start_mode,
+            "status": campaign.status,
             "product_docs": campaign.product_docs,
             "campaign_objective": campaign.campaign_objective,
             "booking_link": campaign.booking_link,
             "is_freemium": campaign.is_freemium,
             "action_fraction": campaign.action_fraction,
         }
+        if campaign.active_message_version_id:
+            payload["message_program_key"] = campaign.active_message_version.program.key
         if options["include_seeds"]:
             payload["seed_public_ids"] = campaign.seed_public_ids
         rendered = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"

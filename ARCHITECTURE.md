@@ -26,6 +26,31 @@ polling and coordinated restarts after updates; immutable Docker startup passes
 `--no-update`. `make run-linkedin` remains the explicit LinkedIn-only diagnostic
 path and does not consume Gmail Tasks.
 
+`LinkedInProfile.restart_requested` adds an independent DB control at that same
+default 300-second poll. `--no-update` disables Git only; `--once` never consumes
+a restart flag. Child crashes no longer reset or starve this control timer.
+The supervisor requires one exact case-insensitive `LINKEDIN_USERNAME` profile,
+without creating profiles or falling back to another active sender. The consumer
+in `linkedin/supervisor_control.py` holds a PostgreSQL `FOR NO KEY UPDATE SKIP
+LOCKED` row lock across child replacement and updates only the Boolean after an
+explicit successful callback. No joined User/Campaign/Task locks are held. A
+concurrent request writer waits until acknowledgement and then sets the flag for
+the next poll; simultaneous consumers cannot both act on the same request.
+Code update plus DB request coalesce to one restart in that poll. Only this
+supervisor's LinkedIn and mapped Gmail processes are replaced; a running feed
+collector is stopped and resumes under its existing scheduler. Pending flags
+survive cancellations, launch failures and DB outages. A lost DB acknowledgement
+after process launch can require another restart later, not an exactly-once
+process action. See `docs/sender-supervisor-restart.md` for operator commands,
+deployment bootstrap, and the distinction between launched and healthy workers.
+The supervisor reconnects its own control DB connection per poll with bounded
+connect/statement/lock timeouts and host-supported TCP keepalive settings; worker
+connections and `.env` are unchanged. A narrowly recognized missing control
+column is an uninstalled-migration warning, not permission to select another
+sender or consume a request without restarting. Other unexpected schema/program
+errors propagate. Cancellation is rechecked after replacement process polls;
+failed or cancelled partial launches clean up new children without acknowledging.
+
 `manage.py` (LinkedIn child / Django bootstrap + auto-migrate + CRM setup):
 - Suppresses Pydantic serialization warning from langchain-openai. Configures logging: DEBUG level, suppresses noisy third-party loggers.
 - No args → runs daemon: startup checks → `ensure_onboarding()` → validate `LLM_API_KEY` → `get_or_create_session(handle)` → set default campaign → `session.ensure_browser()` → `ensure_self_profile()` → GDPR newsletter override (marker-guarded) → `ensure_newsletter_subscription()` → `run_daemon(session)`.
@@ -205,9 +230,44 @@ The `{role}` message token resolves that saved tag through the shared
 `finance leaders`. Missing/blank tags use `companies`; unknown nonblank tags
 raise `MessageRoleError`. The lookup never reads a title or audience label and
 does not write lead records. General draft validation, the versioned renderer,
-and legacy LinkedIn/Gmail renderers support this token. Changing a tag or its
-wording affects only future rendering, not an existing frozen delivery.
-Independent drip manifests retain their separate placeholder contract.
+legacy LinkedIn/Gmail renderers, and independent drip manifests/rendering
+support this token. Changing a tag or its wording affects only future
+rendering, not an existing frozen delivery. Drip's separate manifest schema
+and audience validation remain unchanged.
+
+Drip accepts `{role}` in LinkedIn bodies and Gmail subjects/bodies and resolves
+the shared lookup only when the selected copy uses the token. Role-free copy
+does not validate role metadata. Resolution occurs when reconciliation first
+materializes a `DripDelivery`; subsequent polls, retries, and replacement Tasks
+reuse its frozen subject/body even if the lead's role tag later changes.
+
+Campaign creation explicitly asks whether Gmail starts before or after LinkedIn
+acceptance. `Campaign.gmail_start_mode` preserves `post_acceptance` on existing
+records; `invitation_sent` requires a new version-bound campaign and exact sender.
+Import requires the explicit choice and owner, previews with `--dry-run`, and
+defaults new invitation-mode imports to disabled. Creation UI has no silent
+selection. Model guards reject historical opt-in and mode/owner changes after
+enrollment/outreach. Migration `linkedin.0031_campaign_gmail_start_mode` adds
+only this setting and its constraints, not new lead/routing fields.
+
+The invitation hook runs after commit of its exact sender/timestamp ledger.
+`gmail.handoff` locks the Lead and Deal, freezes the first email from that stable
+anchor, and reuses existing work on acceptance. A bounded startup pass recovers
+only missing opted-in invitation work; it does not retry held/unclear sends or
+move future Tasks forward. `WorkflowRun(name="invitation-gmail-recovery")` records
+the exact sender/campaign scope, scanned/scheduled counts and last Deal ID so
+bounded passes rotate past held rows and wrap to reconsider them without
+starving later eligible invitations. A terminal lookup is not counted as queued.
+Missing email starts an early lookup in the separate
+enrichment worker, retaining the delivery's send clock. Expected no-address
+results remain planned with a visible lookup-Task reason; later reviewed addresses
+can use the same unsent delivery. Current Gmail's final boundary rechecks Task and
+delivery due times, shared stops and campaign state, and invitation mode honors
+the sender window. The Gmail worker preserves pending deferrals. Submission and
+recovery lock Lead before Task/delivery. Existing post-acceptance sequences and
+all frozen copy retain their identity. See `docs/gmail-sequence-plan.md` and the
+review-gated `docs/connection-first-omnichannel-v1-rollout.md`; no deployment or
+live pilot is implied by the implementation.
 
 `linkedin/message_delivery.py` selects the exact operator-effective route,
 uses a deterministic variant for the enrollment and step, mechanically renders
@@ -639,18 +699,17 @@ keeps multi-node deployments from letting one sender's daemon claim another
 sender's Gmail task and fail because that local node lacks the mapped OAuth
 token.
 
-**Worker.** `EnrichmentWorker` (`worker.py`) is a single background thread
-`run_daemon` always spawns alongside the listener supervisor (no longer
-flag-gated — the Slack menu is always available so enrichment must always be
-processable). It claims `enrich_phone` and `enrich_email` tasks via
-`Task.objects.next_enrichment()` — the outbound loop excludes `ENRICH_PHONE`,
-`ENRICH_EMAIL`, and `GMAIL_FOLLOW_UP` from `claim_next`/`seconds_to_next`, and
-`heal_tasks` excludes enrichment tasks from the stale-`RUNNING` reset, so the two
-never race. The worker
-reclaims its own stale `RUNNING` tasks at `start()` (the daemon has no clean
-shutdown — this is the crash-recovery path). HTTP-only, so it is not gated on
-active hours. Single-threaded is load-bearing: `next_enrichment` is a plain
-read, not a locking claim.
+**Worker.** `run_daemon` always starts one HTTP-only `EnrichmentWorker` background
+thread per canonical sender, independent of active hours. Email Tasks are scoped
+to that exact operator; legacy phone Tasks remain a shared queue. `_claim_next`
+locks one due row with `SELECT FOR UPDATE SKIP LOCKED` and stamps RUNNING in the
+same transaction, so simultaneous workers cannot claim the same row. Startup
+recovers only scope-matching RUNNING Tasks older than `TASK_RUNNING_STALE_MINUTES`
+(unknown start times also require an old creation date). Fresh work and another
+sender's email are untouched; identity, due dates and provider request IDs survive.
+Provider results end as COMPLETED/FAILED. The browser loop and its healer exclude
+enrichment Tasks; `GmailWorker` consumes sends, not lookups. The old
+`Task.objects.next_enrichment()` is a diagnostic read, never a runtime claim.
 
 **Waterfall.** `run_waterfall` (`waterfall.py`) iterates a provider chain.
 `handle_enrich_phone` routes on the task payload's `provider` field: the

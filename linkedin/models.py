@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import logging
+from copy import copy
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from linkedin.conf import (
@@ -166,6 +167,10 @@ class MessageProgramVersion(models.Model):
 
 
 class Campaign(models.Model):
+    class GmailStartMode(models.TextChoices):
+        POST_ACCEPTANCE = "post_acceptance", "Post-acceptance: after LinkedIn acceptance"
+        INVITATION_SENT = "invitation_sent", "Pre-acceptance: after a confirmed invitation"
+
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
         DISABLED = "disabled", "Disabled"
@@ -197,12 +202,92 @@ class Campaign(models.Model):
         on_delete=models.SET_NULL,
         related_name="active_for_campaigns",
     )
+    gmail_start_mode = models.CharField(
+        max_length=24,
+        choices=GmailStartMode.choices,
+        default=GmailStartMode.POST_ACCEPTANCE,
+        help_text="Choose when the existing email sequence starts; LinkedIn follow-ups still wait for acceptance.",
+    )
+
+    def clean(self) -> None:
+        super().clean()
+        self._validate_gmail_start_mode()
+
+    def _validate_gmail_start_mode(self, *, original=None) -> None:
+        from linkedin.operators import CANONICAL_OPERATOR_HANDLES, resolve_operator
+
+        errors = {}
+        if self.gmail_start_mode not in self.GmailStartMode.values:
+            errors["gmail_start_mode"] = "Choose pre-acceptance or post-acceptance email explicitly."
+        if self.gmail_start_mode == self.GmailStartMode.INVITATION_SENT:
+            if not self.active_message_version_id:
+                errors["active_message_version"] = "Pre-acceptance email requires a published message version."
+            profile = LinkedInProfile.objects.filter(user_id=self.user_id, active=True).first() if self.user_id else None
+            profile_operator = resolve_operator(profile.linkedin_username) if profile else ""
+            user_operator = resolve_operator(self.user.username) if self.user_id else ""
+            if profile_operator not in CANONICAL_OPERATOR_HANDLES or (
+                user_operator in CANONICAL_OPERATOR_HANDLES and user_operator != profile_operator
+            ):
+                errors["user"] = "Pre-acceptance email requires an exact canonical sender owner."
+        if not self._state.adding and self.pk:
+            original = original or type(self).objects.get(pk=self.pk)
+            mode_changed = self.gmail_start_mode != original.gmail_start_mode
+            owner_changed = self.user_id != original.user_id
+            if mode_changed and self.gmail_start_mode == self.GmailStartMode.INVITATION_SENT:
+                errors["gmail_start_mode"] = "Pre-acceptance email is only available when creating a new campaign."
+            if (mode_changed or owner_changed) and (
+                self.deals.exists()
+                or Task.objects.filter(
+                    models.Q(payload__campaign_id=self.pk) | models.Q(payload__campaign_id=str(self.pk)),
+                ).exists()
+            ):
+                errors["gmail_start_mode" if mode_changed else "user"] = (
+                    "Campaign email timing and sender cannot change after enrollment or outreach starts."
+                )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs) -> None:
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            update_fields = frozenset(update_fields)
+            kwargs["update_fields"] = update_fields
+        if update_fields is not None and not update_fields & {"gmail_start_mode", "user", "user_id", "active_message_version", "active_message_version_id"}:
+            # Pausing must remain possible even if an external sender profile was removed.
+            super().save(*args, **kwargs)
+            return
+        with transaction.atomic():
+            original = None
+            if not self._state.adding and self.pk:
+                original = type(self).objects.select_for_update().get(pk=self.pk)
+            effective = self
+            if original is not None and update_fields is not None:
+                # Validate the row this UPDATE will actually persist. Dirty or
+                # stale attributes outside update_fields must neither bypass
+                # the invitation-owner guard nor reject an unrelated update.
+                effective = copy(original)
+                for field in self._meta.concrete_fields:
+                    if field.name in update_fields or field.attname in update_fields:
+                        setattr(effective, field.attname, getattr(self, field.attname))
+            effective._validate_gmail_start_mode(original=original)
+            super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
 
     class Meta:
         app_label = "linkedin"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(gmail_start_mode__in=("post_acceptance", "invitation_sent")),
+                name="linkedin_campaign_gmail_start_mode_valid",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(gmail_start_mode="invitation_sent")
+                | models.Q(active_message_version__isnull=False),
+                name="linkedin_campaign_invite_email_bound",
+            ),
+        ]
 
 
 class CampaignMessageEnrollment(models.Model):
@@ -461,6 +546,10 @@ class LinkedInProfile(models.Model):
     linkedin_password = models.CharField(max_length=200)
     subscribe_newsletter = models.BooleanField(default=True)
     active = models.BooleanField(default=True)
+    restart_requested = models.BooleanField(
+        default=False,
+        help_text="Request a one-shot sender worker restart at the next supervisor poll.",
+    )
     connect_daily_limit = models.PositiveIntegerField(default=20)
     connect_weekly_limit = models.PositiveIntegerField(default=100)
     follow_up_daily_limit = models.PositiveIntegerField(default=30)
@@ -1228,12 +1317,10 @@ class TaskQuerySet(models.QuerySet):
         return max((next_task.scheduled_at - timezone.now()).total_seconds(), 0)
 
     def next_enrichment(self) -> "Task | None":
-        """The next due enrichment task — the EnrichmentWorker's claim query.
+        """Read the next due enrichment row for diagnostics, without claiming it.
 
-        Separate from `claim_next` (which excludes enrichment tasks) so the
-        outbound task loop and the single enrichment worker thread never compete
-        for the same row. NOTE: this is a plain ordered read, not a locking
-        claim — safe only because exactly one worker thread calls it.
+        Runtime uses EnrichmentWorker's sender-scoped atomic locking claim.
+        This global ordered read must never be used to execute provider work.
         """
         return self.due().filter(
             task_type__in=[

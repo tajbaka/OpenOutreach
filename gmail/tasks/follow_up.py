@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from django.db import transaction
 from django.utils import timezone
 
+from gmail.addresses import usable_email
 from gmail.auth import GMAIL_OPERATOR_MAPPING
 from gmail.client import (
     GmailClient,
@@ -16,9 +17,11 @@ from gmail.client import (
     validated_provider_rfc_message_id,
 )
 from gmail.delivery import issue_gmail_delivery_permit
+from gmail.exceptions import GmailSubmissionDeferred
 from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME, enqueue_gmail_follow_up
 from gmail.submission import (
     current_gmail_automation_key,
+    defer_early_current_gmail_task,
     stamp_submission_attempt,
     submission_attempted,
 )
@@ -544,9 +547,6 @@ def handle_gmail_follow_up(task) -> None:
         if delivery is not None:
             _set_delivery_status(delivery, delivery.Status.STOPPED)
         return
-    if not lead.email:
-        raise ValueError(f"gmail_follow_up: lead {lead_id} has no email")
-
     stop_reason = lead_automation_stop_reason(lead)
     if stop_reason:
         logger.info("gmail_follow_up: lead %s stopped - %s", lead_id, stop_reason)
@@ -656,6 +656,15 @@ def handle_gmail_follow_up(task) -> None:
             "automatic retry is blocked"
         )
 
+    if not usable_email(lead.email):
+        if delivery is not None:
+            _set_delivery_status(delivery, delivery.Status.FAILED)
+        raise ValueError(f"gmail_follow_up: lead {lead_id} has no usable email")
+
+    if defer_early_current_gmail_task(task):
+        logger.info("gmail_follow_up: Task %s deferred until %s", task.pk, task.scheduled_at)
+        return
+
     mapping = GMAIL_OPERATOR_MAPPING.get(operator)
     if mapping is None:
         raise ValueError(f"No Gmail mapping configured for operator {operator!r}")
@@ -714,6 +723,10 @@ def handle_gmail_follow_up(task) -> None:
         return
 
     def _recheck_before_submission() -> None:
+        if not _current_deal_campaign_is_active(payload.get("deal_id")):
+            if delivery is not None:
+                _set_delivery_status(delivery, delivery.Status.STOPPED)
+            raise ValueError("gmail_follow_up: campaign stopped before submission")
         if _drip_owns_gmail(lead.id):
             if delivery is not None:
                 _set_delivery_status(delivery, delivery.Status.STOPPED)
@@ -728,7 +741,10 @@ def handle_gmail_follow_up(task) -> None:
                 f"gmail_follow_up: lead {lead_id} stopped before submission - "
                 f"{callback_stop_reason}"
             )
-        stamp_submission_attempt(task)
+        if not stamp_submission_attempt(task):
+            raise GmailSubmissionDeferred(
+                f"gmail_follow_up: Task {task.pk} deferred until {task.scheduled_at}"
+            )
 
     rfc_message_id = _rfc_message_id(
         automation_key=automation_key,
@@ -779,6 +795,9 @@ def handle_gmail_follow_up(task) -> None:
             references=context.references,
             delivery=delivery,
         )
+    except GmailSubmissionDeferred:
+        logger.info("gmail_follow_up: Task %s deferred before submission", task.pk)
+        return
     except Exception:
         if delivery is not None:
             delivery.refresh_from_db(fields=["status"])

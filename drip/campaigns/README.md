@@ -28,6 +28,8 @@ The plan command requires explicit Lead IDs and creates a new private artifact; 
 
 A manifest uses `schema_version: 3` and contains one ordered theme list per canonical ICP. Every theme has a shared `intent`, the same canonical sender set, and one or both independent `linkedin`/`gmail` renditions. `delay_days` is channel-local. Gmail step 0 requires the lane subject; later Gmail steps omit it or repeat it exactly because the lane stays in one thread.
 
+LinkedIn bodies and Gmail subjects/bodies may use `{role}`, with the same wording as current connection/follow-up messages. The shared `linkedin/message_roles.py` lookup renders the saved `Lead.role_tag`, for example `CFO/Finance` as `finance leaders`; a missing/blank tag becomes `companies`, and an unknown nonblank tag fails rendering when the copy uses `{role}`. This does not classify leads or select an ICP. Reconciliation freezes the rendered text before Task creation, so later role edits do not rewrite an existing delivery or its retries.
+
 A LinkedIn step may declare one optional GIF or MP4 attachment. Gmail steps do not accept media:
 
 ```json

@@ -593,18 +593,40 @@ def handle_connect(task, session, qualifiers):
             )
 
             if new_state == ProfileState.PENDING:
+                from django.db import transaction
+                from django.db.models import Value
+                from django.db.models.functions import Coalesce
+                from linkedin.models import Campaign
+
+                invitation_start = (
+                    session.campaign.gmail_start_mode == Campaign.GmailStartMode.INVITATION_SENT
+                )
+                sent_at = timezone.now()
                 Deal.objects.filter(
                     lead__linkedin_url=public_id_to_url(public_id),
                     campaign=session.campaign,
                 ).update(
                     sent_note=note,
-                    invitation_sent_at=timezone.now(),
+                    invitation_sent_at=(
+                        Coalesce("invitation_sent_at", Value(sent_at)) if invitation_start else sent_at
+                    ),
                     invitation_sender=operator,
                     invitation_withdrawn_at=None,
                 )
                 enqueue_sweep_connections(
                     operator=operator,
                 )
+                if invitation_start:
+                    from functools import partial
+                    from gmail.handoff import maybe_schedule_gmail_sequence
+
+                    invited_deal = Deal.objects.get(
+                        lead__linkedin_url=public_id_to_url(public_id),
+                        campaign=session.campaign,
+                    )
+                    transaction.on_commit(partial(
+                        maybe_schedule_gmail_sequence, deal=invited_deal, operator=operator,
+                    ))
             elif new_state == ProfileState.CONNECTED:
                 deal = Deal.objects.filter(
                     lead__linkedin_url=public_id_to_url(public_id),

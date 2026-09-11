@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -182,10 +183,15 @@ def _deal(
 
 
 def _run_task(task):
-    task.status = Task.Status.RUNNING
-    task.started_at = timezone.now()
-    task.save(update_fields={"status", "started_at"})
-    handle_gmail_follow_up(task)
+    # Exercise sends at their actual persisted due time. Earlier versions of
+    # this fixture bypassed the worker and executed future steps immediately.
+    task.refresh_from_db()
+    due_at = max(timezone.now(), task.scheduled_at)
+    with patch("django.utils.timezone.now", return_value=due_at):
+        task.status = Task.Status.RUNNING
+        task.started_at = timezone.now()
+        task.save(update_fields={"status", "started_at"})
+        handle_gmail_follow_up(task)
 
 
 def test_bound_gmail_freezes_copy_ignores_live_json_drift_and_keeps_version(monkeypatch):

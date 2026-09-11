@@ -21,6 +21,7 @@ ALLOWED_PLACEHOLDERS = frozenset(
         "first_name",
         "last_name",
         "company_name",
+        "role",
         "my_name",
         "our_company_name",
         "our_website_url",

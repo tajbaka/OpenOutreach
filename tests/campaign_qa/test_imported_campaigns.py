@@ -61,13 +61,15 @@ def identify(request, sender, audience, scenario, expected):
 
 
 def preview(request, sender, audience, role, channel, step, subject, body, kind):
+    assert '{' not in subject and '}' not in subject, 'Unresolved subject placeholder'
+    assert '{' not in body and '}' not in body, 'Unresolved body placeholder'
     reporting.PREVIEWS.append({'case': request.node.nodeid, 'sender': sender,
         'icp': LABELS[audience], 'role_tag': role, 'channel': channel, 'step': step,
         'subject': subject, 'body': body, 'kind': kind})
 
 
 @pytest.fixture
-def harness(monkeypatch, tmp_path):
+def harness(monkeypatch, tmp_path, django_capture_on_commit_callbacks):
     assert connection.vendor == 'postgresql'
     assert connection.settings_dict['HOST'] == os.environ['CAMPAIGN_QA_SOCKET']
     assert connection.settings_dict['NAME'] == 'test_campaign_qa'
@@ -79,6 +81,7 @@ def harness(monkeypatch, tmp_path):
         monkeypatch.setattr(name, True)
     monkeypatch.setattr('linkedin.conf.OUR_COMPANY_NAME', 'Boundera')
     monkeypatch.setattr('linkedin.conf.OUR_WEBSITE_URL', 'https://boundera.io')
+    monkeypatch.setattr('linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS', False)
     # Block only external read boundaries, not routing, stop checks, rendering,
     # persistence, or the normal enqueue/executor functions under test.
     monkeypatch.setattr('linkedin.tasks.sweep_connections.notify_connection_accepted', lambda **kwargs: None)
@@ -91,21 +94,26 @@ def harness(monkeypatch, tmp_path):
     monkeypatch.setattr('gmail.templates._load', forbid)
     sessions = {}
 
-    def make(sender, audience, *, store_icp=True, role='Founder/CEO'):
-        if sender not in sessions:
-            user = User.objects.create(username=sender)
+    def make(sender, audience, *, store_icp=True, role='Founder/CEO', gmail_start_mode='post_acceptance'):
+        session_key = (sender, gmail_start_mode)
+        if session_key not in sessions:
+            user, _ = User.objects.get_or_create(username=sender)
             LinkedInProfile.objects.filter(active=True).update(active=False)
-            account = LinkedInProfile.objects.create(user=user, linkedin_username=sender,
-                linkedin_password='unused-qa-placeholder', active=True)
-            path = tmp_path / f'{sender}-campaign.json'
-            path.write_text(json.dumps({'name': f'QA {sender}', 'message_program_key': PROGRAM.key}), encoding='utf-8')
+            account, _ = LinkedInProfile.objects.update_or_create(user=user,
+                defaults={'linkedin_username': sender, 'linkedin_password': 'unused-qa-placeholder', 'active': True})
+            campaign_name = f'QA {sender} {gmail_start_mode}'
+            path = tmp_path / f'{sender}-{gmail_start_mode}-campaign.json'
+            path.write_text(json.dumps({'name': campaign_name, 'message_program_key': PROGRAM.key,
+                'gmail_start_mode': gmail_start_mode, 'owner_username': user.username,
+                'status': 'active'}), encoding='utf-8')
             call_command('import_campaign', str(path), stdout=io.StringIO())
-            campaign = Campaign.objects.get(name=f'QA {sender}')
+            campaign = Campaign.objects.get(name=campaign_name)
             assert campaign.user_id == user.pk
+            assert campaign.gmail_start_mode == gmail_start_mode
             assert campaign.active_message_version.content_hash == PROGRAM.content_hash
-            sessions[sender] = SimpleNamespace(django_user=user, linkedin_profile=account,
+            sessions[session_key] = SimpleNamespace(django_user=user, linkedin_profile=account,
                 campaign=campaign, handle=sender, ensure_browser=forbid)
-        session = sessions[sender]
+        session = sessions[session_key]
         number = Lead.objects.count() + 1
         pid = f'qa-{sender.lower()}-{number}'
         lead = Lead.objects.create(first_name='Eddy', last_name='QA', company_name='Example Cloud',
@@ -114,15 +122,24 @@ def harness(monkeypatch, tmp_path):
         deal = Deal.objects.create(lead=lead, campaign=session.campaign, state=ProfileState.QUALIFIED)
         return session, deal
 
-    return SimpleNamespace(make=make, clock=clock, monkeypatch=monkeypatch)
+    return SimpleNamespace(make=make, clock=clock, monkeypatch=monkeypatch,
+        capture_callbacks=django_capture_on_commit_callbacks)
 
 
-def expected_body(message, sender, role='Founder/CEO'):
+def expected_copy(template, message, sender, role='Founder/CEO'):
     display_name = sender
     if message.channel == 'gmail':
         display_name = GMAIL_OPERATOR_MAPPING[sender].get('display_name') or sender
-    return message.body.format(first_name='Eddy', last_name='QA', company_name='Example Cloud',
+    return template.format(first_name='Eddy', last_name='QA', company_name='Example Cloud',
         my_name=display_name, our_company_name='Boundera', our_website_url='https://boundera.io', role=role_wording(role))
+
+
+def expected_body(message, sender, role='Founder/CEO'):
+    return expected_copy(message.body, message, sender, role)
+
+
+def expected_subject(message, sender, role='Founder/CEO'):
+    return expected_copy(message.subject, message, sender, role)
 
 
 def enrollment_fixture(deal, audience, sender):
@@ -153,8 +170,10 @@ def test_imported_render_matrix(harness, request, sender, audience):
         assert created
         expected = expected_body(message, sender)
         assert delivery.frozen_body == expected
+        assert delivery.frozen_subject == expected_subject(message, sender)
         assert delivery.scheduled_at == harness.clock.now + timedelta(hours=float(message.delay_hours))
         assert '{' not in delivery.frozen_body and '}' not in delivery.frozen_body
+        assert '{' not in delivery.frozen_subject and '}' not in delivery.frozen_subject
         assert delivery.operator == sender and delivery.enrollment.audience_key == audience
         again, created = get_or_create_delivery(enrollment=enrollment, channel=selected.channel, step_key=selected.step_key)
         assert not created and again.pk == delivery.pk
@@ -230,7 +249,7 @@ def transports(harness, request, sender, audience, deal):
     return calls
 
 
-def run_connect(harness, session, deal, status=ProfileState.QUALIFIED):
+def run_connect(harness, session, deal, status=ProfileState.QUALIFIED, *, execute_callbacks=True):
     profile = {'first_name': deal.lead.first_name, 'last_name': deal.lead.last_name,
         'public_identifier': deal.lead.public_identifier, 'url': deal.lead.linkedin_url,
         'headline': 'QA contact', 'positions': [{'company_name': deal.lead.company_name}]}
@@ -242,7 +261,8 @@ def run_connect(harness, session, deal, status=ProfileState.QUALIFIED):
     harness.monkeypatch.setattr('linkedin.actions.status.get_connection_status', lambda *args: status)
     task = Task.objects.create(task_type=Task.TaskType.CONNECT, status=Task.Status.RUNNING,
         scheduled_at=harness.clock.now, started_at=harness.clock.now, payload={'campaign_id': session.campaign.pk})
-    handle_connect(task, session, {})
+    with harness.capture_callbacks(execute=execute_callbacks):
+        handle_connect(task, session, {})
     task.status = Task.Status.COMPLETED
     task.save(update_fields=['status'])
 
@@ -306,8 +326,165 @@ def test_imported_campaign_sequence(harness, request, sender, audience):
         selected = sorted((m for m in messages if m.channel == channel), key=lambda m: m.step_index)
         actual = [c for c in calls if c[0] == channel]
         assert [c[1] for c in actual] == [m.step_key for m in selected]
+        # Bound Gmail keeps each step's frozen subject, including successors;
+        # only the separate legacy path substitutes the original thread subject.
+        assert [c[2] for c in actual] == [expected_subject(m, sender) for m in selected]
         assert [c[3] for c in actual] == [expected_body(m, sender) for m in selected]
     assert OutboundDelivery.objects.filter(enrollment__deal=deal).exclude(status='sent').count() == 0
+
+
+@pytest.mark.parametrize('sender,audience', BASELINES)
+def test_imported_invitation_started_email_before_acceptance(harness, request, sender, audience):
+    """Every published cohort traverses the real invitation hook and both lanes."""
+    identify(request, sender, audience, 'invitation_email_then_acceptance',
+        'Confirmed invitation starts exactly one frozen Gmail lane before acceptance; acceptance only starts LinkedIn')
+    session, deal = harness.make(sender, audience, gmail_start_mode='invitation_sent')
+    calls = transports(harness, request, sender, audience, deal)
+    run_connect(harness, session, deal)
+    deal.refresh_from_db()
+    receipt = deal.invitation_sent_at
+    assert deal.state == ProfileState.PENDING and receipt == harness.clock.now
+    assert deal.invitation_sender == sender
+    assert not Task.objects.filter(task_type=Task.TaskType.FOLLOW_UP).exists()
+    first_task = Task.objects.get(task_type=Task.TaskType.GMAIL_FOLLOW_UP)
+    first_delivery = OutboundDelivery.objects.get(enrollment__deal=deal, channel='gmail')
+    gmail_copy = sorted((m for m in PROGRAM.messages if m.audience_key == audience and m.channel == 'gmail'),
+                        key=lambda m: m.step_index)
+    assert first_task.payload['delivery_id'] == first_delivery.pk
+    assert first_delivery.scheduled_at == receipt + timedelta(hours=float(gmail_copy[0].delay_hours))
+    assert maybe_schedule_gmail_sequence(deal=deal, operator=sender).pk == first_task.pk
+
+    harness.clock.now = first_task.scheduled_at
+    first_task.status, first_task.started_at = Task.Status.RUNNING, harness.clock.now
+    first_task.save(update_fields=['status', 'started_at'])
+    handle_gmail_follow_up(first_task)
+    first_task.status = Task.Status.COMPLETED
+    first_task.save(update_fields=['status'])
+    deal.refresh_from_db()
+    first_delivery.refresh_from_db()
+    assert deal.state == ProfileState.PENDING and deal.connected_at is None
+    assert first_delivery.status == OutboundDelivery.Status.SENT
+    assert [(c[0], c[1]) for c in calls] == [('linkedin_connect', 'connect'), ('gmail', gmail_copy[0].step_key)]
+    second = Task.objects.get(task_type=Task.TaskType.GMAIL_FOLLOW_UP, status=Task.Status.PENDING)
+    second_due, second_identity = second.scheduled_at, second.payload.copy()
+
+    harness.clock.now += timedelta(hours=1)
+    seed_observed_thread(deal, sender)
+    process_accepted_deal(session, deal)
+    second.refresh_from_db()
+    assert second.scheduled_at == second_due and second.payload == second_identity
+    assert Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).count() == 2
+    run_due(harness, session, deal)
+
+    messages = [m for m in PROGRAM.messages if m.audience_key == audience]
+    for channel in ('linkedin_connect', 'linkedin_followup', 'gmail'):
+        selected = sorted((m for m in messages if m.channel == channel), key=lambda m: m.step_index)
+        actual = [c for c in calls if c[0] == channel]
+        assert [c[1] for c in actual] == [m.step_key for m in selected]
+        assert [c[2] for c in actual] == [expected_subject(m, sender) for m in selected]
+        assert [c[3] for c in actual] == [expected_body(m, sender) for m in selected]
+    assert OutboundDelivery.objects.filter(enrollment__deal=deal).exclude(status='sent').count() == 0
+    task_count, call_count = Task.objects.count(), len(calls)
+    maybe_schedule_gmail_sequence(deal=deal, operator=sender)
+    assert Task.objects.count() == task_count and len(calls) == call_count
+    assert not Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP, status=Task.Status.PENDING).exists()
+
+
+@pytest.mark.parametrize('sender', OPERATORS)
+@pytest.mark.parametrize('acceptance_time', ['before_email_1', 'after_email_completion'])
+def test_actual_acceptance_preserves_invitation_email_at_sequence_boundaries(
+    harness, request, sender, acceptance_time,
+):
+    identify(request, sender, REFERENCE_KEY, f'acceptance_{acceptance_time}',
+        'Actual acceptance starts LinkedIn only, preserving every existing Gmail Task, frozen delivery and due time')
+    session, deal = harness.make(sender, REFERENCE_KEY, gmail_start_mode='invitation_sent')
+    calls = transports(harness, request, sender, REFERENCE_KEY, deal)
+    run_connect(harness, session, deal)
+    deal.refresh_from_db()
+    receipt = deal.invitation_sent_at
+    assert deal.state == ProfileState.PENDING and deal.connected_at is None
+
+    if acceptance_time == 'before_email_1':
+        first_task = Task.objects.get(task_type=Task.TaskType.GMAIL_FOLLOW_UP)
+        harness.clock.now += timedelta(seconds=1)
+        assert first_task.scheduled_at > harness.clock.now
+        assert not any(call[0] == 'gmail' for call in calls)
+    else:
+        # No acceptance yet, so the actual queued task loop can only run Gmail.
+        run_due(harness, session, deal)
+        deal.refresh_from_db()
+        assert deal.state == ProfileState.PENDING and deal.connected_at is None
+        assert len([call for call in calls if call[0] == 'gmail']) == 2
+        assert not Task.objects.filter(task_type=Task.TaskType.FOLLOW_UP).exists()
+        assert not Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+                                       status=Task.Status.PENDING).exists()
+        harness.clock.now += timedelta(hours=1)
+
+    def gmail_state():
+        return (
+            list(Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP,
+                payload__deal_id=deal.pk).order_by('pk').values()),
+            list(OutboundDelivery.objects.filter(enrollment__deal=deal,
+                channel='gmail').order_by('pk').values()),
+        )
+
+    before_acceptance = gmail_state()
+    before_gmail_calls = [call for call in calls if call[0] == 'gmail']
+    seed_observed_thread(deal, sender)
+    for _ in range(2):
+        with harness.capture_callbacks(execute=True):
+            process_accepted_deal(session, deal)
+        deal.refresh_from_db()
+        assert deal.state == ProfileState.CONNECTED
+        assert deal.connected_at is not None
+        assert deal.invitation_sent_at == receipt
+        assert gmail_state() == before_acceptance
+        assert [call for call in calls if call[0] == 'gmail'] == before_gmail_calls
+    assert Task.objects.filter(task_type=Task.TaskType.FOLLOW_UP, status=Task.Status.PENDING).count() == 1
+
+    run_due(harness, session, deal)
+
+    for channel in ('linkedin_connect', 'linkedin_followup', 'gmail'):
+        selected = sorted((m for m in PROGRAM.messages
+            if m.audience_key == REFERENCE_KEY and m.channel == channel), key=lambda m: m.step_index)
+        actual = [call for call in calls if call[0] == channel]
+        assert [call[1] for call in actual] == [m.step_key for m in selected]
+        assert [call[2] for call in actual] == [expected_subject(m, sender) for m in selected]
+        assert [call[3] for call in actual] == [expected_body(m, sender) for m in selected]
+    assert Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).count() == 2
+    assert OutboundDelivery.objects.filter(enrollment__deal=deal).exclude(status='sent').count() == 0
+
+
+@pytest.mark.parametrize('sender', OPERATORS)
+@pytest.mark.parametrize('scenario', ['observed_pending', 'already_connected', 'failed', 'uncertain', 'rollback'])
+def test_invitation_hook_requires_a_committed_confirmed_send(harness, request, sender, scenario):
+    from linkedin.exceptions import SkipProfile
+
+    identify(request, sender, REFERENCE_KEY, f'invitation_hook_{scenario}',
+        'No invitation-triggered Gmail without a committed exact successful-invitation receipt')
+    session, deal = harness.make(sender, REFERENCE_KEY, gmail_start_mode='invitation_sent')
+    transports(harness, request, sender, REFERENCE_KEY, deal)
+    if scenario in {'failed', 'uncertain'}:
+        def fail(**kwargs):
+            if scenario == 'failed':
+                raise SkipProfile('No usable invitation route')
+            raise RuntimeError('Simulated unknown provider result')
+        harness.monkeypatch.setattr('linkedin.actions.connect.send_connection_request', fail)
+    if scenario == 'uncertain':
+        with pytest.raises(RuntimeError, match='unknown provider result'):
+            run_connect(harness, session, deal)
+    elif scenario == 'rollback':
+        with pytest.raises(RuntimeError, match='Simulated database rollback'):
+            with transaction.atomic():
+                run_connect(harness, session, deal, execute_callbacks=False)
+                raise RuntimeError('Simulated database rollback')
+    else:
+        observed = {'observed_pending': ProfileState.PENDING, 'already_connected': ProfileState.CONNECTED}
+        run_connect(harness, session, deal, observed.get(scenario, ProfileState.QUALIFIED))
+    deal.refresh_from_db()
+    assert deal.invitation_sent_at is None and deal.invitation_sender == ''
+    assert not OutboundDelivery.objects.filter(enrollment__deal=deal, channel='gmail').exists()
+    assert not Task.objects.filter(task_type__in=[Task.TaskType.GMAIL_FOLLOW_UP, Task.TaskType.ENRICH_EMAIL]).exists()
 
 
 @pytest.mark.parametrize('sender', OPERATORS)

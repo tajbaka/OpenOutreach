@@ -113,6 +113,45 @@ def _set_delivery_status(delivery, status: str, *, sent_at=None) -> None:
         delivery.save(update_fields={"sent_at", "updated_at"})
 
 
+def _lock_current_delivery(task):
+    """Keep delivery timing stable through the final Task/receipt transaction."""
+    from linkedin.models import OutboundDelivery
+
+    delivery_id = (task.payload or {}).get("delivery_id")
+    if isinstance(delivery_id, int) and not isinstance(delivery_id, bool):
+        # Identity validation below remains authoritative. This read only
+        # establishes the lock before inspecting mutable schedule/status.
+        OutboundDelivery.objects.select_for_update(of=("self",)).filter(
+            pk=delivery_id,
+        ).first()
+    return _versioned_delivery_for_task(task)
+
+
+def _lock_current_task(task_id: int, *, expected_payload=None):
+    """Use the shared Lead-first lock prefix before Task and delivery locks."""
+    from crm.models import Lead
+    from linkedin.models import Task
+
+    snapshot = Task.objects.filter(pk=task_id).values("payload").first()
+    if snapshot is None:
+        return None
+    snapshot_payload = snapshot["payload"] or {}
+    lead_id = snapshot_payload.get("lead_id")
+    if isinstance(lead_id, int) and not isinstance(lead_id, bool):
+        Lead.objects.select_for_update(of=("self",)).filter(pk=lead_id).first()
+    locked = Task.objects.select_for_update(of=("self",)).filter(pk=task_id).first()
+    if locked is None:
+        return None
+    if (locked.payload or {}).get("lead_id") != lead_id:
+        raise ValueError("Gmail Task Lead changed while acquiring its ownership lock")
+    if expected_payload is not None and (
+        current_gmail_automation_key(locked.payload) != current_gmail_automation_key(expected_payload)
+        or (locked.payload or {}).get("deal_id") != expected_payload.get("deal_id")
+    ):
+        raise ValueError("Gmail Task identity changed after claim")
+    return locked
+
+
 def _requeue(task, *, scheduled_at=None) -> None:
     task.status = task.Status.PENDING
     task.started_at = None
@@ -121,31 +160,86 @@ def _requeue(task, *, scheduled_at=None) -> None:
     task.save(update_fields={"status", "started_at", "scheduled_at", "error"})
 
 
+def _defer_locked_task_if_early(locked, *, delivery, task) -> bool:
+    """Keep the same frozen identity while honoring both persisted due dates."""
+    from crm.models import Deal
+    from linkedin.models import Campaign
+    from linkedin.tasks.follow_up import _normalize_linkedin_due_at
+
+    now = timezone.now()
+    due_at = locked.scheduled_at
+    if delivery is not None:
+        due_at = max(due_at, delivery.scheduled_at)
+    # Existing campaigns retain their current cadence. Only the new opt-in
+    # lane uses the sender's active/rest-day window at the Gmail boundary.
+    invitation_mode = Deal.objects.filter(
+        pk=(locked.payload or {}).get("deal_id"),
+        campaign__gmail_start_mode=Campaign.GmailStartMode.INVITATION_SENT,
+    ).exists()
+    if invitation_mode:
+        due_at = _normalize_linkedin_due_at(due_at, current_time=now)
+    if due_at <= now:
+        return False
+    _requeue(locked, scheduled_at=due_at)
+    locked.error = "Gmail deferred until its persisted due time/sender window"
+    locked.save(update_fields={"error"})
+    task.status = locked.status
+    task.started_at = locked.started_at
+    task.scheduled_at = locked.scheduled_at
+    task.error = locked.error
+    return True
+
+
 @transaction.atomic
-def stamp_submission_attempt(task) -> None:
-    """Persist the boundary immediately before Gmail provider submission."""
+def defer_early_current_gmail_task(task) -> bool:
+    """Defer a mistakenly early claim without making a replacement Task."""
     from linkedin.models import Task
 
-    locked = Task.objects.select_for_update(of=("self",)).get(pk=task.pk)
+    locked = _lock_current_task(task.pk, expected_payload=task.payload)
+    if locked is None:
+        raise ValueError("Gmail timing Task no longer exists")
+    if locked.task_type != Task.TaskType.GMAIL_FOLLOW_UP:
+        raise ValueError("Gmail timing guard received another Task type")
+    if locked.status != Task.Status.RUNNING:
+        raise ValueError("Gmail timing guard requires a claimed running Task")
+    delivery = _lock_current_delivery(locked)
+    if submission_attempted(locked.payload) or (
+        delivery is not None and delivery.status != delivery.Status.QUEUED
+    ):
+        raise ValueError("Gmail timing guard requires an unsubmitted queued delivery")
+    return _defer_locked_task_if_early(locked, delivery=delivery, task=task)
+
+
+@transaction.atomic
+def stamp_submission_attempt(task) -> bool:
+    """Stamp an on-time submission, or commit a safe same-Task deferral."""
+    from linkedin.models import Task
+
+    locked = _lock_current_task(task.pk, expected_payload=task.payload)
+    if locked is None:
+        raise ValueError("Gmail submission Task no longer exists")
     if locked.task_type != Task.TaskType.GMAIL_FOLLOW_UP:
         raise ValueError("Gmail submission marker received another Task type")
-    if locked.status not in {Task.Status.PENDING, Task.Status.RUNNING}:
-        raise ValueError("Gmail submission marker requires a live Task")
+    if locked.status != Task.Status.RUNNING:
+        raise ValueError("Gmail submission marker requires a claimed running Task")
     if submission_attempted(locked.payload):
         raise ValueError("Gmail submission was already attempted for this Task")
+    delivery = _lock_current_delivery(locked)
+    if delivery is not None and delivery.status != delivery.Status.QUEUED:
+        raise ValueError(
+            f"versioned Gmail delivery {delivery.pk} status "
+            f"{delivery.status!r} cannot cross submission"
+        )
+    if _defer_locked_task_if_early(locked, delivery=delivery, task=task):
+        return False
     payload = dict(locked.payload or {})
     payload[SUBMISSION_ATTEMPTED_AT_KEY] = timezone.now().isoformat()
     locked.payload = payload
     locked.save(update_fields={"payload"})
-    delivery = _versioned_delivery_for_task(locked)
     if delivery is not None:
-        if delivery.status != delivery.Status.QUEUED:
-            raise ValueError(
-                f"versioned Gmail delivery {delivery.pk} status "
-                f"{delivery.status!r} cannot cross submission"
-            )
         _set_delivery_status(delivery, delivery.Status.SENDING)
     task.payload = payload
+    return True
 
 
 @transaction.atomic
@@ -153,13 +247,13 @@ def recover_stale_current_gmail_task(task_id: int) -> bool:
     """Recover pre-submit work or post-submit work with exact sent evidence."""
     from linkedin.models import Task
 
-    task = Task.objects.select_for_update(of=("self",)).filter(pk=task_id).first()
+    task = _lock_current_task(task_id)
     if task is None or task.task_type != Task.TaskType.GMAIL_FOLLOW_UP:
         return False
     if task.status != Task.Status.RUNNING:
         return False
     try:
-        delivery = _versioned_delivery_for_task(task)
+        delivery = _lock_current_delivery(task)
     except ValueError as exc:
         task.status = Task.Status.FAILED
         task.error = f"Invalid versioned Gmail delivery: {exc}"
@@ -232,7 +326,7 @@ def reschedule_persisted_current_gmail_task(task_id: int) -> bool:
     """Heal the post-persist/pre-successor failure window without re-sending."""
     from linkedin.models import Task
 
-    task = Task.objects.select_for_update(of=("self",)).filter(pk=task_id).first()
+    task = _lock_current_task(task_id)
     if task is None or task.task_type != Task.TaskType.GMAIL_FOLLOW_UP:
         return False
     if task.status != Task.Status.RUNNING:
@@ -240,7 +334,7 @@ def reschedule_persisted_current_gmail_task(task_id: int) -> bool:
     if not submission_attempted(task.payload):
         return False
     try:
-        delivery = _versioned_delivery_for_task(task)
+        delivery = _lock_current_delivery(task)
     except ValueError:
         return False
     if delivery is not None and delivery.status in {

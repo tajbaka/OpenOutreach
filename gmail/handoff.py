@@ -1,8 +1,9 @@
-"""Post-accept Gmail cadence scheduling.
+"""Campaign-selected Gmail cadence scheduling.
 
 This module owns the durable task contract for the browserless Gmail lane. The
-connect/sweep paths call `maybe_schedule_gmail_sequence` when a lead reaches
-CONNECTED, so Gmail timing is independent from the LinkedIn follow-up sequence.
+connect/sweep paths call `maybe_schedule_gmail_sequence` after acceptance or a
+confirmed invitation. The Campaign chooses the anchor; acceptance never starts
+a second email sequence. Gmail remains independent from LinkedIn follow-ups.
 """
 from __future__ import annotations
 
@@ -217,6 +218,11 @@ def enqueue_gmail_follow_up(
         delivery_id=delivery_id,
         message_version_id=message_version_id,
     )
+    if delivery is not None and delivery.status in {
+        delivery.Status.STOPPED, delivery.Status.UNCLEAR,
+    }:
+        logger.info("gmail_follow_up held for delivery %s: %s", delivery.pk, delivery.status)
+        return None
     payload = {
         "lead_id": lead_id,
         "operator": operator,
@@ -377,6 +383,11 @@ def enqueue_email_enrichment(
         delivery_id=delivery_id,
         message_version_id=message_version_id,
     )
+    if delivery is not None and delivery.status not in {
+        delivery.Status.PLANNED, delivery.Status.QUEUED,
+    }:
+        logger.info("email enrichment held for delivery %s: %s", delivery.pk, delivery.status)
+        return None
     payload = {
         "lead_id": lead_id,
         "operator": operator,
@@ -418,10 +429,28 @@ def enqueue_email_enrichment(
             )
         return existing
 
+    # A repeated acceptance or restart must not purchase the same failed lookup
+    # again. A later manually supplied address can still enqueue this delivery.
+    if delivery is not None:
+        previous = Task.objects.filter(
+            task_type=Task.TaskType.ENRICH_EMAIL,
+            payload__delivery_id=delivery.pk,
+            payload__operator=operator,
+        ).order_by("pk").first()
+        if previous is not None:
+            logger.info("email enrichment held for delivery %s: prior lookup Task %s", delivery.pk, previous.pk)
+            return previous
+
+    from linkedin.models import Campaign
+    enrich_immediately = bool(
+        delivery is not None
+        and delivery.enrollment.deal.campaign.gmail_start_mode
+        == Campaign.GmailStartMode.INVITATION_SENT
+    )
     return Task.objects.create(
         task_type=Task.TaskType.ENRICH_EMAIL,
         scheduled_at=(
-            delivery.scheduled_at
+            timezone.now() if enrich_immediately else delivery.scheduled_at
             if delivery is not None
             else timezone.now() + timedelta(seconds=max(delay_seconds, 0))
         ),
@@ -451,10 +480,45 @@ def maybe_schedule_gmail_sequence(*, deal, operator: str):
         return None
 
 
+@transaction.atomic
 def _maybe_schedule_gmail_sequence(*, deal, operator: str):
-    """Queue the first Gmail step from the post-accept cadence when eligible."""
+    """Materialize the first Gmail step once, under the Lead ownership lock."""
     if not ENABLE_GMAIL_SEQUENCE:
+        logger.info("gmail cadence skipped for lead %s: Gmail sequence disabled", deal.lead_id)
         return None
+    from crm.models import Deal
+    from drip.services.ownership import lock_lead_outbound_ownership
+    from linkedin.enums import ProfileState
+    from linkedin.models import Campaign, LinkedInProfile
+    from linkedin.operators import resolve_operator
+
+    lock_lead_outbound_ownership(deal.lead_id)
+    deal = Deal.objects.select_for_update(of=("self",)).select_related(
+        "lead", "campaign__active_message_version__program",
+    ).get(pk=deal.pk)
+    invitation_start = deal.campaign.gmail_start_mode == Campaign.GmailStartMode.INVITATION_SENT
+    if invitation_start:
+        owner_handle = LinkedInProfile.objects.filter(
+            user_id=deal.campaign.user_id,
+        ).values_list("linkedin_username", flat=True).first()
+        if not owner_handle or resolve_operator(owner_handle) != operator:
+            logger.info("gmail cadence skipped for Deal %s: invitation sender ownership mismatch", deal.pk)
+            return None
+        if (
+            not deal.campaign.active_message_version_id
+            or deal.invitation_sent_at is None
+            or deal.invitation_sender != operator
+            or deal.invitation_withdrawn_at is not None
+            or deal.state not in {ProfileState.PENDING, ProfileState.CONNECTED, ProfileState.COMPLETED}
+        ):
+            logger.info("gmail cadence skipped for Deal %s: no qualifying confirmed invitation", deal.pk)
+            return None
+        reference_at = deal.invitation_sent_at
+    else:
+        if deal.state not in {ProfileState.CONNECTED, ProfileState.COMPLETED}:
+            logger.info("gmail cadence skipped for Deal %s: waiting for acceptance", deal.pk)
+            return None
+        reference_at = deal.connected_at or timezone.now()
     if not _current_deal_campaign_is_active(deal.pk):
         logger.info(
             "gmail cadence skipped for lead %s: campaign %s is not active",
@@ -537,21 +601,36 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
             logger.info("gmail cadence skipped for lead %s: no configured Gmail steps", deal.lead_id)
             return None
         first_step = routes[0][0]
-        delivery, _created = get_or_create_delivery(
+        delivery, created = get_or_create_delivery(
             enrollment=enrollment,
             channel=OutboundDelivery.Channel.GMAIL,
             step_key=first_step.step_key,
             step_index=first_step.step_index,
-            reference_at=deal.connected_at or timezone.now(),
+            reference_at=reference_at,
         )
+        # Hooks start missing work; they are not a retry or sent-step recovery
+        # command. Keep all terminal/interrupted identities and schedules intact.
+        if delivery.status not in {delivery.Status.PLANNED, delivery.Status.QUEUED}:
+            logger.info("gmail cadence held for delivery %s: %s", delivery.pk, delivery.status)
+            return None
+        if delivery.task_id is not None:
+            return delivery.task
+        if created and invitation_start:
+            from linkedin.tasks.follow_up import _normalize_linkedin_due_at
+
+            delivery.scheduled_at = _normalize_linkedin_due_at(
+                delivery.scheduled_at, current_time=timezone.now(),
+            )
+            delivery.save(update_fields={"scheduled_at", "updated_at"})
         if delivery.frozen_media:
             from linkedin.message_delivery_runtime import mark_delivery_status
 
             mark_delivery_status(delivery, delivery.Status.FAILED)
-            raise ValueError(
-                "versioned Gmail delivery includes media, but Gmail attachments "
-                "are not supported"
+            logger.error(
+                "Gmail delivery %s held as failed: Gmail attachments are not supported",
+                delivery.pk,
             )
+            return None
         enqueue_kwargs = {
             "lead_id": deal.lead_id,
             "operator": operator,
@@ -560,7 +639,8 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
             "delivery_id": delivery.pk,
             "message_version_id": enrollment.message_version_id,
         }
-        if deal.lead.email:
+        from gmail.addresses import usable_email
+        if usable_email(deal.lead.email):
             queued_task = enqueue_gmail_follow_up(**enqueue_kwargs)
         else:
             queued_task = enqueue_email_enrichment(**enqueue_kwargs)
@@ -604,3 +684,89 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
         deal_id=deal.pk,
         delay_seconds=delay_seconds,
     )
+
+
+def recover_invitation_gmail_sequences(*, operator: str, campaign_ids, limit: int = 100) -> int:
+    """One bounded startup pass for confirmed opt-in invitations missing work.
+
+    This cannot backfill a legacy campaign or reset any existing Gmail Task.
+    Repeat passes are safe: the canonical hook locks exact Lead/delivery identity.
+    A scoped audit cursor rotates past temporarily held rows instead of letting
+    a full page of missing-copy/stopped leads starve later eligible invitations.
+    """
+    from crm.models import Deal
+    from django.db.models import CharField, Exists, OuterRef, Q
+    from django.db.models.fields.json import KeyTextTransform
+    from django.db.models.functions import Cast
+    from linkedin.enums import ProfileState
+    from linkedin.models import Campaign, OutboundDelivery, Task, WorkflowRun
+    from linkedin.operators import CANONICAL_OPERATOR_HANDLES
+
+    if not ENABLE_GMAIL_SEQUENCE:
+        return 0
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("invitation Gmail recovery limit must be between 1 and 1000")
+    if operator not in CANONICAL_OPERATOR_HANDLES:
+        raise ValueError("invitation Gmail recovery requires a canonical operator")
+    campaign_ids = list(campaign_ids)
+    if any(isinstance(pk, bool) or not isinstance(pk, int) or pk <= 0 for pk in campaign_ids):
+        raise ValueError("invitation Gmail recovery requires positive campaign IDs")
+    campaign_ids = sorted(set(campaign_ids))
+    if not campaign_ids or not _operator_can_send_gmail(operator):
+        return 0
+    # Exclude handled work before applying the cap, so repeat restarts can reach
+    # later missing hooks instead of repeatedly scanning the first sent batch.
+    handled = OutboundDelivery.objects.filter(
+        enrollment__deal_id=OuterRef("pk"), channel=OutboundDelivery.Channel.GMAIL,
+    ).exclude(status=OutboundDelivery.Status.PLANNED, task__isnull=True)
+    enrichment = Task.objects.annotate(
+        _deal_key=KeyTextTransform("deal_id", "payload"),
+    ).filter(
+        task_type=Task.TaskType.ENRICH_EMAIL,
+        _deal_key=Cast(OuterRef("pk"), output_field=CharField()),
+        payload__operator=operator,
+    )
+    deals = Deal.objects.filter(
+        campaign_id__in=campaign_ids,
+        campaign__status=Campaign.Status.ACTIVE,
+        campaign__gmail_start_mode=Campaign.GmailStartMode.INVITATION_SENT,
+        campaign__active_message_version__isnull=False,
+        state__in=(ProfileState.PENDING, ProfileState.CONNECTED, ProfileState.COMPLETED),
+        lead__disqualified=False,
+        invitation_sender=operator,
+        invitation_sent_at__isnull=False,
+        invitation_withdrawn_at__isnull=True,
+    ).annotate(_handled=Exists(handled), _lookup=Exists(enrichment)).filter(
+        Q(_lookup=False) | ~Q(lead__email=""), _handled=False,
+    ).order_by("pk")
+    audit_name = "invitation-gmail-recovery"
+    previous = WorkflowRun.objects.filter(
+        name=audit_name, operator=operator, counts__campaign_ids=campaign_ids,
+    ).order_by("-completed_at", "-pk").first()
+    cursor = previous.counts.get("last_deal_id", 0) if previous else 0
+    if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
+        raise ValueError("invalid invitation Gmail recovery cursor")
+    batch = list(deals.filter(pk__gt=cursor)[:limit])
+    if not batch and cursor:
+        batch = list(deals[:limit])
+    if not batch:
+        return 0
+    scheduled = 0
+    for deal in batch:
+        task = maybe_schedule_gmail_sequence(deal=deal, operator=operator)
+        # A completed/failed lookup is deliberately returned by the canonical
+        # hook to avoid buying it again. It is a hold, not scheduled work.
+        scheduled += int(task is not None and task.status in _pending_or_running())
+    WorkflowRun.objects.create(
+        name=audit_name, operator=operator,
+        summary=f"Scanned {len(batch)} invitations; {scheduled} pending/running work items",
+        counts={
+            "campaign_ids": campaign_ids, "last_deal_id": batch[-1].pk,
+            "scanned": len(batch), "scheduled": scheduled,
+        },
+    )
+    logger.info(
+        "Invitation Gmail recovery for %s: scanned %d, %d work item(s), cursor %d",
+        operator, len(batch), scheduled, batch[-1].pk,
+    )
+    return scheduled

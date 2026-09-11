@@ -30,7 +30,7 @@ def test_import_campaign_snapshots_current_json_program(monkeypatch, tmp_path):
     user = User.objects.create(username="Arian")
     LinkedInProfile.objects.create(
         user=user,
-        linkedin_username="arian@example.com",
+        linkedin_username="Arian",
         linkedin_password="unused",
         active=True,
     )
@@ -43,6 +43,8 @@ def test_import_campaign_snapshots_current_json_program(monkeypatch, tmp_path):
     path.write_text(json.dumps({
         "name": "Marketplace campaign",
         "message_program_key": "fedramp-marketplace-csp",
+        "gmail_start_mode": "post_acceptance",
+        "owner_username": "Arian",
     }))
 
     call_command("import_campaign", str(path))

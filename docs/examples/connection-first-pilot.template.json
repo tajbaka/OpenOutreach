@@ -1,0 +1,9 @@
+{
+  "name": "QA | Connection-first | REVIEW_REQUIRED",
+  "owner_username": "REVIEW_REQUIRED",
+  "gmail_start_mode": "REVIEW_REQUIRED",
+  "message_program_key": "fedramp-marketplace-csp",
+  "status": "disabled",
+  "seed_public_ids": [],
+  "campaign_objective": "Review-gated internal QA. Not an approved recipient cohort."
+}

@@ -2,17 +2,13 @@
 from __future__ import annotations
 
 import logging
-from email.utils import parseaddr
+
+from gmail.addresses import usable_email
 
 from linkedin.enrichment.base import EnrichmentResult, EnrichmentStatus
 from linkedin.enrichment.providers.bettercontact import BetterContactEmailProvider
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_email(value: str) -> str:
-    _, addr = parseaddr(value or "")
-    return addr.strip().lower()
 
 
 def _stop_delivery(delivery) -> None:
@@ -98,7 +94,7 @@ def handle_enrich_email(task) -> EnrichmentResult | None:
         logger.info("enrich_email: lead %s stopped - %s", lead_id, stop_reason)
         _stop_delivery(delivery)
         return None
-    if lead.email:
+    if usable_email(lead.email):
         logger.info("enrich_email: lead %s already has email - enqueueing Gmail", lead_id)
         gmail_task = enqueue_gmail_follow_up(
             lead_id=lead.id,
@@ -126,10 +122,36 @@ def handle_enrich_email(task) -> EnrichmentResult | None:
             "enrich_email: lead %s - provider %s already tried, skipping",
             lead_id, provider.name,
         )
-        _fail_delivery(delivery)
+        task.error = "Email lookup exhausted: provider already tried; email lane held"
+        task.save(update_fields={"error"})
         return None
 
     result = provider.enrich(lead, task)
+    # Lookups can take minutes. A reply, suppression, handoff or campaign pause
+    # while the provider runs must win over the now-stale Lead snapshot.
+    lead.refresh_from_db()
+    post_lookup_stop = lead_automation_stop_reason(lead)
+    if not _current_deal_campaign_is_active(deal_id):
+        post_lookup_stop = "Campaign is not active"
+    elif drip_owns_channel(lead_id=lead.id, channel=DripLane.Channel.GMAIL):
+        post_lookup_stop = "Drip owns Gmail"
+    if delivery is not None:
+        delivery.refresh_from_db(fields=["status"])
+        if delivery.status in {
+            delivery.Status.SENT,
+            delivery.Status.STOPPED,
+            delivery.Status.UNCLEAR,
+            delivery.Status.SENDING,
+        }:
+            post_lookup_stop = f"Delivery is {delivery.status}"
+    if post_lookup_stop:
+        logger.info("enrich_email: lead %s stopped after lookup - %s", lead_id, post_lookup_stop)
+        if delivery is None or delivery.status != delivery.Status.SENDING:
+            _stop_delivery(delivery)
+        task.error = f"Email lookup result held: {post_lookup_stop}"
+        task.save(update_fields={"error"})
+        return None
+    tried = list(lead.email_providers_tried or [])
     if result.status in (EnrichmentStatus.FOUND, EnrichmentStatus.NOT_FOUND):
         if result.provider not in tried:
             tried.append(result.provider)
@@ -137,14 +159,14 @@ def handle_enrich_email(task) -> EnrichmentResult | None:
         update_fields = ["email_providers_tried"]
 
         if result.status == EnrichmentStatus.FOUND and result.email:
-            email = _normalize_email(result.email)
-            if email:
+            email = usable_email(result.email)
+            if email and not usable_email(lead.email):
                 lead.email = email
                 update_fields.append("email")
 
         lead.save(update_fields=update_fields)
 
-        if result.status == EnrichmentStatus.FOUND and lead.email:
+        if usable_email(lead.email):
             gmail_task = enqueue_gmail_follow_up(
                 lead_id=lead.id,
                 operator=operator,
@@ -160,12 +182,17 @@ def handle_enrich_email(task) -> EnrichmentResult | None:
             )
             if gmail_task is None:
                 _stop_delivery(delivery)
-        elif delivery is not None:
-            _fail_delivery(delivery)
+        else:
+            # No address is an expected email-only hold, not a failed frozen
+            # message. Preserve PLANNED so a reviewed address can resume it.
+            task.error = "Email lookup found no usable address; email lane held"
+            task.save(update_fields={"error"})
     else:
         logger.warning(
             "enrich_email: BetterContact failed for lead %s - not recording tried",
             lead_id,
         )
+        task.error = "Email lookup provider failed; email lane awaiting retry/review"
+        task.save(update_fields={"error"})
 
     return result

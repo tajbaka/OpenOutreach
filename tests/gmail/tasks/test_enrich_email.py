@@ -207,5 +207,8 @@ def test_enrich_email_reply_during_lookup_blocks_gmail_enqueue(monkeypatch):
 
     result = handle_enrich_email(_task(lead))
 
-    assert result.status == EnrichmentStatus.FOUND
+    assert result is None
+    lead.refresh_from_db()
+    assert lead.email == ""
+    assert lead.email_providers_tried == []
     assert not Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).exists()

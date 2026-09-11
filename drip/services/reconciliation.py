@@ -26,6 +26,7 @@ from drip.models import (
 from drip.services.handoff import evaluate_handoff
 from drip.services.ownership import acquire_reconciliation_lock, lock_enrollment_graph
 from drip.services.stops import stop_enrollment_for_reason
+from linkedin.message_roles import role_wording
 
 
 @dataclass(frozen=True)
@@ -116,10 +117,16 @@ def _render_step(
     context = _render_context(lane=lane)
     if extra_context:
         context.update(extra_context)
-    body = render_template(rendition[step_index]["body"], context)
+    body_template = rendition[step_index]["body"]
+    subject_template = (
+        "" if lane.channel == DripLane.Channel.LINKEDIN else rendition[0]["subject"]
+    )
+    if "{role}" in body_template or "{role}" in subject_template:
+        context["role"] = role_wording(lane.enrollment.lead.role_tag)
+    body = render_template(body_template, context)
     if lane.channel == DripLane.Channel.LINKEDIN:
         return "", body
-    first_subject = render_template(rendition[0]["subject"], context)
+    first_subject = render_template(subject_template, context)
     return thread_subject or first_subject, body
 
 

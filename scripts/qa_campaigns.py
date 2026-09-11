@@ -20,6 +20,22 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUTS = (ROOT / 'linkedin/icp_messages.json', ROOT / 'gmail/icp_emails.json')
 
 
+def source_fingerprint() -> tuple[str, int]:
+    """Identify the uncommitted source under test without reading credentials."""
+    paths = set(ROOT.glob('*.py'))
+    for directory in ('linkedin', 'gmail', 'drip', 'crm', 'chat', 'tests', 'scripts', 'requirements'):
+        paths.update(
+            path for path in (ROOT / directory).rglob('*')
+            if path.is_file() and path.suffix in {'.py', '.json', '.j2', '.txt'}
+            and '__pycache__' not in path.parts
+        )
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        digest.update(str(path.relative_to(ROOT)).encode('utf-8') + b'\0')
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest(), len(paths)
+
+
 def run() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, help='New directory for QA reports; never overwritten')
@@ -39,6 +55,7 @@ def run() -> int:
     output = (args.output_dir or ROOT / 'artifacts/qa/campaigns' / run_id).resolve()
     output.mkdir(parents=True, exist_ok=False)
     fingerprints = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in INPUTS}
+    source_sha256, source_file_count = source_fingerprint()
     clean_env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR') if key in os.environ}
     # A short private Unix-socket path avoids both TCP exposure and macOS's
     # socket path limit. This cluster contains synthetic data only.
@@ -89,13 +106,17 @@ def run() -> int:
         assert cluster.parent == Path('/tmp').resolve() and (cluster / 'QA_ONLY').read_text() == run_id
         shutil.rmtree(cluster)
         unchanged = fingerprints == {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in INPUTS}
+        source_unchanged = (source_sha256, source_file_count) == source_fingerprint()
         receipt = {'run_id': run_id, 'postgres_version': version, 'exit_code': result,
                    'suite': args.suite,
                    'input_sha256': fingerprints, 'input_files_unchanged': unchanged,
+                   'source_tree_sha256': source_sha256, 'source_file_count': source_file_count,
+                   'source_files_unchanged': source_unchanged,
                    'private_cluster_started': started, 'private_cluster_stopped_and_removed': stopped,
                    'live_sending': False, 'production_database_access': False}
         (output / 'run.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
         assert unchanged, 'QA must not alter the message JSON files'
+        assert source_unchanged, 'Source changed during QA; rerun against the final working tree'
     print(f'QA reports: {output}\nExit status: {result}', flush=True)
     return result
 

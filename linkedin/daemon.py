@@ -510,6 +510,14 @@ def heal_tasks(session):
     if reconcile_discovery_tasks(session.linkedin_profile, our_operator):
         logger.info("Profile discovery task ready for %s", our_operator)
 
+    # Recover only missing invitation-start Gmail work, independently of the
+    # post-accept LinkedIn follow-up switch. Never change existing due Tasks.
+    from gmail.handoff import recover_invitation_gmail_sequences
+
+    recover_invitation_gmail_sequences(
+        operator=our_operator, campaign_ids=owned_campaign_ids,
+    )
+
     # 7. Follow-up tasks (post-accept DMs — gated separately).
     if not ENABLE_FOLLOW_UP:
         cancelled_fu = Task.objects.filter(
@@ -862,7 +870,7 @@ def run_daemon(session):
     # available, so enrich_phone tasks must always be processable. The worker
     # is a cheap idle DB poll when no tasks exist.
     from linkedin.enrichment.worker import EnrichmentWorker
-    enrichment_worker = EnrichmentWorker()
+    enrichment_worker = EnrichmentWorker(operator=resolve_operator(session.linkedin_profile.linkedin_username))
     enrichment_worker.start()
 
     # Node monitoring — a background thread that beats this daemon's

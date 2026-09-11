@@ -1,5 +1,7 @@
 # linkedin/admin.py
 from django.contrib import admin
+from django import forms
+from django.core.exceptions import ValidationError
 
 from chat.models import ChatMessage
 
@@ -26,13 +28,42 @@ from linkedin.models import (
 )
 
 
+class CampaignAdminForm(forms.ModelForm):
+    gmail_start_mode = forms.ChoiceField(
+        label="Should this campaign's email sequence start before or after LinkedIn acceptance?",
+        choices=[("", "Choose explicitly (required)")] + list(Campaign.GmailStartMode.choices),
+        required=True,
+    )
+
+    class Meta:
+        model = Campaign
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance._state.adding:
+            self.initial["gmail_start_mode"] = ""
+
+    def clean_user(self):
+        from linkedin.campaign_setup import exact_campaign_owner
+
+        user = self.cleaned_data["user"]
+        if self.instance._state.adding or user.pk != self.instance.user_id:
+            try:
+                exact_campaign_owner(user.username)
+            except ValidationError as exc:
+                raise forms.ValidationError(exc.messages) from exc
+        return user
+
+
 @admin.register(Campaign)
 class CampaignAdmin(admin.ModelAdmin):
+    form = CampaignAdminForm
     list_display = (
-        "name", "user", "status", "active_message_version", "booking_link",
+        "name", "user", "status", "gmail_start_mode", "active_message_version", "booking_link",
         "is_freemium", "action_fraction",
     )
-    list_filter = ("status", "is_freemium")
+    list_filter = ("status", "is_freemium", "gmail_start_mode")
     raw_id_fields = ("user", "active_message_version")
 
 
@@ -113,12 +144,20 @@ class OutreachSuppressionAdmin(admin.ModelAdmin):
 @admin.register(LinkedInProfile)
 class LinkedInProfileAdmin(admin.ModelAdmin):
     list_display = (
-        "user", "linkedin_username", "active",
+        "user", "linkedin_username", "active", "restart_requested",
         "legal_accepted",
     )
-    list_filter = ("active",)
-    list_editable = ("active",)
+    list_filter = ("active", "restart_requested")
+    list_editable = ("active", "restart_requested")
     raw_id_fields = ("user",)
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            super().save_model(request, obj, form, change)
+        elif form.changed_data:
+            # The supervisor can consume a request while this form is open.
+            # Save only edited fields, never a stale whole-profile snapshot.
+            obj.save(update_fields=form.changed_data)
 
 
 @admin.register(LinkedInDiscoveryLead)

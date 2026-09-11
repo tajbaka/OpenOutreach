@@ -304,6 +304,7 @@ def test_gmail_follow_up_continues_real_thread_and_retains_subject(monkeypatch):
         payload__step_index=1,
     )
     step_one_task.status = Task.Status.RUNNING
+    monkeypatch.setattr("django.utils.timezone.now", lambda: step_one_task.scheduled_at)
     step_one_task.started_at = timezone.now()
     step_one_task.save(update_fields={"status", "started_at"})
     handle_gmail_follow_up(step_one_task)

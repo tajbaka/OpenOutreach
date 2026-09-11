@@ -206,5 +206,9 @@ class GmailWorker:
             )
             return True
 
-        task.mark_completed()
+        # The final send boundary may defer this exact Task if its persisted
+        # due date/window changed after claim. Do not complete deferred work.
+        task.refresh_from_db(fields=["status"])
+        if task.status == task.Status.RUNNING:
+            task.mark_completed()
         return True
