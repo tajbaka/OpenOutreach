@@ -35,8 +35,10 @@ flag edits through locked selective saves and hidden original checkbox values.
 Restart acknowledgement alerts use ops Slack, emergency shutdown uses the replies
 channel (ops fallback); notification failure cannot delay process termination.
 See `docs/sender-supervisor-stop.md` for deployment and live-proof requirements.
-The extension's isolated QA passed 1,704 tests plus 1,148 message previews
-(`artifacts/qa/campaigns/20260911T025222371756Z/`). A separate synthetic macOS
+The extension reconciled with listener fix `ac6ec839` passed 1,729 isolated tests
+plus 1,148 message previews (`artifacts/qa/campaigns/20260911T030401607352Z/`),
+with unchanged source and approved JSON inputs and no shared DB/live providers.
+This supersedes the feature-only 1,704-test run. A separate synthetic macOS
 owned-process shutdown smoke also passed; neither exercise verifies deployed
 remote Windows supervisors, the production migration, or live Slack delivery.
 

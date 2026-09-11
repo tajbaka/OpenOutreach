@@ -89,6 +89,16 @@ That smoke used a local fake flag and 0.1-second polling, not the production
 15-second cadence. Neither check proves migration deployment, remote Windows
 shutdown, actual Slack delivery, or either laptop loading the new supervisor.
 
+The main-release reconciliation also preserves concurrent listener fix
+`ac6ec839`. The combined source in merge `43cc4029` passed **1,729 tests and
+1,148 message previews** under `artifacts/qa/campaigns/20260911T030401607352Z/`.
+Source fingerprint `0793d3404feab7497dd1f00c81b2963c3eb71f13d34b7815b8061051e0a47410`
+and both approved JSON inputs were unchanged; the private cluster was removed.
+No shared-DB migration, live flag change, campaign creation or remote restart
+was performed by that verification. An old remote supervisor may automatically
+pull/migrate/restart children after publication, but still needs a full restart
+to load this watchdog. Check the schema before bootstrapping the new supervisor.
+
 Campaigns, leads, copy and schedules are not changed by this control. Future
 campaign preparation and 9 a.m. monitoring requested by the user are a subsequent
 workflow, not part of installing or testing this feature.
