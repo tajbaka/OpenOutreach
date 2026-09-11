@@ -24,6 +24,7 @@ class ListenerSupervisor:
     # Consecutive spawn failures after which the supervisor stops trying for
     # the rest of the current active period (daemon degrades to polling).
     MAX_SPAWN_FAILURES = 5
+    STOP_TIMEOUT_SECONDS = 20
 
     def __init__(self):
         self._proc: subprocess.Popen | None = None
@@ -64,15 +65,23 @@ class ListenerSupervisor:
                 )
 
     def stop(self) -> None:
-        """Terminate the listener child if running. Idempotent, never raises.
+        """Stop and reap the child before permitting another listener to start.
 
         Also clears the spawn-failure count so the next active period starts
         fresh (off-hours is a natural reset point)."""
         if self._proc is not None and self._proc.poll() is None:
             try:
                 self._proc.terminate()
+                try:
+                    self._proc.wait(timeout=self.STOP_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Realtime listener shutdown timed out — killing child")
+                    self._proc.kill()
+                    self._proc.wait(timeout=5)
                 logger.info("Realtime listener child process terminated")
-            except Exception as e:
-                logger.debug("Error terminating realtime listener: %s", e)
+            except ProcessLookupError:
+                self._proc.wait(timeout=5)
+        elif self._proc is not None:
+            self._proc.wait(timeout=5)
         self._proc = None
         self._spawn_failures = 0

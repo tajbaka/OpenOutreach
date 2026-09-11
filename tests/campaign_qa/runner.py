@@ -83,6 +83,8 @@ def main():
         'tests/test_daemon_supervisor_stop.py', 'tests/test_supervisor_safety.py',
         'tests/test_slack_supervisor_controls.py',
         'tests/test_supervisor_control.py',
+        'tests/realtime/test_listener.py', 'tests/realtime/test_supervisor.py',
+        'tests/realtime/test_listener_command.py',
         'tests/test_daemon_resilience.py',
         'tests/gmail/test_delivery.py', 'tests/gmail/test_client.py',
         'tests/gmail/test_templates.py',

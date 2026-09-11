@@ -17,12 +17,15 @@ restarts this process; the entrypoint is `manage.py listen_realtime`.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import time
+from pathlib import Path
+from threading import Event
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
-from linkedin.conf import LISTENER_CDP_PORT, LISTENER_PUMP_SLICE_SECONDS
+from linkedin.conf import LISTENER_CDP_PORT, LISTENER_PUMP_SLICE_SECONDS, ROOT_DIR
 from linkedin.realtime.handler import handle_realtime_event
 from linkedin.realtime.heartbeat import write_heartbeat
 from linkedin.realtime.sse import RealtimeSSEBuffer
@@ -46,21 +49,25 @@ _HEALTHY_CONNECTION_SECONDS = 60
 _MESSAGING_NAV_TIMEOUT_MS = 15_000
 
 
-def run_listener(*, operator: str, username: str, cdp_port: int | None = None) -> int:
-    """Listener process main loop. Returns a process exit code (0 never —
-    it loops until the cap is hit, then returns 1).
+def run_listener(*, operator: str, username: str, cdp_port: int | None = None,
+                 stop_event: Event | None = None) -> int:
+    """Return 0 on requested shutdown, or 1 after repeated connection failures.
 
     Maintains a CDP connection to the daemon's browser; on any drop,
     reconnects after a short delay. Exits 1 only after
     `_MAX_CONSECUTIVE_FAILURES` quick failures in a row.
     """
     cdp_port = LISTENER_CDP_PORT if cdp_port is None else cdp_port
+    stop_event = Event() if stop_event is None else stop_event
     failures = 0
-    while failures < _MAX_CONSECUTIVE_FAILURES:
+    while not stop_event.is_set() and failures < _MAX_CONSECUTIVE_FAILURES:
         started = time.monotonic()
         try:
-            _run_one_connection(cdp_port=cdp_port, operator=operator, username=username)
-        except Exception as e:
+            _run_one_connection(cdp_port=cdp_port, operator=operator, username=username,
+                                stop_event=stop_event)
+        except PlaywrightError as e:
+            if stop_event.is_set():
+                return 0
             lasted = time.monotonic() - started
             if lasted >= _HEALTHY_CONNECTION_SECONDS:
                 failures = 0
@@ -71,12 +78,74 @@ def run_listener(*, operator: str, username: str, cdp_port: int | None = None) -
                     "listener: connect attempt failed (%d/%d): %s",
                     failures, _MAX_CONSECUTIVE_FAILURES, e,
                 )
-            time.sleep(_RECONNECT_DELAY_SECONDS)
+            stop_event.wait(_RECONNECT_DELAY_SECONDS)
+    if stop_event.is_set():
+        return 0
     logger.error("listener: gave up after %d failed reconnects — exiting", failures)
     return 1
 
 
-def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
+def _tab_record_path(username: str, cdp_port: int) -> Path:
+    account = hashlib.sha256(username.strip().lower().encode()).hexdigest()
+    return ROOT_DIR / "data" / f"listener-tab-{account}-{cdp_port}.txt"
+
+
+def _target_id(context, page) -> str:
+    cdp = context.new_cdp_session(page)
+    try:
+        return cdp.send("Target.getTargetInfo")["targetInfo"]["targetId"]
+    finally:
+        cdp.detach()
+
+
+def _listener_page(context, record: Path):
+    """Reclaim only our recorded CDP target, never a tab selected by URL.
+
+    The record survives listener termination and a lost CDP connection. A new
+    browser has different target IDs, so an obsolete record is replaced.
+    The command's single-instance guard serializes listener processes.
+    """
+    try:
+        target_id = record.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        target_id = None
+    if target_id:
+        for page in context.pages:
+            if page.is_closed():
+                continue
+            if _target_id(context, page) == target_id:
+                logger.info("listener: reusing owned messaging tab")
+                return page
+
+    record.parent.mkdir(parents=True, exist_ok=True)
+    page = context.new_page()
+    recorded = False
+    try:
+        target_id = _target_id(context, page)
+        temporary = record.with_suffix(".tmp")
+        temporary.write_text(target_id, encoding="utf-8")
+        temporary.replace(record)
+        recorded = True
+    finally:
+        # If recording ownership fails, do not leave an untracked tab behind.
+        if not recorded:
+            page.close()
+    return page
+
+
+def _close_listener_page(page, record: Path) -> None:
+    try:
+        page.close()
+    except PlaywrightError:
+        # The browser may still be alive after our CDP transport drops. Keep
+        # its exact target ID so the next connection can reclaim the tab.
+        logger.warning("listener: tab cleanup unavailable; retaining ownership for reconnect")
+    else:
+        record.unlink(missing_ok=True)
+
+
+def _run_one_connection(*, cdp_port: int, operator: str, username: str,
+                        stop_event: Event) -> None:
     """One CDP connection lifecycle: connect, wire the stream, pump until
     the connection drops (at which point a Playwright call raises and the
     exception propagates to `run_listener`'s reconnect loop).
@@ -89,7 +158,8 @@ def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
         if not browser.contexts:
             raise RuntimeError("no shared browser context available over CDP")
         context = browser.contexts[0]
-        page = context.new_page()
+        record = _tab_record_path(username, cdp_port)
+        page = _listener_page(context, record)
         try:
             cdp = context.new_cdp_session(page)
             cdp.send("Network.enable")
@@ -137,14 +207,14 @@ def _run_one_connection(*, cdp_port: int, operator: str, username: str) -> None:
             logger.info("listener: connected over CDP, observing %s", _REALTIME_CONNECT_PATH)
 
             slice_ms = LISTENER_PUMP_SLICE_SECONDS * 1000
-            while True:
-                page.wait_for_timeout(slice_ms)
-                write_heartbeat(username)
+            next_heartbeat = time.monotonic() + LISTENER_PUMP_SLICE_SECONDS
+            while not stop_event.is_set():
+                page.wait_for_timeout(min(slice_ms, 1000))
+                if time.monotonic() >= next_heartbeat:
+                    write_heartbeat(username)
+                    next_heartbeat = time.monotonic() + LISTENER_PUMP_SLICE_SECONDS
         finally:
-            try:
-                page.close()
-            except Exception:
-                pass
+            _close_listener_page(page, record)
 
 
 def _open_messaging_page(page) -> None:

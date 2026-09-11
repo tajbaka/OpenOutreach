@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+import subprocess
+
+import pytest
 
 from linkedin.realtime.supervisor import ListenerSupervisor
 
@@ -52,6 +55,7 @@ def test_stop_terminates_a_running_process():
         sup.ensure_running()
     sup.stop()
     proc.terminate.assert_called_once()
+    proc.wait.assert_called_once_with(timeout=sup.STOP_TIMEOUT_SECONDS)
 
 
 def test_stop_is_noop_when_nothing_running():
@@ -69,3 +73,34 @@ def test_stop_resets_failure_count_so_ensure_can_spawn_again():
     with patch("linkedin.realtime.supervisor.subprocess.Popen", return_value=_fake_proc()) as popen:
         sup.ensure_running()
     popen.assert_called_once()
+
+
+def test_stop_kills_and_reaps_child_that_ignores_graceful_shutdown():
+    sup = ListenerSupervisor()
+    proc = _fake_proc()
+    proc.wait.side_effect = [subprocess.TimeoutExpired("listener", 20), 0]
+    sup._proc = proc
+    sup.stop()
+    proc.kill.assert_called_once()
+    assert proc.wait.call_count == 2
+    assert sup._proc is None
+
+
+def test_stop_keeps_process_reference_if_it_cannot_confirm_exit():
+    sup = ListenerSupervisor()
+    proc = _fake_proc()
+    proc.wait.side_effect = subprocess.TimeoutExpired("listener", 20)
+    sup._proc = proc
+    with pytest.raises(subprocess.TimeoutExpired):
+        sup.stop()
+    assert sup._proc is proc
+
+
+def test_stop_reaps_process_that_exits_before_terminate():
+    sup = ListenerSupervisor()
+    proc = _fake_proc()
+    proc.terminate.side_effect = ProcessLookupError()
+    sup._proc = proc
+    sup.stop()
+    proc.wait.assert_called_once_with(timeout=5)
+    assert sup._proc is None
