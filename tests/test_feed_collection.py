@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone as dt_timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from django.core.management import call_command
 from django.utils import timezone
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from linkedin.feed_collection import (
     CollectionResult,
     FeedPostRecord,
+    _CollectionProgress,
     _collect_from_page,
-    _retry_feed_startup,
+    _feed_page,
+    collect_feed_for_job,
     claim_due_collection_job,
     catchup_start_date,
     collection_cutoff_for_job,
@@ -34,31 +40,176 @@ from linkedin.models import (
 )
 
 
-def test_retry_feed_startup_recovers_from_transient_failures(monkeypatch):
-    attempts = []
+@pytest.fixture
+def browser_attempts(monkeypatch, tmp_path):
+    pages = [MagicMock(), MagicMock(), MagicMock()]
+    browsers = []
+    managers = []
+    for page in pages:
+        browser = MagicMock()
+        browser.contexts = [MagicMock()]
+        browser.contexts[0].pages = [page]
+        browser.contexts[0].new_cdp_session.return_value.send.return_value = {
+            "targetInfo": {"targetId": "owned"},
+        }
+        browser.new_browser_cdp_session.return_value.send.return_value = {"targetId": "owned"}
+        manager = MagicMock()
+        manager.__enter__.return_value.chromium.connect_over_cdp.return_value = browser
+        browsers.append(browser)
+        managers.append(manager)
+    factory = MagicMock(side_effect=managers)
+    monkeypatch.setattr("linkedin.feed_collection.sync_playwright", factory)
     monkeypatch.setattr("linkedin.feed_collection.time.sleep", lambda seconds: None)
-
-    def operation():
-        attempts.append(True)
-        if len(attempts) < 3:
-            raise RuntimeError("transient")
-        return "connected"
-
-    assert _retry_feed_startup(operation, label="test") == "connected"
-    assert len(attempts) == 3
+    monkeypatch.setattr("linkedin.feed_collection._FEED_LOG_PATH", tmp_path / "collector.log")
+    return SimpleNamespace(pages=pages, browsers=browsers, managers=managers, factory=factory, log=tmp_path / "collector.log")
 
 
-def test_retry_feed_startup_raises_after_bound(monkeypatch):
-    attempts = []
-    monkeypatch.setattr("linkedin.feed_collection.time.sleep", lambda seconds: None)
+def test_collector_timeout_replaces_tab_and_transport(monkeypatch, browser_attempts):
+    setup = browser_attempts
+    setup.pages[0].wait_for_url.side_effect = PlaywrightTimeoutError("Page.wait_for_url: Timeout")
+    monkeypatch.setattr("linkedin.feed_collection.extract_posts_from_page", lambda page: [_record()])
+    job = ensure_collection_jobs(operator="Arian", account_username="arian@example.com")
 
-    def operation():
-        attempts.append(True)
-        raise RuntimeError("still unavailable")
+    result = collect_feed_for_job(job, max_posts=1, cutoff_at=timezone.now() - timedelta(days=1))
 
-    with pytest.raises(RuntimeError, match="still unavailable"):
-        _retry_feed_startup(operation, label="test")
-    assert len(attempts) == 3
+    assert result.posts_created == 1
+    assert setup.factory.call_count == 2
+    for index in (0, 1):
+        setup.pages[index].wait_for_url.assert_called_once()
+        setup.browsers[index].new_browser_cdp_session.return_value.send.assert_any_call(
+            "Target.closeTarget", {"targetId": "owned"},
+        )
+        setup.managers[index].__exit__.assert_called_once()
+        setup.browsers[index].close.assert_not_called()
+        setup.browsers[index].contexts[0].close.assert_not_called()
+    assert "replacing collector tab" in setup.log.read_text()
+    assert "completed result=" in setup.log.read_text()
+
+
+def test_collector_recovery_preserves_counts_and_observations(monkeypatch, browser_attempts):
+    first = _record(activity_urn="urn:li:activity:111", post_text="first")
+    second = _record(activity_urn="urn:li:activity:222", post_text="second")
+    extracts = iter([
+        [first], PlaywrightError("Target page, context or browser has been closed"),
+        [first, second],
+    ])
+
+    def extract(page):
+        result = next(extracts)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("linkedin.feed_collection.extract_posts_from_page", extract)
+    job = ensure_collection_jobs(operator="Arian", account_username="arian@example.com")
+    result = collect_feed_for_job(job, max_posts=2, cutoff_at=timezone.now() - timedelta(days=1))
+
+    assert result == CollectionResult(2, 2, 2, 0)
+    assert browser_attempts.factory.call_count == 2
+    assert list(LinkedInFeedObservation.objects.values_list("seen_count", flat=True)) == [1, 1]
+
+
+def test_collector_exhausted_recovery_closes_all_owned_tabs(browser_attempts):
+    for page in browser_attempts.pages:
+        page.wait_for_url.side_effect = PlaywrightTimeoutError("Page.wait_for_url: Timeout")
+    job = ensure_collection_jobs(operator="Arian", account_username="arian@example.com")
+
+    with pytest.raises(PlaywrightTimeoutError):
+        collect_feed_for_job(job)
+
+    assert browser_attempts.factory.call_count == 3
+    for browser in browser_attempts.browsers:
+        browser.new_browser_cdp_session.return_value.send.assert_any_call(
+            "Target.closeTarget", {"targetId": "owned"},
+        )
+    assert "failed after saving 0 posts" in browser_attempts.log.read_text()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("parse failure"), PlaywrightError("invalid selector")])
+def test_collector_does_not_retry_unexpected_errors(monkeypatch, browser_attempts, error):
+    def extract(page):
+        raise error
+
+    monkeypatch.setattr("linkedin.feed_collection.extract_posts_from_page", extract)
+    job = ensure_collection_jobs(operator="Arian", account_username="arian@example.com")
+    with pytest.raises(type(error), match=str(error)):
+        collect_feed_for_job(job)
+    assert browser_attempts.factory.call_count == 1
+    browser_attempts.browsers[0].new_browser_cdp_session.return_value.send.assert_any_call(
+        "Target.closeTarget", {"targetId": "owned"},
+    )
+
+
+def test_feed_page_owns_exact_target_not_another_workers_page(browser_attempts):
+    browser = browser_attempts.browsers[0]
+    owned = browser_attempts.pages[0]
+    other = MagicMock()
+    browser.contexts[0].pages = [other, owned]
+
+    def session_for(page):
+        session = MagicMock()
+        session.send.return_value = {
+            "targetInfo": {"targetId": "owned" if page is owned else "messaging"},
+        }
+        return session
+
+    browser.contexts[0].new_cdp_session.side_effect = session_for
+    with _feed_page(browser) as page:
+        assert page is owned
+
+    cdp = browser.new_browser_cdp_session.return_value
+    cdp.send.assert_any_call("Target.createTarget", {"url": "https://www.linkedin.com/feed/"})
+    cdp.send.assert_any_call("Target.closeTarget", {"targetId": "owned"})
+    assert not any(
+        call.args == ("Target.closeTarget", {"targetId": "messaging"})
+        for call in cdp.send.call_args_list
+    )
+    other.close.assert_not_called()
+    other.goto.assert_not_called()
+
+
+def test_feed_page_startup_deadline_cleans_up_exact_unattached_target(
+    monkeypatch, browser_attempts,
+):
+    browser = browser_attempts.browsers[0]
+    browser.contexts[0].pages = []
+    clock = iter([0, 1, 46])
+    monkeypatch.setattr("linkedin.feed_collection.time.monotonic", lambda: next(clock, 46))
+    with pytest.raises(PlaywrightTimeoutError, match="did not become available"):
+        with _feed_page(browser):
+            pytest.fail("Must not yield an unattached target")
+    browser.new_browser_cdp_session.return_value.send.assert_any_call(
+        "Target.closeTarget", {"targetId": "owned"},
+    )
+    browser.close.assert_not_called()
+
+
+def test_feed_page_create_failure_only_detaches_transport(browser_attempts):
+    browser = browser_attempts.browsers[0]
+    cdp = browser.new_browser_cdp_session.return_value
+    cdp.send.side_effect = PlaywrightError("Target page, context or browser has been closed")
+    with pytest.raises(PlaywrightError):
+        with _feed_page(browser):
+            pytest.fail("Must not yield after failed creation")
+    cdp.send.assert_called_once_with("Target.createTarget", {"url": "https://www.linkedin.com/feed/"})
+    cdp.detach.assert_called_once()
+
+
+def test_recovery_can_traverse_more_than_ten_previously_saved_pages(monkeypatch):
+    records = [_record(activity_urn=f"urn:li:activity:{i}", post_text=f"post {i}") for i in range(12)]
+    scans = iter([[record] for record in records])
+    monkeypatch.setattr("linkedin.feed_collection.extract_posts_from_page", lambda page: next(scans))
+    job = ensure_collection_jobs(operator="Arian", account_username="arian@example.com")
+    progress = _CollectionProgress(processed={r.activity_urn for r in records[:11]}, posts_seen=11)
+
+    result = _collect_from_page(
+        MagicMock(), job=job, cutoff_at=timezone.now() - timedelta(days=1),
+        max_posts=12, stop_after_seen=15, stop_after_stale=25,
+        scroll_pause_seconds=0, progress=progress,
+    )
+
+    assert result.posts_seen == 12
+    assert result.posts_created == 1
 
 
 def _record(**overrides) -> FeedPostRecord:

@@ -4,13 +4,18 @@ import hashlib
 import logging
 import re
 import time
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import date, datetime, time as dt_time, timedelta, timezone as dt_timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from django.db import transaction
 from django.utils import timezone
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from linkedin.conf import (
@@ -41,6 +46,7 @@ _FEED_STARTUP_ATTEMPTS = 3
 _FEED_STARTUP_RETRY_SECONDS = 3
 _CDP_CONNECT_TIMEOUT_MS = 30_000
 _FEED_NAVIGATION_TIMEOUT_MS = 45_000
+_FEED_LOG_PATH = Path(__file__).resolve().parent.parent / "data/logs/linkedin-feed-collector.log"
 _ACTIVITY_RE = re.compile(r"urn:li:(?:activity|share):\d+")
 _RELATIVE_TIME_RE = re.compile(r"\b(now|(\d+)\s*(mo|yr|s|m|h|d|w|y))\b", re.IGNORECASE)
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -74,6 +80,88 @@ class CollectionResult:
     posts_created: int
     observations_created: int
     repeated_observations: int
+
+
+@dataclass
+class _CollectionProgress:
+    processed: set[str] = field(default_factory=set)
+    posts_seen: int = 0
+    posts_created: int = 0
+    observations_created: int = 0
+    repeated_observations: int = 0
+
+    def result(self) -> CollectionResult:
+        return CollectionResult(
+            posts_seen=self.posts_seen,
+            posts_created=self.posts_created,
+            observations_created=self.observations_created,
+            repeated_observations=self.repeated_observations,
+        )
+
+
+@contextmanager
+def _collection_log():
+    _FEED_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(
+        _FEED_LOG_PATH, maxBytes=5_000_000, backupCount=2, encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    previous_level = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        handler.close()
+
+
+@contextmanager
+def _feed_page(browser):
+    """Create the feed as the target's initial document and own its exact ID."""
+    context = browser.contexts[0]
+    cdp = browser.new_browser_cdp_session()
+    target_id = None
+    try:
+        # With multiple CDP clients, about:blank -> goto can wedge a new
+        # renderer. Starting the target at the feed URL avoids that transition.
+        target_id = cdp.send("Target.createTarget", {"url": FEED_URL})["targetId"]
+        deadline = time.monotonic() + _FEED_NAVIGATION_TIMEOUT_MS / 1000
+        checked = set()
+        while time.monotonic() < deadline:
+            for page in context.pages:
+                if page in checked:
+                    continue
+                session = context.new_cdp_session(page)
+                try:
+                    info = session.send("Target.getTargetInfo")["targetInfo"]
+                finally:
+                    session.detach()
+                checked.add(page)
+                if info["targetId"] == target_id:
+                    page.wait_for_url(
+                        "https://www.linkedin.com/feed/**",
+                        wait_until="domcontentloaded",
+                        timeout=max(1, int((deadline - time.monotonic()) * 1000)),
+                    )
+                    yield page
+                    return
+            # Pump Playwright events while the newly created page is attached.
+            cdp.send("Target.getTargetInfo", {"targetId": target_id})
+            time.sleep(0.1)
+        raise PlaywrightTimeoutError("Collector-owned feed target did not become available")
+    finally:
+        try:
+            if target_id is not None:
+                cdp.send("Target.closeTarget", {"targetId": target_id})
+        except PlaywrightError:
+            logger.warning("Feed owned target cleanup unavailable target=%s", target_id)
+        finally:
+            try:
+                cdp.detach()
+            except PlaywrightError:
+                logger.warning("Feed target-control transport already closed")
 
 
 def collection_timezone() -> ZoneInfo:
@@ -336,34 +424,58 @@ def collect_feed_for_job(
         if scroll_pause_seconds is None else scroll_pause_seconds
     )
 
-    with sync_playwright() as pw:
-        browser = _retry_feed_startup(
-            lambda: pw.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{cdp_port}",
-                timeout=_CDP_CONNECT_TIMEOUT_MS,
-            ),
-            label="CDP attach",
+    cutoff_at = cutoff_at or collection_cutoff_for_job(job)
+    progress = _CollectionProgress()
+    with _collection_log():
+        logger.info(
+            "Feed job=%s operator=%s starting cutoff=%s max_posts=%s",
+            job.pk, job.operator, cutoff_at.isoformat(), max_posts,
         )
-        if not browser.contexts:
-            raise RuntimeError("no shared browser context available over CDP")
-        context = browser.contexts[0]
-        page = context.new_page()
-        try:
-            return _collect_from_page(
-                page,
-                job=job,
-                cutoff_at=cutoff_at or collection_cutoff_for_job(job),
-                window_end_at=window_end_at,
-                max_posts=max_posts,
-                stop_after_seen=stop_after_seen,
-                stop_after_stale=stop_after_stale,
-                scroll_pause_seconds=scroll_pause_seconds,
-            )
-        finally:
+        for attempt in range(1, _FEED_STARTUP_ATTEMPTS + 1):
             try:
-                page.close()
+                # A stalled target can ignore every subsequent goto. Each retry
+                # needs its own transport and tab, not another goto on that target.
+                with sync_playwright() as pw:
+                    logger.info(
+                        "Feed job=%s browser attempt=%s/%s attaching",
+                        job.pk, attempt, _FEED_STARTUP_ATTEMPTS,
+                    )
+                    browser = pw.chromium.connect_over_cdp(
+                        f"http://127.0.0.1:{cdp_port}", timeout=_CDP_CONNECT_TIMEOUT_MS,
+                    )
+                    if not browser.contexts:
+                        raise RuntimeError("no shared browser context available over CDP")
+                    with _feed_page(browser) as page:
+                        logger.info("Feed job=%s feed document loaded", job.pk)
+                        result = _collect_from_page(
+                            page, job=job, cutoff_at=cutoff_at,
+                            window_end_at=window_end_at, max_posts=max_posts,
+                            stop_after_seen=stop_after_seen, stop_after_stale=stop_after_stale,
+                            scroll_pause_seconds=scroll_pause_seconds, progress=progress,
+                        )
+                        logger.info("Feed job=%s completed result=%s", job.pk, result)
+                        return result
+            except PlaywrightError as exc:
+                recoverable = isinstance(exc, PlaywrightTimeoutError) or any(
+                    message in str(exc)
+                    for message in (
+                        "Target page, context or browser has been closed", "Page crashed",
+                    )
+                )
+                if not recoverable or attempt == _FEED_STARTUP_ATTEMPTS:
+                    logger.exception(
+                        "Feed job=%s failed after saving %s posts", job.pk, progress.posts_seen,
+                    )
+                    raise
+                logger.warning(
+                    "Feed job=%s browser attempt=%s failed; replacing collector tab in %ss; "
+                    "saved=%s; error=%s",
+                    job.pk, attempt, _FEED_STARTUP_RETRY_SECONDS, progress.posts_seen, exc,
+                )
+                time.sleep(_FEED_STARTUP_RETRY_SECONDS)
             except Exception:
-                pass
+                logger.exception("Feed job=%s failed after saving %s posts", job.pk, progress.posts_seen)
+                raise
 
 
 def _collect_from_page(
@@ -376,62 +488,63 @@ def _collect_from_page(
     stop_after_stale: int,
     scroll_pause_seconds: float,
     window_end_at: datetime | None = None,
+    progress: _CollectionProgress | None = None,
 ) -> CollectionResult:
-    _retry_feed_startup(
-        lambda: page.goto(
-            FEED_URL,
-            wait_until="commit",
-            timeout=_FEED_NAVIGATION_TIMEOUT_MS,
-        ),
-        label="feed navigation",
-    )
     page.wait_for_timeout(2000)
 
-    processed: set[str] = set()
-    posts_created = 0
-    observations_created = 0
-    repeated_observations = 0
+    progress = progress if progress is not None else _CollectionProgress()
+    traversed: set[str] = set()
     stale_posts_seen = 0
-    posts_seen = 0
     idle_scrolls = 0
 
     while (
-        posts_seen < max_posts
-        and repeated_observations < stop_after_seen
+        progress.posts_seen < max_posts
+        and progress.repeated_observations < stop_after_seen
         and stale_posts_seen < stop_after_stale
     ):
-        before = len(processed)
+        before = len(traversed)
+        scan_started = time.monotonic()
         for record in extract_posts_from_page(page):
             identity = record.activity_urn or record.content_hash
-            if not identity or identity in processed:
+            if not identity or identity in traversed:
                 continue
+            traversed.add(identity)
             if record.posted_at is not None and record.posted_at <= cutoff_at:
-                processed.add(identity)
                 stale_posts_seen += 1
                 if stale_posts_seen >= stop_after_stale:
                     break
                 continue
-            processed.add(identity)
+            stale_posts_seen = 0
+            if identity in progress.processed:
+                continue
             if (
                 window_end_at is not None
                 and record.posted_at is not None
                 and record.posted_at > window_end_at
             ):
                 continue
-            stale_posts_seen = 0
-            posts_seen += 1
             post_created, observation_created = upsert_feed_record(record, job=job)
-            posts_created += int(post_created)
-            observations_created += int(observation_created)
-            repeated_observations += int(not observation_created)
+            progress.processed.add(identity)
+            progress.posts_seen += 1
+            progress.posts_created += int(post_created)
+            progress.observations_created += int(observation_created)
+            progress.repeated_observations += int(not observation_created)
 
-            if posts_seen >= max_posts or repeated_observations >= stop_after_seen:
+            if (
+                progress.posts_seen >= max_posts
+                or progress.repeated_observations >= stop_after_seen
+            ):
                 break
 
+        logger.info(
+            "Feed job=%s scan_seconds=%.1f traversed=%s saved=%s new=%s repeated=%s stale=%s",
+            job.pk, time.monotonic() - scan_started, len(traversed), progress.posts_seen,
+            progress.posts_created, progress.repeated_observations, stale_posts_seen,
+        )
         if stale_posts_seen >= stop_after_stale:
             break
 
-        if len(processed) == before:
+        if len(traversed) == before:
             idle_scrolls += 1
         else:
             idle_scrolls = 0
@@ -441,29 +554,7 @@ def _collect_from_page(
         _scroll_feed_page(page)
         page.wait_for_timeout(int(scroll_pause_seconds * 1000))
 
-    return CollectionResult(
-        posts_seen=posts_seen,
-        posts_created=posts_created,
-        observations_created=observations_created,
-        repeated_observations=repeated_observations,
-    )
-
-
-def _retry_feed_startup(operation, *, label: str):
-    for attempt in range(1, _FEED_STARTUP_ATTEMPTS + 1):
-        try:
-            return operation()
-        except Exception:
-            if attempt == _FEED_STARTUP_ATTEMPTS:
-                raise
-            logger.warning(
-                "LinkedIn feed %s failed (%d/%d); retrying in %ss",
-                label,
-                attempt,
-                _FEED_STARTUP_ATTEMPTS,
-                _FEED_STARTUP_RETRY_SECONDS,
-            )
-            time.sleep(_FEED_STARTUP_RETRY_SECONDS)
+    return progress.result()
 
 
 def _scroll_feed_page(page) -> None:
@@ -546,6 +637,7 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
             return '';
           };
           const rows = [];
+          const menuCache = window.__openoutreachFeedMenuCache ||= new WeakMap();
           for (const node of unique) {
             const attr = (name) => node.getAttribute(name) || '';
             const pickText = (items) => {
@@ -614,7 +706,19 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
                 'a[href*="urn:li:share"]'
               ])}
             ).href || '';
-            const menuPostUrn = postLink ? '' : await findMenuPostUrn(node);
+            const descendantActivityUrn = findAttr([
+              'data-urn', 'data-id', 'data-activity-urn', 'data-chameleon-result-urn'
+            ]);
+            // Recycled virtual-feed nodes must not inherit another post's URL.
+            const signature = node.innerText || '';
+            const cached = menuCache.get(node);
+            let menuPostUrn = '';
+            if (!postLink && !descendantActivityUrn) {
+              menuPostUrn = cached && cached.signature === signature
+                ? cached.urn : await findMenuPostUrn(node);
+              if ((node.innerText || '') !== signature) continue;
+              if (menuPostUrn) menuCache.set(node, {signature, urn: menuPostUrn});
+            }
             const profileLink = pickHref([
               'a.update-components-actor__meta-link[href*="/in/"]',
               'a.feed-shared-actor__container-link[href*="/in/"]',
@@ -634,9 +738,7 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
             rows.push({
               dataUrn: attr('data-urn'),
               dataId: attr('data-id'),
-              descendantActivityUrn: findAttr([
-                'data-urn', 'data-id', 'data-activity-urn', 'data-chameleon-result-urn'
-              ]),
+              descendantActivityUrn,
               menuPostUrn,
               postUrl: postLink || menuPostUrn,
               candidateLinks: links.slice(0, 80),
