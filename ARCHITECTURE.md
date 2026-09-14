@@ -857,6 +857,8 @@ The owned tab is created with `Target.createTarget(url=FEED_URL)` so its initial
 
 Menu-derived permalinks are cached in a page-local WeakMap keyed by DOM node plus exact rendered text. Changed/recycled cards require a fresh lookup; failed lookups are not cached. Existing activity attributes or specific links avoid menu actions altogether. New lookups retain their configured action delays, but repeated scans no longer reopen all unchanged cards' menus.
 
+Connection refusal/reset during CDP attach also uses the bounded recovery budget, allowing a briefly unavailable daemon browser to return. This classification is attach-only; unrelated application/selector errors still fail immediately.
+
 The feed feature is split into collection and Codex-reviewed analysis. Collection saves LinkedIn home-feed posts visible to each sender account. The app never calls an analyzer LLM for this lane; a daily Codex automation reads the exported review queue, decides which posts matter, then applies structured decisions back to the DB. Slack alerts are sent only when Codex decisions mark high/urgent hits.
 
 **Trigger.** `daemon_supervisor.py` is the daily wake-up process. When `ENABLE_LINKEDIN_FEED_COLLECTOR=true`, it starts a nonblocking child after `LINKEDIN_FEED_COLLECTION_HOUR:LINKEDIN_FEED_COLLECTION_MINUTE` in `LINKEDIN_FEED_COLLECTION_TIMEZONE` (default 17:00 America/Toronto):

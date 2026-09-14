@@ -86,6 +86,19 @@ def test_collector_timeout_replaces_tab_and_transport(monkeypatch, browser_attem
     assert "completed result=" in setup.log.read_text()
 
 
+def test_collector_retries_temporarily_unavailable_cdp(monkeypatch, browser_attempts):
+    setup = browser_attempts
+    setup.managers[0].__enter__.return_value.chromium.connect_over_cdp.side_effect = (
+        PlaywrightError("connect ECONNREFUSED 127.0.0.1:9222")
+    )
+    monkeypatch.setattr("linkedin.feed_collection.extract_posts_from_page", lambda page: [_record()])
+    job = ensure_collection_jobs(operator="Arian", account_username="arian@example.com")
+    result = collect_feed_for_job(job, max_posts=1, cutoff_at=timezone.now() - timedelta(days=1))
+    assert result.posts_created == 1
+    assert setup.factory.call_count == 2
+    setup.browsers[0].new_browser_cdp_session.assert_not_called()
+
+
 def test_collector_recovery_preserves_counts_and_observations(monkeypatch, browser_attempts):
     first = _record(activity_urn="urn:li:activity:111", post_text="first")
     second = _record(activity_urn="urn:li:activity:222", post_text="second")

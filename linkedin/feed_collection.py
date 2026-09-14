@@ -432,6 +432,7 @@ def collect_feed_for_job(
             job.pk, job.operator, cutoff_at.isoformat(), max_posts,
         )
         for attempt in range(1, _FEED_STARTUP_ATTEMPTS + 1):
+            attaching = True
             try:
                 # A stalled target can ignore every subsequent goto. Each retry
                 # needs its own transport and tab, not another goto on that target.
@@ -443,6 +444,7 @@ def collect_feed_for_job(
                     browser = pw.chromium.connect_over_cdp(
                         f"http://127.0.0.1:{cdp_port}", timeout=_CDP_CONNECT_TIMEOUT_MS,
                     )
+                    attaching = False
                     if not browser.contexts:
                         raise RuntimeError("no shared browser context available over CDP")
                     with _feed_page(browser) as page:
@@ -462,6 +464,8 @@ def collect_feed_for_job(
                         "Target page, context or browser has been closed", "Page crashed",
                     )
                 )
+                if attaching and any(code in str(exc) for code in ("ECONNREFUSED", "ECONNRESET")):
+                    recoverable = True
                 if not recoverable or attempt == _FEED_STARTUP_ATTEMPTS:
                     logger.exception(
                         "Feed job=%s failed after saving %s posts", job.pk, progress.posts_seen,
