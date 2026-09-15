@@ -522,3 +522,77 @@ def test_handle_draft_keeps_typed_text_while_loading_and_on_failure(monkeypatch)
     assert updates[1]["selected_sender_key"] == "1"
     assert "model unavailable" in updates[1]["draft_error"]
     responder._respond_text.assert_called_once_with(200, "")
+
+
+@pytest.mark.parametrize("starting_text", ["", "My own starting draft"])
+def test_generated_comments_replace_slack_preserved_input_and_remain_submittable(monkeypatch, starting_text):
+    """Model Slack retaining input state when block/action IDs are reused."""
+    payload = json.loads(parse_qs(_draft_body(current_comment=starting_text))["payload"][0])
+    view = payload["view"]
+    drafts = iter(["First AI suggestion", "Revised AI suggestion"])
+    monkeypatch.setattr(feed_comment, "fetch_feed_comment_context", lambda *_: _context())
+    monkeypatch.setattr(feed_comment, "generate_ai_feed_comment", lambda *_, **__: next(drafts))
+    updates = []
+
+    def slack_api(method, update):
+        assert method == "views.update"
+        previous = view["state"]["values"]
+        new_view = update["view"]
+        state = {}
+        for block in new_view["blocks"]:
+            if block["type"] != "input":
+                continue
+            element = block["element"]
+            block_id, action_id = block["block_id"], element["action_id"]
+            old = previous.get(block_id, {}).get(action_id)
+            if old is not None:
+                field = old
+            elif element["type"] == "plain_text_input":
+                field = {"value": element.get("initial_value", "")}
+            else:
+                field = {"selected_option": element["initial_option"]}
+            state[block_id] = {action_id: field}
+        view.update(new_view)
+        view["state"] = {"values": state}
+        updates.append(feed_comment._state_text(state, feed_comment.COMMENT_BODY_ACTION_ID))
+
+    for expected in ("First AI suggestion", "Revised AI suggestion"):
+        feed_comment.handle_comment_draft(
+            MagicMock(), urlencode({"payload": json.dumps(payload)}),
+            connect_factory=MagicMock(), slack_api=slack_api,
+        )
+        assert updates[-1] == expected
+        submission = {"type": "view_submission", "view": view, "user": {"id": "U123"}}
+        parsed = feed_comment.parse_comment_modal_submission(urlencode({"payload": json.dumps(submission)}))
+        assert parsed["message"] == expected
+        assert parsed["operator"] == "Chuka"
+    assert updates == [starting_text, "First AI suggestion", "First AI suggestion", "Revised AI suggestion"]
+
+    # A failed regeneration must preserve edits to the last generated draft.
+    state = view["state"]["values"]
+    editor_id = next(key for key, fields in state.items() if feed_comment.COMMENT_BODY_ACTION_ID in fields)
+    state[editor_id][feed_comment.COMMENT_BODY_ACTION_ID]["value"] = "My edited AI draft"
+
+    def fail_generation(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(feed_comment, "generate_ai_feed_comment", fail_generation)
+    feed_comment.handle_comment_draft(
+        MagicMock(), urlencode({"payload": json.dumps(payload)}),
+        connect_factory=MagicMock(), slack_api=slack_api,
+    )
+    assert updates[-2:] == ["My edited AI draft", "My edited AI draft"]
+    assert "model unavailable" in json.dumps(view["blocks"])
+
+    # Clearing a generated draft targets validation at the current editor.
+    view["state"]["values"][editor_id][feed_comment.COMMENT_BODY_ACTION_ID]["value"] = ""
+    responder, connect_factory = MagicMock(), MagicMock()
+    feed_comment.handle_comment_submission(
+        responder,
+        urlencode({"payload": json.dumps({"type": "view_submission", "view": view})}),
+        connect_factory=connect_factory, slack_api=slack_api, post_response_url=MagicMock(),
+    )
+    responder._respond_json.assert_called_once_with({
+        "response_action": "errors", "errors": {editor_id: "Write a comment before queuing."},
+    })
+    connect_factory.assert_not_called()

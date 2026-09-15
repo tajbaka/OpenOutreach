@@ -680,7 +680,28 @@ def test_update_reply_modal_prefills_generated_draft(monkeypatch):
     assert blocks[-1]["block_id"] == "linkedin_reply_actions"
 
 
-def test_render_lead_context_blocks_includes_ai_action_only():
+@pytest.mark.parametrize("role_tag", ["CFO/Finance", "", "Security & Trust <Lead>"])
+def test_fetch_lead_context_reads_role_tag(role_tag):
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchone.return_value = (
+        42, "Ada", "Lovelace", "Example", "", "ada", "{}", "CSP", False, role_tag,
+    )
+    cur.fetchall.return_value = []
+    with patch.object(slack_enrich, "fetch_linkedin_thread_preview", return_value=[]), patch.object(
+        slack_enrich, "fetch_lead_context_artifacts", return_value={},
+    ):
+        context = slack_enrich.fetch_lead_context(conn, 42)
+    assert context["lead"]["role_tag"] == role_tag
+    assert "disqualified, role_tag" in cur.execute.call_args_list[0].args[0]
+
+
+@pytest.mark.parametrize("role_tag, displayed", [
+    ("CFO/Finance", "CFO/Finance"),
+    ("", "Not assigned"),
+    ("Security & Trust <Lead>", "Security &amp; Trust &lt;Lead&gt;"),
+])
+def test_render_lead_context_blocks_includes_ai_action_only(role_tag, displayed):
     context = {
         "lead": {
             "id": 42,
@@ -694,6 +715,7 @@ def test_render_lead_context_blocks_includes_ai_action_only():
                 "summary": "Works with public sector compliance teams.",
             }),
             "icp": "Advisor",
+            "role_tag": role_tag,
         },
         "deals": [{
             "owner": "Arian",
@@ -719,6 +741,13 @@ def test_render_lead_context_blocks_includes_ai_action_only():
     assert "Jacquelyn Bell" in body
     assert "Advisor lead" in body
     assert "Happy to explain" in body
+    fields = next(b for b in blocks if b.get("block_id") == "lead_context_fields")["fields"]
+    assert {"type": "mrkdwn", "text": f"*Role:*\n{displayed}"} in fields
+    assert "lead_context_deals" not in body
+    assert "lead_context_messages" not in body
+    assert "Campaign/deal context" not in body
+    assert "Recent LinkedIn messages" not in body
+    assert "Tell me more." not in body
     actions = next(b for b in blocks if b.get("block_id") == "lead_context_actions")
     action_ids = {el["action_id"] for el in actions["elements"]}
     assert action_ids == {"linkedin_lead_context_ai_button"}

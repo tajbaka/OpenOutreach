@@ -1018,7 +1018,7 @@ def fetch_lead_context(
     with conn.cursor() as cur:
         cur.execute(
             "SELECT id, first_name, last_name, company_name, linkedin_url, "
-            "public_identifier, description, icp, disqualified "
+            "public_identifier, description, icp, disqualified, role_tag "
             "FROM crm_lead WHERE id = %s",
             (lead_id,),
         )
@@ -1035,6 +1035,7 @@ def fetch_lead_context(
             "description": row[6] or "",
             "icp": row[7] or "",
             "disqualified": bool(row[8]),
+            "role_tag": row[9] or "",
         }
 
         cur.execute(
@@ -1111,13 +1112,6 @@ def _full_name(lead: dict) -> str:
     )
 
 
-def _brief_message_line(message: dict) -> str:
-    direction = message.get("direction") or ""
-    speaker = message.get("sender") or ("Lead" if direction == "inbound" else "Us")
-    body = _compact_message(message.get("body") or "", limit=180)
-    return f"*{_slack_escape(speaker)}* ({_slack_escape(direction)}): {_slack_escape(body)}"
-
-
 def render_lead_context_blocks(
     context: dict,
     *,
@@ -1144,6 +1138,7 @@ def render_lead_context_blocks(
     fields = [
         f"*Name:*\n<{profile}|{name}>" if profile else f"*Name:*\n{name}",
         f"*ICP:*\n{_slack_escape(lead.get('icp') or 'Unknown')}",
+        f"*Role:*\n{_slack_escape(lead.get('role_tag') or 'Not assigned')}",
     ]
     if company:
         fields.append(f"*Company:*\n{_slack_escape(company)}")
@@ -1171,29 +1166,6 @@ def render_lead_context_blocks(
                 "type": "mrkdwn",
                 "text": f"*Profile summary*\n{_slack_escape(_compact_message(bits['summary'], limit=650))}",
             },
-        })
-
-    if context.get("deals"):
-        deal_lines = []
-        for deal in context["deals"][:3]:
-            owner = deal.get("owner") or "unknown owner"
-            campaign = deal.get("campaign") or "unknown campaign"
-            state = deal.get("state") or "unknown state"
-            deal_lines.append(
-                f"*{_slack_escape(owner)}* — {_slack_escape(state)} — {_slack_escape(campaign)}"
-            )
-        blocks.append({
-            "type": "section",
-            "block_id": "lead_context_deals",
-            "text": {"type": "mrkdwn", "text": "*Campaign/deal context*\n" + "\n".join(deal_lines)},
-        })
-
-    if context.get("messages"):
-        message_lines = [_brief_message_line(m) for m in context["messages"][-4:]]
-        blocks.append({
-            "type": "section",
-            "block_id": "lead_context_messages",
-            "text": {"type": "mrkdwn", "text": "*Recent LinkedIn messages*\n" + "\n".join(message_lines)},
         })
 
     ai_blocks: list[dict] = []

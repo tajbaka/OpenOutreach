@@ -314,7 +314,7 @@ def render_feed_comment_modal_blocks(
         input_element["initial_value"] = initial_comment.strip()[:_MODAL_TEXT_LIMIT]
     blocks.append({
         "type": "input",
-        "block_id": "feed_comment_message",
+        "block_id": _comment_input_block_id(metadata),
         "label": {"type": "plain_text", "text": "Comment"},
         "element": input_element,
     })
@@ -578,11 +578,18 @@ def handle_comment_draft(responder, body: str, *, connect_factory, slack_api, **
             context,
             current_comment=data["current_comment"],
         )
+        # Slack preserves entered values for unchanged block/action IDs,
+        # ignoring a new initial_value. Replace only the comment input on
+        # success; loading/errors must retain the operator's current text.
+        draft_metadata = {
+            **data["metadata"],
+            "comment_revision": int(data["metadata"].get("comment_revision", 0)) + 1,
+        }
         update_feed_comment_modal(
             slack_api=slack_api,
             view_id=data["view_id"],
             context=context,
-            metadata=data["metadata"],
+            metadata=draft_metadata,
             initial_comment=draft,
             selected_sender_key=data["selected_sender_key"],
         )
@@ -612,12 +619,15 @@ def handle_comment_submission(
     post_response_url,
     **_kwargs,
 ) -> None:
+    error_block_id = "feed_comment_message"
     try:
+        view = _decode_body(body).get("view") or {}
+        error_block_id = _comment_input_block_id(json.loads(view.get("private_metadata") or "{}"))
         payload = parse_comment_modal_submission(body)
     except (ValueError, KeyError, json.JSONDecodeError):
         responder._respond_json({
             "response_action": "errors",
-            "errors": {"feed_comment_message": "Write a comment before queuing."},
+            "errors": {error_block_id: "Write a comment before queuing."},
         })
         return
 
@@ -689,6 +699,11 @@ def handle_comment_cancel(
         workflow="feed comment",
     )
     responder._respond_text(200, "")
+
+
+def _comment_input_block_id(metadata: dict) -> str:
+    revision = int(metadata.get("comment_revision", 0))
+    return f"feed_comment_message:{revision}" if revision else "feed_comment_message"
 
 
 def _feed_comment_view(

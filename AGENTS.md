@@ -2,6 +2,10 @@
 
 ## Rules
 
+- **Slack feed comment draft replacement**: Successful AI drafts increment a modal-only `comment_revision` and replace the comment input block ID so Slack displays the new `initial_value`. Loading and failed drafts preserve the current editor ID/text and sender selection. Submission reads the stable body action ID and targets empty-comment validation at the current revision. Drafting never queues a comment or Like; the operator must submit the modal.
+
+- **Slack Lead context display**: Show the existing operator-reviewed `Lead.role_tag` as Role (blank: Not assigned). Do not render Campaign/deal context or Recent LinkedIn messages in this modal. Keep the underlying context for AI tools and the separate reply-modal transcript; no lead metadata or outreach behavior changes.
+
 - **Python env**: Always use `.venv/bin/python` (not system `python3`).
 - **Commits**: No `Co-Authored-By` lines. Single-line messages (no body).
 - **Dependencies**: Managed in `requirements/*.txt` (used by local dev and Docker).
@@ -30,6 +34,8 @@
 - **Email recovery and enrichment concurrency**: Invitation Gmail recovery stores an exact sender/campaign-scoped scan cursor and scanned/scheduled counts in existing `WorkflowRun(name="invitation-gmail-recovery")` records. Bounded passes rotate past held rows and wrap; prior completed/failed lookups are holds, not newly scheduled work. `EnrichmentWorker` requires its canonical sender, atomically claims due rows with `SELECT FOR UPDATE SKIP LOCKED`, and consumes only that sender's email Tasks plus the shared legacy phone queue. Startup only reclaims scope-matching work older than `TASK_RUNNING_STALE_MINUTES`; unknown start dates additionally require old creation dates. Never reclaim another sender's email or fresh work; preserve Task IDs, due dates and provider request IDs. `Task.objects.next_enrichment()` is diagnostic only. This supersedes older single-global-worker descriptions below.
 
 ## Project Overview
+
+**Slack changes approved for main (2026-09-15):** The user authorized committing and pushing both the comment-draft editor fix and the Lead context display changes. They were reconciled with the latest feed-recovery main commits and passed 133 isolated Slack/feed regressions plus 3 offline browser checks. No live comment/Like or outreach was submitted. The comment fix had already been deployed separately on September 14 at 18:44 UTC as Vercel deployment `dpl_8SS6tSFJa2pWCBnYz9QNEEuSe1Jm`, based on `94444764014c87edcd66dd2b62cb1ebd693cb5d0`; that isolated deployment excluded the Lead context edit and passed 78 package tests plus an unsigned-request 401 check. Receipt: `artifacts/qa/slack-comment-draft-2026-09-14/deployment-receipt.json`. Git publication alone does not verify a subsequent production deployment. Keep unrelated campaign and email catch-up work separate.
 
 **Reviewed emergency-stop main release (2026-09-11 UTC):** Implementation `d965e0b1` and concurrent listener fix `ac6ec839` were reconciled in `43cc4029` before publication. The combined tree passed 1,729 tests and 1,148 message previews in `artifacts/qa/campaigns/20260911T030401607352Z/`; source fingerprint `0793d3404feab7497dd1f00c81b2963c3eb71f13d34b7815b8061051e0a47410` (586 files) and both approved JSON inputs were unchanged, no live providers/shared DB were used, and the private cluster was removed. This supersedes the earlier feature-only 1,704-test baseline. Publishing does not verify migration 0033, remote full-supervisor bootstrap or live stop/Slack behavior. No campaign creation, flag changes, shared-DB migration or manual remote restart was performed for this release. An already-running old supervisor may auto-pull/migrate/reload children after publication; that still does not install the new watchdog in its own process.
 
