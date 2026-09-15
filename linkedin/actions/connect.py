@@ -67,7 +67,8 @@ SELECTORS = {
         'div[role="dialog"] textarea, '
         'textarea[aria-label*="message" i], '
         'textarea[placeholder*="note" i], '
-        'textarea[placeholder*="message" i]'
+        'textarea[placeholder*="message" i], '
+        'textarea[placeholder*="We know each other" i]'
     ),
     "send_invitation": 'button[aria-label*="Send invitation"], button:has-text("Send invitation"), button:has-text("Send")',
     "email_required_prompt": (
