@@ -696,6 +696,193 @@ def test_fetch_lead_context_reads_role_tag(role_tag):
     assert "disqualified, role_tag" in cur.execute.call_args_list[0].args[0]
 
 
+def _icp_message(**overrides):
+    return {
+        "audience_key": "business-rev5-authorized-direct-agency",
+        "role_persona": "CSP Any Size | Business leaders",
+        "fedramp_segment": "Rev5 Authorized to 20x",
+        "channel": "linkedin_followup", "step_index": 0,
+        "sender_override": "", "subject": "",
+        "body": "Approved business angle for {role}.",
+        **overrides,
+    }
+
+
+def _icp_enrollment(enrollment_id=7, *, messages=None, schema=1):
+    return (
+        enrollment_id, 42, "business-rev5-authorized-direct-agency", 3, 1, schema,
+        {"messages": messages if messages is not None else [_icp_message()]},
+    )
+
+
+def _icp_connection(candidates, thread_ids=()):
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.side_effect = [[(str(i), "Chuka") for i in thread_ids], candidates]
+    return conn, cur
+
+
+def test_reply_icp_lookup_uses_exact_sender_and_frozen_version_not_current_campaign():
+    conn, cur = _icp_connection([_icp_enrollment()], [7])
+    out = slack_enrich.fetch_reply_icp_messaging(conn, 42, operator="Chuka", thread_external_id="thread-chuka")
+    assert out["status"] == "matched"
+    assert out["enrollment_id"] == 7
+    assert out["message_version_id"] == 3
+    assert out["source"] == "frozen_campaign_version"
+    assert out["examples"][0]["body"] == "Approved business angle for {role}."
+    assert cur.execute.call_args_list[0].args[1] == (42, "thread-chuka")
+    sql, params = cur.execute.call_args_list[1].args
+    assert params == (42, "Chuka")
+    assert "e.operator = %s" in sql
+    assert "v.id = e.message_version_id" in sql
+    assert "od.status = 'sent'" in sql  # Unsent/superseded enrollments cannot win.
+    assert "od.sent_at IS NOT NULL" in sql
+    assert "active_message_version" not in sql
+    conn.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("candidates, thread_ids", [
+    ([], []),
+    ([_icp_enrollment(7), _icp_enrollment(8)], []),
+    ([_icp_enrollment(7)], [8]),  # Another sender's conversation evidence.
+    ([_icp_enrollment(7), _icp_enrollment(8)], [7, 8]),
+    ([_icp_enrollment(7)], [7, 99]),  # Mixed provenance is also ambiguous.
+    ([_icp_enrollment(schema=2)], []),
+    ([_icp_enrollment(messages=[])], []),
+    ([_icp_enrollment(messages=[_icp_message(audience_key="technical")])], []),
+    ([_icp_enrollment(messages=[_icp_message(sender_override="Arian")])], []),
+])
+def test_reply_icp_lookup_falls_back_without_guessing(candidates, thread_ids):
+    conn, _ = _icp_connection(candidates, thread_ids)
+    assert slack_enrich.fetch_reply_icp_messaging(
+        conn, 42, operator="Chuka", thread_external_id="thread-chuka",
+    ) == {"status": "unavailable", "examples": []}
+
+
+def test_reply_icp_lookup_thread_disambiguates_same_sender_campaigns():
+    conn, _ = _icp_connection([_icp_enrollment(7), _icp_enrollment(8)], [8])
+    assert slack_enrich.fetch_reply_icp_messaging(
+        conn, 42, operator="Chuka", thread_external_id="thread-chuka",
+    )["enrollment_id"] == 8
+
+
+def test_reply_icp_lookup_without_thread_requires_one_sender_enrollment():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = [_icp_enrollment()]
+    out = slack_enrich.fetch_reply_icp_messaging(conn, 42, operator="Chuka", thread_external_id="")
+    assert out["status"] == "matched"
+    cur.execute.assert_called_once()
+
+
+def test_reply_icp_lookup_without_sender_never_queries_or_picks_an_account():
+    conn = MagicMock()
+    assert slack_enrich.fetch_reply_icp_messaging(conn, 42, operator="", thread_external_id="t")["status"] == "unavailable"
+    conn.cursor.assert_not_called()
+
+
+@pytest.mark.parametrize("owners", [["Arian"], ["Chuka", "Arian"]])
+def test_reply_icp_lookup_rejects_other_or_mixed_thread_owners_without_audit_ids(owners):
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.return_value = [(None, owner) for owner in owners]
+    out = slack_enrich.fetch_reply_icp_messaging(conn, 42, operator="Chuka", thread_external_id="t")
+    assert out["status"] == "unavailable"
+    cur.execute.assert_called_once()
+
+
+def test_reply_icp_lookup_accepts_sender_attributed_synced_thread_without_audit_ids():
+    conn = MagicMock()
+    cur = conn.cursor.return_value.__enter__.return_value
+    cur.fetchall.side_effect = [[(None, "Chuka")], [_icp_enrollment()]]
+    out = slack_enrich.fetch_reply_icp_messaging(conn, 42, operator="Chuka", thread_external_id="t")
+    assert out["enrollment_id"] == 7
+
+
+def test_reply_icp_examples_filter_audience_and_honor_sender_overrides_per_step():
+    messages = [
+        _icp_message(),
+        _icp_message(body="Arian only", sender_override="Arian"),
+        _icp_message(body="Eddy override", sender_override="Chuka"),
+        _icp_message(channel="gmail", subject="Email reference", body="Shared email"),
+        _icp_message(audience_key="technical", body="Wrong cohort"),
+    ]
+    conn, _ = _icp_connection([_icp_enrollment(messages=messages)])
+    out = slack_enrich.fetch_reply_icp_messaging(conn, 42, operator="Chuka", thread_external_id="t")
+    assert {m["body"] for m in out["examples"]} == {"Eddy override", "Shared email"}
+
+
+def test_reply_draft_context_adds_lookup_without_changing_general_context(monkeypatch):
+    context = {"lead": {"id": 42}, "messages": [], "artifacts": {}}
+    fetch = MagicMock(return_value=context.copy())
+    lookup = MagicMock(return_value={"status": "matched"})
+    monkeypatch.setattr(slack_enrich, "fetch_lead_context", fetch)
+    monkeypatch.setattr(slack_enrich, "fetch_reply_icp_messaging", lookup)
+    conn = MagicMock()
+    out = slack_enrich.fetch_reply_draft_context(conn, 42, operator="Chuka", thread_external_id="t")
+    lookup.assert_called_once_with(conn, 42, operator="Chuka", thread_external_id="t")
+    assert out["icp_messaging"] == {"status": "matched"}
+    assert "icp_messaging" not in context
+
+
+@pytest.mark.parametrize("matched", [True, False])
+def test_reply_prompt_gets_reviewed_role_and_only_matching_campaign_examples(monkeypatch, matched):
+    reference = {"status": "matched", "deal_id": 42, "audience_key": "frozen-audience", "examples": [_icp_message()]} if matched else {"status": "unavailable", "examples": []}
+    context = {
+        "lead": {"id": 42, "first_name": "Ada", "company_name": "Example", "icp": "newer-mutable-label", "role_tag": "CFO/Finance"},
+        "operator": "Chuka", "icp_messaging": reference,
+        "messages": [{"direction": "inbound", "body": "What do you mean?"}],
+        "deals": [{"id": 42, "campaign": "Matching campaign"}, {"id": 99, "campaign": "Other sender campaign"}],
+    }
+    before = json.dumps(context, sort_keys=True)
+    chat = MagicMock(return_value="A natural reply")
+    monkeypatch.setattr(slack_enrich, "_llm_chat", chat)
+    assert slack_enrich.generate_ai_draft_reply(context) == "A natural reply"
+    prompt = chat.call_args.kwargs["user"]
+    payload = json.loads(prompt[prompt.index('{"lead":'):])
+    assert payload["lead"]["role_tag"] == "CFO/Finance"
+    assert payload["lead"]["icp"] == ("frozen-audience" if matched else "newer-mutable-label")
+    assert payload["icp_messaging"] == reference
+    assert payload["messages"][0]["body"] == "What do you mean?"
+    assert "Other sender campaign" not in prompt
+    assert bool(payload["deals"]) == matched
+    assert "actual conversation takes precedence" in prompt
+    assert "not proof they were already sent" in prompt
+    assert "no em dashes" in prompt
+    assert "not current regulatory verification" in prompt
+    assert "warm founder trying to learn" not in prompt
+    assert json.dumps(context, sort_keys=True) == before
+    # Summary and normal modal payload remain unchanged.
+    assert "icp_messaging" not in slack_enrich._ai_context_payload(context)
+    assert "role_tag" not in slack_enrich._ai_context_payload(context)["lead"]
+
+
+@pytest.mark.parametrize("method, body", [
+    ("_handle_reply_draft", _reply_draft_body()),
+    ("_handle_lead_context_draft", _lead_context_body("linkedin_lead_context_draft_button")),
+])
+def test_both_reply_draft_handlers_use_context_but_never_enqueue(monkeypatch, method, body):
+    fetch = MagicMock(return_value={"lead": {"id": 42}, "artifacts": {}})
+    monkeypatch.setattr(slack_enrich, "fetch_reply_draft_context", fetch)
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", MagicMock())
+    monkeypatch.setattr(slack_enrich, "generate_ai_draft_reply", MagicMock(return_value="Draft only"))
+    monkeypatch.setattr(slack_enrich, "upsert_lead_context_artifact", MagicMock())
+    monkeypatch.setattr(slack_enrich, "update_reply_modal", MagicMock())
+    monkeypatch.setattr(slack_enrich, "update_slack_view", MagicMock())
+    enqueue = MagicMock()
+    monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", enqueue)
+    phone = MagicMock()
+    monkeypatch.setattr(slack_enrich, "enqueue_task", phone)
+    handler = object.__new__(slack_enrich.handler)
+    handler._respond_text = MagicMock()
+    getattr(handler, method)(body)
+    fetch.assert_called_once()
+    assert fetch.call_args.kwargs["thread_external_id"] in {"thread-chuka", "thread-arian"}
+    enqueue.assert_not_called()
+    phone.assert_not_called()
+    handler._respond_text.assert_called_once_with(200, "")
+
+
 @pytest.mark.parametrize("role_tag, displayed", [
     ("CFO/Finance", "CFO/Finance"),
     ("", "Not assigned"),
