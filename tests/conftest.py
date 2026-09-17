@@ -8,6 +8,12 @@ from tests.factories import UserFactory
 
 
 @pytest.fixture(autouse=True)
+def _default_supervisor_mode(monkeypatch):
+    # Local email-only deployments must not change legacy supervisor test defaults.
+    monkeypatch.setenv("ENABLE_LINKEDIN_DAEMON", "true")
+
+
+@pytest.fixture(autouse=True)
 def _ensure_crm_data(db):
     """
     Ensure CRM bootstrap data exists before every test.

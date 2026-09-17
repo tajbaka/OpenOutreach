@@ -138,6 +138,12 @@ def _ensure_db():
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
+        from linkedin.conf import ENABLE_LINKEDIN_DAEMON
+
+        if not ENABLE_LINKEDIN_DAEMON:
+            logger.warning("LinkedIn daemon disabled. Run daemon_supervisor.py for email-only operation.")
+            raise SystemExit(0)
+
         # No arguments → run the daemon. Top-level Exception goes to Slack
         # before re-raising so an operator sees the crash even when the
         # process logs scroll off. KeyboardInterrupt / SystemExit pass

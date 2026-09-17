@@ -3,6 +3,8 @@
 Each sender daemon starts one background thread. Email work belongs to that
 exact canonical operator; the legacy phone queue remains shared. A row-locking
 claim makes concurrent workers safe without changing Task or provider identity.
+Email-only supervisors run the same loop in a foreground process with phone
+claims disabled, independently of Gmail sending and without a browser.
 
 Startup only reclaims age-qualified RUNNING work in the same scope. Fresh work
 and another sender's email stay untouched; recovery retains BetterContact's
@@ -75,10 +77,11 @@ def _notify_api_failure(*, task, result) -> None:
 
 
 class EnrichmentWorker:
-    def __init__(self, *, operator: str, poll_interval: float = 10.0):
+    def __init__(self, *, operator: str, poll_interval: float = 10.0, include_phone: bool = True):
         if not isinstance(operator, str) or operator not in CANONICAL_OPERATOR_HANDLES:
             raise ValueError("EnrichmentWorker requires a canonical operator")
         self.operator = operator
+        self._include_phone = include_phone
         self._poll_interval = poll_interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -95,6 +98,13 @@ class EnrichmentWorker:
         self._thread.start()
         logger.info("Enrichment worker started for %s", self.operator)
 
+    def run_forever(self) -> None:
+        """Run in the foreground so unexpected loop failures reach the supervisor."""
+        self._reclaim_stale()
+        self._stop.clear()
+        logger.info("Enrichment worker running for %s (include_phone=%s)", self.operator, self._include_phone)
+        self._run()
+
     def stop(self, timeout: float = 5.0) -> None:
         """Signal the loop to exit and join the thread. Idempotent, never raises."""
         self._stop.set()
@@ -106,10 +116,10 @@ class EnrichmentWorker:
     def _owned_tasks(self):
         from linkedin.models import Task
 
-        return Task.objects.filter(
-            Q(task_type=Task.TaskType.ENRICH_PHONE)
-            | Q(task_type=Task.TaskType.ENRICH_EMAIL, payload__operator=self.operator),
-        )
+        scope = Q(task_type=Task.TaskType.ENRICH_EMAIL, payload__operator=self.operator)
+        if self._include_phone:
+            scope |= Q(task_type=Task.TaskType.ENRICH_PHONE)
+        return Task.objects.filter(scope)
 
     def _reclaim_stale(self) -> None:
         from linkedin.models import Task

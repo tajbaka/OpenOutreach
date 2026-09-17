@@ -118,6 +118,55 @@ def test_run_once_dispatches_email_enrichment():
 
 
 @pytest.mark.django_db
+def test_email_only_worker_leaves_phone_foreign_and_future_tasks_untouched():
+    phone = _enrich_task(scheduled_offset_s=-20)
+    foreign = _email_task(operator="Arian", scheduled_offset_s=-10)
+    future = _email_task(operator="Chuka", scheduled_offset_s=600)
+    own = _email_task(operator="Chuka")
+    worker = EnrichmentWorker(operator="Chuka", include_phone=False)
+    with patch("linkedin.enrichment.worker.handle_enrich_email", return_value=None) as email, \
+         patch("linkedin.enrichment.worker.handle_enrich_phone") as phone_handler:
+        assert worker._run_once() is True
+        assert worker._run_once() is False
+    email.assert_called_once_with(own)
+    phone_handler.assert_not_called()
+    for untouched in (phone, foreign, future):
+        untouched.refresh_from_db()
+        assert untouched.status == Task.Status.PENDING
+    own.refresh_from_db()
+    assert own.status == Task.Status.COMPLETED
+
+
+@pytest.mark.django_db
+def test_email_only_recovery_preserves_foreign_phone_and_saved_request_ids():
+    phone = _enrich_task(status=Task.Status.RUNNING)
+    foreign = _email_task(status=Task.Status.RUNNING, operator="Arian")
+    own = _email_task(status=Task.Status.RUNNING, operator="Chuka")
+    Task.objects.filter(pk__in=[phone.pk, foreign.pk, own.pk]).update(
+        started_at=timezone.now() - timedelta(hours=2),
+    )
+    own.payload["bettercontact_email_request_id"] = "already-purchased"
+    own.save(update_fields=["payload"])
+    EnrichmentWorker(operator="Chuka", include_phone=False)._reclaim_stale()
+    for untouched in (phone, foreign):
+        untouched.refresh_from_db()
+        assert untouched.status == Task.Status.RUNNING
+    own.refresh_from_db()
+    assert own.status == Task.Status.PENDING
+    assert own.payload["bettercontact_email_request_id"] == "already-purchased"
+
+
+def test_foreground_worker_propagates_loop_failure_for_supervisor_recovery():
+    worker = EnrichmentWorker(operator="Chuka", include_phone=False)
+    with patch.object(worker, "_reclaim_stale") as reclaim, \
+         patch.object(worker, "_run", side_effect=RuntimeError("db unavailable")):
+        with pytest.raises(RuntimeError, match="db unavailable"):
+            worker.run_forever()
+    reclaim.assert_called_once_with()
+    assert worker._thread is None
+
+
+@pytest.mark.django_db
 def test_run_once_handler_exception_marks_failed_and_notifies():
     task = _enrich_task()
     with patch("linkedin.enrichment.worker.handle_enrich_phone",
