@@ -48,6 +48,120 @@ def job(*, context=False):
     return drafts.parse_job(encode(payload(context=context)), api, lead_context=context)
 
 
+def with_instructions(value, text):
+    value["view"]["state"]["values"]["linkedin_reply_draft_instructions"] = {
+        api._REPLY_INSTRUCTIONS_ACTION_ID: {"value": text},
+    }
+    return value
+
+
+def test_optional_guidance_is_separate_from_manual_reply_and_thread_preview():
+    value = with_instructions(payload(), "Keep it casual; include my 20-minute meeting link.")
+    blocks = value["view"]["blocks"]
+    field = next(b for b in blocks if b.get("element", {}).get("action_id") == api._REPLY_INSTRUCTIONS_ACTION_ID)
+    assert field["optional"] is True
+    assert field["element"]["max_length"] == 500
+    assert api._reply_thread_blocks_from_view(blocks) == []
+    data = drafts.parse_job(encode(value), api)
+    assert data["draft_instructions"].startswith("Keep it casual")
+    assert data["request_key"] != job()["request_key"]
+    assert data["request_key"] == drafts.parse_job(encode(value), api)["request_key"]
+    value["type"] = "view_submission"
+    submitted = api.parse_reply_modal_submission(encode(value))
+    assert submitted["message"] == "New typed text"
+    assert "draft_instructions" not in submitted
+
+
+@pytest.mark.parametrize("instructions", [None, "", "   "])
+def test_blank_optional_guidance_is_normal_drafting(instructions):
+    data = drafts.parse_job(encode(with_instructions(payload(), instructions)), api)
+    assert data["draft_instructions"] == ""
+    assert data["request_key"] == job()["request_key"]
+
+
+@pytest.mark.parametrize("instructions", ["x" * 501, ["invalid"]])
+def test_invalid_guidance_rejected_before_background_work(instructions):
+    with pytest.raises(ValueError, match="instructions"):
+        drafts.parse_job(encode(with_instructions(payload(), instructions)), api)
+
+
+@pytest.mark.parametrize("state", ["loading", "error", "ready"])
+def test_guidance_editor_is_preserved_across_all_updates(state):
+    data = drafts.parse_job(encode(with_instructions(payload(), "No pitch, just answer their question.")), api)
+    before = next(b for b in data["view"]["blocks"] if b.get("element", {}).get("action_id") == api._REPLY_INSTRUCTIONS_ACTION_ID)
+    result = drafts.modal(data, api, state=state, content="Generated reply")
+    after = next(b for b in result["blocks"] if b.get("element", {}).get("action_id") == api._REPLY_INSTRUCTIONS_ACTION_ID)
+    assert after == before  # Stable Slack IDs preserve the live typed guidance.
+
+
+def test_recovery_keeps_guidance_but_an_edit_creates_a_new_job():
+    data = drafts.parse_job(encode(with_instructions(payload(), "Include my 20-minute link")), api)
+    data["job_known"] = True
+    view = drafts.modal(data, api, state="error")
+    value = payload()
+    value["view"] = {**view, "id": "V1", "hash": "h2"}
+    value["actions"] = view["blocks"][-1]["elements"]
+    recovered = drafts.parse_job(encode(value), api)
+    assert recovered["retry"]
+    assert recovered["request_key"] == data["request_key"]
+    assert recovered["draft_instructions"] == data["draft_instructions"]
+    value["view"]["state"] = {"values": {}}
+    with_instructions(value, "Use the deep dive link instead")
+    edited = drafts.parse_job(encode(value), api)
+    assert not edited["retry"]
+    assert edited["request_key"] != recovered["request_key"]
+    assert edited["draft_instructions"] == "Use the deep dive link instead"
+    with_instructions(value, None)
+    assert not drafts.parse_job(encode(value), api)["retry"]
+
+
+def test_instruction_retry_button_fits_slack_value_limit():
+    value = with_instructions(payload(), '"' * api._REPLY_INSTRUCTIONS_LIMIT)
+    data = drafts.parse_job(encode(value), api)
+    data.update(operator="s" * 80, thread_external_id="t" * 512, job_known=True)
+    view = drafts.modal(data, api, state="error")
+    assert len(view["blocks"][-1]["elements"][0]["value"]) <= 2000
+
+
+def test_background_passes_guidance_and_verified_catalog_to_model(monkeypatch):
+    worker(monkeypatch)
+    drafts.fetch_context.return_value = {"lead": {}, "operator": "Arian", "messages": []}
+    data = drafts.parse_job(encode(with_instructions(payload(), "Include my 20-minute meeting link")), api)
+    asyncio.run(drafts.run(data, api))
+    prompt = drafts.generate.call_args.args[0]
+    context = json.loads(prompt[prompt.index('{"lead":'):])
+    assert context["operator_instructions"] == data["draft_instructions"]
+    assert context["booking_links"]["owner"] == "Arian"
+    quick = next(e for e in context["booking_links"]["events"] if e["key"] == "quick_chat")
+    assert quick["duration_minutes"] == 20
+    assert quick["url"].endswith("/quick-chat-boundera")
+    assert "Never invent a URL" in prompt
+
+
+def test_missing_duration_is_visible_and_never_replaces_reply_or_calls_model(monkeypatch):
+    calls = worker(monkeypatch)
+    drafts.fetch_context.return_value = {"lead": {}, "operator": "Arian", "messages": []}
+    data = drafts.parse_job(encode(with_instructions(payload(), "Attach my meeting link for 15 mins")), api)
+    asyncio.run(drafts.run(data, api))
+    drafts.generate.assert_not_called()
+    drafts.save_result.assert_not_called()
+    assert "No saved meeting link matches that duration" in json.dumps(calls[-1])
+    assert calls[-1]["blocks"][0]["element"]["initial_value"] == "My text"
+    drafts.fail_job.assert_called_once()
+
+
+@pytest.mark.parametrize("operator,instructions,available", [
+    ("Arian", "", True),
+    ("Chuka", "Include my 30-minute link", False),
+    ("Chuka", "Include Arian's 30-minute intro link", True),
+    ("Chuka", "Arianna asked for a link", False),
+])
+def test_calendar_ownership_is_explicit(operator, instructions, available):
+    prompt = api.reply_draft_prompt({"lead": {}, "operator": operator}, instructions=instructions)
+    context = json.loads(prompt[prompt.index('{"lead":'):])
+    assert bool(context["booking_links"].get("events")) is available
+
+
 def test_request_identity_and_explicit_retry_scope():
     data = job()
     assert data["request_key"] == job()["request_key"]

@@ -41,9 +41,22 @@ def parse_job(body, api, *, lead_context=False):
     retry_key = value.get("draft_job_key", "")
     if retry_key and not re.fullmatch(r"[0-9a-f]{64}", retry_key):
         raise ValueError("invalid draft key")
+    instructions = value.get("draft_instructions", "") if retry_key else ""
+    for fields in ((view.get("state") or {}).get("values") or {}).values():
+        if api._REPLY_INSTRUCTIONS_ACTION_ID in fields:
+            instructions = fields[api._REPLY_INSTRUCTIONS_ACTION_ID].get("value") or ""
+            break
+    if not isinstance(instructions, str) or len(instructions) > api._REPLY_INSTRUCTIONS_LIMIT:
+        raise ValueError("invalid draft instructions")
+    instructions = instructions.strip()
+    # Editing guidance is an explicit new draft, not recovery of different copy.
+    # Otherwise retries carry the original instructions, even after a lost update.
+    if retry_key and instructions != value.get("draft_instructions", ""):
+        retry_key = ""
     identity = [view["id"], view["hash"], data["lead_id"], data["operator"],
-                data["thread_external_id"], expected]
+                data["thread_external_id"], expected, instructions]
     data.update(view=deepcopy(view), lead_context=lead_context,
+                draft_instructions=instructions,
                 view_id=view["id"], view_hash=view["hash"], retry=bool(retry_key),
                 request_key=retry_key or hashlib.sha256(json.dumps(identity).encode()).hexdigest())
     return data
@@ -161,7 +174,8 @@ def modal(data, api, *, state, content=""):
                 continue
         blocks.append(block)
     value = {k: data[k] for k in ("lead_id", "operator", "thread_external_id")}
-    retry_value = json.dumps({**value, "draft_job_key": data["request_key"]})
+    retry_value = json.dumps({**value, "draft_job_key": data["request_key"],
+                             "draft_instructions": data.get("draft_instructions", "")}, ensure_ascii=False)
     if state == "error" and not data.get("job_known"):
         retry_value = json.dumps(value)
     if state == "ready" and not data["lead_context"]:
@@ -175,6 +189,8 @@ def modal(data, api, *, state, content=""):
         status_text = "Draft reply (not sent):\n" + content
     elif state == "loading":
         status_text = "Drafting reply… The draft will replace the reply text when ready. Check draft if this takes longer than two minutes."
+    elif data.get("error_code") == "calendar_duration_unavailable":
+        status_text = "No saved meeting link matches that duration. Arian's events are 20, 30 or 60 minutes. Edit AI instructions and retry; your reply text is unchanged."
     else:
         status_text = "Couldn't finish displaying the draft. Your text is unchanged. Retry draft to recover or try again."
     if status_text:
@@ -271,7 +287,7 @@ async def run(data, api):
                 stage = "context"
                 context = await asyncio.to_thread(fetch_context, data, api)
                 stage = "model"
-                content = await generate(api.reply_draft_prompt(context), api)
+                content = await generate(api.reply_draft_prompt(context, instructions=data.get("draft_instructions", "")), api)
                 stage = "save"
                 saved = await asyncio.to_thread(save_result, data, token, content, api)
                 if not saved:
@@ -290,6 +306,7 @@ async def run(data, api):
                        exc.code if isinstance(exc, DraftServiceError) else "transport", saved)
         if isinstance(exc, DraftServiceError) and exc.code == "retry_required":
             data["job_known"] = True
+        data["error_code"] = exc.code if isinstance(exc, DraftServiceError) else "transport"
         try:
             await update(data, modal(data, api, state="error"), api)
         except (DraftViewError, httpx.TransportError, httpx.HTTPStatusError):

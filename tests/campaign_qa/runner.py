@@ -46,6 +46,7 @@ def main():
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'slack-drafts':
         return pytest.main(common + [
             'tests/test_slack_reply_drafts.py', 'tests/test_slack_enrich.py',
+            'tests/test_calendar_links.py',
             'tests/test_slack_feed_comment.py', 'tests/test_slack_feed_context.py',
             'tests/test_slack_feed_like.py', 'tests/test_feed_comment_action.py',
             'tests/tasks/test_feed_comment.py', 'tests/management/test_run_feed_comment_once.py',

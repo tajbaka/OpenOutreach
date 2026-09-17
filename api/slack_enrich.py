@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler
@@ -29,7 +30,8 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from api import slack_feed_comment, slack_feed_context, slack_feed_like, slack_reply_drafts
-from api.exceptions import DraftRuntimeUnavailable
+from api.exceptions import DraftRuntimeUnavailable, DraftServiceError
+from linkedin.calendar_links import ARIAN_CALENDAR_EVENTS, unsupported_calendar_duration
 
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
@@ -55,6 +57,8 @@ _REPLY_CANCEL_ACTION_ID = "linkedin_reply_cancel_button"
 _REPLY_DRAFT_ACTION_ID = "linkedin_reply_draft_button"
 _REPLY_MODAL_CALLBACK_ID = "linkedin_reply_modal"
 _REPLY_BODY_ACTION_ID = "linkedin_reply_body"
+_REPLY_INSTRUCTIONS_ACTION_ID = "linkedin_reply_draft_instructions"
+_REPLY_INSTRUCTIONS_LIMIT = 500
 _LEAD_CONTEXT_ACTION_ID = "linkedin_lead_context_button"
 _LEAD_CONTEXT_AI_ACTION_ID = "linkedin_lead_context_ai_button"
 _LEAD_CONTEXT_DRAFT_ACTION_ID = "linkedin_lead_context_draft_button"
@@ -410,6 +414,20 @@ def render_reply_modal_blocks(
             "block_id": "linkedin_reply_message",
             "label": {"type": "plain_text", "text": "Reply"},
             "element": input_element,
+        },
+        {
+            "type": "input",
+            "block_id": "linkedin_reply_draft_instructions",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "AI instructions"},
+            "hint": {"type": "plain_text", "text": "Only guides the draft; not sent. Arian's links: 20m quick chat, 30m intro/call/next steps, 60m deep dive."},
+            "element": {
+                "type": "plain_text_input",
+                "action_id": _REPLY_INSTRUCTIONS_ACTION_ID,
+                "multiline": True,
+                "max_length": _REPLY_INSTRUCTIONS_LIMIT,
+                "placeholder": {"type": "plain_text", "text": "Keep it brief and include my 20-minute meeting link."},
+            },
         },
     ]
     if loading:
@@ -1425,7 +1443,7 @@ def generate_ai_lead_summary(context: dict) -> str:
     ) or "No summary returned."
 
 
-def reply_draft_prompt(context: dict) -> str:
+def reply_draft_prompt(context: dict, *, instructions: str = "") -> str:
     """Build the private reply prompt; transport runs after Slack's ACK."""
     messaging = context.get("icp_messaging") or {"status": "unavailable", "examples": []}
     # Do not mix other senders' campaigns into this reply's persona context.
@@ -1437,6 +1455,21 @@ def reply_draft_prompt(context: dict) -> str:
         payload["lead"]["icp"] = messaging["audience_key"]
     payload["lead"]["role_tag"] = context["lead"].get("role_tag") or ""
     payload["icp_messaging"] = messaging
+    payload["operator_instructions"] = instructions
+    # Never present another sender's calendar as their own. Explicitly naming
+    # Arian permits a handoff to his calendar from a different sender.
+    use_arian_calendar = (context.get("operator") or "").casefold() == "arian" or bool(re.search(r"\barian\b", instructions, re.I))
+    if use_arian_calendar and unsupported_calendar_duration(instructions):
+        raise DraftServiceError("calendar_duration_unavailable")
+    payload["booking_links"] = {
+        "owner": "Arian",
+        "verified_on": "2026-09-17",
+        "events": [
+            {"key": key, "name": event.name, "duration_minutes": event.duration_minutes,
+             "purpose": event.purpose, "url": event.url}
+            for key, event in ARIAN_CALENDAR_EVENTS.items()
+        ],
+    } if use_arian_calendar else {"status": "no verified calendar for this sender"}
     prompt = (
         "Draft one LinkedIn reply for this conversation. Return only the message text. "
         "Use the full recent message history, including the connection note and any short "
@@ -1444,6 +1477,18 @@ def reply_draft_prompt(context: dict) -> str:
         "thread. Answer the latest message first, including any question or objection. "
         "Be direct, natural, concise, and low-pressure. Use short paragraphs, no em dashes, "
         "and at most one relevant question; do not force a question or a call request.\n\n"
+        "operator_instructions is optional guidance from the human drafting this reply, "
+        "not prospect text. Follow its requested tone, focus and meeting-link request "
+        "while respecting factual accuracy and opt-outs. Never quote the instructions "
+        "or send operational commentary as part of the reply. Blank means draft normally. "
+        "Only include a booking link when the operator requests it or the conversation "
+        "clearly calls for scheduling. Use only exact URLs in booking_links, matching "
+        "the requested duration and purpose. Never invent a URL, append duration/query "
+        "parameters, relabel a 20-minute event as 15 minutes, or claim a time is available. "
+        "For 30 minutes, use an explicitly named event first, otherwise intro for a first "
+        "conversation, next_steps for an established opportunity's next meeting, or general "
+        "for an unspecified call. If no exact duration or sender calendar exists, omit "
+        "the link rather than substitute one. Arian's calendar is never Eddy's calendar.\n\n"
         "When icp_messaging is matched, its examples are approved positioning references "
         "for this exact campaign audience, not messages to send in sequence and not proof "
         "they were already sent. Use their value proposition, FedRAMP stage and revenue "
