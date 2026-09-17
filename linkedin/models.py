@@ -1594,6 +1594,35 @@ class SlackLeadContextArtifact(models.Model):
         return f"{self.kind} for lead={self.lead_id} {scope}".strip()
 
 
+class SlackReplyDraftJob(models.Model):
+    """Private modal draft receipt, never a daemon Task or an outbound queue.
+
+    A Slack view revision identifies a request. A short lease prevents duplicate
+    generation; completed copy survives failed modal updates for manual retry.
+    """
+
+    class Status(models.TextChoices):
+        RUNNING = "running"
+        READY = "ready"
+        FAILED = "failed"
+
+    request_key = models.CharField(max_length=64, primary_key=True)
+    lead = models.ForeignKey("crm.Lead", on_delete=models.CASCADE)
+    operator = models.CharField(max_length=80)
+    thread_external_id = models.CharField(max_length=512, blank=True, default="")
+    view_id = models.CharField(max_length=128)
+    status = models.CharField(max_length=16, choices=Status.choices)
+    lease_token = models.CharField(max_length=32)
+    lease_until = models.DateTimeField()
+    content = models.TextField(blank=True, default="")
+    error_code = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "linkedin"
+
+
 class WorkflowRun(models.Model):
     """Audit + freshness signal for high-level workflows the operator runs.
 

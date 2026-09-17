@@ -18,6 +18,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import time
 from http.server import BaseHTTPRequestHandler
 from urllib import request
@@ -27,7 +28,8 @@ from urllib.parse import parse_qs
 import psycopg
 from psycopg.types.json import Jsonb
 
-from api import slack_feed_comment, slack_feed_context, slack_feed_like
+from api import slack_feed_comment, slack_feed_context, slack_feed_like, slack_reply_drafts
+from api.exceptions import DraftRuntimeUnavailable
 
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
@@ -441,7 +443,7 @@ def _reply_thread_blocks_from_view(blocks: list) -> list:
     thread_blocks: list = []
     for block in blocks or []:
         block_id = block.get("block_id") or ""
-        if block_id == "linkedin_reply_message" or block_id == "linkedin_reply_actions":
+        if block_id.startswith("linkedin_reply_message") or block_id == "linkedin_reply_actions":
             break
         if block_id.startswith("linkedin_reply_draft_"):
             continue
@@ -1423,8 +1425,8 @@ def generate_ai_lead_summary(context: dict) -> str:
     ) or "No summary returned."
 
 
-def generate_ai_draft_reply(context: dict) -> str:
-    """Draft a short LinkedIn reply grounded in the full recent thread."""
+def reply_draft_prompt(context: dict) -> str:
+    """Build the private reply prompt; transport runs after Slack's ACK."""
     messaging = context.get("icp_messaging") or {"status": "unavailable", "examples": []}
     # Do not mix other senders' campaigns into this reply's persona context.
     reply_context = {**context, "deals": [
@@ -1467,11 +1469,7 @@ def generate_ai_draft_reply(context: dict) -> str:
         "and review friction. Channel partners care about routing vendors to the right owner.\n\n"
         + json.dumps(payload, ensure_ascii=False)
     )
-    return _llm_chat(
-        system="You draft concise Boundera LinkedIn sales replies.",
-        user=prompt,
-        temperature=0.4,
-    ) or "No draft returned."
+    return prompt
 
 
 class handler(BaseHTTPRequestHandler):
@@ -1552,65 +1550,24 @@ class handler(BaseHTTPRequestHandler):
         self._respond_text(200, "")
 
     def _handle_reply_draft(self, body: str) -> None:
-        try:
-            data = parse_reply_draft_button(body)
-            with psycopg.connect(DATABASE_URL) as conn:
-                context = fetch_reply_draft_context(
-                    conn,
-                    data["lead_id"],
-                    operator=data.get("operator", ""),
-                    thread_external_id=data.get("thread_external_id", ""),
-                )
-        except (ValueError, json.JSONDecodeError):
-            self._respond_text(400, "malformed reply draft action")
-            return
-        except Exception:  # noqa: BLE001 — DB failure
-            self._respond_text(500, "lead context error")
-            return
+        self._schedule_private_draft(body)
 
-        view_id = data.get("view_id") or ""
-        metadata = data.get("metadata") or {}
-        current_reply = data.get("current_reply") or ""
-        if view_id:
-            try:
-                update_reply_modal(
-                    view_id=view_id,
-                    view_hash=data.get("view_hash") or "",
-                    metadata=metadata,
-                    initial_reply=current_reply,
-                    loading="Drafting reply...",
-                )
-            except Exception:
-                pass
-
+    def _schedule_private_draft(self, body: str, *, lead_context=False) -> None:
+        api = sys.modules[__name__]
         try:
-            draft = generate_ai_draft_reply(context)
-            with psycopg.connect(DATABASE_URL) as conn:
-                upsert_lead_context_artifact(
-                    conn,
-                    lead_id=data["lead_id"],
-                    operator=data.get("operator", ""),
-                    thread_external_id=data.get("thread_external_id", ""),
-                    kind=_ARTIFACT_DRAFT_REPLY,
-                    content=draft,
-                )
-            update_reply_modal(
-                view_id=view_id,
-                metadata=metadata,
-                initial_reply=draft,
-            )
-        except Exception as exc:  # noqa: BLE001 — show recoverable model failure in modal
-            try:
-                update_reply_modal(
-                    view_id=view_id,
-                    metadata=metadata,
-                    initial_reply=current_reply,
-                    draft_error=str(exc),
-                )
-            except Exception:
-                self._respond_text(500, "slack modal error")
-                return
+            data = slack_reply_drafts.parse_job(body, api, lead_context=lead_context)
+        except (ValueError, KeyError):
+            self._respond_text(400, "malformed private draft action")
+            return
+        try:
+            slack_reply_drafts.schedule(data, api)
+        except DraftRuntimeUnavailable:
+            self._respond_text(503, "Private draft background runtime unavailable")
+            return
+        # Registration does no DB, Slack or AI I/O. Vercel holds the invocation
+        # open after this response, not a fire-and-forget thread.
         self._respond_text(200, "")
+        self.wfile.flush()
 
     def _handle_lead_context_button(self, body: str) -> None:
         try:
@@ -1719,100 +1676,23 @@ class handler(BaseHTTPRequestHandler):
         self._respond_text(200, "")
 
     def _handle_lead_context_draft(self, body: str) -> None:
-        try:
-            data = parse_lead_context_button(body)
-            with psycopg.connect(DATABASE_URL) as conn:
-                context = fetch_reply_draft_context(
-                    conn,
-                    data["lead_id"],
-                    operator=data.get("operator", ""),
-                    thread_external_id=data.get("thread_external_id", ""),
-                )
-        except (ValueError, json.JSONDecodeError):
-            self._respond_text(400, "malformed lead context action")
-            return
-        except Exception:  # noqa: BLE001 — DB failure
-            self._respond_text(500, "lead context error")
-            return
-
-        view_id = data.get("view_id") or ""
-        artifacts = context.get("artifacts") or {}
-        existing_summary = data.get("ai_summary") or artifacts.get(_ARTIFACT_AI_SUMMARY, "")
-        existing_draft = data.get("draft_reply") or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")
-        if view_id:
-            try:
-                update_slack_view(
-                    view_id=view_id,
-                    blocks=render_lead_context_blocks(
-                        context,
-                        ai_summary=existing_summary,
-                        draft_reply=existing_draft,
-                        loading="Drafting reply...",
-                    ),
-                    private_metadata=_lead_context_metadata(
-                        context,
-                        ai_summary=existing_summary,
-                        draft_reply=existing_draft,
-                    ),
-                )
-            except Exception:
-                pass
-
-        try:
-            draft = generate_ai_draft_reply(context)
-            with psycopg.connect(DATABASE_URL) as conn:
-                upsert_lead_context_artifact(
-                    conn,
-                    lead_id=data["lead_id"],
-                    operator=data.get("operator", ""),
-                    thread_external_id=data.get("thread_external_id", ""),
-                    kind=_ARTIFACT_DRAFT_REPLY,
-                    content=draft,
-                )
-            blocks = render_lead_context_blocks(
-                context,
-                ai_summary=existing_summary,
-                draft_reply=draft,
-                newest_artifact=_ARTIFACT_DRAFT_REPLY,
-            )
-            metadata = _lead_context_metadata(
-                context,
-                ai_summary=existing_summary,
-                draft_reply=draft,
-            )
-        except Exception as exc:  # noqa: BLE001 — show recoverable model failure in modal
-            blocks = render_lead_context_blocks(
-                context,
-                ai_summary=existing_summary,
-                draft_reply=existing_draft,
-                draft_error="" if existing_draft else str(exc),
-                newest_artifact=_ARTIFACT_DRAFT_REPLY if not existing_draft else "",
-            )
-            metadata = _lead_context_metadata(
-                context,
-                ai_summary=existing_summary,
-                draft_reply=existing_draft,
-            )
-
-        try:
-            update_slack_view(
-                view_id=view_id,
-                blocks=blocks,
-                private_metadata=metadata,
-            )
-        except Exception:
-            self._respond_text(500, "slack modal error")
-            return
-        self._respond_text(200, "")
+        self._schedule_private_draft(body, lead_context=True)
 
     def _handle_reply_submission(self, body: str) -> None:
         try:
             payload = parse_reply_modal_submission(body)
         except (ValueError, KeyError, json.JSONDecodeError):
+            try:
+                view = decode_slack_payload(body).get("view") or {}
+            except ValueError:
+                view = {}
+            block_id = next((b.get("block_id") for b in view.get("blocks", [])
+                             if b.get("element", {}).get("action_id") == _REPLY_BODY_ACTION_ID),
+                            "linkedin_reply_message")
             self._respond_json({
                 "response_action": "errors",
                 "errors": {
-                    "linkedin_reply_message": "Type a reply before queuing.",
+                    block_id: "Type a reply before queuing.",
                 },
             })
             return

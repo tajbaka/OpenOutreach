@@ -22,8 +22,8 @@ INPUTS = (ROOT / 'linkedin/icp_messages.json', ROOT / 'gmail/icp_emails.json')
 
 def source_fingerprint() -> tuple[str, int]:
     """Identify the uncommitted source under test without reading credentials."""
-    paths = set(ROOT.glob('*.py'))
-    for directory in ('linkedin', 'gmail', 'drip', 'crm', 'chat', 'tests', 'scripts', 'requirements'):
+    paths = set(ROOT.glob('*.py')) | {ROOT / 'vercel.json'}
+    for directory in ('api', 'linkedin', 'gmail', 'drip', 'crm', 'chat', 'tests', 'scripts', 'requirements'):
         paths.update(
             path for path in (ROOT / directory).rglob('*')
             if path.is_file() and path.suffix in {'.py', '.json', '.j2', '.txt'}
@@ -39,7 +39,7 @@ def source_fingerprint() -> tuple[str, int]:
 def run() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, help='New directory for QA reports; never overwritten')
-    parser.add_argument('--suite', choices=('campaigns', 'accepted-connections'), default='campaigns',
+    parser.add_argument('--suite', choices=('campaigns', 'accepted-connections', 'slack-drafts'), default='campaigns',
                         help='Full campaign QA or the focused accepted-connections/CRM sync regression suite')
     args = parser.parse_args()
     expected_python = ROOT / '.venv/bin/python'

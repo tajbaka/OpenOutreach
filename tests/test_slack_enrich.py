@@ -9,6 +9,7 @@ import hmac
 import importlib.util
 import json
 import pathlib
+import sys
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
@@ -17,6 +18,7 @@ import pytest
 _PATH = pathlib.Path(__file__).resolve().parent.parent / "api" / "slack_enrich.py"
 _spec = importlib.util.spec_from_file_location("slack_enrich", _PATH)
 slack_enrich = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = slack_enrich
 _spec.loader.exec_module(slack_enrich)
 
 
@@ -110,6 +112,7 @@ def _lead_context_body(
         "view": {
             "id": "V123",
             "hash": "h123",
+            "callback_id": "linkedin_lead_context_modal",
             "private_metadata": json.dumps(view_metadata or {}),
         },
         "actions": [{
@@ -835,10 +838,7 @@ def test_reply_prompt_gets_reviewed_role_and_only_matching_campaign_examples(mon
         "deals": [{"id": 42, "campaign": "Matching campaign"}, {"id": 99, "campaign": "Other sender campaign"}],
     }
     before = json.dumps(context, sort_keys=True)
-    chat = MagicMock(return_value="A natural reply")
-    monkeypatch.setattr(slack_enrich, "_llm_chat", chat)
-    assert slack_enrich.generate_ai_draft_reply(context) == "A natural reply"
-    prompt = chat.call_args.kwargs["user"]
+    prompt = slack_enrich.reply_draft_prompt(context)
     payload = json.loads(prompt[prompt.index('{"lead":'):])
     assert payload["lead"]["role_tag"] == "CFO/Finance"
     assert payload["lead"]["icp"] == ("frozen-audience" if matched else "newer-mutable-label")
@@ -862,22 +862,21 @@ def test_reply_prompt_gets_reviewed_role_and_only_matching_campaign_examples(mon
     ("_handle_lead_context_draft", _lead_context_body("linkedin_lead_context_draft_button")),
 ])
 def test_both_reply_draft_handlers_use_context_but_never_enqueue(monkeypatch, method, body):
-    fetch = MagicMock(return_value={"lead": {"id": 42}, "artifacts": {}})
-    monkeypatch.setattr(slack_enrich, "fetch_reply_draft_context", fetch)
-    monkeypatch.setattr(slack_enrich.psycopg, "connect", MagicMock())
-    monkeypatch.setattr(slack_enrich, "generate_ai_draft_reply", MagicMock(return_value="Draft only"))
-    monkeypatch.setattr(slack_enrich, "upsert_lead_context_artifact", MagicMock())
-    monkeypatch.setattr(slack_enrich, "update_reply_modal", MagicMock())
-    monkeypatch.setattr(slack_enrich, "update_slack_view", MagicMock())
+    schedule = MagicMock()
+    monkeypatch.setattr(slack_enrich.slack_reply_drafts, "schedule", schedule)
+    connect = MagicMock()
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", connect)
     enqueue = MagicMock()
     monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", enqueue)
     phone = MagicMock()
     monkeypatch.setattr(slack_enrich, "enqueue_task", phone)
     handler = object.__new__(slack_enrich.handler)
     handler._respond_text = MagicMock()
+    handler.wfile = MagicMock()
     getattr(handler, method)(body)
-    fetch.assert_called_once()
-    assert fetch.call_args.kwargs["thread_external_id"] in {"thread-chuka", "thread-arian"}
+    schedule.assert_called_once()
+    assert schedule.call_args.args[0]["thread_external_id"] in {"thread-chuka", "thread-arian"}
+    connect.assert_not_called()
     enqueue.assert_not_called()
     phone.assert_not_called()
     handler._respond_text.assert_called_once_with(200, "")

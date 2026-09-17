@@ -43,6 +43,13 @@ def main():
         '-p', 'pytest_django.plugin', '-p', 'pytest_mock', '-p', 'tests.campaign_qa.reporting',
         '-q', '--tb=short', '-p', 'no:cacheprovider', '--strict-markers',
     ]
+    if os.environ.get('CAMPAIGN_QA_SUITE') == 'slack-drafts':
+        return pytest.main(common + [
+            'tests/test_slack_reply_drafts.py', 'tests/test_slack_enrich.py',
+            'tests/test_slack_feed_comment.py', 'tests/test_slack_feed_context.py',
+            'tests/test_slack_feed_like.py', 'tests/test_feed_comment_action.py',
+            'tests/tasks/test_feed_comment.py', 'tests/management/test_run_feed_comment_once.py',
+        ])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'accepted-connections':
         return pytest.main(common + [
             'tests/test_accepted_connections.py', 'tests/test_accepted_connections_sheet.py',
@@ -54,6 +61,7 @@ def main():
         'tests/campaign_qa/test_imported_campaigns.py',
         'tests/test_general_icp_json.py', 'tests/test_general_icp_messages.py',
         'tests/test_message_roles.py', 'tests/test_message_delivery.py',
+        'tests/test_slack_reply_drafts.py',
         'tests/test_message_delivery_locks.py',
         'tests/test_message_program_models.py',
         'tests/test_seed_import.py', 'tests/test_seeds.py',

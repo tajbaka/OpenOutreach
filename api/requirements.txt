@@ -1,1 +1,5 @@
-psycopg[binary]
+# Deployment mirror of requirements/slack.txt; parity is covered by tests.
+# Vercel's function-local requirements parser cannot resolve the parent include.
+psycopg[binary]>=3.1
+httpx>=0.28,<0.29
+vercel==0.11.2

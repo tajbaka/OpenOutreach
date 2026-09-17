@@ -2,5 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": null,
-  "installCommand": null
+  "installCommand": null,
+  "functions": {
+    "api/slack_enrich.py": { "maxDuration": 120 }
+  }
 }
