@@ -9,6 +9,7 @@ from linkedin.actions.connect import (
     _click_more_button,
     _click_with_note,
     _click_without_note,
+    send_connection_request,
     _connect_via_more,
     _custom_invite_vanity_name,
     _direct_invite_option,
@@ -22,7 +23,7 @@ from linkedin.actions.connect import (
     _targets_current_profile,
 )
 from linkedin.enums import ProfileState
-from linkedin.exceptions import SkipProfile
+from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
 
 
 class _Locator:
@@ -449,3 +450,54 @@ def test_click_without_note_skips_email_required_invite(_wait):
 
     assert cancel.clicked is True
     session.wait.assert_called()
+
+
+@pytest.mark.parametrize("after_add_note", [False, True])
+def test_custom_note_limit_aborts_before_fill_or_send(monkeypatch, after_add_note):
+    page = Mock(url="https://www.linkedin.com/in/example/")
+    add_note = Mock()
+    add_note.count.return_value = int(after_add_note)
+    add_note.first = add_note
+    textarea = Mock()
+    textarea.count.return_value = 0
+
+    def locator(selector):
+        if selector == SELECTORS["note_textarea"]:
+            return textarea
+        if selector == SELECTORS["add_note"]:
+            return add_note
+        if selector == SELECTORS["custom_note_limit"]:
+            return _Locator(count=int(not after_add_note or add_note.click.called))
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    session = Mock(page=page)
+    monkeypatch.setattr("linkedin.actions.connect._wait_for_invite_surface", lambda *_: True)
+    monkeypatch.setattr("linkedin.actions.connect._dump_step_screenshot", lambda *_: None)
+    issue = Mock()
+    monkeypatch.setattr("linkedin.actions.connect._record_connect_issue", issue)
+
+    with pytest.raises(ReachedConnectionLimit, match="out of free custom notes"):
+        _click_with_note(session, "Approved note")
+
+    assert add_note.click.call_count == int(after_add_note)
+    textarea.first.fill.assert_not_called()
+    assert SELECTORS["send_invitation"] not in [call.args[0] for call in page.locator.call_args_list]
+    issue.assert_not_called()
+
+
+def test_custom_note_limit_reports_real_reason_and_propagates(monkeypatch):
+    monkeypatch.setattr("linkedin.actions.connect._connect_direct", lambda *args: True)
+    monkeypatch.setattr(
+        "linkedin.actions.connect._click_with_note",
+        Mock(side_effect=ReachedConnectionLimit("LinkedIn reports you're out of free custom notes.")),
+    )
+    notify = Mock()
+    monkeypatch.setattr("linkedin.actions.connect.notify_connect_send_failed", notify)
+    monkeypatch.setattr("linkedin.actions.connect.resolve_operator", lambda _: "Arian")
+
+    with pytest.raises(ReachedConnectionLimit):
+        send_connection_request(Mock(), {"public_identifier": "example"}, note="Approved note")
+
+    notify.assert_called_once()
+    assert "out of free custom notes" in notify.call_args.kwargs["reason"]

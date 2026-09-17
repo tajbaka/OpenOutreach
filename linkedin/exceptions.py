@@ -26,7 +26,7 @@ class SkipProfile(Exception):
 
 
 class ReachedConnectionLimit(Exception):
-    """ Weekly connection limit reached. """
+    """LinkedIn reported a connection or personalized-invitation note limit."""
     pass
 
 

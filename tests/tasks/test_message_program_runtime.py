@@ -302,9 +302,11 @@ def test_bound_followup_task_with_sender_mismatch_fails_closed(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("note_limited", [False, True])
 def test_bound_connect_uses_frozen_note_and_never_reads_sender_json(
     fake_session,
     monkeypatch,
+    note_limited,
 ):
     monkeypatch.setattr("linkedin.tasks.connect.ENABLE_CONNECT", True)
     _version(fake_session.campaign)
@@ -342,6 +344,10 @@ def test_bound_connect_uses_frozen_note_and_never_reads_sender_json(
         lambda *_args, **_kwargs: ProfileState.QUALIFIED,
     )
     send = MagicMock(return_value=ProfileState.PENDING)
+    if note_limited:
+        from linkedin.exceptions import ReachedConnectionLimit
+
+        send.side_effect = ReachedConnectionLimit("LinkedIn reports you're out of free custom notes.")
     monkeypatch.setattr("linkedin.actions.connect.send_connection_request", send)
     monkeypatch.setattr(
         "linkedin.icp_outbound.load_icp_messages",
@@ -366,6 +372,21 @@ def test_bound_connect_uses_frozen_note_and_never_reads_sender_json(
     assert send.call_args.kwargs["note"] == delivery.frozen_body
     assert delivery.frozen_body == "Hi Ada, frozen connect for Analytical Engines."
     delivery.refresh_from_db()
+    if note_limited:
+        from linkedin.models import ActionLog
+
+        deal.refresh_from_db()
+        assert delivery.status == OutboundDelivery.Status.FAILED
+        assert deal.state == ProfileState.QUALIFIED
+        assert deal.connect_attempts == 0
+        assert not deal.sent_note
+        assert not deal.invitation_sent_at
+        assert not ActionLog.objects.filter(action_type=ActionLog.ActionType.CONNECT).exists()
+        assert fake_session.linkedin_profile.is_externally_exhausted(ActionLog.ActionType.CONNECT)
+        queued = Task.objects.get(task_type=Task.TaskType.CONNECT, status=Task.Status.PENDING)
+        assert queued.scheduled_at > timezone.now()
+        assert not Task.objects.filter(task_type=Task.TaskType.GMAIL_FOLLOW_UP).exists()
+        return
     assert delivery.status == OutboundDelivery.Status.SENT
     deal.refresh_from_db()
     assert deal.sent_note == delivery.frozen_body

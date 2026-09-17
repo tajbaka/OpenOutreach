@@ -61,6 +61,10 @@ SELECTORS = {
     "send_now": 'button:has-text("Send now"), button[aria-label*="Send without"], button[aria-label*="Send invitation"]',
     "send_without_note": 'button:has-text("Send without a note"), button[aria-label*="Send without a note"]',
     "add_note": 'button:has-text("Add a note")',
+    "custom_note_limit": (
+        '[role="dialog"] :text("out of free custom notes"):visible, '
+        '#interop-outlet :text("out of free custom notes"):visible'
+    ),
     "note_textarea": (
         'textarea[name="message"], '
         'textarea[id*="custom-message"], '
@@ -328,7 +332,18 @@ def send_connection_request(
             return ProfileState.QUALIFIED
 
     if note:
-        if not _click_with_note(session, note, full_name=full_name):
+        try:
+            note_sent = _click_with_note(session, note, full_name=full_name)
+        except ReachedConnectionLimit as exc:
+            notify_connect_send_failed(
+                full_name=full_name,
+                profile_url=profile_url,
+                campaign_name=getattr(session.campaign, "name", ""),
+                operator=resolve_operator(session.linkedin_profile.linkedin_username),
+                reason=str(exc),
+            )
+            raise
+        if not note_sent:
             logger.warning("Could not add note for %s — aborting connection request", public_identifier)
             notify_connect_send_failed(
                 full_name=full_name,
@@ -724,6 +739,14 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
     return False
 
 
+def _check_custom_note_limit(session) -> None:
+    if session.page.locator(SELECTORS["custom_note_limit"]).count() > 0:
+        raise ReachedConnectionLimit(
+            "LinkedIn reports you're out of free custom notes. "
+            "Invitation not sent; personalized notes must be available before retrying."
+        )
+
+
 def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
     session.wait()
@@ -740,6 +763,7 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     add_note_btn = session.page.locator(SELECTORS["add_note"])
     deadline = time.monotonic() + 5
     while textarea.count() == 0 and add_note_btn.count() == 0:
+        _check_custom_note_limit(session)
         if _pending_invite_surface_visible(session, full_name=full_name):
             logger.debug("Detected pending invite surface while waiting for note UI for %s", current_public_id)
             raise ExistingPendingInvite(current_public_id)
@@ -766,6 +790,7 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
         textarea = session.page.locator(SELECTORS["note_textarea"])
 
     if textarea.count() == 0:
+        _check_custom_note_limit(session)
         _dump_page_state(session, "no-textarea-after-add-note")
         logger.warning("Note textarea not found after Add-a-note click — aborting (artifacts in /tmp/connect-debug/)")
         _record_connect_issue(
