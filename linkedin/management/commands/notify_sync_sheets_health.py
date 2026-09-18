@@ -72,6 +72,11 @@ class Command(BaseCommand):
             "warning": ":warning:",
             "failed": ":rotating_light:",
         }.get(result.status, ":grey_question:")
+        slack_message = slack_escape(message)
+        if len(slack_message) > 2900:
+            slack_message = slack_message[:2800].rsplit("\n", 1)[0] + (
+                "\n[Log excerpt truncated; see data/logs/crm_v2_task.log]"
+            )
         payload = {
             "text": f"{emoji} OpenOutreach CRM v2 health: {result.status}",
             "blocks": [
@@ -82,7 +87,7 @@ class Command(BaseCommand):
                         "text": f"{emoji} *OpenOutreach CRM v2 health: {result.status.upper()}*",
                     },
                 },
-                {"type": "section", "text": {"type": "mrkdwn", "text": slack_escape(message)}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": slack_message}},
             ],
         }
         _post_to_slack(SLACK_WEBHOOK_URL, payload, "crm-v2-refresh-health")
@@ -227,7 +232,9 @@ def _powershell_json(script: str) -> dict:
 def _tail_log(path: Path, *, max_lines: int) -> list[str]:
     if not path.exists():
         return []
-    return path.read_text(encoding="utf-8", errors="replace").splitlines()[-max_lines:]
+    # Windows PowerShell native redirection can mix UTF-16 ASCII output into
+    # this UTF-8 wrapper log. Strip its NUL padding before parsing/display.
+    return path.read_text(encoding="utf-8", errors="replace").replace("\x00", "").splitlines()[-max_lines:]
 
 
 def _latest_exit_code(lines: list[str]) -> int | None:

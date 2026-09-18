@@ -132,6 +132,8 @@ class FakeWorksheet:
         self.updates: list[dict] = []
         self.batch_updates: list[dict] = []
         self.appended: list[list[str]] = []
+        self.spreadsheet_id = "sheet-id"
+        self.client = SimpleNamespace(batch_update=self._append_cells)
         self._properties = {
             "hidden": False,
             "gridProperties": {"frozenRowCount": 1},
@@ -145,6 +147,9 @@ class FakeWorksheet:
     def add_cols(self, count):
         self.added_cols.append(count)
         self.col_count += count
+
+    def add_rows(self, count):
+        self.row_count += count
 
     def update(self, *, values, range_name):
         self.updates.append({"range": range_name, "values": values})
@@ -173,6 +178,48 @@ class FakeWorksheet:
     def append_rows(self, rows, value_input_option=None, table_range=None):
         self.appended.extend([list(row) for row in rows])
         self.rows.extend([list(row) for row in rows])
+
+    def _append_cells(self, spreadsheet_id, body):
+        assert spreadsheet_id == self.spreadsheet_id
+        request, = body["requests"]
+        append = request["appendCells"]
+        assert append["sheetId"] == self.id
+        assert append["fields"] == "userEnteredValue"
+        rows = [
+            [cell["userEnteredValue"]["stringValue"] for cell in row["values"]]
+            for row in append["rows"]
+        ]
+        self.appended.extend(rows)
+        self.rows.extend(rows)
+
+
+def test_derived_append_preserves_keyed_rows_after_visible_gaps():
+    class GappedWorksheet(FakeWorksheet):
+        def append_rows(self, *_args, **_kwargs):
+            pytest.fail("logical-table append can overwrite keyed rows after gaps")
+
+    ws = GappedWorksheet("Active Accounts", [
+        ["Account", "Opportunity ID", "Operator notes"],
+        ["Retired", "old", "=1+1"],
+        ["Current", "keep", "Reviewed"],
+    ])
+    ws.row_count = len(ws.rows)
+    adapter = crm.DerivedSheetAdapter(
+        ws, headers=("Account", "Opportunity ID"), key_header="Opportunity ID",
+    )
+    plan = adapter.plan([
+        {"Account": "Current", "Opportunity ID": "keep"},
+        {"Account": "=literal", "Opportunity ID": "new"},
+    ])
+    adapter.apply(plan)
+
+    assert ws.row_count == 4
+    assert ws.rows == [
+        ["Account", "Opportunity ID", "Operator notes"],
+        ["", "old", "=1+1"],
+        ["Current", "keep", "Reviewed"],
+        ["=literal", "new", ""],
+    ]
 
 
 class FakeSpreadsheet:

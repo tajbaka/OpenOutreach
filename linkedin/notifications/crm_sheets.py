@@ -1457,7 +1457,21 @@ def apply_tab_plan(
             for row in plan.appends
         ]
         try:
-            ws.append_rows(rows, value_input_option="RAW", table_range="A1")
+            required_rows = len(before.rows) + 1 + len(rows)
+            if required_rows > ws.row_count:
+                ws.add_rows(required_rows - ws.row_count)
+            # Logical-table detection stops at gaps in the visible columns and
+            # can overwrite later stable IDs. Append after all populated cells.
+            ws.client.batch_update(ws.spreadsheet_id, {"requests": [{
+                "appendCells": {
+                    "sheetId": ws.id,
+                    "rows": [{"values": [
+                        {"userEnteredValue": {"stringValue": value}}
+                        for value in row
+                    ]} for row in rows],
+                    "fields": "userEnteredValue",
+                },
+            }]})
         except APIError as exc:
             raise SheetsError(f"failed appending to {plan.title}: {exc}") from exc
     return summary

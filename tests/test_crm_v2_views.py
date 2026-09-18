@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, UTC
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,9 @@ class FakeWorksheet:
         self.updates = []
         self.batch_updates = []
         self.appended = []
+        self.id = 1
+        self.spreadsheet_id = "workbook-v2"
+        self.client = SimpleNamespace(batch_update=self._append_cells)
 
     def get_all_values(self, value_render_option=None):
         return [list(row) for row in self.rows]
@@ -75,6 +79,17 @@ class FakeWorksheet:
     def append_rows(self, rows, value_input_option=None, table_range=None):
         self.appended.extend([list(row) for row in rows])
         self.rows.extend([list(row) for row in rows])
+
+    def _append_cells(self, spreadsheet_id, body):
+        assert spreadsheet_id == self.spreadsheet_id
+        request, = body["requests"]
+        append = request["appendCells"]
+        assert append["sheetId"] == self.id
+        assert append["fields"] == "userEnteredValue"
+        self.append_rows([
+            [cell["userEnteredValue"]["stringValue"] for cell in row["values"]]
+            for row in append["rows"]
+        ])
 
 
 def _active(**overrides) -> ActiveAccountRecord:

@@ -35,6 +35,7 @@ from linkedin.management.commands.refresh_crm_v2 import (
     _evidence_counts,
     _import_legacy_human_state,
     _load_reviewed_preview,
+    _verify_sheet_payload,
 )
 from linkedin.notifications import crm_sheets
 from linkedin.notifications import crm_v2_sheets as v2
@@ -42,6 +43,39 @@ from linkedin.notifications.crm_v2_layout import build_layout_requests
 
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.mark.parametrize("human_value", ["", "FALSE", "false"])
+def test_readback_accepts_equivalent_unchecked_human_values(human_value):
+    desired = {header: "" for header in v2.ACTIVE_ACCOUNT_HEADERS}
+    desired.update({"Account": "Example", "Opportunity ID": "opp", "Manual pin": "FALSE"})
+    actual = {**desired, "Manual pin": human_value}
+    ws = MemoryWorksheet("Active Accounts", 1, [
+        list(v2.ACTIVE_ACCOUNT_HEADERS),
+        [actual[header] for header in v2.ACTIVE_ACCOUNT_HEADERS],
+    ])
+    _verify_sheet_payload(
+        ws, headers=v2.ACTIVE_ACCOUNT_HEADERS, key_header=v2.COL_OPPORTUNITY_ID,
+        desired_rows=[desired], crm_sheets=crm_sheets, exact_headers=True,
+        human_fields=v2.ACTIVE_ACCOUNT_HUMAN_FIELDS,
+    )
+
+
+@pytest.mark.parametrize("field,value", [("Manual pin", "TRUE"), ("Account ID", "different"), ("Human sync baseline", "{}")])
+def test_readback_still_rejects_changed_human_and_system_values(field, value):
+    desired = {header: "" for header in v2.ACTIVE_ACCOUNT_HEADERS}
+    desired.update({"Account": "Example", "Opportunity ID": "opp", "Manual pin": "FALSE"})
+    actual = {**desired, field: value}
+    ws = MemoryWorksheet("Active Accounts", 1, [
+        list(v2.ACTIVE_ACCOUNT_HEADERS),
+        [actual[header] for header in v2.ACTIVE_ACCOUNT_HEADERS],
+    ])
+    with pytest.raises(SheetsError, match="managed-cell readback"):
+        _verify_sheet_payload(
+            ws, headers=v2.ACTIVE_ACCOUNT_HEADERS, key_header=v2.COL_OPPORTUNITY_ID,
+            desired_rows=[desired], crm_sheets=crm_sheets, exact_headers=True,
+            human_fields=v2.ACTIVE_ACCOUNT_HUMAN_FIELDS,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +124,8 @@ class MemoryWorksheet:
         self.row_count = max(1000, len(self.rows) + 10)
         self.col_count = max((len(row) for row in self.rows), default=0)
         self.fail_append = fail_append
+        self.spreadsheet_id = "workbook-v2"
+        self.client = SimpleNamespace(batch_update=self._append_cells)
 
     def get_all_values(self, value_render_option=None):
         return [list(row) for row in self.rows]
@@ -127,6 +163,17 @@ class MemoryWorksheet:
         if self.fail_append:
             raise SheetsError("test append failure")
         self.rows.extend([list(row) for row in rows])
+
+    def _append_cells(self, spreadsheet_id, body):
+        assert spreadsheet_id == self.spreadsheet_id
+        request, = body["requests"]
+        append = request["appendCells"]
+        assert append["sheetId"] == self.id
+        assert append["fields"] == "userEnteredValue"
+        self.append_rows([
+            [cell["userEnteredValue"]["stringValue"] for cell in row["values"]]
+            for row in append["rows"]
+        ])
 
 
 class MemorySpreadsheet:

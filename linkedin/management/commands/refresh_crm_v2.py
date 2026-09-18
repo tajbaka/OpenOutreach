@@ -847,6 +847,7 @@ def _apply_first_cutover(
         crm_sheets=crm_sheets,
         exact_headers=True,
         baseline_updates=active_plan.baseline_updates,
+        human_fields=crm_v2_sheets.ACTIVE_ACCOUNT_HUMAN_FIELDS,
     )
     _verify_sheet_payload(
         actions_ws,
@@ -856,6 +857,7 @@ def _apply_first_cutover(
         crm_sheets=crm_sheets,
         exact_headers=True,
         baseline_updates=action_plan.baseline_updates,
+        human_fields=crm_v2_sheets.ACTION_HUMAN_FIELDS,
     )
 
     # Resolve the deletion whitelist from the same pre-cutover inventory.  No
@@ -1007,6 +1009,7 @@ def _apply_in_place_staged(
         crm_sheets=crm_sheets,
         exact_headers=False,
         baseline_updates=active_plan.baseline_updates,
+        human_fields=crm_v2_sheets.ACTIVE_ACCOUNT_HUMAN_FIELDS,
     )
     _verify_sheet_payload(
         staged_actions,
@@ -1016,6 +1019,7 @@ def _apply_in_place_staged(
         crm_sheets=crm_sheets,
         exact_headers=False,
         baseline_updates=action_plan.baseline_updates,
+        human_fields=crm_v2_sheets.ACTION_HUMAN_FIELDS,
     )
     if original_fingerprints != {
         crm_v2_sheets.ACTIVE_ACCOUNTS_TAB: _worksheet_formula_fingerprint(
@@ -1168,6 +1172,7 @@ def _verify_sheet_payload(
     crm_sheets,
     exact_headers,
     baseline_updates=(),
+    human_fields=(),
 ) -> None:
     snapshot = crm_sheets.SheetSnapshot.read(
         worksheet,
@@ -1215,8 +1220,17 @@ def _verify_sheet_payload(
     for stable_id, desired_row in desired.items():
         actual = visible[stable_id]
         for header in headers:
-            if str(actual.get(header, "")) != str(desired_row.get(header, "")):
-                raise SheetsError("CRM v2 managed-cell readback does not match the plan")
+            actual_value = str(actual.get(header, ""))
+            expected_value = str(desired_row.get(header, ""))
+            if header in human_fields:
+                # The merge may preserve an unchanged accepted representation,
+                # such as a blank unchecked checkbox instead of literal FALSE.
+                actual_value = crm_sheets._human_semantic_value(header, actual_value)
+                expected_value = crm_sheets._human_semantic_value(header, expected_value)
+            if actual_value != expected_value:
+                raise SheetsError(
+                    f"CRM v2 managed-cell readback does not match the plan for {header!r}"
+                )
 
 
 def _worksheet_inventory(spreadsheet, *, crm_sheets) -> dict[str, Any]:

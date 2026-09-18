@@ -1,4 +1,5 @@
 from datetime import datetime
+import io
 from pathlib import Path
 import re
 
@@ -18,6 +19,42 @@ def _successful_log(run_id: str = "abc123") -> str:
 
 def test_default_log_path_is_v2_specific():
     assert health.DEFAULT_LOG_PATH == Path("data/logs/crm_v2_task.log")
+
+
+def test_tail_log_removes_windows_nul_padding(tmp_path):
+    path = tmp_path / "task.log"
+    path.write_text("\x00".join(_successful_log()), encoding="utf-8")
+
+    lines = health._tail_log(path, max_lines=128)
+
+    assert lines == _successful_log().splitlines()
+    assert health._latest_exit_code(lines) == 0
+
+
+def test_health_slack_excerpt_is_bounded_after_escaping(monkeypatch):
+    from linkedin.notifications import slack
+
+    result = health.HealthResult(
+        status="healthy", reason="Both phases succeeded.",
+        task={"State": "Ready"}, task_info={"LastTaskResult": 0},
+        last_log_lines=["&" * 6000], latest_exit_code=0,
+    )
+    monkeypatch.setattr(health, "evaluate_health", lambda **_kwargs: result)
+    payloads = []
+    monkeypatch.setattr(
+        slack, "_post_to_slack",
+        lambda _url, payload, _label: payloads.append(payload) or True,
+    )
+    stdout = io.StringIO()
+    health.Command(stdout=stdout).handle(
+        task_name="test", log_path="unused", no_slack=False,
+    )
+
+    body = payloads[0]["blocks"][1]["text"]["text"]
+    assert len(body) <= 2900
+    assert "Status: healthy" in body
+    assert "Log excerpt truncated" in body
+    assert "&" * 6000 in stdout.getvalue()
 
 
 def test_latest_run_lines_ignore_an_older_failure():
