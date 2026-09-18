@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 from playwright_stealth import Stealth
 from termcolor import colored
 
@@ -87,6 +87,31 @@ def _require_visible(page, selectors: list[str], label: str):
     return locator
 
 
+def _is_linkedin_feed_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname in {"linkedin.com", "www.linkedin.com"}
+        and (parsed.path == "/feed" or parsed.path.startswith("/feed/"))
+    )
+
+
+def _submit_login_and_wait_for_feed(page, submit):
+    if not _is_linkedin_feed_url(page.url):
+        try:
+            submit.click()
+        except PlaywrightTimeoutError:
+            # Manual login can finish while the old submit locator is waiting.
+            if not _is_linkedin_feed_url(page.url):
+                raise
+            logger.info("Feed reached while the login submit locator timed out")
+    page.wait_for_url(
+        _is_linkedin_feed_url,
+        timeout=_LOGIN_WITH_2FA_TIMEOUT_MS,
+        wait_until="domcontentloaded",
+    )
+
+
 def playwright_login(session: "AccountSession"):
     page = session.page
     lp = session.linkedin_profile
@@ -112,13 +137,12 @@ def playwright_login(session: "AccountSession"):
     # whatever LinkedIn challenges with (2FA, phone verification, captcha,
     # etc.). The standalone session has the same window; daemon login is
     # equally exposed to those challenges on first run / new fingerprint.
-    submit.click()
     logger.info(
-        "Login form submitted. If LinkedIn shows 2FA / verification, complete "
+        "Submitting login. If LinkedIn shows 2FA / verification, complete "
         "it manually in the browser window — waiting up to 10 minutes for "
         "/feed/ …"
     )
-    page.wait_for_url("**/feed/**", timeout=_LOGIN_WITH_2FA_TIMEOUT_MS)
+    _submit_login_and_wait_for_feed(page, submit)
     logger.info(colored("Feed reached — login successful", "green", attrs=["bold"]))
 
 
