@@ -774,7 +774,9 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
                 )
                 _notify(
                     "Gmail worker exited unexpectedly",
-                    f"Account `{gmail_account}` exited with status `{gmail_code}`. Restarting.",
+                    f"Account `{gmail_account}` exited with status `{gmail_code}`. Restarting. "
+                    f"Local diagnostics: `data/logs/gmail-worker-{gmail_account}.log` "
+                    "(look for worker_crashed; abrupt or pre-startup exits may have no entry).",
                 )
                 time.sleep(args.restart_delay)
                 if stop or safety.stopped.is_set():

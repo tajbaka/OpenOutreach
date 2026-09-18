@@ -2,6 +2,8 @@
 
 ## Rules
 
+- **Gmail worker diagnostics**: Independent workers write account-scoped rotating logs under `data/logs/gmail-worker-<account>.log` (5 MB plus three backups). Record lifecycle, task IDs/types, failure stage, exception classes and stack locations only; never add raw exception messages, source lines, locals, tokens, email bodies, or Task payloads. Fatal failures still propagate for supervisor recovery, and restart Slack alerts point to the file. Pre-command startup failures and hard process kills may lack a crash entry.
+
 - **Completed manual login race**: A submit-locator timeout is recoverable only when the page has reached the HTTPS LinkedIn feed. Skip an already-stale submit click on the feed and retain the bounded verification wait. Login/checkpoint timeouts and other browser errors still propagate; never treat an arbitrary redirect as authentication success.
 
 - **Email-only supervisor**: `ENABLE_LINKEDIN_DAEMON=false` replaces the browser daemon with `run_email_enrichment --operator <exact local operator>` and suppresses automatic feed collection. No LinkedIn browser, login, listener, discovery, sweep, manual reply, or LinkedIn drip worker starts. Gmail retains its existing mailbox/alias scope and all send guards; the replacement enrichment worker claims only the local operator's email Tasks, never shared phone work. Defaults remain unchanged on other machines. Direct argument-free `manage.py` exits without login when disabled. Restart the whole supervisor after changing this environment flag; existing processes do not hot-reload it. This does not clear stops, retry failed lookups, change campaigns, or collect new LinkedIn acceptance/reply signals while paused.

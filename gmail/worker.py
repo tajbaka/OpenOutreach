@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from drip.tasks.gmail import handle_drip_gmail, recover_stale_drip_gmail_task
 from gmail.auth import account_for_key, operators_for_account
+from gmail.worker_logging import log_worker_event
 from gmail.submission import (
     recover_stale_current_gmail_task,
     reschedule_persisted_current_gmail_task,
@@ -38,6 +39,7 @@ class GmailWorker:
         self._poll_interval = poll_interval
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.diagnostic_context = {"stage": "startup"}
 
     def start(self) -> None:
         """Start in a background thread for bounded/test supervisors."""
@@ -74,6 +76,7 @@ class GmailWorker:
         logger.info("Gmail worker stopped (account=%s)", self.account_key)
 
     def _prepare_run(self) -> None:
+        self.diagnostic_context = {"stage": "reclaim_stale_tasks"}
         self._reclaim_stale()
         self._stop.clear()
 
@@ -166,15 +169,22 @@ class GmailWorker:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            self.diagnostic_context = {"stage": "queue_poll"}
             connection.close()
             handled = self._run_once()
             if not handled:
                 self._stop.wait(self._poll_interval)
 
     def _run_once(self) -> bool:
+        self.diagnostic_context = {"stage": "queue_claim"}
         task = self._claim_next()
         if task is None:
             return False
+
+        self.diagnostic_context = {
+            "stage": "task_handler", "task_id": task.id, "task_type": task.task_type,
+        }
+        log_worker_event(self.account_key, "task_claimed", **self.diagnostic_context)
 
         handlers = {
             self._task_model().TaskType.GMAIL_FOLLOW_UP: handle_gmail_follow_up,
@@ -188,6 +198,8 @@ class GmailWorker:
         try:
             handler(task)
         except Exception as exc:
+            log_worker_event(self.account_key, "task_failed", exception=exc, **self.diagnostic_context)
+            self.diagnostic_context["stage"] = "task_failure_recovery"
             logger.exception("%s task %s failed", task.task_type, task.id)
             rescheduled = (
                 task.task_type == self._task_model().TaskType.GMAIL_FOLLOW_UP
@@ -208,7 +220,11 @@ class GmailWorker:
 
         # The final send boundary may defer this exact Task if its persisted
         # due date/window changed after claim. Do not complete deferred work.
+        self.diagnostic_context["stage"] = "task_completion"
         task.refresh_from_db(fields=["status"])
         if task.status == task.Status.RUNNING:
             task.mark_completed()
+            log_worker_event(self.account_key, "task_completed", **self.diagnostic_context)
+        else:
+            log_worker_event(self.account_key, "task_not_completed", **self.diagnostic_context)
         return True
