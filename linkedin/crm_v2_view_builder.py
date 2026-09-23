@@ -1,9 +1,10 @@
-"""Build the two concise CRM v2 Sheet payloads from reconciled database state."""
+"""Build concise CRM v2 payloads inside the manual Active Accounts scope."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Mapping
+from uuid import UUID
 
 from crm.models import Opportunity, OpportunityAction, OpportunitySheetState
 from linkedin.crm_v2_evidence import ResolvedAccountEvidence
@@ -29,11 +30,14 @@ class CrmV2DatabaseView:
 
 def build_crm_v2_database_view(
     evidence_rows: Iterable[ResolvedAccountEvidence],
+    *,
+    active_account_opportunity_ids: Iterable[UUID | str] | None = None,
 ) -> CrmV2DatabaseView:
-    """Serialize admitted reconciled Opportunities and only work due now.
+    """Serialize scoped reconciled Opportunities and only work due now.
 
     Waiting, scheduled, and review-only relationships remain legible on Active
-    Accounts but do not clutter Actions.  No target or owner is ever guessed.
+    Accounts but do not clutter Actions. When an exact manual scope is supplied,
+    rows outside it are omitted. No target or owner is ever guessed.
     """
     admitted = [row for row in evidence_rows if row.decision.admitted]
     missing_ids = [row.account_key for row in admitted if not row.opportunity_id]
@@ -42,6 +46,15 @@ def build_crm_v2_database_view(
             "Admitted evidence must be recollected after reconciliation; "
             f"{len(missing_ids)} row(s) have no Opportunity ID."
         )
+    if active_account_opportunity_ids is not None:
+        scope_ids = frozenset(
+            str(UUID(str(opportunity_id)))
+            for opportunity_id in active_account_opportunity_ids
+        )
+        admitted = [
+            row for row in admitted
+            if str(UUID(str(row.opportunity_id))) in scope_ids
+        ]
     by_opportunity_id = {row.opportunity_id: row for row in admitted}
     if len(by_opportunity_id) != len(admitted):
         raise ValueError("CRM v2 evidence contains duplicate Opportunity IDs")
@@ -192,8 +205,8 @@ def _active_account_sort_key(record: ActiveAccountRecord):
 
 def _action_sort_key(record: ActionRecord):
     return (
-        _date_sort_key(record.next_action_due),
         _WHY_NOW_RANK.get(record.why_now, 99),
+        _date_sort_key(record.next_action_due),
         record.owner.casefold(),
         record.account.casefold(),
     )

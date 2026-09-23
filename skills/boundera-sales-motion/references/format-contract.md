@@ -60,6 +60,8 @@ Account-specific edits belong only in:
 - column E on task rows;
 - column F on task rows.
 
+Within A5, native rich-text emphasis and textual indentation may distinguish main questions, scenario labels, and listening notes. Preserve its base font, size, colors, wrapping, merge, and row height.
+
 Do not insert separate question rows beneath tasks or scatter questions through the tracker. The account-status blocks show what is known and missing; the single call block turns the most important unknowns into an ordered conversation.
 
 ## Account-status writing rules
@@ -88,17 +90,16 @@ Do not restate the generic task description.
 
 ## Next-call block
 
-Keep one block, ordered as the meeting should actually run:
+Keep one block containing only:
 
-1. **Welcome:** greet returning and new attendees naturally.
-2. **Introductions:** name each Boundera attendee and their real role in one sentence.
-3. **Context:** give new stakeholders the shortest useful account recap.
-4. **Purpose:** explain why the session is tailored and what should be decided or validated.
-5. **Questions:** ask only the highest-leverage unknowns, in conversational order.
-6. **Working transitions:** place workflow questions where the relevant product or process appears.
-7. **Close:** confirm reactions, testing scope, owners, missing stakeholders, decision path, and a dated next step when appropriate.
+1. **Confirm context:** one concise, evidence-backed sentence, spoken after introductions and placed immediately before the questions.
+2. **Bold numbered topic-and-question lines:** `1. SHORT TOPIC TITLE — “Spoken question?”`, with a short uppercase title and the whole line bold; cover the highest-leverage unknowns in conversational order.
+3. **Indented scenario bullets:** two em spaces (`U+2003`) before `• `; one conditional branch per line, with a bold scenario label through its colon and regular quoted follow-up text.
+4. **Deeper-indented listening/positioning notes:** three em spaces before a regular-weight `Listen →` note; concise signals and what they imply for the pitch.
 
-Prefer roughly five to eight real questions for a normal meeting. A longer list is acceptable only when many are explicitly conditional or embedded naturally during the working session. Do not re-ask preparation-email answers; confirm them. Do not force stakeholder, decision, or procurement questions before enough value and context have been established.
+This Xerox-style hierarchy is the default for new or revised account call blocks. Read [discovery-question-design.md](discovery-question-design.md) for the example and native emphasis rules. Separate question groups with blank lines. Use literal indentation and native rich text, not visible Markdown markers. Do not include introductions, opening/setup, how-to-use instructions, a separate purpose/recap, meeting metadata, pacing, preparation checklists, or a closing script. Relevant logistics and preparation belong in existing account-status or task-detail fields. Replace inherited Template A5 prose when populating an account; leave Template itself unchanged.
+
+Prefer roughly five to eight main questions. Select conditional follow-ups from the buyer’s answers; do not ask every branch. Confirm preparation-email answers rather than repeating them. Put the next-participant and dated next-action prompt in the final group when appropriate; do not force approval, procurement, budget, or signature questions forward.
 
 ## Verification standard
 
@@ -111,4 +112,5 @@ A completed operation is valid only if:
 - account-specific writes appear only in the editable fields;
 - no literal `[Account]` placeholder remains;
 - every range changed by the operation has been read back;
+- when A5 is created or revised, it has the context-only lead-in, numbered uppercase topic titles followed by an em dash and the spoken question, consistent scenario/listening indentation, and native rich-text emphasis matching the hierarchy above; read back the text and rich-text runs and check visual fit;
 - existing unrelated account tabs are unchanged.

@@ -60,12 +60,10 @@ class Command(BaseCommand):
             sales_motion_accounts.update(_configured_sales_motion_accounts())
 
         owner_overrides = _parse_owner_overrides(options["owner_override"])
-        dont_send_lead_ids = _configured_people_dont_send_lead_ids()
         rows = collect_account_evidence(
             sales_motion_accounts=sorted(sales_motion_accounts),
             manual_account_pins=options["manual_pin"],
             owner_overrides=owner_overrides,
-            dont_send_lead_ids=dont_send_lead_ids,
             now=generated_at,
         )
         active = [row for row in rows if row.decision.admitted]
@@ -93,7 +91,6 @@ class Command(BaseCommand):
                     row.facts.do_not_outreach for row in active
                 ),
                 "unowned_active_accounts": sum(not row.owner for row in active),
-                "people_dont_send_leads": len(dont_send_lead_ids),
             },
             "inputs": {
                 "sales_motion_accounts": sorted(sales_motion_accounts),
@@ -141,27 +138,6 @@ def _configured_sales_motion_accounts() -> tuple[str, ...]:
         if worksheet.title.strip()
         and worksheet.title.strip().casefold() not in _IGNORED_SALES_MOTION_TABS
     }, key=str.casefold))
-
-
-def _configured_people_dont_send_lead_ids() -> set[int]:
-    """Read the exact People safety ledger when a CRM workbook is configured."""
-    spreadsheet_id = conf.GOOGLE_SHEETS_ID.strip()
-    if not spreadsheet_id:
-        # Offline/unit-test previews may intentionally have no CRM workbook.
-        return set()
-    from linkedin.crm_sheet_import import read_people_dont_send_lead_ids
-    from linkedin.notifications import sheets
-
-    try:
-        spreadsheet = sheets._gspread_client()
-        if str(getattr(spreadsheet, "id", "")) != spreadsheet_id:
-            raise ValueError("unexpected workbook")
-        return read_people_dont_send_lead_ids(spreadsheet)
-    except Exception as exc:
-        # Provider details and People cell values are intentionally suppressed.
-        raise CommandError(
-            f"Could not read People Don't send safety state: {type(exc).__name__}"
-        ) from exc
 
 
 def _parse_owner_overrides(values) -> dict[str, str]:

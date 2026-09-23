@@ -1,12 +1,12 @@
-"""Incrementally publish the durable Lead ledger to the People tab.
+"""Deprecated explicit publisher for the legacy People tab.
 
 Every Lead is eligible, including contacts with no Deal and contacts whose
 automation Deal is inactive, failed, or otherwise historical. Deals only
 supply optional status/stage rollups. Existing People rows are never removed,
 rebuilt, or reordered.
 
-Idempotent. Safe to run from cron. Decoupled from the daemon — failures
-here never block outreach.
+Idempotent and decoupled from the daemon, but no canonical CRM workflow reads
+this tab. Retained only for deliberate legacy inspection/export.
 
 Usage:
     python manage.py sync_sheets                     # all campaigns
@@ -26,7 +26,7 @@ from django.utils import timezone
 
 
 class Command(BaseCommand):
-    help = "Incrementally publish the complete Lead ledger to People."
+    help = "Deprecated: explicitly publish the legacy People ledger."
 
     def add_arguments(self, parser):
         parser.add_argument("--campaign", type=int, default=None,

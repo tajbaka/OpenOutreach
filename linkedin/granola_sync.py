@@ -899,7 +899,13 @@ def resolve_meeting_context(
     opportunity: Opportunity | None = None,
     granola_available: bool = True,
 ) -> ResolvedMeetingContext | None:
-    """Select Granola first, then Gemini, from already matched cached notes."""
+    """Select the newest matched recording, preferring Granola for a tie.
+
+    Recording chronology is authoritative across sources.  Granola is the
+    richer primary source only when it represents the same recording time as
+    Gemini; an actually newer Gemini recording must not be hidden by an older
+    Granola note.
+    """
     if meeting is None and opportunity is None:
         raise ValueError("meeting or opportunity is required")
     notes = MeetingNote.objects.filter(
@@ -917,37 +923,56 @@ def resolve_meeting_context(
             )
     else:
         scoped_notes.append(notes.filter(opportunity=opportunity))
-    source_order = (
+    eligible_sources = (
         (MeetingNote.Source.GRANOLA, MeetingNote.Source.GEMINI)
         if granola_available
         else (MeetingNote.Source.GEMINI,)
     )
-    for source in source_order:
-        for scope in scoped_notes:
-            for note in scope.filter(source=source).order_by(
-                "-source_updated_at", "-fetched_at", "-id"
-            ):
-                content = (
-                    note.content
-                    or note.summary_markdown
-                    or note.summary_text
-                    or _transcript_text(note.transcript)
-                )
-                if not content:
-                    continue
-                return ResolvedMeetingContext(
-                    source=note.source,
-                    external_id=note.external_id,
-                    meeting_id=note.meeting_id,
-                    opportunity_id=(
-                        str(note.opportunity_id) if note.opportunity_id else None
-                    ),
-                    title=note.title,
-                    scheduled_start_at=note.scheduled_start_at,
-                    content=content,
-                    source_updated_at=note.source_updated_at,
-                    fetched_at=note.fetched_at,
-                )
+    candidates: dict[int, MeetingNote] = {}
+    for scope in scoped_notes:
+        for note in scope.filter(source__in=eligible_sources):
+            candidates[note.id] = note
+
+    floor = datetime.min.replace(tzinfo=UTC)
+
+    def ordering_key(note: MeetingNote) -> tuple[Any, ...]:
+        recording_at = (
+            note.scheduled_start_at
+            or (note.meeting.start_at if note.meeting_id else None)
+            or note.source_updated_at
+            or note.fetched_at
+            or floor
+        )
+        return (
+            recording_at,
+            note.source == MeetingNote.Source.GRANOLA,
+            note.source_updated_at or floor,
+            note.fetched_at or floor,
+            note.id,
+        )
+
+    for note in sorted(candidates.values(), key=ordering_key, reverse=True):
+        content = (
+            note.content
+            or note.summary_markdown
+            or note.summary_text
+            or _transcript_text(note.transcript)
+        )
+        if not content:
+            continue
+        return ResolvedMeetingContext(
+            source=note.source,
+            external_id=note.external_id,
+            meeting_id=note.meeting_id,
+            opportunity_id=(
+                str(note.opportunity_id) if note.opportunity_id else None
+            ),
+            title=note.title,
+            scheduled_start_at=note.scheduled_start_at,
+            content=content,
+            source_updated_at=note.source_updated_at,
+            fetched_at=note.fetched_at,
+        )
     return _legacy_gemini_context(meeting=meeting, opportunity=opportunity)
 
 

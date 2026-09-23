@@ -39,6 +39,7 @@ from linkedin.management.commands.refresh_crm_v2 import (
 )
 from linkedin.notifications import crm_sheets
 from linkedin.notifications import crm_v2_sheets as v2
+from linkedin.notifications import manual_active_accounts as manual_active
 from linkedin.notifications.crm_v2_layout import build_layout_requests
 
 
@@ -47,62 +48,35 @@ pytestmark = pytest.mark.django_db
 
 @pytest.mark.parametrize("human_value", ["", "FALSE", "false"])
 def test_readback_accepts_equivalent_unchecked_human_values(human_value):
-    desired = {header: "" for header in v2.ACTIVE_ACCOUNT_HEADERS}
-    desired.update({"Account": "Example", "Opportunity ID": "opp", "Manual pin": "FALSE"})
-    actual = {**desired, "Manual pin": human_value}
-    ws = MemoryWorksheet("Active Accounts", 1, [
-        list(v2.ACTIVE_ACCOUNT_HEADERS),
-        [actual[header] for header in v2.ACTIVE_ACCOUNT_HEADERS],
+    desired = {header: "" for header in v2.ACTION_HEADERS}
+    desired.update({"Account": "Example", "Action ID": "action", "Handled": "FALSE"})
+    actual = {**desired, "Handled": human_value}
+    ws = MemoryWorksheet("Actions", 1, [
+        list(v2.ACTION_HEADERS),
+        [actual[header] for header in v2.ACTION_HEADERS],
     ])
     _verify_sheet_payload(
-        ws, headers=v2.ACTIVE_ACCOUNT_HEADERS, key_header=v2.COL_OPPORTUNITY_ID,
+        ws, headers=v2.ACTION_HEADERS, key_header=v2.COL_ACTION_ID,
         desired_rows=[desired], crm_sheets=crm_sheets, exact_headers=True,
-        human_fields=v2.ACTIVE_ACCOUNT_HUMAN_FIELDS,
+        human_fields=v2.ACTION_HUMAN_FIELDS,
     )
 
 
-@pytest.mark.parametrize("field,value", [("Manual pin", "TRUE"), ("Account ID", "different"), ("Human sync baseline", "{}")])
+@pytest.mark.parametrize("field,value", [("Handled", "TRUE"), ("Opportunity ID", "different"), ("Human sync baseline", "{}")])
 def test_readback_still_rejects_changed_human_and_system_values(field, value):
-    desired = {header: "" for header in v2.ACTIVE_ACCOUNT_HEADERS}
-    desired.update({"Account": "Example", "Opportunity ID": "opp", "Manual pin": "FALSE"})
+    desired = {header: "" for header in v2.ACTION_HEADERS}
+    desired.update({"Account": "Example", "Action ID": "action", "Handled": "FALSE"})
     actual = {**desired, field: value}
-    ws = MemoryWorksheet("Active Accounts", 1, [
-        list(v2.ACTIVE_ACCOUNT_HEADERS),
-        [actual[header] for header in v2.ACTIVE_ACCOUNT_HEADERS],
+    ws = MemoryWorksheet("Actions", 1, [
+        list(v2.ACTION_HEADERS),
+        [actual[header] for header in v2.ACTION_HEADERS],
     ])
     with pytest.raises(SheetsError, match="managed-cell readback"):
         _verify_sheet_payload(
-            ws, headers=v2.ACTIVE_ACCOUNT_HEADERS, key_header=v2.COL_OPPORTUNITY_ID,
+            ws, headers=v2.ACTION_HEADERS, key_header=v2.COL_ACTION_ID,
             desired_rows=[desired], crm_sheets=crm_sheets, exact_headers=True,
-            human_fields=v2.ACTIVE_ACCOUNT_HUMAN_FIELDS,
+            human_fields=v2.ACTION_HUMAN_FIELDS,
         )
-
-
-@pytest.fixture(autouse=True)
-def _stub_people_publisher(monkeypatch):
-    from linkedin.management.commands import sync_sheets
-    from linkedin.notifications import accepted_connections_sheet
-
-    monkeypatch.setattr(
-        accepted_connections_sheet,
-        "sync_accepted_connections",
-        lambda *, dry_run: {"status": "planned" if dry_run else "published"},
-    )
-
-    monkeypatch.setattr(
-        sync_sheets,
-        "run_people_sync",
-        lambda *, dry_run, stdout, stderr, lock_held: {
-            "status": "planned" if dry_run else "published",
-            "source_leads": Lead.objects.count(),
-            "rows_before": Lead.objects.count(),
-            "rows_after": Lead.objects.count(),
-            "errored": 0,
-            "duplicate_lead_ids": 0,
-        },
-    )
-
-
 def _column_number(letters: str) -> int:
     value = 0
     for character in letters:
@@ -283,6 +257,23 @@ def _database_view():
     return SimpleNamespace(rows=rows, active_baselines={}, action_baselines={})
 
 
+def _manual_active_worksheet(database_view, sheet_id=1):
+    rows = [list(manual_active.HEADERS)]
+    for item in database_view.rows.active_accounts:
+        rows.append([
+            item.get(v2.COL_ACCOUNT, ""),
+            item.get(v2.COL_OWNER, ""),
+            item.get(v2.COL_STAGE, ""),
+            item.get(v2.COL_KEY_CONTACTS, ""),
+            item.get(v2.COL_NEXT_ACTION, ""),
+            item.get(v2.COL_NEXT_ACTION_DUE, ""),
+            "",
+            item.get(v2.COL_OPPORTUNITY_ID, ""),
+            item.get(v2.COL_ACCOUNT_ID, ""),
+        ])
+    return MemoryWorksheet("Active Accounts", sheet_id, rows)
+
+
 def test_default_command_executes_exact_db_path_then_rolls_everything_back(monkeypatch):
     from linkedin import conf
     from linkedin.notifications import sheets
@@ -320,19 +311,13 @@ def test_default_command_executes_exact_db_path_then_rolls_everything_back(monke
     assert spreadsheet.batch_calls == []
 
 
-def test_people_prerequisite_blocks_before_v2_work_on_errors_or_duplicate_ids(
-    monkeypatch,
-):
+def test_refresh_never_reads_or_publishes_deprecated_people(monkeypatch):
     from linkedin import conf
     from linkedin.management.commands import sync_sheets
     from linkedin.notifications import sheets
 
-    lead = Lead.objects.create(
-        company_name="People Gate Account",
-        email="person@people-gate.example",
-    )
     spreadsheet = MemorySpreadsheet(
-        [_people_worksheet(lead)],
+        [],
         spreadsheet_id="people-gate-workbook",
     )
     monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", "people-gate-workbook")
@@ -340,19 +325,22 @@ def test_people_prerequisite_blocks_before_v2_work_on_errors_or_duplicate_ids(
     monkeypatch.setattr(
         sync_sheets,
         "run_people_sync",
-        lambda **_kwargs: {"errored": 1, "duplicate_lead_ids": 1},
+        lambda **_kwargs: pytest.fail("refresh_crm_v2 must not publish People"),
     )
 
-    with pytest.raises(CommandError, match="People publisher reported"):
-        call_command(
-            "refresh_crm_v2",
-            "--skip-sales-motion",
-            stdout=io.StringIO(),
-        )
+    stdout = io.StringIO()
+    call_command(
+        "refresh_crm_v2",
+        "--skip-sales-motion",
+        stdout=stdout,
+    )
 
     assert Account.objects.count() == 0
     assert spreadsheet.added == []
     assert spreadsheet.batch_calls == []
+    assert json.loads(stdout.getvalue())["people"] == {
+        "status": "deprecated_not_read"
+    }
 
 
 def test_existing_dry_run_imports_reconciles_and_replans_inside_rollback(monkeypatch):
@@ -390,17 +378,14 @@ def test_existing_dry_run_imports_reconciles_and_replans_inside_rollback(monkeyp
     view = build_crm_v2_database_view(
         collect_account_evidence(now=timezone.now())
     )
-    active = MemoryWorksheet("Active Accounts", 1)
+    active = _manual_active_worksheet(view)
     actions = MemoryWorksheet("Actions", 2)
-    active_plan, action_plan = _build_plans(
-        active,
-        actions,
-        view,
-        crm_v2_sheets=v2,
+    action_plan = v2.actions_adapter(actions).plan(
+        view.rows.actions,
+        baseline_by_id=view.action_baselines,
     )
-    v2.active_accounts_adapter(active).apply(active_plan)
     v2.actions_adapter(actions).apply(action_plan)
-    owner_column = list(v2.ACTIVE_ACCOUNT_HEADERS).index(v2.COL_OWNER)
+    owner_column = list(manual_active.HEADERS).index(manual_active.COL_OWNER)
     active.rows[1][owner_column] = athena.handle
 
     spreadsheet = MemorySpreadsheet(
@@ -420,7 +405,10 @@ def test_existing_dry_run_imports_reconciles_and_replans_inside_rollback(monkeyp
     payload = json.loads(stdout.getvalue())
     assert payload["publication"]["mode"] == "in_place"
     assert payload["human_imports"]["active_account_edits"] == 1
-    assert payload["accepted_connections"]["status"] == "planned"
+    assert "accepted_connections" not in payload
+    assert payload["actions"]["active_account_scope_enforced"] is True
+    assert payload["actions"]["active_account_scope_rows"] == 1
+    assert payload["actions"]["out_of_scope_rows"] == 0
     assert payload["sheet_plan"]["imports"] == 0
     opportunity.refresh_from_db()
     assert opportunity.owner_id == arian.id
@@ -465,11 +453,18 @@ def test_routine_flag_requires_apply_and_rejects_reviewed_preview():
             "--skip-sales-motion",
         )
 
+    with pytest.raises(CommandError, match="requires --apply --routine"):
+        call_command(
+            "refresh_crm_v2",
+            "--replace-sheet-state",
+            "--skip-sales-motion",
+        )
+
 
 @pytest.mark.parametrize(
     ("titles", "message"),
     [
-        (["People"], "both canonical CRM v2 tabs"),
+        (["People"], "manual Active Accounts tab and generated Actions tab"),
         (
             ["People", "Active Accounts", "Actions", "Pipeline"],
             "legacy canonical CRM tabs",
@@ -481,7 +476,7 @@ def test_routine_apply_fails_before_people_or_writes_unless_cutover_is_clean(
     titles,
     message,
 ):
-    from linkedin import conf
+    from linkedin import conf, crm_sheet_import
     from linkedin.management.commands import sync_sheets
     from linkedin.notifications import sheets
 
@@ -645,13 +640,11 @@ def test_failure_before_cutover_preserves_old_titles_and_has_no_atomic_batch():
     assert [worksheet.title for worksheet in old] == ["Opportunities", "People"]
 
 
-def test_apply_failure_before_cutover_rolls_back_db_and_never_commits_baselines(
+def test_apply_without_manual_surfaces_fails_before_db_or_sheet_writes(
     monkeypatch,
     tmp_path,
 ):
     from linkedin import conf
-    from linkedin import crm_sheet_import
-    from linkedin.management.commands import refresh_crm_v2 as command_module
     from linkedin.notifications import sheets
 
     lead = Lead.objects.create(
@@ -675,31 +668,10 @@ def test_apply_failure_before_cutover_rolls_back_db_and_never_commits_baselines(
         str(preview),
         stdout=io.StringIO(),
     )
-    monkeypatch.setattr(
-        crm_sheets,
-        "backup_spreadsheet",
-        lambda *_args, **_kwargs: tmp_path / "backup.json",
-    )
-    monkeypatch.setattr(
-        command_module,
-        "_apply_first_cutover",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            SheetsError("pre-cutover verification failed")
-        ),
-    )
-    commits = []
-    monkeypatch.setattr(
-        crm_sheet_import,
-        "commit_sheet_baselines",
-        lambda updates, **_kwargs: commits.append(tuple(updates)),
-    )
-    monkeypatch.setattr(
-        crm_sheet_import,
-        "commit_followup_baselines",
-        lambda updates, **_kwargs: commits.append(tuple(updates)),
-    )
-
-    with pytest.raises(CommandError, match="pre-cutover verification failed"):
+    with pytest.raises(
+        CommandError,
+        match="manual Active Accounts tab and generated Actions tab",
+    ):
         call_command(
             "refresh_crm_v2",
             "--apply",
@@ -713,21 +685,17 @@ def test_apply_failure_before_cutover_rolls_back_db_and_never_commits_baselines(
             stdout=io.StringIO(),
         )
 
-    assert commits == []
     assert not Account.objects.filter(name="Failure Account").exists()
     assert spreadsheet.batch_calls == []
     assert [worksheet.title for worksheet in old] == ["People"]
 
 
-def test_reviewed_first_cutover_applies_db_and_commits_after_atomic_batch(
+def test_reviewed_apply_does_not_recreate_missing_manual_surfaces(
     monkeypatch,
     tmp_path,
 ):
-    from crm.models import OpportunitySheetState
     from linkedin import conf
-    from linkedin.crm_v2_evidence import collect_account_evidence
-    from linkedin.crm_v2_view_builder import build_crm_v2_database_view
-    from linkedin.notifications import crm_v2_layout, sheets
+    from linkedin.notifications import sheets
 
     lead = Lead.objects.create(
         company_name="Reviewed Account",
@@ -750,64 +718,33 @@ def test_reviewed_first_cutover_applies_db_and_commits_after_atomic_batch(
         str(preview),
         stdout=io.StringIO(),
     )
-    backups = []
-    monkeypatch.setattr(
-        crm_sheets,
-        "backup_spreadsheet",
-        lambda *_args, **_kwargs: backups.append(True) or tmp_path / "backup.json",
-    )
-    monkeypatch.setattr(crm_v2_layout, "apply_layout", lambda *_args, **_kwargs: 0)
-    stdout = io.StringIO()
-
-    call_command(
-        "refresh_crm_v2",
-        "--apply",
-        "--reviewed-preview",
-        str(preview),
-        "--skip-sales-motion",
-        "--manual-pin",
-        "Reviewed Account",
-        "--owner-override",
-        "Reviewed Account=Arian",
-        stdout=stdout,
-    )
-
-    payload = json.loads(stdout.getvalue())
-    assert payload["status"] == "applied"
-    assert payload["publication"]["atomic_cutover"] is True
-    assert payload["baselines"]["committed"] is True
-    assert backups == [True]
-    assert len(spreadsheet.batch_calls) == 1
-    account = Account.objects.get(name="Reviewed Account")
-    opportunity = account.opportunities.get()
-    assert OpportunitySheetState.objects.filter(opportunity=opportunity).exists()
-    assert opportunity.actions.filter(sheet_published_at__isnull=False).exists()
-    current_view = build_crm_v2_database_view(
-        collect_account_evidence(
-            manual_account_pins=["Reviewed Account"],
-            owner_overrides={"Reviewed Account": "Arian"},
-            now=timezone.now(),
+    with pytest.raises(
+        CommandError,
+        match="manual Active Accounts tab and generated Actions tab",
+    ):
+        call_command(
+            "refresh_crm_v2",
+            "--apply",
+            "--reviewed-preview",
+            str(preview),
+            "--skip-sales-motion",
+            "--manual-pin",
+            "Reviewed Account",
+            "--owner-override",
+            "Reviewed Account=Arian",
+            stdout=io.StringIO(),
         )
-    )
-    rerun_active, rerun_action = _build_plans(
-        spreadsheet.added[0],
-        spreadsheet.added[1],
-        current_view,
-        crm_v2_sheets=v2,
-    )
-    assert rerun_active.appends == []
-    assert rerun_active.changes == []
-    assert rerun_active.imports == []
-    assert rerun_action.appends == []
-    assert rerun_action.changes == []
-    assert rerun_action.imports == []
+
+    assert not Account.objects.filter(name="Reviewed Account").exists()
+    assert spreadsheet.batch_calls == []
+    assert spreadsheet.added == []
 
 
-def test_routine_apply_stages_both_tabs_then_swaps_and_cleans_after_db_commit(
+def test_routine_apply_stages_only_actions_then_swaps_and_cleans_after_db_commit(
     monkeypatch,
     tmp_path,
 ):
-    from linkedin import conf
+    from linkedin import conf, crm_sheet_import
     from linkedin.crm_v2_evidence import collect_account_evidence
     from linkedin.crm_v2_view_builder import build_crm_v2_database_view
     from linkedin.notifications import crm_v2_layout, sheets
@@ -840,16 +777,15 @@ def test_routine_apply_stages_both_tabs_then_swaps_and_cleans_after_db_commit(
     current_view = build_crm_v2_database_view(
         collect_account_evidence(now=timezone.now())
     )
-    active = MemoryWorksheet("Active Accounts", 1)
+    active = _manual_active_worksheet(current_view)
     actions = MemoryWorksheet("Actions", 2)
-    active_plan, action_plan = _build_plans(
-        active,
-        actions,
-        current_view,
-        crm_v2_sheets=v2,
+    action_plan = v2.actions_adapter(actions).plan(
+        current_view.rows.actions,
+        baseline_by_id=current_view.action_baselines,
     )
-    v2.active_accounts_adapter(active).apply(active_plan)
     v2.actions_adapter(actions).apply(action_plan)
+    active.rows[1][active.rows[0].index(manual_active.COL_OWNER)] = "Chuka"
+    actions.rows[1][actions.rows[0].index(v2.COL_CHANNEL)] = "LinkedIn"
     spreadsheet = MemorySpreadsheet(
         [_people_worksheet(lead), active, actions],
         spreadsheet_id="routine-workbook",
@@ -862,12 +798,22 @@ def test_routine_apply_stages_both_tabs_then_swaps_and_cleans_after_db_commit(
         lambda *_args, **_kwargs: tmp_path / "backup.json",
     )
     monkeypatch.setattr(crm_v2_layout, "apply_layout", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(
+        crm_sheet_import,
+        "apply_followup_imports",
+        lambda imports, **_kwargs: (
+            pytest.fail("replace mode must not import Actions edits")
+            if tuple(imports)
+            else SimpleNamespace(fields_imported=0, invalid=[])
+        ),
+    )
     stdout = io.StringIO()
 
     call_command(
         "refresh_crm_v2",
         "--apply",
         "--routine",
+        "--replace-sheet-state",
         "--skip-sales-motion",
         stdout=stdout,
     )
@@ -875,28 +821,34 @@ def test_routine_apply_stages_both_tabs_then_swaps_and_cleans_after_db_commit(
     payload = json.loads(stdout.getvalue())
     assert payload["publication"]["mode"] == "in_place"
     assert payload["publication"]["gate"] == "routine"
-    assert payload["accepted_connections"]["status"] == "published"
+    assert payload["human_imports"]["active_account_edits"] == 1
+    assert payload["human_imports"]["sheet_edits_discarded"] == 1
+    assert "accepted_connections" not in payload
     assert payload["publication"]["atomic_cutover"] is True
     assert payload["publication"]["archive_cleanup"] == {
         "attempted": True,
-        "deleted": 2,
+        "deleted": 1,
         "retained": 0,
     }
     assert len(spreadsheet.batch_calls) == 2
     first_requests = spreadsheet.batch_calls[0]["requests"]
-    assert len(first_requests) == 4
+    assert len(first_requests) == 2
     assert all("updateSheetProperties" in request for request in first_requests)
-    assert [
-        request["updateSheetProperties"]["properties"].get("index")
-        for request in first_requests[2:]
-    ] == [0, 1]
+    assert first_requests[1]["updateSheetProperties"]["properties"].get("index") == 1
     second_requests = spreadsheet.batch_calls[1]["requests"]
-    assert len(second_requests) == 2
+    assert len(second_requests) == 1
     assert all("deleteSheet" in request for request in second_requests)
     live_titles = {worksheet.title for worksheet in spreadsheet.worksheets()}
     assert "Active Accounts" in live_titles
     assert "Actions" in live_titles
     assert not any("archived" in title for title in live_titles)
+    live_active = spreadsheet.worksheet("Active Accounts")
+    live_actions = spreadsheet.worksheet("Actions")
+    assert live_active is active
+    assert live_active.rows[1][live_active.rows[0].index(manual_active.COL_OWNER)] == "Chuka"
+    assert live_actions.rows[1][live_actions.rows[0].index(v2.COL_CHANNEL)] == ""
+    opportunity.refresh_from_db()
+    assert opportunity.owner.handle == "Chuka"
 
 
 def test_post_swap_baseline_failure_compensates_titles_and_rolls_back_db(
@@ -907,15 +859,34 @@ def test_post_swap_baseline_failure_compensates_titles_and_rolls_back_db(
     from linkedin import crm_sheet_import
     from linkedin.notifications import crm_v2_layout, sheets
 
+    arian, _ = SalesOwner.objects.get_or_create(handle="Arian")
     lead = Lead.objects.create(
         company_name="Compensation Account",
         email="person@compensation-account.example",
     )
-    SalesOwner.objects.get_or_create(handle="Arian")
-    people = _people_worksheet(lead)
-    pipeline = MemoryWorksheet("Pipeline", 10)
+    account = Account.objects.create(name="Compensation Account")
+    opportunity = Opportunity.objects.create(
+        account=account,
+        owner=arian,
+        source=Opportunity.Source.MANUAL,
+        manual_pin=True,
+    )
+    OpportunityContact.objects.create(opportunity=opportunity, lead=lead)
+    from linkedin.crm_v2_evidence import collect_account_evidence
+    from linkedin.crm_v2_view_builder import build_crm_v2_database_view
+
+    view = build_crm_v2_database_view(
+        collect_account_evidence(now=timezone.now())
+    )
+    active = _manual_active_worksheet(view)
+    actions = MemoryWorksheet("Actions", 2)
+    action_plan = v2.actions_adapter(actions).plan(
+        view.rows.actions,
+        baseline_by_id=view.action_baselines,
+    )
+    v2.actions_adapter(actions).apply(action_plan)
     spreadsheet = MemorySpreadsheet(
-        [people, pipeline],
+        [active, actions],
         spreadsheet_id="compensation-workbook",
     )
     monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", "compensation-workbook")
@@ -926,21 +897,9 @@ def test_post_swap_baseline_failure_compensates_titles_and_rolls_back_db(
         lambda *_args, **_kwargs: tmp_path / "backup.json",
     )
     monkeypatch.setattr(crm_v2_layout, "apply_layout", lambda *_args, **_kwargs: 0)
-    preview = tmp_path / "compensation-preview.json"
-    call_command(
-        "preview_crm_v2",
-        "--skip-sales-motion",
-        "--manual-pin",
-        "Compensation Account",
-        "--owner-override",
-        "Compensation Account=Arian",
-        "--output",
-        str(preview),
-        stdout=io.StringIO(),
-    )
     monkeypatch.setattr(
         crm_sheet_import,
-        "commit_sheet_baselines",
+        "commit_followup_baselines",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("test baseline failure")
         ),
@@ -950,26 +909,20 @@ def test_post_swap_baseline_failure_compensates_titles_and_rolls_back_db(
         call_command(
             "refresh_crm_v2",
             "--apply",
-            "--reviewed-preview",
-            str(preview),
+            "--routine",
             "--skip-sales-motion",
-            "--manual-pin",
-            "Compensation Account",
-            "--owner-override",
-            "Compensation Account=Arian",
             stdout=io.StringIO(),
         )
 
-    assert not Account.objects.filter(name="Compensation Account").exists()
+    assert Account.objects.filter(name="Compensation Account").exists()
     assert len(spreadsheet.batch_calls) == 2
     assert all(
         "updateSheetProperties" in request
         for request in spreadsheet.batch_calls[1]["requests"]
     )
     live_titles = {worksheet.title for worksheet in spreadsheet.worksheets()}
-    assert "Pipeline" in live_titles
-    assert "Active Accounts" not in live_titles
-    assert "Actions" not in live_titles
+    assert "Active Accounts" in live_titles
+    assert "Actions" in live_titles
     assert any("failed" in title for title in live_titles)
 
 

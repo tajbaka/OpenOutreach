@@ -3,7 +3,8 @@
 This module is deliberately a task ledger, not an outreach engine.  It never
 sends messages and never generates copy.  It consumes already-resolved
 ``ResolvedAccountEvidence`` after account reconciliation and maintains at most
-one replaceable ``v2:`` current action per active, admitted, owned Opportunity.
+one replaceable ``v2:`` current action per active, admitted, owned Opportunity
+inside the exact bound Active Accounts scope supplied by the publisher.
 
 Human work is authoritative.  A current action is replaceable only when its
 idempotency key starts with ``v2:`` *and* it has no human revision.  Every
@@ -20,7 +21,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from django.db import transaction
 from django.utils import timezone
 
-from crm.models import Message, Meeting, Opportunity, OpportunityAction
+from crm.models import Meeting, MeetingNote, Message, Opportunity, OpportunityAction
 from linkedin.crm_v2_evidence import ResolvedAccountEvidence
 from linkedin.crm_v2_policy import ReminderState
 
@@ -65,6 +66,9 @@ class ActionReconciliationIssue:
 class ActionReconciliationReport:
     applied: bool
     evaluated_at: datetime
+    active_account_scope_enforced: bool = False
+    active_account_scope_rows: int = 0
+    out_of_scope_rows: int = 0
     evidence_rows: int = 0
     actionable_rows: int = 0
     actions_created: int = 0
@@ -96,12 +100,14 @@ def dry_run_action_reconciliation(
     evidence_rows: Iterable[ResolvedAccountEvidence],
     *,
     evaluated_at: datetime | None = None,
+    active_account_opportunity_ids: Iterable[UUID | str] | None = None,
 ) -> ActionReconciliationReport:
     """Execute the exact write path in a transaction that is rolled back."""
     return reconcile_v2_actions(
         evidence_rows,
         apply=False,
         evaluated_at=evaluated_at,
+        active_account_opportunity_ids=active_account_opportunity_ids,
     )
 
 
@@ -109,12 +115,14 @@ def apply_action_reconciliation(
     evidence_rows: Iterable[ResolvedAccountEvidence],
     *,
     evaluated_at: datetime | None = None,
+    active_account_opportunity_ids: Iterable[UUID | str] | None = None,
 ) -> ActionReconciliationReport:
     """Atomically apply v2 reminder actions without sending anything."""
     return reconcile_v2_actions(
         evidence_rows,
         apply=True,
         evaluated_at=evaluated_at,
+        active_account_opportunity_ids=active_account_opportunity_ids,
     )
 
 
@@ -123,6 +131,7 @@ def reconcile_v2_actions(
     *,
     apply: bool = False,
     evaluated_at: datetime | None = None,
+    active_account_opportunity_ids: Iterable[UUID | str] | None = None,
 ) -> ActionReconciliationReport:
     """Create, update, reuse, or cancel only replaceable ``v2:`` actions.
 
@@ -130,18 +139,36 @@ def reconcile_v2_actions(
     reconciliation.  Missing/stale IDs fail closed; this layer never guesses
     an Opportunity or contact from names.  Locks are acquired in deterministic
     Opportunity-ID order, and each Opportunity is locked before its actions.
+    When an Active Accounts scope is supplied, replaceable generated work
+    outside it is cancelled while human-authored tasks remain untouched.
     """
     rows = tuple(evidence_rows)
     observed_at = evaluated_at or timezone.now()
     if timezone.is_naive(observed_at):
         raise ValueError("evaluated_at must be timezone-aware")
+    scope_ids = (
+        None
+        if active_account_opportunity_ids is None
+        else frozenset(
+            UUID(str(opportunity_id))
+            for opportunity_id in active_account_opportunity_ids
+        )
+    )
 
     report = ActionReconciliationReport(
         applied=apply,
         evaluated_at=observed_at,
+        active_account_scope_enforced=scope_ids is not None,
+        active_account_scope_rows=len(scope_ids or ()),
         evidence_rows=len(rows),
         actionable_rows=sum(
-            bool(row.decision.reminder.should_create_reminder)
+            bool(
+                row.decision.reminder.should_create_reminder
+                and (
+                    scope_ids is None
+                    or _opportunity_id_in_scope(row.opportunity_id, scope_ids)
+                )
+            )
             for row in rows
         ),
     )
@@ -183,10 +210,16 @@ def reconcile_v2_actions(
             if opportunity_id in duplicate_ids:
                 _issue(report, row, "duplicate_evidence_opportunity_id")
                 continue
+            in_active_account_scope = bool(
+                scope_ids is None or opportunity_id in scope_ids
+            )
+            if not in_active_account_scope:
+                report.out_of_scope_rows += 1
             _reconcile_row(
                 row,
                 opportunity_id=opportunity_id,
                 report=report,
+                in_active_account_scope=in_active_account_scope,
             )
         if not apply:
             transaction.set_rollback(True)
@@ -198,6 +231,7 @@ def _reconcile_row(
     *,
     opportunity_id: UUID,
     report: ActionReconciliationReport,
+    in_active_account_scope: bool = True,
 ) -> None:
     # Lock ordering is intentional: Opportunity first, then its Action rows.
     opportunity = (
@@ -223,6 +257,24 @@ def _reconcile_row(
         None,
     )
     replaceable_current = current if _is_replaceable_v2_action(current) else None
+
+    if not in_active_account_scope:
+        report.ineligible_rows += 1
+        _cancel_current_if_replaceable(
+            replaceable_current,
+            row=row,
+            opportunity=opportunity,
+            report=report,
+            detail="not_in_active_accounts",
+        )
+        if current is not None and replaceable_current is None:
+            _preserve_human_action(
+                current,
+                row=row,
+                opportunity=opportunity,
+                report=report,
+            )
+        return
 
     eligible = bool(
         row.decision.admitted
@@ -411,6 +463,7 @@ def _proposal_for(
         target_lead_id is None
         and (
             recommendation.state == ReminderState.DEFINE_NEXT_STEP
+            or row.trigger_meeting_note_id is not None
             or (
                 (row.facts.manual_pin or row.facts.sales_motion_active)
                 and row.trigger_message_id is None
@@ -453,6 +506,42 @@ def _proposal_for(
             )
             return None
 
+    if row.trigger_meeting_note_id is not None:
+        note = (
+            MeetingNote.objects.select_related("meeting", "opportunity")
+            .filter(pk=row.trigger_meeting_note_id)
+            .first()
+        )
+        if note is None:
+            _issue(
+                report,
+                row,
+                "trigger_meeting_note_not_found",
+                str(row.trigger_meeting_note_id),
+            )
+            return None
+        note_linked = bool(
+            note.opportunity_id is not None
+            and note.opportunity_id == opportunity.id
+        )
+        if note.opportunity_id is None and note.meeting_id is not None:
+            meeting = note.meeting
+            note_linked = bool(meeting.opportunity_id == opportunity.id)
+            if not note_linked:
+                meeting_lead_ids = {meeting.lead_id}
+                meeting_lead_ids.update(
+                    meeting.participants.values_list("id", flat=True)
+                )
+                note_linked = bool(meeting_lead_ids & contact_ids)
+        if not note_linked:
+            _issue(
+                report,
+                row,
+                "trigger_meeting_note_not_linked_to_opportunity",
+                str(row.trigger_meeting_note_id),
+            )
+            return None
+
     if row.trigger_meeting_id is not None:
         meeting = Meeting.objects.filter(pk=row.trigger_meeting_id).first()
         if meeting is None:
@@ -487,6 +576,11 @@ def _proposal_for(
     )
     idempotency_key = f"v2:{opportunity.id}:{basis}"[:255]
     kind, description = _translated_action(recommendation.state)
+    if row.trigger_meeting_note_id is not None:
+        description = row.commitment_description.strip()
+        if not description:
+            _issue(report, row, "missing_meeting_note_commitment_description")
+            return None
     channel = ""
     if not row.reminder_do_not_outreach:
         reason = recommendation.reason_code.value
@@ -583,6 +677,8 @@ def _idempotency_basis(
     current_v2_action: OpportunityAction | None,
     account_level_allowed: bool,
 ) -> str:
+    if row.trigger_meeting_note_id is not None:
+        return f"meeting-note:{row.trigger_meeting_note_id}"
     if row.trigger_message_id is not None:
         return f"message:{row.trigger_message_id}"
     if row.trigger_meeting_id is not None:
@@ -759,6 +855,16 @@ def _is_current_account_level_v2_action(
         and action.target_lead_id is None
         and action.idempotency_key.startswith(f"v2:{opportunity.id}:account:")
     )
+
+
+def _opportunity_id_in_scope(
+    raw_id: str,
+    scope_ids: frozenset[UUID],
+) -> bool:
+    try:
+        return UUID(str(raw_id)) in scope_ids
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def _issue(

@@ -1,8 +1,8 @@
 ![OpenOutreach Logo](docs/logo.png)
 
 > Self-hosted LinkedIn outreach automation with a Postgres-backed, Google
-> Sheets-operated sales CRM. Capture conversations, maintain a durable People
-> ledger, operate concise Active Accounts and Actions views, and draft
+> Sheets-operated sales CRM. Capture conversations, operate concise Active
+> Accounts and Actions views, and draft
 > human-reviewed followups.
 
 <div align="center">
@@ -24,8 +24,8 @@
 A long-running daemon that runs LinkedIn outreach inside a stealth Playwright
 browser, plus a Postgres-backed canonical sales CRM operated through Google
 Sheets. The CRM separates per-Lead outreach automation Deals from durable
-account Opportunities, then publishes only meaningful Active Accounts and
-current Actions.
+account Opportunities, keeps Active Accounts manual, and publishes current
+Actions plus an Active-Accounts-scoped People view.
 
 **Core loop:**
 
@@ -37,9 +37,9 @@ current Actions.
 5. **`sync_crm_v2_context`** refreshes Gmail/Gemini, validated email-first
    contacts, and Granola without publishing Sheets
 6. **`refresh_crm_v2`** reconciles account evidence and atomically publishes
-   `Active Accounts` plus one owner-filterable `Actions` queue
-7. **`sync_sheets`** remains a narrow incremental People publisher, not a sales
-   decision engine
+   one owner-filterable `Actions` queue while leaving Active Accounts manual
+7. **`sync_active_account_people`** rebuilds People from the companies currently
+   listed in Active Accounts while preserving Notes/Priority/custom columns
 8. **`generate_followups`** exports stable-ID current Actions and applies validated
    drafts without sending messages
 
@@ -138,36 +138,47 @@ QUALIFIED → READY_TO_CONNECT → PENDING → CONNECTED → COMPLETED / FAILED
 
 **Canonical CRM v2 refresh** (`manage.py refresh_crm_v2`):
 
-- `People` is durable and growing: update in place, append once, never
-  clear/reorder/prune, and preserve operator columns/formulas/formatting.
-- `Active Accounts` is the concise account workspace: one row per admitted
-  account/opportunity with explicit owner, stage, attention, evidence, next
-  action, due date, and key contacts.
-- `Actions` is one owner-filterable current-work queue. There are no separate
+- `People` is published in the following `sync_active_account_people` phase,
+  not by this refresh.
+- `Active Accounts` is an Attio-style manual company ledger with Owner, Stage,
+  Main point of contact, Next step, due date, and Notes. Automation never
+  writes it; exact-ID rows may feed only Owner and Stage back to the database
+  and define the exact Opportunity scope for Actions.
+- `Actions` is the generated owner-filterable current-work queue. There are no separate
   Pipeline, Recovery, or sender Followups surfaces.
 - Granola is primary meeting context; stored Gemini notes are secondary.
-- Human fields round-trip through a conservative three-way merge. Invalid or
-  conflicting edits fail closed instead of being guessed.
+- Actions human fields round-trip through a conservative three-way merge.
+  Invalid edits fail closed instead of being guessed.
 - Admission prioritizes explicit human/Sales Motion state, real meetings, and
   human Gmail; LinkedIn qualifies only when the exchange is substantive and
-  bidirectional. One-sided outbound remains in People.
-- Don't send suppresses outreach to that exact contact without erasing account
-  relevance.
+  bidirectional. One-sided outbound remains contact-only in Postgres.
+- Automated `Actions` come only from real calendar meetings and deterministic
+  high-intent Gmail replies/threads for Opportunities bound in Active Accounts.
+  LinkedIn can explain account relevance but never creates or targets an Action.
+  Generated work outside the manual scope is cancelled; human-authored database
+  tasks remain preserved but are not published there.
+- Database suppression such as `Lead.disqualified` remains separate from
+  account relevance; legacy People `Don't send` cells are ignored.
 - Omit `--apply` for an exact rollback-only DB plan with zero Sheet writes.
-  First cutover requires a reviewed private preview; scheduled runs use
-  `--apply --routine`. The command never sends Gmail or LinkedIn messages.
+  Scheduled runs use `--apply --routine` and replace only Actions. The command
+  never sends Gmail or LinkedIn messages.
 
 **Context refresh** (`manage.py sync_crm_v2_context`):
 
 - Refreshes Gmail/Gmail-delivered Gemini, strictly validated email-first Leads,
   and Granola before publication.
-- Defaults to no-write; `--apply` persists context but never sends messages.
+- Defaults to no-write; `--apply` persists database context only. It never
+  publishes Sheets or sends messages.
 
-**Narrow People publisher** (`manage.py sync_sheets`):
+**Active-account People publisher** (`manage.py sync_active_account_people`):
 
-- Plans/publishes only the durable People ledger.
-- Performs no LLM synthesis, opportunity-stage decisions, or followup
-  eligibility.
+- Active Accounts defines the exact company/account boundary. Contacts still
+  require human inbound Gmail, calendar/Granola participation, an exact Main
+  point of contact name, or a deliberately curated OpportunityContact.
+  Company-name-only cold prospects are excluded; fuzzy matching is never used.
+- Notes, Priority, and custom columns survive routine rebuilds. AI Notes,
+  Lead ID, Outreach status, and Stage are omitted. The workflow performs no
+  LLM synthesis or sends.
 
 ---
 
@@ -215,7 +226,7 @@ pytest -k test_name                # single test
   --owner-override Ramp=Arian \
   --owner-override StackArmor=Arian
 
-# Narrow People publisher diagnostics
+# Deprecated legacy People publisher diagnostic
 .venv/bin/python manage.py sync_sheets --dry-run
 
 # Resync crm.Message from LinkedIn DM threads (run on cron)

@@ -67,11 +67,10 @@ def test_preview_ignores_outbound_only_linkedin(tmp_path):
     assert payload["summary"]["people_only_accounts"] == 1
 
 
-def test_preview_reads_people_dno_and_serializes_exact_reminder_target_safety(
+def test_preview_ignores_deprecated_people_dont_send_state(
     monkeypatch,
     tmp_path,
 ):
-    from linkedin import conf
     from linkedin.notifications import sheets
 
     allowed = Lead.objects.create(
@@ -93,23 +92,11 @@ def test_preview_reads_people_dno_and_serializes_exact_reminder_target_safety(
         sent_at=timezone.now(),
     )
 
-    class PeopleWorksheet:
-        def get_all_values(self):
-            return [
-                ["Lead ID", "LinkedIn URL", "Outreach status"],
-                [str(allowed.id), "", ""],
-                [str(stopped.id), "", "Don't send"],
-            ]
-
-    class Spreadsheet:
-        id = "preview-workbook"
-
-        def worksheet(self, title):
-            assert title == "People"
-            return PeopleWorksheet()
-
-    monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", "preview-workbook")
-    monkeypatch.setattr(sheets, "_gspread_client", lambda: Spreadsheet())
+    monkeypatch.setattr(
+        sheets,
+        "_gspread_client",
+        lambda: pytest.fail("preview_crm_v2 must not read the People workbook"),
+    )
     output = tmp_path / "preview.json"
 
     call_command(
@@ -122,7 +109,7 @@ def test_preview_reads_people_dno_and_serializes_exact_reminder_target_safety(
 
     payload = json.loads(output.read_text())
     row = payload["active_accounts"][0]
-    assert payload["summary"]["people_dont_send_leads"] == 1
+    assert "people_dont_send_leads" not in payload["summary"]
     assert row["do_not_outreach"] is False
     assert row["reminder_target_lead_id"] == stopped.id
-    assert row["reminder_do_not_outreach"] is True
+    assert row["reminder_do_not_outreach"] is False

@@ -48,9 +48,9 @@ row appears only for a genuine current action, such as:
 - an explicit human next step.
 
 Future Waiting rows do not become current work until due. Closed and ineligible
-records do not enter the current queue. An exact target marked Don't send may
-remain sales-relevant but is shown as outreach stopped with no send channel or
-draft. Granola/Gemini context can enrich a row but cannot create eligibility.
+records do not enter the current queue. Database-level target suppression may
+retain sales relevance while stopping outreach; legacy People `Don't send`
+cells are not read. Granola/Gemini context can enrich a row but cannot create eligibility.
 
 ## Export the canonical queue
 
@@ -185,8 +185,8 @@ require `--legacy`.
 
 ## Scheduling
 
-Schedule the two-phase `sync_crm_v2_context --apply` then
-`refresh_crm_v2 --apply --routine` wrapper, not legacy followup generation. A separate
+Schedule the `sync_crm_v2_context --apply`, `refresh_crm_v2 --apply --routine`,
+then `sync_active_account_people --apply` wrapper, not legacy followup generation. A separate
 Codex drafting job may export, draft, and apply canonical decisions, but it must
 stop on validation failures and must never send messages automatically.
 

@@ -6,12 +6,14 @@ from crm.models import (
     Account,
     Lead,
     Meeting,
+    MeetingNote,
     Message,
     Opportunity,
     OpportunityAction,
     OpportunityContact,
     SalesOwner,
 )
+from linkedin.crm_v2_actions import apply_action_reconciliation
 from linkedin.crm_v2_evidence import (
     collect_account_evidence,
     conversation_evidence,
@@ -117,6 +119,30 @@ def test_old_list_mail_headers_cannot_admit_an_account():
 
     assert evidence.human_inbound_count == 0
     assert evidence.automated_inbound_count == 1
+
+
+def test_gmail_substantive_count_requires_high_intent_language():
+    courtesy = _message(
+        identifier=9,
+        direction=Message.Direction.INBOUND,
+        body="Thanks for the thoughtful note. I will keep it on file.",
+        offset=0,
+    )
+    courtesy.source = Message.Source.GMAIL
+    high_intent = _message(
+        identifier=10,
+        direction=Message.Direction.INBOUND,
+        body="Could you send pricing and schedule a demo?",
+        offset=1,
+    )
+    high_intent.source = Message.Source.GMAIL
+
+    low = conversation_evidence([courtesy], source=Message.Source.GMAIL)
+    high = conversation_evidence([high_intent], source=Message.Source.GMAIL)
+
+    assert low.real_human_inbound_count == 1
+    assert low.substantive_inbound_count == 0
+    assert high.substantive_inbound_count == 1
 
 
 def test_account_reminder_keeps_the_exact_gmail_contact_and_message():
@@ -378,6 +404,163 @@ def test_completed_external_meeting_counts_without_granola_or_gemini_notes():
     assert row.decision.admitted is True
     assert row.decision.primary_reason_code.value == "recent_completed_external_meeting"
     assert row.trigger_meeting_id is not None
+
+
+def test_note_owned_commitments_create_durable_action_until_explicitly_handled():
+    owner = SalesOwner.objects.get(handle="Arian")
+    account = Account.objects.create(name="Prescient Security")
+    opportunity = Opportunity.objects.create(
+        account=account,
+        name="Prescient Security",
+        owner=owner,
+        source=Opportunity.Source.SHEET,
+        stage=Opportunity.Stage.SANDBOX_PILOT,
+        sales_motion_step=7,
+    )
+    lead = Lead.objects.create(
+        first_name="Sammy",
+        company_name="Prescient Security",
+        email="sammy@prescient.example",
+    )
+    OpportunityContact.objects.create(opportunity=opportunity, lead=lead)
+    note = MeetingNote.objects.create(
+        source=MeetingNote.Source.GRANOLA,
+        external_id="prescient-pricing-call",
+        opportunity=opportunity,
+        title="Arian and Sammy @ Prescient Security",
+        scheduled_start_at=NOW - timedelta(days=1),
+        summary_markdown=(
+            "# Next Steps\n"
+            "- **Send partner and white-label pricing to Sammy** (Arian)\n"
+            "- **Send Sammy a proposal for Casillion's Class C journey** (Arian)\n"
+            "- **Model white-label pricing for Class A** (Arian)\n"
+            "- **Send customer data** (Sammy)"
+        ),
+        detail_status=MeetingNote.DetailStatus.COMPLETE,
+        match_status=MeetingNote.MatchStatus.MATCHED,
+        match_method=MeetingNote.MatchMethod.MANUAL,
+    )
+    # This later outbound is unrelated to the explicit meeting commitments
+    # and therefore must not clear them.
+    Message.objects.create(
+        lead=lead,
+        operator=owner,
+        source=Message.Source.GMAIL,
+        external_id="prescient-unrelated-outbound",
+        thread_external_id="prescient-thread",
+        direction=Message.Direction.OUTBOUND,
+        body="Here are the partnership documents from our other discussion.",
+        sent_at=NOW - timedelta(hours=12),
+    )
+
+    row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.opportunity_id == str(opportunity.id)
+    )
+
+    assert row.decision.reminder.state.value == "post_meeting_followup"
+    assert row.trigger_meeting_note_id == str(note.id)
+    assert row.trigger_meeting_id is None
+    assert row.trigger_message_id is None
+    assert row.reminder_target_lead_id is None
+    assert row.commitment_description == (
+        "Send partner and white-label pricing to Sammy; "
+        "Send Sammy a proposal for Casillion's Class C journey; "
+        "Model white-label pricing for Class A"
+    )
+    assert "customer data" not in row.commitment_description
+
+    report = apply_action_reconciliation([row], evaluated_at=NOW)
+    assert report.actions_created == 1
+    action = OpportunityAction.objects.get(opportunity=opportunity)
+    assert action.kind == OpportunityAction.Kind.POST_MEETING_COMMITMENT
+    assert action.description == row.commitment_description
+    assert action.idempotency_key == f"v2:{opportunity.id}:meeting-note:{note.id}"
+
+    due_row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.opportunity_id == str(opportunity.id)
+    )
+    assert due_row.decision.reminder.state.value == "post_meeting_followup"
+    assert due_row.trigger_meeting_note_id == str(note.id)
+    due_report = apply_action_reconciliation([due_row], evaluated_at=NOW)
+    assert due_report.actions_unchanged == 1
+    action.refresh_from_db()
+    assert action.idempotency_key == f"v2:{opportunity.id}:meeting-note:{note.id}"
+    assert action.description == row.commitment_description
+
+    action.status = OpportunityAction.Status.COMPLETED
+    action.disposition = OpportunityAction.Disposition.HANDLED
+    action.handled_at = NOW
+    action.completed_at = NOW
+    action.save(update_fields={
+        "status",
+        "disposition",
+        "handled_at",
+        "completed_at",
+        "updated_at",
+    })
+
+    handled_row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.opportunity_id == str(opportunity.id)
+    )
+    assert handled_row.trigger_meeting_note_id is None
+    handled_report = apply_action_reconciliation([handled_row], evaluated_at=NOW)
+    assert handled_report.actions_created == 0
+    assert OpportunityAction.objects.filter(opportunity=opportunity).count() == 1
+
+
+def test_newest_recording_wins_and_granola_breaks_same_time_ties():
+    owner = SalesOwner.objects.get(handle="Arian")
+    opportunity = Opportunity.objects.create(
+        account=Account.objects.create(name="Recorder Priority"),
+        owner=owner,
+        source=Opportunity.Source.SHEET,
+    )
+    older = NOW - timedelta(days=2)
+    newer = NOW - timedelta(days=1)
+    common = {
+        "opportunity": opportunity,
+        "detail_status": MeetingNote.DetailStatus.COMPLETE,
+        "match_status": MeetingNote.MatchStatus.MATCHED,
+        "match_method": MeetingNote.MatchMethod.MANUAL,
+    }
+    MeetingNote.objects.create(
+        source=MeetingNote.Source.GRANOLA,
+        external_id="older-granola",
+        scheduled_start_at=older,
+        summary_markdown="- Older Granola task (Arian)",
+        **common,
+    )
+    MeetingNote.objects.create(
+        source=MeetingNote.Source.GEMINI,
+        external_id="newer-gemini",
+        scheduled_start_at=newer,
+        summary_markdown="- Newer Gemini task (Arian)",
+        **common,
+    )
+
+    gemini_row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.opportunity_id == str(opportunity.id)
+    )
+    assert gemini_row.commitment_description == "Newer Gemini task"
+
+    granola = MeetingNote.objects.create(
+        source=MeetingNote.Source.GRANOLA,
+        external_id="newer-granola",
+        scheduled_start_at=newer,
+        summary_markdown="- Same-time Granola task (Arian)",
+        **common,
+    )
+
+    granola_row = next(
+        item for item in collect_account_evidence(now=NOW)
+        if item.opportunity_id == str(opportunity.id)
+    )
+    assert granola_row.trigger_meeting_note_id == str(granola.id)
+    assert granola_row.commitment_description == "Same-time Granola task"
 
 
 def test_new_inbound_outranks_an_old_replaceable_v2_due_action():

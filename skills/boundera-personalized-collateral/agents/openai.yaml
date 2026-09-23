@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boundera Personalized Collateral"
+  short_description: "Research companies and fill three FedRAMP PDF templates"
+  default_prompt: "Use $boundera-personalized-collateral to research this company and create a review PDF from the matching FedRAMP template."

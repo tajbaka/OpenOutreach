@@ -1,0 +1,7 @@
+interface:
+  display_name: "Gmail OAuth"
+  short_description: "Read, draft, and send Gmail through existing OAuth"
+  default_prompt: "Use $gmail-oauth to handle this email through the existing Google OAuth access, performing only the requested read, draft, or explicitly approved send."
+
+policy:
+  allow_implicit_invocation: true

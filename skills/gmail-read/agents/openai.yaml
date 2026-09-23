@@ -1,0 +1,7 @@
+interface:
+  display_name: "Gmail Read"
+  short_description: "Read email using existing Google OAuth access"
+  default_prompt: "Use $gmail-read to find and read the requested email conversation through the repository's existing Google OAuth access."
+
+policy:
+  allow_implicit_invocation: true

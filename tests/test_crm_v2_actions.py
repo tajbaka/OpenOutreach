@@ -6,6 +6,7 @@ import pytest
 from crm.models import (
     Account,
     Lead,
+    MeetingNote,
     Message,
     Opportunity,
     OpportunityAction,
@@ -54,6 +55,8 @@ def _resolved(
     target_lead_id=None,
     trigger_message_id=None,
     trigger_meeting_id=None,
+    trigger_meeting_note_id=None,
+    commitment_description="",
     reminder_do_not_outreach=False,
 ):
     return ResolvedAccountEvidence(
@@ -69,6 +72,8 @@ def _resolved(
         trigger_meeting_id=trigger_meeting_id,
         facts=facts,
         decision=evaluate_account(facts, today=NOW.date()),
+        trigger_meeting_note_id=trigger_meeting_note_id,
+        commitment_description=commitment_description,
         reminder_do_not_outreach=reminder_do_not_outreach,
     )
 
@@ -106,7 +111,7 @@ def test_opportunity_lock_is_scoped_away_from_nullable_owner_join():
     assert lock_calls == [((), {"of": ("self",)})]
 
 
-def test_ramp_authoritative_sales_motion_gets_targetless_account_action():
+def test_authoritative_sales_motion_without_calendar_or_gmail_gets_no_action():
     opportunity = _opportunity(
         "Ramp",
         source=Opportunity.Source.SHEET,
@@ -116,18 +121,10 @@ def test_ramp_authoritative_sales_motion_gets_targetless_account_action():
 
     report = apply_action_reconciliation([evidence], evaluated_at=NOW)
 
-    action = OpportunityAction.objects.get(opportunity=opportunity)
-    assert report.actions_created == 1
-    assert action.status == OpportunityAction.Status.OPEN
-    assert action.kind == OpportunityAction.Kind.NEXT_STEP
-    assert action.description == "Define and schedule the next step"
-    assert action.target_lead is None
-    assert action.due_on == NOW.date()
-    assert action.idempotency_key == (
-        f"v2:{opportunity.id}:account:authoritative-next-step"
-    )
-    assert action.channel == ""
-    assert action.draft == ""
+    assert evidence.decision.admitted is True
+    assert evidence.decision.reminder.state == ReminderState.NONE
+    assert report.actions_created == 0
+    assert not OpportunityAction.objects.filter(opportunity=opportunity).exists()
 
 
 def test_exact_gmail_inbound_target_and_trigger_are_preserved():
@@ -297,6 +294,8 @@ def test_stackarmor_dno_keeps_targetless_manual_reminder_but_no_delivery_fields(
         account_key="stackarmor",
         manual_pin=True,
         do_not_outreach=True,
+        latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+        post_meeting_followup_required=True,
     )
     evidence = _resolved(opportunity, facts)
 
@@ -438,7 +437,12 @@ def test_non_v2_and_human_edited_current_actions_are_preserved(
 
 def test_dry_run_matches_apply_and_repeated_apply_is_idempotent():
     opportunity = _opportunity("Idempotent")
-    facts = AccountPolicyFacts(account_key="idempotent", manual_pin=True)
+    facts = AccountPolicyFacts(
+        account_key="idempotent",
+        manual_pin=True,
+        latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+        post_meeting_followup_required=True,
+    )
     evidence = _resolved(opportunity, facts)
 
     dry_run = dry_run_action_reconciliation([evidence], evaluated_at=NOW)
@@ -461,14 +465,64 @@ def test_dry_run_matches_apply_and_repeated_apply_is_idempotent():
     assert OpportunityAction.objects.filter(opportunity=opportunity).count() == 1
 
 
-def test_primary_define_next_step_remains_stable_after_fresh_due_recollection():
+def test_active_accounts_scope_creates_only_in_scope_and_retires_generated_work():
+    in_scope = _opportunity("In Active Accounts")
+    generated_outside = _opportunity("Generated Outside Active Accounts")
+    human_outside = _opportunity("Human Outside Active Accounts")
+    generated_action = OpportunityAction.objects.create(
+        opportunity=generated_outside,
+        description="Generated task outside the manual ledger",
+        idempotency_key=(
+            f"v2:{generated_outside.id}:account:authoritative-next-step"
+        ),
+    )
+    human_action = OpportunityAction.objects.create(
+        opportunity=human_outside,
+        description="Human task outside the manual ledger",
+        idempotency_key="human:outside-active-accounts",
+    )
+
+    def evidence(opportunity):
+        facts = AccountPolicyFacts(
+            account_key=opportunity.account.normalized_name,
+            manual_pin=True,
+            latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+            post_meeting_followup_required=True,
+        )
+        return _resolved(opportunity, facts)
+
+    report = apply_action_reconciliation(
+        [evidence(in_scope), evidence(generated_outside), evidence(human_outside)],
+        evaluated_at=NOW,
+        active_account_opportunity_ids=[in_scope.id],
+    )
+
+    generated_action.refresh_from_db()
+    human_action.refresh_from_db()
+    assert report.active_account_scope_enforced is True
+    assert report.active_account_scope_rows == 1
+    assert report.out_of_scope_rows == 2
+    assert report.actions_created == 1
+    assert report.actions_cancelled == 1
+    assert report.human_actions_preserved == 1
+    assert generated_action.status == OpportunityAction.Status.CANCELLED
+    assert human_action.status == OpportunityAction.Status.OPEN
+    assert OpportunityAction.objects.filter(
+        opportunity=in_scope,
+        status=OpportunityAction.Status.OPEN,
+    ).count() == 1
+
+
+def test_calendar_action_remains_stable_after_fresh_due_recollection():
     opportunity = _opportunity("Primary account-level")
     initial_facts = AccountPolicyFacts(
         account_key="primary account level",
+        manual_pin=True,
         latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+        post_meeting_followup_required=True,
     )
     initial = _resolved(opportunity, initial_facts)
-    assert initial.decision.reminder.state == ReminderState.DEFINE_NEXT_STEP
+    assert initial.decision.reminder.state == ReminderState.POST_MEETING_FOLLOWUP
 
     apply_action_reconciliation([initial], evaluated_at=NOW)
     action = OpportunityAction.objects.get(opportunity=opportunity)
@@ -481,7 +535,9 @@ def test_primary_define_next_step_remains_stable_after_fresh_due_recollection():
     # for lacking a guessed contact or manufacture another action.
     refreshed_facts = AccountPolicyFacts(
         account_key="primary account level",
+        manual_pin=True,
         latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+        post_meeting_followup_required=True,
         next_action_due_on=NOW.date(),
     )
     refreshed = _resolved(opportunity, refreshed_facts)
@@ -493,8 +549,43 @@ def test_primary_define_next_step_remains_stable_after_fresh_due_recollection():
     assert report.actions_unchanged == 1
     assert action.id == stable_id
     assert action.idempotency_key == stable_key
-    assert action.description == "Define and schedule the next step"
+    assert action.description == "Complete the post-meeting follow-up"
     assert OpportunityAction.objects.filter(opportunity=opportunity).count() == 1
+
+
+def test_note_commitment_fails_closed_when_linked_to_another_opportunity():
+    opportunity = _opportunity("Expected Account")
+    other = _opportunity("Other Account")
+    note = MeetingNote.objects.create(
+        source=MeetingNote.Source.GRANOLA,
+        external_id="wrong-opportunity-note",
+        opportunity=other,
+        scheduled_start_at=NOW - timedelta(days=1),
+        summary_markdown="- Send pricing (Arian)",
+        detail_status=MeetingNote.DetailStatus.COMPLETE,
+        match_status=MeetingNote.MatchStatus.MATCHED,
+        match_method=MeetingNote.MatchMethod.MANUAL,
+    )
+    facts = AccountPolicyFacts(
+        account_key="expected account",
+        manual_pin=True,
+        latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+        post_meeting_followup_required=True,
+    )
+    evidence = _resolved(
+        opportunity,
+        facts,
+        trigger_meeting_note_id=str(note.id),
+        commitment_description="Send pricing",
+    )
+
+    report = apply_action_reconciliation([evidence], evaluated_at=NOW)
+
+    assert report.actions_created == 0
+    assert [issue.reason for issue in report.issues] == [
+        "trigger_meeting_note_not_linked_to_opportunity"
+    ]
+    assert not OpportunityAction.objects.filter(opportunity=opportunity).exists()
 
 
 def test_inactive_opportunity_cancels_v2_action_without_touching_account():
@@ -592,7 +683,12 @@ def test_admitted_row_without_reconciled_opportunity_still_fails_closed():
 
 def test_cancelled_v2_action_is_reused_with_the_same_stable_id():
     opportunity = _opportunity("Reusable")
-    facts = AccountPolicyFacts(account_key="reusable", manual_pin=True)
+    facts = AccountPolicyFacts(
+        account_key="reusable",
+        manual_pin=True,
+        latest_completed_external_meeting_on=NOW.date() - timedelta(days=1),
+        post_meeting_followup_required=True,
+    )
     evidence = _resolved(opportunity, facts)
 
     apply_action_reconciliation([evidence], evaluated_at=NOW)

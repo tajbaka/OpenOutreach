@@ -12,7 +12,9 @@ def _successful_log(run_id: str = "abc123") -> str:
             f"[2026-08-26T09:00:00-04:00] starting crm_v2_workflow run_id={run_id}",
             f"[2026-08-26T09:00:01-04:00] finished sync_crm_v2_context run_id={run_id} exit_code=0",
             f"[2026-08-26T09:00:02-04:00] finished refresh_crm_v2 run_id={run_id} exit_code=0",
-            f"[2026-08-26T09:00:03-04:00] finished crm_v2_workflow run_id={run_id} exit_code=0",
+            f"[2026-08-26T09:00:03-04:00] finished sync_active_account_people run_id={run_id} exit_code=0",
+            f"[2026-08-26T09:00:04-04:00] finished sync_linkedin_pending run_id={run_id} exit_code=0",
+            f"[2026-08-26T09:00:05-04:00] finished crm_v2_workflow run_id={run_id} exit_code=0",
         )
     )
 
@@ -71,6 +73,8 @@ def test_latest_run_lines_ignore_an_older_failure():
     assert health._latest_phase_exit_codes(latest) == {
         "context": 0,
         "refresh": 0,
+        "people": 0,
+        "linkedin_pending": 0,
     }
 
 
@@ -101,7 +105,7 @@ def test_evaluate_health_requires_both_v2_phases(monkeypatch, tmp_path):
     result = health.evaluate_health(task_name="task", log_path=log_path)
 
     assert result.status == "failed"
-    assert "both required phases" in result.reason
+    assert "all required phases" in result.reason
 
 
 def test_evaluate_health_detects_failure_even_if_start_rolled_out_of_tail(
@@ -163,6 +167,8 @@ def test_scheduled_wrapper_runs_context_then_routine_v2_refresh():
         ["manage.py", "sync_crm_v2_context", "--apply"],
         ["manage.py", "refresh_crm_v2", "--apply", "--routine", "--manual-pin",
          "StackArmor", "--owner-override", "Ramp=Arian", "--owner-override", "StackArmor=Arian"],
+        ["manage.py", "sync_active_account_people", "--apply"],
+        ["manage.py", "sync_linkedin_pending", "--apply"],
     ]
     assert '"crm_v2_task.log"' in wrapper
     assert "manage.py refresh_crm --apply" not in wrapper

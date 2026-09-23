@@ -133,8 +133,27 @@ def test_substantive_bidirectional_linkedin_is_secondary():
     )
     assert decision.evidence_tier == EvidenceTier.SECONDARY
     assert decision.confidence_score == 72
-    assert decision.reminder.state == ReminderState.WAITING
-    assert decision.priority == Priority.LOW
+    assert decision.reminder.state == ReminderState.NONE
+    assert decision.priority == Priority.NONE
+    assert not decision.reminder.should_create_reminder
+
+
+def test_low_intent_gmail_can_admit_without_creating_an_action():
+    decision = evaluate_account(
+        AccountPolicyFacts(
+            account_key="gmail:courtesy-reply",
+            gmail=ConversationEvidence(
+                human_inbound_count=1,
+                latest_human_inbound_on=TODAY,
+            ),
+        ),
+        today=TODAY,
+    )
+
+    assert decision.admitted
+    assert decision.primary_reason_code == AdmissionReasonCode.RECENT_GMAIL_HUMAN_INBOUND
+    assert decision.reminder.state == ReminderState.NONE
+    assert not decision.reminder.should_create_reminder
 
 
 def test_answered_gmail_waits_then_becomes_a_real_followup_reminder():

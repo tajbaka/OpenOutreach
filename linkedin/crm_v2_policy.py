@@ -12,7 +12,7 @@ one deterministic precedence order:
 
 1. manual pins and active Sales Motion records are authoritative;
 2. real external meetings and human Gmail engagement are primary evidence;
-3. LinkedIn is secondary and must be substantively bidirectional;
+3. LinkedIn is secondary admission context and never creates Actions;
 4. weak, outbound-only, or stale evidence remains People-only.
 """
 from __future__ import annotations
@@ -30,7 +30,6 @@ __all__ = (
     "GMAIL_ADMISSION_MAX_AGE_DAYS",
     "GMAIL_ACTION_MAX_AGE_DAYS",
     "LINKEDIN_ADMISSION_MAX_AGE_DAYS",
-    "LINKEDIN_ACTION_MAX_AGE_DAYS",
     "AccountPolicyDecision",
     "AccountPolicyFacts",
     "AdmissionReasonCode",
@@ -56,7 +55,6 @@ GMAIL_ADMISSION_MAX_AGE_DAYS = 120
 LINKEDIN_ADMISSION_MAX_AGE_DAYS = 90
 COMPLETED_MEETING_ACTION_MAX_AGE_DAYS = 30
 GMAIL_ACTION_MAX_AGE_DAYS = 30
-LINKEDIN_ACTION_MAX_AGE_DAYS = 21
 
 
 class AdmissionStatus(str, Enum):
@@ -417,8 +415,9 @@ def recommend_reminder(
     """Recommend one reminder state without mutating or routing anything.
 
     A future human waiting date is authoritative.  Otherwise explicit due
-    dates win, followed by unanswered human inbound, meeting preparation,
-    post-meeting follow-up, and finally the absence of a next step.
+    dates win, followed by high-intent Gmail, meeting preparation, and
+    post-meeting follow-up. LinkedIn and generic missing-next-step state never
+    create automated Actions.
     """
     allowed = not facts.do_not_outreach
     if not admitted:
@@ -458,7 +457,6 @@ def recommend_reminder(
 
     conversation_reminder = _latest_conversation_reminder(
         gmail=facts.gmail,
-        linkedin=facts.linkedin,
         today=today,
         allowed=allowed,
     )
@@ -534,14 +532,9 @@ def recommend_reminder(
         )
 
     return _reminder(
-        ReminderState.DEFINE_NEXT_STEP,
+        ReminderState.NONE,
         ReminderReasonCode.ACTIVE_ACCOUNT_MISSING_NEXT_STEP,
-        due_on=today,
-        priority=(
-            Priority.LOW
-            if evidence_tier == EvidenceTier.SECONDARY
-            else Priority.NORMAL
-        ),
+        priority=Priority.NONE,
         allowed=allowed,
     )
 
@@ -724,32 +717,16 @@ def _is_recent(
 def _latest_conversation_reminder(
     *,
     gmail: ConversationEvidence,
-    linkedin: ConversationEvidence,
     today: date,
     allowed: bool,
 ) -> ReminderRecommendation | None:
-    candidates = []
-    for source, evidence in (("gmail", gmail), ("linkedin", linkedin)):
-        candidate = _conversation_reminder(
-            evidence,
-            today=today,
-            source=source,
-            allowed=allowed,
-        )
-        if candidate is not None:
-            candidates.append(candidate)
-    if not candidates:
-        return None
-    # The account's newest real conversation controls ball-on-court. Gmail is
-    # the deterministic tie-breaker when only day-level evidence is available.
-    candidates.sort(
-        key=lambda item: (
-            _event_order_key(item[0]),
-            item[1] == "gmail",
-        ),
-        reverse=True,
+    candidate = _conversation_reminder(
+        gmail,
+        today=today,
+        source="gmail",
+        allowed=allowed,
     )
-    return candidates[0][2]
+    return candidate[2] if candidate is not None else None
 
 
 def _conversation_reminder(
@@ -759,14 +736,8 @@ def _conversation_reminder(
     source: str,
     allowed: bool,
 ) -> tuple[date | datetime, str, ReminderRecommendation] | None:
-    inbound = (
-        evidence.latest_human_inbound_on
-        if source == "gmail"
-        else evidence.latest_substantive_inbound_on
-    )
-    if source == "gmail" and evidence.real_human_inbound_count <= 0:
-        return None
-    if source == "linkedin" and not evidence.is_substantive_bidirectional:
+    inbound = evidence.latest_substantive_inbound_on
+    if source != "gmail" or evidence.substantive_inbound_count <= 0:
         return None
     if inbound is None:
         return None
@@ -774,19 +745,11 @@ def _conversation_reminder(
     outbound = evidence.latest_outbound_on
     inbound_is_latest = outbound is None or _is_later(inbound, outbound)
     event = inbound if inbound_is_latest else outbound
-    max_action_age = (
-        GMAIL_ACTION_MAX_AGE_DAYS
-        if source == "gmail"
-        else LINKEDIN_ACTION_MAX_AGE_DAYS
-    )
+    max_action_age = GMAIL_ACTION_MAX_AGE_DAYS
     if (today - _event_date(event)).days > max_action_age:
         reminder = _reminder(
             ReminderState.REVIEW,
-            (
-                ReminderReasonCode.OLD_GMAIL_CONVERSATION_REVIEW
-                if source == "gmail"
-                else ReminderReasonCode.OLD_LINKEDIN_CONVERSATION_REVIEW
-            ),
+            ReminderReasonCode.OLD_GMAIL_CONVERSATION_REVIEW,
             priority=Priority.LOW,
             allowed=allowed,
         )
@@ -795,27 +758,19 @@ def _conversation_reminder(
     if inbound_is_latest:
         reminder = _reminder(
             ReminderState.NEEDS_RESPONSE,
-            (
-                ReminderReasonCode.UNANSWERED_GMAIL_HUMAN_INBOUND
-                if source == "gmail"
-                else ReminderReasonCode.UNANSWERED_LINKEDIN_SUBSTANTIVE_INBOUND
-            ),
+            ReminderReasonCode.UNANSWERED_GMAIL_HUMAN_INBOUND,
             due_on=today,
             priority=Priority.URGENT,
             allowed=allowed,
         )
         return event, source, reminder
 
-    wait_days = 4 if source == "gmail" else 5
+    wait_days = 4
     due_on = _event_date(outbound) + timedelta(days=wait_days)
     if due_on <= today:
         reminder = _reminder(
             ReminderState.FOLLOW_UP_DUE,
-            (
-                ReminderReasonCode.GMAIL_FOLLOW_UP_DUE
-                if source == "gmail"
-                else ReminderReasonCode.LINKEDIN_FOLLOW_UP_DUE
-            ),
+            ReminderReasonCode.GMAIL_FOLLOW_UP_DUE,
             due_on=due_on,
             priority=Priority.HIGH,
             allowed=allowed,
@@ -823,11 +778,7 @@ def _conversation_reminder(
         return event, source, reminder
     reminder = _reminder(
         ReminderState.WAITING,
-        (
-            ReminderReasonCode.WAITING_FOR_GMAIL_REPLY
-            if source == "gmail"
-            else ReminderReasonCode.WAITING_FOR_LINKEDIN_REPLY
-        ),
+        ReminderReasonCode.WAITING_FOR_GMAIL_REPLY,
         due_on=due_on,
         priority=Priority.LOW,
         allowed=allowed,

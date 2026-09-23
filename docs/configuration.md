@@ -46,8 +46,11 @@ email-first, and Granola ingestion phase. `manage.py refresh_crm_v2` is the
 canonical reconciler/publisher; omit `--apply` for a rollback-only DB plan with
 zero Sheet writes. First cutover requires a recent matching `preview_crm_v2`
 artifact, while post-cutover production uses `--apply --routine`.
-`manage.py sync_sheets` is only the narrow People publisher and does not decide
-account admission or action eligibility. Granola is primary meeting context,
+`manage.py sync_active_account_people` is the canonical third phase that rebuilds
+People from manual Active Accounts; it previews by default and publishes with
+`--apply`. `manage.py sync_linkedin_pending` is the canonical fourth phase; it
+previews the incremental two-week LinkedIn response queue by default and applies
+append/update/delete reconciliation with `--apply`. `manage.py sync_sheets` is legacy-only. Granola is primary meeting context,
 with stored Gemini notes secondary.
 LinkedIn backfill and Calendar/Drive ingestion remain separate prerequisites;
 see [the CRM refresh runbook](crm-refresh-workflow.md).

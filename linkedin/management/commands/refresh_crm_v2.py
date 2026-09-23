@@ -9,7 +9,6 @@ still match the recomputed evidence universe.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import stat
 from collections import Counter
@@ -48,7 +47,7 @@ class _CutoverState:
 
 class Command(BaseCommand):
     help = (
-        "Reconcile Active Accounts and Actions, then publish accepted connections awaiting a reply. Defaults to "
+        "Read manual Active Accounts and reconcile/publish Actions. Defaults to "
         "a no-write, rollback-only dry-run and never sends outreach."
     )
 
@@ -64,6 +63,15 @@ class Command(BaseCommand):
             help=(
                 "Apply an already-cut-over v2 workbook without a preview; "
                 "requires both canonical tabs and no legacy canonical tabs."
+            ),
+        )
+        parser.add_argument(
+            "--replace-sheet-state",
+            action="store_true",
+            help=(
+                "With --apply --routine, discard current Actions cell edits "
+                "and replace that generated queue from canonical DB state. "
+                "Active Accounts remains read-only to automation."
             ),
         )
         parser.add_argument(
@@ -127,6 +135,10 @@ class Command(BaseCommand):
             raise CommandError(
                 "--routine cannot be combined with --reviewed-preview"
             )
+        if options["replace_sheet_state"] and not (apply and routine):
+            raise CommandError(
+                "--replace-sheet-state requires --apply --routine"
+            )
         if apply and not routine and not options["reviewed_preview"]:
             raise CommandError("--apply requires --reviewed-preview PATH")
         if not apply and options["reviewed_preview"]:
@@ -150,13 +162,6 @@ class Command(BaseCommand):
                     )
                     report["publication"]["archive_cleanup"] = cleanup
                     self._pending_cutover = None
-                # Reporting-only projection, independent of CRM human-state
-                # reconciliation. Publish after its DB/cutover commit so a
-                # failure here cannot roll back a verified CRM title swap.
-                # A failed projection still fails the overall scheduled job.
-                from linkedin.notifications.accepted_connections_sheet import sync_accepted_connections
-
-                report["accepted_connections"] = sync_accepted_connections(dry_run=not apply)
         except CrmRefreshAlreadyRunning as exc:
             raise CommandError(str(exc)) from exc
         except SheetsError as exc:
@@ -173,8 +178,6 @@ class Command(BaseCommand):
             apply_followup_imports,
             apply_opportunity_imports,
             commit_followup_baselines,
-            commit_sheet_baselines,
-            read_people_dont_send_lead_ids,
         )
         from linkedin.crm_v2_actions import apply_action_reconciliation
         from linkedin.crm_v2_evidence import collect_account_evidence
@@ -184,8 +187,12 @@ class Command(BaseCommand):
             _configured_sales_motion_accounts,
             _parse_owner_overrides,
         )
-        from linkedin.management.commands.sync_sheets import run_people_sync
-        from linkedin.notifications import crm_sheets, crm_v2_sheets, sheets
+        from linkedin.notifications import (
+            crm_sheets,
+            crm_v2_sheets,
+            manual_active_accounts,
+            sheets,
+        )
         from linkedin.notifications.crm_v2_layout import apply_layout
 
         evaluated_at = timezone.now()
@@ -220,6 +227,10 @@ class Command(BaseCommand):
             raise SheetsError("CRM v2 publisher opened an unexpected workbook")
         worksheets = _worksheet_inventory(spreadsheet, crm_sheets=crm_sheets)
         existing_mode = _publication_mode(worksheets, crm_v2_sheets=crm_v2_sheets)
+        if apply and existing_mode != "in_place":
+            raise SheetsError(
+                "apply requires the manual Active Accounts tab and generated Actions tab"
+            )
         if options["routine"]:
             if existing_mode != "in_place":
                 raise SheetsError(
@@ -229,33 +240,19 @@ class Command(BaseCommand):
                 raise SheetsError(
                     "--routine requires all legacy canonical CRM tabs to be absent"
                 )
-        try:
-            people_result = run_people_sync(
-                dry_run=not apply,
-                stdout=io.StringIO(),
-                stderr=io.StringIO(),
-                lock_held=True,
+        manual_active_read = None
+        active_account_opportunity_ids = None
+        if existing_mode == "in_place":
+            manual_active_read = manual_active_accounts.read_imports(
+                worksheets[crm_v2_sheets.ACTIVE_ACCOUNTS_TAB]
             )
-        except Exception as exc:
-            raise SheetsError("People publisher prerequisite failed") from exc
-        people_blocked = bool(
-            int(people_result.get("errored", 0) or 0)
-            or int(people_result.get("duplicate_lead_ids", 0) or 0)
-        )
-        if people_blocked:
-            raise SheetsError(
-                "People publisher reported errors or duplicate stable Lead IDs"
+            active_account_opportunity_ids = (
+                manual_active_read.bound_opportunity_ids
             )
-        # People is the safety ledger, not an admission source.  Resolve its
-        # exact stable Lead IDs before any evidence decision and fail closed if
-        # the tab, headers, or identities cannot be read safely.
-        dont_send_lead_ids = read_people_dont_send_lead_ids(spreadsheet)
-
         initial_evidence = collect_account_evidence(
             sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
             manual_account_pins=resolved_inputs["manual_pins"],
             owner_overrides=resolved_inputs["owner_overrides"],
-            dont_send_lead_ids=dont_send_lead_ids,
             now=evaluated_at,
         )
         if preview is not None:
@@ -273,7 +270,7 @@ class Command(BaseCommand):
         )
         _assert_reconciliation_safe(reconcile_report)
 
-        preliminary_plans = None
+        preliminary_action_plan = None
         import_reports = {
             "active_account_edits": 0,
             "action_edits": 0,
@@ -281,6 +278,7 @@ class Command(BaseCommand):
             "legacy_followup_edits": 0,
             "legacy_unresolved_rows": 0,
             "invalid_edits": 0,
+            "sheet_edits_discarded": 0,
         }
         retained_legacy_archives: set[str] = set()
         if existing_mode == "first_cutover":
@@ -302,7 +300,6 @@ class Command(BaseCommand):
                     sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
                     manual_account_pins=resolved_inputs["manual_pins"],
                     owner_overrides=resolved_inputs["owner_overrides"],
-                    dont_send_lead_ids=dont_send_lead_ids,
                     now=evaluated_at,
                 )
                 refreshed_reconcile = apply_reconciliation(
@@ -321,76 +318,84 @@ class Command(BaseCommand):
             apply_action_reconciliation=apply_action_reconciliation,
             build_crm_v2_database_view=build_crm_v2_database_view,
             resolved_inputs=resolved_inputs,
-            dont_send_lead_ids=dont_send_lead_ids,
             evaluated_at=evaluated_at,
+            active_account_opportunity_ids=active_account_opportunity_ids,
         )
         if existing_mode == "in_place":
-            preliminary_plans = _build_plans(
-                worksheets[crm_v2_sheets.ACTIVE_ACCOUNTS_TAB],
+            assert manual_active_read is not None
+            preliminary_action_plan = _build_action_plan(
                 worksheets[crm_v2_sheets.ACTIONS_TAB],
                 database_view,
                 crm_v2_sheets=crm_v2_sheets,
             )
-            _assert_cross_plan_imports_consistent(
-                preliminary_plans[0],
-                preliminary_plans[1],
-            )
+            if options["replace_sheet_state"]:
+                import_reports["sheet_edits_discarded"] = len(
+                    preliminary_action_plan.imports
+                )
             active_import = apply_opportunity_imports(
-                preliminary_plans[0].imports,
+                manual_active_read.imports,
                 dry_run=False,
                 now=evaluated_at,
             )
-            action_import = apply_followup_imports(
-                preliminary_plans[1].imports,
-                dry_run=False,
-                now=evaluated_at,
-            )
+            if options["replace_sheet_state"]:
+                action_import = apply_followup_imports(
+                    (),
+                    dry_run=False,
+                    now=evaluated_at,
+                )
+            else:
+                action_import = apply_followup_imports(
+                    preliminary_action_plan.imports,
+                    dry_run=False,
+                    now=evaluated_at,
+                )
             invalid_count = len(active_import.invalid) + len(action_import.invalid)
             if invalid_count:
                 raise SheetsError(
                     f"CRM v2 has {invalid_count} invalid human Sheet edit(s)"
                 )
-            import_reports = {
+            import_reports.update({
                 "active_account_edits": active_import.fields_imported,
                 "action_edits": action_import.fields_imported,
-                "legacy_opportunity_edits": 0,
-                "legacy_followup_edits": 0,
-                "legacy_unresolved_rows": 0,
                 "invalid_edits": 0,
-            }
-            # Human edits are authoritative.  Recollect and fully re-run the
-            # evidence/reconciliation/action path before planning any writes.
-            fresh = collect_account_evidence(
-                sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
-                manual_account_pins=resolved_inputs["manual_pins"],
-                owner_overrides=resolved_inputs["owner_overrides"],
-                dont_send_lead_ids=dont_send_lead_ids,
-                now=evaluated_at,
-            )
-            imported_reconcile = apply_reconciliation(
-                fresh,
-                evaluated_at=evaluated_at,
-            )
-            _assert_reconciliation_safe(imported_reconcile)
-            reconciled_evidence, action_report, database_view = _refresh_database_view(
-                collect_account_evidence=collect_account_evidence,
-                apply_reconciliation=apply_reconciliation,
-                apply_action_reconciliation=apply_action_reconciliation,
-                build_crm_v2_database_view=build_crm_v2_database_view,
-                resolved_inputs=resolved_inputs,
-                dont_send_lead_ids=dont_send_lead_ids,
-                evaluated_at=evaluated_at,
-            )
+            })
+            if active_import.fields_imported or action_import.fields_imported:
+                # Human edits are authoritative. Recollect and fully re-run the
+                # evidence/reconciliation/action path before planning writes.
+                fresh = collect_account_evidence(
+                    sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
+                    manual_account_pins=resolved_inputs["manual_pins"],
+                    owner_overrides=resolved_inputs["owner_overrides"],
+                    now=evaluated_at,
+                )
+                imported_reconcile = apply_reconciliation(
+                    fresh,
+                    evaluated_at=evaluated_at,
+                )
+                _assert_reconciliation_safe(imported_reconcile)
+                reconciled_evidence, action_report, database_view = _refresh_database_view(
+                    collect_account_evidence=collect_account_evidence,
+                    apply_reconciliation=apply_reconciliation,
+                    apply_action_reconciliation=apply_action_reconciliation,
+                    build_crm_v2_database_view=build_crm_v2_database_view,
+                    resolved_inputs=resolved_inputs,
+                    evaluated_at=evaluated_at,
+                    active_account_opportunity_ids=(
+                        active_account_opportunity_ids
+                    ),
+                )
 
-        active_plan = action_plan = None
+        action_plan = None
         if existing_mode == "in_place":
-            active_plan, action_plan = _build_plans(
-                worksheets[crm_v2_sheets.ACTIVE_ACCOUNTS_TAB],
+            action_plan = _build_action_plan(
                 worksheets[crm_v2_sheets.ACTIONS_TAB],
                 database_view,
                 crm_v2_sheets=crm_v2_sheets,
             )
-            if active_plan.imports or action_plan.imports:
+            if (
+                not options["replace_sheet_state"]
+                and action_plan.imports
+            ):
                 raise SheetsError(
                     "CRM v2 human imports remained after fresh database re-plan"
                 )
@@ -401,8 +406,7 @@ class Command(BaseCommand):
             "status": "applied" if apply else "planned",
             "sends_performed": 0,
             "context": context,
-            "people": _people_publish_counts(people_result),
-            "people_dont_send_leads": len(dont_send_lead_ids),
+            "people": {"status": "deprecated_not_read"},
             "publication": {
                 "mode": existing_mode,
                 "gate": (
@@ -410,7 +414,8 @@ class Command(BaseCommand):
                     else "reviewed" if apply
                     else "dry-run"
                 ),
-                "managed_tabs": 2,
+                "written_tabs": [crm_v2_sheets.ACTIONS_TAB],
+                "read_only_tabs": [crm_v2_sheets.ACTIVE_ACCOUNTS_TAB],
                 "obsolete_tabs_present": _obsolete_tab_count(
                     worksheets,
                     crm_sheets=crm_sheets,
@@ -421,10 +426,10 @@ class Command(BaseCommand):
             "actions": _action_counts(action_report),
             "human_imports": import_reports,
             "sheet_plan": _sheet_plan_counts(
-                active_plan,
                 action_plan,
                 database_view=database_view,
                 first_cutover=(existing_mode == "first_cutover"),
+                manual_active_read=manual_active_read,
             ),
             "backup": {
                 "required": apply,
@@ -452,33 +457,20 @@ class Command(BaseCommand):
         )
 
         if existing_mode == "first_cutover":
-            active_plan, action_plan, cutover_state = _apply_first_cutover(
-                spreadsheet,
-                worksheets=worksheets,
-                database_view=database_view,
-                crm_sheets=crm_sheets,
-                crm_v2_sheets=crm_v2_sheets,
-                apply_layout=apply_layout,
-                owner_values=owner_values,
-                retain_archive_titles=retained_legacy_archives,
+            raise SheetsError(
+                "first cutover no longer creates Active Accounts; run the manual setup command"
             )
-            self._pending_cutover = cutover_state
-            report["publication"]["atomic_cutover"] = True
-            report["publication"]["obsolete_tabs_archived"] = (
-                _obsolete_tab_count(worksheets, crm_sheets=crm_sheets)
-            )
-            report["publication"]["obsolete_tabs_deleted"] = 0
         else:
-            assert active_plan is not None and action_plan is not None
-            active_plan, action_plan, cutover_state = _apply_in_place_staged(
+            assert action_plan is not None
+            action_plan, cutover_state = _apply_in_place_staged(
                 spreadsheet,
-                active_ws=worksheets[crm_v2_sheets.ACTIVE_ACCOUNTS_TAB],
                 actions_ws=worksheets[crm_v2_sheets.ACTIONS_TAB],
                 database_view=database_view,
                 crm_sheets=crm_sheets,
                 crm_v2_sheets=crm_v2_sheets,
                 apply_layout=apply_layout,
                 owner_values=owner_values,
+                replace_sheet_state=options["replace_sheet_state"],
             )
             self._pending_cutover = cutover_state
             report["publication"]["atomic_cutover"] = True
@@ -486,23 +478,19 @@ class Command(BaseCommand):
             report["publication"]["obsolete_tabs_deleted"] = 0
 
         published_at = timezone.now()
-        active_baselines = commit_sheet_baselines(
-            active_plan.baseline_updates,
-            published_at=published_at,
-        )
         action_baselines = commit_followup_baselines(
             action_plan.baseline_updates,
             published_at=published_at,
         )
         report["baselines"] = {
             "committed": True,
-            "rows": active_baselines + action_baselines,
+            "rows": action_baselines,
         }
         report["sheet_plan"] = _sheet_plan_counts(
-            active_plan,
             action_plan,
             database_view=database_view,
             first_cutover=(existing_mode == "first_cutover"),
+            manual_active_read=manual_active_read,
         )
         return report
 
@@ -514,14 +502,13 @@ def _refresh_database_view(
     apply_action_reconciliation,
     build_crm_v2_database_view,
     resolved_inputs,
-    dont_send_lead_ids,
     evaluated_at,
+    active_account_opportunity_ids=None,
 ):
     reconciled = collect_account_evidence(
         sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
         manual_account_pins=resolved_inputs["manual_pins"],
         owner_overrides=resolved_inputs["owner_overrides"],
-        dont_send_lead_ids=dont_send_lead_ids,
         now=evaluated_at,
     )
     reconciliation = apply_reconciliation(
@@ -533,12 +520,12 @@ def _refresh_database_view(
         sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
         manual_account_pins=resolved_inputs["manual_pins"],
         owner_overrides=resolved_inputs["owner_overrides"],
-        dont_send_lead_ids=dont_send_lead_ids,
         now=evaluated_at,
     )
     action_report = apply_action_reconciliation(
         with_ids,
         evaluated_at=evaluated_at,
+        active_account_opportunity_ids=active_account_opportunity_ids,
     )
     if action_report.issues:
         raise SheetsError(
@@ -549,10 +536,12 @@ def _refresh_database_view(
         sales_motion_accounts=resolved_inputs["sales_motion_accounts"],
         manual_account_pins=resolved_inputs["manual_pins"],
         owner_overrides=resolved_inputs["owner_overrides"],
-        dont_send_lead_ids=dont_send_lead_ids,
         now=evaluated_at,
     )
-    return post_action, action_report, build_crm_v2_database_view(post_action)
+    return post_action, action_report, build_crm_v2_database_view(
+        post_action,
+        active_account_opportunity_ids=active_account_opportunity_ids,
+    )
 
 
 def _build_plans(active_ws, actions_ws, database_view, *, crm_v2_sheets):
@@ -567,6 +556,16 @@ def _build_plans(active_ws, actions_ws, database_view, *, crm_v2_sheets):
     _assert_plan_safe(active_plan)
     _assert_plan_safe(action_plan)
     return active_plan, action_plan
+
+
+def _build_action_plan(actions_ws, database_view, *, crm_v2_sheets):
+    """Plan the only generated daily CRM surface."""
+    action_plan = crm_v2_sheets.actions_adapter(actions_ws).plan(
+        database_view.rows.actions,
+        baseline_by_id=database_view.action_baselines,
+    )
+    _assert_plan_safe(action_plan)
+    return action_plan
 
 
 def _assert_plan_safe(plan) -> None:
@@ -836,6 +835,7 @@ def _apply_first_cutover(
         headers=crm_v2_sheets.ACTION_HEADERS,
         technical_fields=crm_v2_sheets.ACTION_TECHNICAL_FIELDS,
         owner_values=owner_values,
+        desired_rows=database_view.rows.actions,
     )
     # All value/header/identity readback happens before the destructive title
     # batch.  A failure here leaves every legacy source tab untouched.
@@ -931,68 +931,47 @@ def _apply_first_cutover(
 def _apply_in_place_staged(
     spreadsheet,
     *,
-    active_ws,
     actions_ws,
     database_view,
     crm_sheets,
     crm_v2_sheets,
     apply_layout,
     owner_values,
+    replace_sheet_state=False,
 ):
-    """Publish both routine surfaces through verified duplicates and one swap.
-
-    Mutating the two canonical worksheets sequentially can expose a mixed
-    Active/Actions generation when the second write fails.  Duplicating first
-    preserves every formula, unknown operator column, comment, and format while
-    keeping both live tabs untouched until one atomic title batch succeeds.
-    """
+    """Publish only the generated Actions queue through a verified swap."""
     token = uuid4().hex[:12]
-    original_fingerprints = {
-        crm_v2_sheets.ACTIVE_ACCOUNTS_TAB: _worksheet_formula_fingerprint(
-            active_ws,
-            crm_sheets=crm_sheets,
-        ),
-        crm_v2_sheets.ACTIONS_TAB: _worksheet_formula_fingerprint(
-            actions_ws,
-            crm_sheets=crm_sheets,
-        ),
-    }
+    original_fingerprint = _worksheet_formula_fingerprint(
+        actions_ws,
+        crm_sheets=crm_sheets,
+    )
     try:
-        staged_active = spreadsheet.duplicate_sheet(
-            active_ws.id,
-            new_sheet_name=f"_CRM v2 staging active {token}",
-        )
-        staged_actions = spreadsheet.duplicate_sheet(
-            actions_ws.id,
-            new_sheet_name=f"_CRM v2 staging actions {token}",
-        )
+        if replace_sheet_state:
+            staged_actions = spreadsheet.add_worksheet(
+                title=f"_CRM v2 staging actions {token}",
+                rows=max(1000, len(database_view.rows.actions) + 10),
+                cols=len(crm_v2_sheets.ACTION_HEADERS),
+            )
+        else:
+            staged_actions = spreadsheet.duplicate_sheet(
+                actions_ws.id,
+                new_sheet_name=f"_CRM v2 staging actions {token}",
+            )
     except Exception as exc:
         raise SheetsError("CRM v2 routine staging-copy creation failed") from exc
 
-    active_plan, action_plan = _build_plans(
-        staged_active,
+    action_plan = _build_action_plan(
         staged_actions,
         database_view,
         crm_v2_sheets=crm_v2_sheets,
     )
-    if active_plan.imports or action_plan.imports:
+    if action_plan.imports:
         raise SheetsError(
-            "CRM v2 source tabs changed while the staged publish was prepared"
+            "CRM Actions changed while the staged publish was prepared"
         )
-    crm_v2_sheets.active_accounts_adapter(staged_active).apply(
-        active_plan,
-        dry_run=False,
-    )
     crm_v2_sheets.actions_adapter(staged_actions).apply(
         action_plan,
         dry_run=False,
-    )
-    apply_layout(
-        spreadsheet,
-        staged_active,
-        headers=crm_v2_sheets.ACTIVE_ACCOUNT_HEADERS,
-        technical_fields=crm_v2_sheets.ACTIVE_ACCOUNT_TECHNICAL_FIELDS,
-        owner_values=owner_values,
     )
     apply_layout(
         spreadsheet,
@@ -1000,16 +979,7 @@ def _apply_in_place_staged(
         headers=crm_v2_sheets.ACTION_HEADERS,
         technical_fields=crm_v2_sheets.ACTION_TECHNICAL_FIELDS,
         owner_values=owner_values,
-    )
-    _verify_sheet_payload(
-        staged_active,
-        headers=crm_v2_sheets.ACTIVE_ACCOUNT_HEADERS,
-        key_header=crm_v2_sheets.COL_OPPORTUNITY_ID,
-        desired_rows=database_view.rows.active_accounts,
-        crm_sheets=crm_sheets,
-        exact_headers=False,
-        baseline_updates=active_plan.baseline_updates,
-        human_fields=crm_v2_sheets.ACTIVE_ACCOUNT_HUMAN_FIELDS,
+        desired_rows=database_view.rows.actions,
     )
     _verify_sheet_payload(
         staged_actions,
@@ -1021,36 +991,21 @@ def _apply_in_place_staged(
         baseline_updates=action_plan.baseline_updates,
         human_fields=crm_v2_sheets.ACTION_HUMAN_FIELDS,
     )
-    if original_fingerprints != {
-        crm_v2_sheets.ACTIVE_ACCOUNTS_TAB: _worksheet_formula_fingerprint(
-            active_ws,
-            crm_sheets=crm_sheets,
-        ),
-        crm_v2_sheets.ACTIONS_TAB: _worksheet_formula_fingerprint(
-            actions_ws,
-            crm_sheets=crm_sheets,
-        ),
-    }:
-        raise SheetsError("CRM v2 live tabs changed during staged publication")
+    if (
+        not replace_sheet_state
+        and original_fingerprint
+        != _worksheet_formula_fingerprint(actions_ws, crm_sheets=crm_sheets)
+    ):
+        raise SheetsError("CRM Actions changed during staged publication")
 
     archive_titles = {
-        crm_v2_sheets.ACTIVE_ACCOUNTS_TAB: _archive_title(
-            crm_v2_sheets.ACTIVE_ACCOUNTS_TAB,
-            token=token,
-        ),
         crm_v2_sheets.ACTIONS_TAB: _archive_title(
             crm_v2_sheets.ACTIONS_TAB,
             token=token,
         ),
     }
     requests = [
-        _rename_request(active_ws.id, archive_titles[crm_v2_sheets.ACTIVE_ACCOUNTS_TAB]),
         _rename_request(actions_ws.id, archive_titles[crm_v2_sheets.ACTIONS_TAB]),
-        _rename_request(
-            staged_active.id,
-            crm_v2_sheets.ACTIVE_ACCOUNTS_TAB,
-            index=0,
-        ),
         _rename_request(
             staged_actions.id,
             crm_v2_sheets.ACTIONS_TAB,
@@ -1065,17 +1020,15 @@ def _apply_in_place_staged(
         spreadsheet=spreadsheet,
         token=token,
         new_sheet_ids={
-            crm_v2_sheets.ACTIVE_ACCOUNTS_TAB: staged_active.id,
             crm_v2_sheets.ACTIONS_TAB: staged_actions.id,
         },
         archived_sheet_ids={
-            crm_v2_sheets.ACTIVE_ACCOUNTS_TAB: active_ws.id,
             crm_v2_sheets.ACTIONS_TAB: actions_ws.id,
         },
         archived_titles=archive_titles,
-        cleanup_sheet_ids=(active_ws.id, actions_ws.id),
+        cleanup_sheet_ids=(actions_ws.id,),
     )
-    return active_plan, action_plan, state
+    return action_plan, state
 
 
 def _worksheet_formula_fingerprint(worksheet, *, crm_sheets) -> str:
@@ -1574,33 +1527,6 @@ def _evidence_counts(rows) -> dict[str, Any]:
     }
 
 
-def _people_publish_counts(result: Mapping[str, Any]) -> dict[str, Any]:
-    fields = (
-        "source_leads",
-        "source_deals",
-        "companies",
-        "rows_before",
-        "rows_after",
-        "appended",
-        "updated",
-        "updated_cells",
-        "unchanged",
-        "skipped",
-        "errored",
-        "duplicate_keys",
-        "duplicate_lead_ids",
-        "duplicate_linkedin_urls",
-        "header_additions",
-    )
-    return {
-        "status": str(result.get("status") or ""),
-        **{
-            field: int(result.get(field, 0) or 0)
-            for field in fields
-        },
-    }
-
-
 def _reconciliation_counts(report) -> dict[str, Any]:
     fields = (
         "evidence_rows", "admitted_rows", "people_only_rows", "accounts_created",
@@ -1616,29 +1542,35 @@ def _reconciliation_counts(report) -> dict[str, Any]:
 
 def _action_counts(report) -> dict[str, Any]:
     fields = (
+        "active_account_scope_rows", "out_of_scope_rows",
         "evidence_rows", "actionable_rows", "actions_created", "actions_updated",
         "actions_reused", "actions_cancelled", "actions_unchanged",
         "human_actions_preserved", "unowned_skipped", "ineligible_rows",
     )
     return {
+        "active_account_scope_enforced": bool(
+            report.active_account_scope_enforced
+        ),
         **{field: int(getattr(report, field)) for field in fields},
         "issues": len(report.issues),
     }
 
 
 def _sheet_plan_counts(
-    active_plan,
     action_plan,
     *,
     database_view,
     first_cutover,
+    manual_active_read=None,
 ) -> dict[str, Any]:
-    if active_plan is None or action_plan is None:
+    if action_plan is None:
         return {
             "first_cutover": first_cutover,
-            "active_account_rows": len(database_view.rows.active_accounts),
+            "active_accounts_write_mode": "never",
+            "active_accounts_bound_rows": 0,
+            "active_accounts_unbound_rows": 0,
             "action_rows": len(database_view.rows.actions),
-            "appends": len(database_view.rows.active_accounts) + len(database_view.rows.actions),
+            "appends": len(database_view.rows.actions),
             "cell_changes": 0,
             "imports": 0,
             "conflicts": 0,
@@ -1646,14 +1578,17 @@ def _sheet_plan_counts(
         }
     return {
         "first_cutover": first_cutover,
-        "active_account_rows": len(database_view.rows.active_accounts),
-        "action_rows": len(database_view.rows.actions),
-        "appends": len(active_plan.appends) + len(action_plan.appends),
-        "cell_changes": len(active_plan.changes) + len(action_plan.changes),
-        "imports": len(active_plan.imports) + len(action_plan.imports),
-        "conflicts": len(active_plan.conflicts) + len(action_plan.conflicts),
-        "unkeyed_rows": (
-            len(active_plan.unkeyed_nonempty_rows)
-            + len(action_plan.unkeyed_nonempty_rows)
+        "active_accounts_write_mode": "never",
+        "active_accounts_bound_rows": int(
+            getattr(manual_active_read, "bound_rows", 0)
         ),
+        "active_accounts_unbound_rows": int(
+            getattr(manual_active_read, "unbound_rows", 0)
+        ),
+        "action_rows": len(database_view.rows.actions),
+        "appends": len(action_plan.appends),
+        "cell_changes": len(action_plan.changes),
+        "imports": len(action_plan.imports),
+        "conflicts": len(action_plan.conflicts),
+        "unkeyed_rows": len(action_plan.unkeyed_nonempty_rows),
     }

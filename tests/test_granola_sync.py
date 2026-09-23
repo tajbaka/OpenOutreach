@@ -343,6 +343,43 @@ def test_resolver_prefers_granola_and_falls_back_to_gemini_on_source_failure():
 
 
 @pytest.mark.django_db
+def test_resolver_uses_newer_gemini_recording_over_older_granola():
+    lead = _lead()
+    opportunity = _opportunity(lead)
+    common = {
+        "opportunity": opportunity,
+        "detail_status": MeetingNote.DetailStatus.COMPLETE,
+        "match_status": MeetingNote.MatchStatus.MATCHED,
+        "match_method": MeetingNote.MatchMethod.MANUAL,
+        "fetched_at": NOW,
+    }
+    MeetingNote.objects.create(
+        source=MeetingNote.Source.GRANOLA,
+        external_id="not_aaaaaaaaaaaaaa",
+        content="Older Granola context",
+        title="Older call",
+        scheduled_start_at=MEETING_AT,
+        source_updated_at=NOW,
+        **common,
+    )
+    MeetingNote.objects.create(
+        source=MeetingNote.Source.GEMINI,
+        external_id="gemini-newer-call",
+        content="Newer Gemini context",
+        title="Newer call",
+        scheduled_start_at=MEETING_AT + timedelta(days=1),
+        source_updated_at=MEETING_AT + timedelta(days=1),
+        **common,
+    )
+
+    context = resolve_meeting_context(opportunity=opportunity)
+
+    assert context is not None
+    assert context.source == MeetingNote.Source.GEMINI
+    assert context.content == "Newer Gemini context"
+
+
+@pytest.mark.django_db
 def test_resolver_falls_back_to_current_meeting_gemini_fields_without_mirror():
     lead = _lead()
     opportunity = _opportunity(lead)

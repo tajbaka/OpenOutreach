@@ -1,18 +1,17 @@
 # Canonical CRM v2 refresh workflow
 
-The production CRM is account-first and deliberately small. `People` remains
-the complete, growing contact ledger. Sales work happens in exactly two managed
-tabs:
+The production CRM is account-first and deliberately small. The three working
+tabs have intentionally different ownership:
 
 | Surface | Purpose | Identity |
 |---|---|---|
-| `Active Accounts` | One row per currently relevant account/opportunity | Stable Account and Opportunity IDs |
-| `Actions` | One owner-filterable queue of current work plus retained handled history | Stable Action, Opportunity, and target Lead IDs |
+| `Active Accounts` | Operator-owned Attio-style company/stage ledger; never automation-written | Hidden Account and Opportunity IDs when bound |
+| `Actions` | Generated owner-filterable queue of current work plus retained handled history | Stable Action, Opportunity, and target Lead IDs |
+| `People` | Generated contacts only for companies listed in Active Accounts; Notes/Priority/custom columns are manual | Canonical LinkedIn URL, then unique email fallback |
 
 `Opportunities`, `Pipeline`, `Recovery`, and `<Owner> - Followups` are retired
-legacy surfaces. They are not inputs to routine publication. Stage, waiting,
-attention, ownership, and next work are fields on `Active Accounts`/`Actions`,
-so duplicating them into more tabs only creates clutter.
+legacy surfaces. They are not publication targets. Active Accounts is the
+manual pipeline tracker; Actions is the programmatic safety net.
 
 No CRM command sends Gmail or LinkedIn messages.
 
@@ -23,60 +22,32 @@ Context ingestion and Sheet publication are separate on purpose.
 1. `sync_crm_v2_context --apply` refreshes configured Gmail threads,
    Gmail-delivered Gemini notes, strictly validated corporate email-first
    contacts, and Granola meeting context. It writes DB/context state only.
-2. `refresh_crm_v2 --apply --routine` reads stored evidence, imports human
-   edits, reconciles Accounts/Opportunities/current Actions, preserves People,
-   and atomically publishes the two v2 tabs. After the CRM transaction commits,
-   it refreshes the separate `Accepted — Awaiting Reply` reporting tab under
-   the same publisher lock.
+2. `refresh_crm_v2 --apply --routine` reads stored evidence plus the exact
+   bound Opportunity scope and Owner/Stage edits from manual Active Accounts, reconciles
+   Accounts/Opportunities/current Actions, and atomically publishes only
+   Actions without reading or writing People.
+3. `sync_active_account_people --apply` reads the manual Active Accounts rows,
+   selects exact company matches plus explicit Account-ID Opportunity contacts,
+   and atomically rebuilds People. It removes contacts when their company leaves
+   Active Accounts and never sends or creates outreach.
+4. `sync_linkedin_pending --apply` reads persisted LinkedIn messages and
+   incrementally reconciles the separate `LinkedIn Pending` tab. It considers
+   only the last 14 days, exact unambiguous conversation ownership, and
+   deterministic questions/requests/interest; later replies and aged-out items
+   are deleted, changed items update in place, and new items append.
 
-Granola is primary meeting-note context when deterministically matched. Stored
-Gemini is secondary. LinkedIn messages come from the daemon/realtime paths and
+Meeting-note context is ordered by recording time when deterministically
+matched. Granola wins only a same-recording tie; a newer stored Gemini note
+wins over an older Granola note. LinkedIn messages come from the daemon/realtime paths and
 the separately scheduled `backfill_messages`; the CRM workflow never logs into
 LinkedIn. Google Calendar and Drive-only notes use
 [`data-sync-workflow.md`](data-sync-workflow.md).
 
-## Accepted connections awaiting a reply
-
-`Accepted — Awaiting Reply` is a generated reporting view, not a third sales
-decision queue. It contains exactly five columns: Connection recorded (Toronto),
-Sender, Name, Company, and LinkedIn URL. Arian and Eddy (canonical DB operator
-Chuka) are separate rows for the same person. Repeat campaign Deals collapse to
-the earliest known `connected_at` for that Lead/sender, even if their campaigns
-are now disabled or finished. Rows are newest-first; missing timestamps remain
-blank at the bottom. Detection time is not the exact acceptance click time.
-Legacy-style UTC-midnight timestamps are conservatively displayed date-only.
-
-A row disappears on the next successful publication after a human inbound
-LinkedIn or Gmail Message is stored for that exact Lead and sender. Our outbound
-follow-ups, automated responses/bounces, and replies to another sender do not
-remove it. Sender attribution uses the inbound Message's explicit owner or,
-when absent, an unambiguous outbound owner/strict sender alias in that exact
-Lead/source/nonblank-thread conversation. It never borrows ownership from a
-different thread or campaign. Unattributed replies leave rows visible and are counted in the
-aggregate report. Legacy `Deal.last_reply_at` is not a removal signal because
-some ingestion paths stamp it across a Lead's Deals. Source freshness still
-depends on the connection sweep, LinkedIn message ingestion, and Gmail sync.
-
-Only this rebuildable tab loses rows. All database history and the People,
-Active Accounts, and Actions tabs retain their existing rules. The view neither
-creates outreach nor changes campaign eligibility, delays, or suppression.
-Do not add manual notes or new columns here: a sort/rebuild would detach them
-from their people. Unknown schemas, populated extra columns, native formulas,
-chips, or validation cause publication to fail instead of being overwritten.
-
-Preview or publish this view independently without running CRM reconciliation:
-
-```bash
-.venv/bin/python manage.py sync_accepted_connections
-.venv/bin/python manage.py sync_accepted_connections --apply
-```
-
-Routine `refresh_crm_v2` includes the same publisher. Both commands hold the
-existing cross-host CRM advisory lock, perform native readback, and report
-aggregate counts only. Reporting failure makes the scheduled job fail, without
-rolling back the already committed Active Accounts/Actions cutover. No schema
-migration or new scheduled task is required; the scheduler must use this updated
-checkout. `sync_sheets` remains People-only.
+`Accepted — Awaiting Reply` and `Upcoming Meetings` are retired workbook views.
+Neither is created, read, or written by the canonical scheduled workflow.
+Historical accepted-connection projection code remains standalone only and must
+not be scheduled. Meeting evidence used by Actions and People comes from the
+database, not an `Upcoming Meetings` Sheet tab.
 
 Regression QA uses a disposable socket-only PostgreSQL instance, with external
 network, browser, and credential access blocked:
@@ -94,15 +65,22 @@ Accounts enter `Active Accounts` from the strongest qualifying evidence:
 3. a human Gmail inbound/bidirectional thread; or
 4. a substantive bidirectional LinkedIn conversation.
 
-One-sided outbound never promotes an account out of People. Exact thread-level
+One-sided outbound remains contact-only in Postgres. Exact thread-level
 message direction determines `Needs response` versus `Waiting`; unrelated
 outbound in another thread cannot hide an inbound reply. An account without a
 deterministic owner or target remains visible with attention required but does
 not enter an outbound queue.
 
-`Don't send`, disqualification, and company suppression are delivery controls,
-not relevance erasers. They suppress outreach to the exact target while
-preserving legitimate meeting/email/account history. Closed Won/Lost, owner,
+A complete, matched Granola or Gemini `MeetingNote` linked to the exact
+Opportunity can create one account-level post-meeting Action without a Calendar
+`Meeting` row when its action-item text explicitly assigns work to the resolved
+Opportunity owner. Unassigned bullets and customer-owned bullets are ignored.
+The exact note UUID keys the durable Action: later unrelated outbound email does
+not clear it, while marking that Action handled/completed does.
+
+Database disqualification and company suppression are delivery controls, not
+relevance erasers. They suppress outreach while preserving legitimate
+meeting/email/account history. Legacy People `Don't send` cells are ignored. Closed Won/Lost, owner,
 stage, sales-motion step, commercial fields, manual pins, and genuine human
 actions remain human-authoritative.
 
@@ -111,20 +89,29 @@ field contract.
 
 ## Field ownership
 
-Human-owned cells are imported by stable ID through conservative three-way
-merges. These include owner, stage, motion step, contact roles, next step/due,
-waiting, manual pin, value/probability, closure fields, draft/channel, handled,
-and disposition. Concurrent DB and Sheet edits produce a conflict; the system
-does not guess.
+`Active Accounts` is entirely operator-owned. Bound rows contribute only Owner
+and Stage to Postgres by exact hidden Opportunity ID, and those exact IDs are
+the Actions inclusion boundary. Company, Main point of
+contact, Next step, Next step due, and Notes stay Sheet-only, and unbound rows
+cannot authorize Actions. The refresh never modifies a cell, row, format,
+filter, validation rule, or ordering on this tab.
 
-System-owned cells include stable IDs, resolved account/contact identity,
-admission evidence, source timestamps, last meaningful touch, attention, who
-owes, and sync revisions. Unknown columns, formulas, comments, formatting, and
-operator cells outside managed ranges are preserved.
+`Actions` retains conservative three-way merge for Waiting until, Channel,
+Draft, Handled, and Disposition. Concurrent DB and Sheet edits produce a
+conflict; the system does not guess. Replaceable generated tasks outside the
+Active Accounts scope are cancelled. Human-authored database tasks outside the
+scope are preserved but omitted from the tab. Its stable IDs and generated
+evidence are system-owned.
 
-`People` is never cleared, rebuilt, reordered, pruned, or shrunk. Existing rows
-are updated in place and new exact Leads append once. Stable Lead ID is
-canonical identity; exact canonical LinkedIn URL is legacy bootstrap identity.
+`People` is generated by `sync_active_account_people`. Active Accounts defines
+the exact company/account boundary, then contacts require human inbound Gmail,
+calendar/Granola participation, an exact Main point of contact name, or a
+deliberately curated OpportunityContact. Exact company name alone is
+insufficient. The view updates contact/profile/sync fields; preserves Notes,
+Priority, and unrecognized operator columns by visible identity; and omits AI
+Notes, Lead ID, Outreach status, and Stage. The
+one-time `--reset` option deliberately discards existing rows/manual values.
+`preview_crm_v2`, `refresh_crm_v2`, and follow-up drafting still never read it.
 
 ## Configuration
 
@@ -135,68 +122,24 @@ Store values in `.env`; never print or commit them.
 | `DATABASE_URL` | Required outside tests | Shared Postgres database; no runtime SQLite fallback |
 | `GOOGLE_SHEETS_ID` | Required | CRM workbook write target |
 | `GOOGLE_SHEETS_CREDENTIALS_PATH` | Required | Service-account JSON with Editor access |
-| `GOOGLE_SHEETS_TAB_NAME` | Optional (`People`) | Durable People tab |
+| `GOOGLE_SHEETS_TAB_NAME` | Legacy only (`People`) | Deprecated People export tab |
 | `SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID` | Required for Sales Motion pins | Separate read-only workbook; never the CRM target |
 | `GRANOLA_API_KEY` | Optional | Primary read-only meeting-note source |
 | `GRANOLA_API_BASE` / `GRANOLA_HTTP_TIMEOUT_SECONDS` | Optional | Granola transport configuration |
 | `ACTIVE_TIMEZONE` | Optional (`America/Toronto`) | Business date for due/waiting evaluation |
 
-## Safe first cutover
+## Manual ledger conversion and routine publication
 
-Pause scheduled CRM writers. Take and verify a Postgres snapshot before schema
-migration, then install dependencies and apply migrations. The automatic CRM
-backup protects Google Sheets only; it is not a database backup.
-
-Build a private preview using the exact inputs intended for apply:
+`configure_active_accounts` is the only command authorized to reshape Active
+Accounts. It is explicit and unscheduled. Preview first; apply takes a private
+full-workbook backup and converts the old generated projection once:
 
 ```bash
-.venv/bin/python manage.py sync_crm_v2_context --apply
-
-.venv/bin/python manage.py preview_crm_v2 \
-  --manual-pin StackArmor \
-  --owner-override Ramp=Arian \
-  --owner-override StackArmor=Arian \
-  --output artifacts/crm-audits/crm-v2-reviewed.json
-
-.venv/bin/python manage.py refresh_crm_v2 \
-  --manual-pin StackArmor \
-  --owner-override Ramp=Arian \
-  --owner-override StackArmor=Arian
+.venv/bin/python manage.py configure_active_accounts
+.venv/bin/python manage.py configure_active_accounts --apply
 ```
 
-The preview is a mode-`0600` local artifact and may contain CRM identities; keep
-it gitignored/private. The refresh dry-run executes the exact reconciliation and
-action mutation path inside a rolled-back DB transaction and performs zero
-Sheet writes. Review at least:
-
-- active versus People-only counts and admission reasons;
-- action count, unowned/untargeted work, and Don't send state;
-- identity/reconciliation issues (must be zero);
-- People append/update/error and duplicate-ID counts;
-- human imports/conflicts/unkeyed rows;
-- planned obsolete-tab count and first-cutover mode; and
-- representative critical accounts such as Ramp and StackArmor in the private
-  preview, without copying their underlying conversations into logs.
-
-Apply only when the preview and dry-run are accepted and still current:
-
-```bash
-.venv/bin/python manage.py refresh_crm_v2 --apply \
-  --reviewed-preview artifacts/crm-audits/crm-v2-reviewed.json \
-  --manual-pin StackArmor \
-  --owner-override Ramp=Arian \
-  --owner-override StackArmor=Arian
-```
-
-The command recomputes the evidence universe and refuses a stale, public,
-structurally invalid, or semantically different preview. Before the first Sheet
-write it creates a full private workbook backup under
-`artifacts/crm-backups/`. Both v2 tabs are staged and verified before one atomic
-title cutover. Exact legacy canonical titles are removed only after DB commit;
-unresolved material legacy rows may be retained under explicit archive titles
-for review. A DB failure after title activation triggers title compensation.
-
-After cutover, verify routine behavior:
+The daily workflow then uses:
 
 ```bash
 .venv/bin/python manage.py refresh_crm_v2 \
@@ -208,12 +151,29 @@ After cutover, verify routine behavior:
   --manual-pin StackArmor \
   --owner-override Ramp=Arian \
   --owner-override StackArmor=Arian
+
+.venv/bin/python manage.py sync_active_account_people --apply
+.venv/bin/python manage.py sync_linkedin_pending --apply
 ```
 
 Routine mode fails closed unless both `Active Accounts` and `Actions` exist and
-all exact legacy canonical titles are absent. Routine publication stages and
-verifies both replacements before one atomic swap; it never updates one live
-surface without the other.
+all exact legacy canonical titles are absent. It reads the exact Opportunity
+scope plus Owner/Stage from bound manual rows, stages and verifies only in-scope
+Actions, then swaps only Actions. Active
+Accounts is never part of the write batch.
+
+Routine refreshes normally import valid human edits and fail closed on invalid
+or stale edits. `--replace-sheet-state` applies only to Actions: it discards
+candidate Actions edits and stages a clean queue, while still reading stable-ID
+Owner/Stage changes from Active Accounts. It does not inspect `People`.
+
+Every Actions publication orders rows by `Why now` urgency before due date.
+The staged tab groups contiguous urgency cohorts with subtle row bands and a
+stronger divider at each cohort start; `Why now` cells receive a stronger
+matching fill, and due-today/overdue date cells are emphasized. Formatting and
+row moves operate on the generated Actions staging copy before verified atomic
+replacement. Active Accounts remains fully manual and is never reformatted or
+reordered by this workflow.
 
 ## Windows scheduled runner
 
@@ -290,7 +250,7 @@ database merely to undo a Sheet-only issue.
 `refresh_crm` is the legacy multi-surface publisher. It is not scheduled and
 refuses to run once either v2 canonical tab exists. Do not bypass that guard.
 
-`sync_sheets` remains available only for a narrow People diagnostic:
+`sync_sheets` remains available only as a deprecated People diagnostic/export:
 
 ```bash
 .venv/bin/python manage.py sync_sheets --dry-run

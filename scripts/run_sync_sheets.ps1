@@ -1,7 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 # Keep this filename so the existing Windows Scheduled Task action remains
-# valid; the authoritative job it launches is now the two-phase CRM v2 refresh.
+# valid; the authoritative job refreshes CRM context, Actions, the
+# Active-Accounts-scoped People view, and LinkedIn Pending.
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $logDir = Join-Path $repoRoot "data\logs"
@@ -62,6 +63,24 @@ try {
     Write-Log "finished refresh_crm_v2 run_id=$runId exit_code=$refreshExitCode"
     if ($refreshExitCode -ne 0) {
         throw "refresh_crm_v2 exited with code $refreshExitCode"
+    }
+
+    Write-Log "starting sync_active_account_people run_id=$runId"
+    $peopleExitCode = Invoke-LoggedPython -Arguments @(
+        "manage.py", "sync_active_account_people", "--apply"
+    )
+    Write-Log "finished sync_active_account_people run_id=$runId exit_code=$peopleExitCode"
+    if ($peopleExitCode -ne 0) {
+        throw "sync_active_account_people exited with code $peopleExitCode"
+    }
+
+    Write-Log "starting sync_linkedin_pending run_id=$runId"
+    $linkedinPendingExitCode = Invoke-LoggedPython -Arguments @(
+        "manage.py", "sync_linkedin_pending", "--apply"
+    )
+    Write-Log "finished sync_linkedin_pending run_id=$runId exit_code=$linkedinPendingExitCode"
+    if ($linkedinPendingExitCode -ne 0) {
+        throw "sync_linkedin_pending exited with code $linkedinPendingExitCode"
     }
 
     Write-Log "finished crm_v2_workflow run_id=$runId exit_code=0"

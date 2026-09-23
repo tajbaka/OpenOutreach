@@ -54,9 +54,12 @@ def main():
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'accepted-connections':
         return pytest.main(common + [
             'tests/test_accepted_connections.py', 'tests/test_accepted_connections_sheet.py',
+            'tests/management/test_preview_crm_v2.py',
             'tests/management/test_refresh_crm_v2.py', 'tests/management/test_sync_sheets.py',
+            'tests/test_active_account_people.py',
             'tests/management/test_notify_sync_sheets_health.py', 'tests/management/test_generate_followups.py',
-            'tests/test_crm_v2_evidence.py', 'tests/test_crm_lock.py',
+            'tests/test_crm_v2_policy.py', 'tests/test_crm_v2_evidence.py',
+            'tests/test_crm_v2_actions.py', 'tests/test_crm_lock.py',
         ])
     return pytest.main(common + [
         'tests/campaign_qa/test_imported_campaigns.py',
@@ -103,6 +106,7 @@ def main():
         'tests/test_lead_role_tag.py', 'tests/test_sales_nav_saved_search_exports.py',
         'tests/management/test_review_general_icp_messages.py',
         'tests/management/test_sync_sheets.py', 'tests/test_sheets.py',
+        'tests/test_active_account_people.py',
         'tests/test_accepted_connections.py', 'tests/test_accepted_connections_sheet.py',
         'tests/management/test_refresh_crm_v2.py', 'tests/test_crm_lock.py',
         'tests/management/test_sync_gmail_context_failures.py',

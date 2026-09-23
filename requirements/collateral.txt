@@ -1,0 +1,3 @@
+# Optional isolated tooling for personalized PDFs; not included by workers.
+PyMuPDF==1.26.4
+Pillow==12.2.0

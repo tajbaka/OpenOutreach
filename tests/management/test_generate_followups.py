@@ -52,6 +52,21 @@ def test_filter_queue_limit_recomputes_owner_counts():
     assert filtered["counts_by_owner"] == {"Arian": 1}
 
 
+@pytest.mark.django_db
+def test_canonical_queue_does_not_read_deprecated_people(monkeypatch):
+    from linkedin.notifications import sheets
+
+    monkeypatch.setattr(
+        sheets,
+        "_gspread_client",
+        lambda: pytest.fail("canonical queue must not read People"),
+    )
+
+    payload = canonical_followup_command._canonical_queue()
+
+    assert payload["candidate_count"] == 0
+
+
 def test_refresh_convenience_uses_context_then_routine_crm_v2(monkeypatch):
     calls = []
     monkeypatch.setattr(canonical_followup_command, "_canonical_queue", _queue)

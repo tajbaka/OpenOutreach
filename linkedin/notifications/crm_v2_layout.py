@@ -8,10 +8,10 @@ in the orchestrator's separate atomic request.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, Mapping
 
 from linkedin.exceptions import SheetsError
-from linkedin.notifications import crm_v2_sheets
+from linkedin.notifications import crm_v2_sheets, manual_active_accounts
 
 
 _HEADER_BACKGROUND = {"red": 0.12, "green": 0.20, "blue": 0.34}
@@ -38,6 +38,11 @@ _WIDTHS = {
     crm_v2_sheets.COL_DRAFT: 280,
     crm_v2_sheets.COL_HANDLED: 85,
     crm_v2_sheets.COL_DISPOSITION: 120,
+    manual_active_accounts.COL_COMPANY: 190,
+    manual_active_accounts.COL_MAIN_POINT_OF_CONTACT: 190,
+    manual_active_accounts.COL_NEXT_STEP: 245,
+    manual_active_accounts.COL_NEXT_STEP_DUE: 120,
+    manual_active_accounts.COL_NOTES: 280,
 }
 
 _WRAPPED_FIELDS = frozenset({
@@ -48,6 +53,10 @@ _WRAPPED_FIELDS = frozenset({
     crm_v2_sheets.COL_CONTACT,
     crm_v2_sheets.COL_WHY_NOW,
     crm_v2_sheets.COL_DRAFT,
+    manual_active_accounts.COL_COMPANY,
+    manual_active_accounts.COL_MAIN_POINT_OF_CONTACT,
+    manual_active_accounts.COL_NEXT_STEP,
+    manual_active_accounts.COL_NOTES,
 })
 
 
@@ -57,6 +66,7 @@ def build_layout_requests(
     headers: Sequence[str],
     technical_fields: Iterable[str],
     owner_values: Iterable[str] = (),
+    validation_values: Mapping[str, Iterable[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Return compact, bounded layout requests for one managed worksheet."""
     sheet_id = getattr(worksheet, "id", None)
@@ -171,6 +181,7 @@ def build_layout_requests(
         }, key=str.casefold)),
         crm_v2_sheets.COL_ATTENTION: crm_v2_sheets.ATTENTION_VALUES,
         crm_v2_sheets.COL_OUTREACH: crm_v2_sheets.OUTREACH_VALUES,
+        **dict(validation_values or {}),
     }
     for header, values in allowed_values.items():
         if header not in header_list or not values or len(values) > 500:
@@ -208,6 +219,8 @@ def apply_layout(
     headers: Sequence[str],
     technical_fields: Iterable[str],
     owner_values: Iterable[str] = (),
+    validation_values: Mapping[str, Iterable[str]] | None = None,
+    desired_rows: Iterable[Mapping[str, Any]] | None = None,
 ) -> int:
     """Apply one bounded formatting batch and return its request count."""
     requests = build_layout_requests(
@@ -215,7 +228,18 @@ def apply_layout(
         headers=headers,
         technical_fields=technical_fields,
         owner_values=owner_values,
+        validation_values=validation_values,
     )
+    if desired_rows is not None and tuple(headers) == crm_v2_sheets.ACTION_HEADERS:
+        from linkedin.notifications.crm_v2_actions_layout import (
+            build_action_presentation_requests,
+        )
+
+        presentation, _groups, _moves = build_action_presentation_requests(
+            worksheet,
+            desired_rows=desired_rows,
+        )
+        requests.extend(presentation)
     try:
         spreadsheet.batch_update({"requests": requests})
     except Exception as exc:

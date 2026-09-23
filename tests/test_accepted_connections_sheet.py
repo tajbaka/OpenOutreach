@@ -7,8 +7,6 @@ import re
 
 import pytest
 from django.core.management import call_command
-from django.core.management.base import CommandError
-from django.db import connection
 
 from linkedin.accepted_connections import AcceptedConnection
 from linkedin.exceptions import SheetsError
@@ -165,32 +163,3 @@ def test_command_default_preview_and_explicit_apply(report_env):
     output = io.StringIO()
     call_command("sync_accepted_connections", "--apply", stdout=output)
     assert json.loads(output.getvalue())["verified"]
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.parametrize("apply,failed", [(False, False), (True, False), (True, True)])
-def test_refresh_invokes_projection_after_its_crm_transaction(monkeypatch, apply, failed):
-    from crm.models import Account
-    from linkedin.management.commands.refresh_crm_v2 import Command
-    def run(self, options, **kwargs):
-        assert connection.in_atomic_block
-        Account.objects.create(name="Committed before reporting")
-        return {"publication": {}}
-    calls = []
-    def publish(*, dry_run):
-        assert not connection.in_atomic_block
-        assert Account.objects.filter(name="Committed before reporting").exists() is apply
-        calls.append(dry_run)
-        if failed:
-            raise SheetsError("Reporting failed")
-        return {"status": "planned" if dry_run else "published"}
-    monkeypatch.setattr(Command, "_run", run)
-    monkeypatch.setattr(pub, "sync_accepted_connections", publish)
-    args = ["--apply", "--routine"] if apply else []
-    if failed:
-        with pytest.raises(CommandError, match="Reporting failed"):
-            call_command("refresh_crm_v2", *args)
-        assert Account.objects.filter(name="Committed before reporting").exists()
-    else:
-        call_command("refresh_crm_v2", *args, stdout=io.StringIO())
-    assert calls == [not apply]

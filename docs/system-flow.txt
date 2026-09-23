@@ -86,9 +86,9 @@ Admission priority:
   3. human Gmail inbound/bidirectional thread;
   4. substantive bidirectional LinkedIn conversation.
 
-One-sided outbound remains People-only. Don't send stops outreach to the exact
-target but does not erase account relevance. Owner, stage, close state, and
-human actions remain authoritative.
+One-sided outbound remains contact-only in Postgres. Database disqualification
+and company suppression remain delivery controls; legacy People Don't send
+cells are ignored. Owner, stage, close state, and human actions remain authoritative.
 
 
 ================================================================================
@@ -112,13 +112,11 @@ After the reviewed first cutover, scheduled publication is:
 One run:
   1. acquires the nonblocking CRM lock;
   2. opens and inventories exactly GOOGLE_SHEETS_ID;
-  3. publishes the durable People prerequisite with preservation checks;
-  4. reads exact People Don't send Lead IDs;
-  5. resolves account evidence and reconciles DB state;
-  6. imports valid human edits by stable ID;
-  7. reconciles at most one current Action per opportunity;
-  8. stages and verifies Active Accounts plus Actions; and
-  9. swaps both live tabs atomically and commits baselines.
+  3. resolves account evidence and reconciles DB state without reading People;
+  4. imports valid human edits by stable ID;
+  5. reconciles at most one current Action per opportunity;
+  6. stages and verifies Active Accounts plus Actions; and
+  7. swaps both live tabs atomically and commits baselines.
 
 Routine mode requires both canonical v2 tabs and no exact legacy canonical
 titles. First cutover requires a recent matching private preview_crm_v2
@@ -133,26 +131,31 @@ be scheduled or used as a fallback.
 5. GOOGLE SHEETS SURFACES
 ================================================================================
 People
-  - Complete durable contact/prospecting ledger.
-  - Updated in place/appended; never clear/rebuild/reorder/prune.
-  - One-sided LinkedIn/outbound prospects stay here without cluttering sales.
+  - Generated contacts inside the exact account boundary from Active Accounts.
+  - Requires inbound Gmail, calendar/Granola participation, an exact Main point
+    of contact name, or a deliberately curated OpportunityContact.
+  - Company-name-only cold prospects are excluded.
+  - Notes, Priority, and custom columns are manual; AI Notes/Lead ID/Stage are absent.
+  - preview_crm_v2, refresh_crm_v2, and canonical drafting never read it.
 
 Active Accounts
-  - One row per currently relevant account/opportunity.
-  - Shows owner, stage, attention, why active, last meaningful touch, who owes,
-    next action, due date, and key contacts.
+  - Manual Attio-style company/stage ledger; automation never writes it.
+  - Its material company rows are the complete inclusion boundary for People.
 
 Actions
   - One owner-filterable current work queue plus retained handled history.
   - Requires deterministic owner, opportunity, and target contact.
+  - Automated rows come only from calendar meetings and high-intent Gmail;
+    LinkedIn messages never create or target Actions.
   - Outreach-stopped rows expose state without a send channel/draft.
 
-ICP Goals / separate Sales Motion workbook
-  - Read-only inputs.
+Separate Sales Motion workbook
+  - Read-only input.
 
 Retired
-  - Opportunities, Pipeline, Recovery, and <Owner> - Followups are not routine
-    data sources or production views.
+  - Opportunities, Pipeline, Recovery, <Owner> - Followups, Legend, and ICP
+    Goals are not routine data sources or production views. Legend and ICP
+    Goals were removed from the workbook on 2026-09-21.
 
 
 ================================================================================
@@ -200,5 +203,5 @@ newest run and requires both phases to finish successfully.
 
 The command uses BACKFILL_LINKEDIN_USERNAME/PASSWORD, imports only matched
 accepted connections, persists message history, and never writes Sheets
-directly. The next context/publication cycle appends eligible contacts to
-People and evaluates account admission conservatively.
+directly. The next context/publication cycle evaluates account admission from
+Postgres without reading or updating People.

@@ -252,3 +252,62 @@ def test_builder_orders_active_accounts_and_actions_by_attention_and_due_date():
         str(overdue_action.id),
         str(due_action.id),
     ]
+
+
+def test_builder_uses_exact_active_accounts_opportunity_scope():
+    owner = SalesOwner.objects.get(handle="Arian")
+    included_account = Account.objects.create(name="Included Account")
+    included = Opportunity.objects.create(
+        account=included_account,
+        owner=owner,
+        source=Opportunity.Source.MANUAL,
+        manual_pin=True,
+        active_account=True,
+    )
+    included_action = OpportunityAction.objects.create(
+        opportunity=included,
+        description="Included task",
+        due_on=NOW.date(),
+        idempotency_key="human:included-account",
+    )
+    excluded_account = Account.objects.create(name="Excluded Account")
+    excluded = Opportunity.objects.create(
+        account=excluded_account,
+        owner=owner,
+        source=Opportunity.Source.MANUAL,
+        manual_pin=True,
+        active_account=True,
+    )
+    OpportunityAction.objects.create(
+        opportunity=excluded,
+        description="Excluded task",
+        due_on=NOW.date(),
+        idempotency_key="human:excluded-account",
+    )
+    included_facts = AccountPolicyFacts(
+        account_key="included account",
+        manual_pin=True,
+        human_current_action=True,
+        next_action_due_on=NOW.date(),
+    )
+    excluded_facts = AccountPolicyFacts(
+        account_key="excluded account",
+        manual_pin=True,
+        human_current_action=True,
+        next_action_due_on=NOW.date(),
+    )
+
+    view = build_crm_v2_database_view(
+        [
+            _evidence(included, facts=included_facts),
+            _evidence(excluded, facts=excluded_facts),
+        ],
+        active_account_opportunity_ids=[included.id],
+    )
+
+    assert [row[sheet.COL_ACCOUNT] for row in view.rows.active_accounts] == [
+        "Included Account"
+    ]
+    assert [row[sheet.COL_ACTION_ID] for row in view.rows.actions] == [
+        str(included_action.id)
+    ]

@@ -26,4 +26,5 @@ local_notes/
 .gstack/
 artifacts/
 outputs/
+/custom_media/
 /:memory:.ses

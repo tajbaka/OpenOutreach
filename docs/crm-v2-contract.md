@@ -2,17 +2,24 @@
 
 ## Outcome
 
-The managed CRM is a concise account workspace, not a mirror of the People
-ledger.  People remains the complete prospecting/contact archive.  An account
+The managed CRM is a concise account workspace backed by Postgres, not the
+generated People contact view. An account
 appears in the managed CRM only when there is current, meaningful sales
 evidence or an explicit human pin.
 
 The managed workbook surfaces are intentionally small:
 
-1. `Active Accounts`: one stable row per active account/opportunity.
-2. `Actions`: one owner-filterable work queue plus retained handled history.
+1. `Active Accounts`: the operator's manual company/stage ledger; bound rows
+   may reference a stable account/opportunity and unbound rows remain valid.
+2. `Actions`: one owner-filterable work queue scoped to exact bound Opportunity
+   IDs in Active Accounts, plus retained handled history inside that scope.
    There is no separate Pipeline or Recovery data source; stage, waiting
    state, and attention state are fields on the account/action rows.
+3. `People`: a derived contact view whose account boundary comes from every
+   material Active Accounts row. Contacts additionally require human inbound
+   Gmail, calendar/Granola participation, an exact Main point of contact name,
+   or a deliberately curated OpportunityContact. It is not an admission,
+   suppression, or send-permission input.
 
 ## Admission order
 
@@ -37,8 +44,12 @@ an unpinned account out of Active Accounts; it does not create a Recovery row.
 - Upcoming external meetings always qualify and create meeting-prep work.
 - Completed external meetings qualify when there is a matched event or note;
   a calendar invitation alone is not proof that a meeting happened.
-- After a completed meeting, an unfulfilled explicit commitment or missing
-  follow-up creates one post-meeting action.
+- A complete, matched Granola/Gemini note linked to the exact Opportunity may
+  create one post-meeting action without a Calendar Meeting row only when a
+  next-step bullet explicitly names the resolved Opportunity owner. Recording
+  time determines recency; Granola wins only same-time ties.
+- The exact note UUID keys the commitment. Unrelated outbound messages do not
+  clear it; explicitly handling/completing its Action does.
 
 ### Gmail
 
@@ -54,7 +65,8 @@ an unpinned account out of Active Accounts; it does not create a Recovery row.
 ### LinkedIn
 
 - Outbound-only messages, invitations, connection acceptance, one-word
-  acknowledgements, automated text, and polite declines remain People-only.
+  acknowledgements, automated text, and polite declines remain contact-only in
+  Postgres.
 - LinkedIn qualifies only when the thread is genuinely bidirectional and the
   inbound content indicates a continuing conversation, scheduling/meeting
   intent, a concrete question, or multiple substantive turns.
@@ -62,8 +74,8 @@ an unpinned account out of Active Accounts; it does not create a Recovery row.
 
 ## Sales relevance versus send permission
 
-`Lead.disqualified`, company suppression, and People `Don't send` prevent
-automated outreach.  They do not erase meeting/email history, remove an active
+`Lead.disqualified` and company suppression prevent automated outreach. Legacy
+People `Don't send` cells are ignored. These controls do not erase meeting/email history, remove an active
 account, or cancel a human-owned opportunity.  Every generated action still
 checks the target contact's send permission before it can enter a sender queue.
 
@@ -99,17 +111,25 @@ At most one current action exists per opportunity:
 - `Waiting`
 - explicit human `Next step`
 
+The generated Actions surface is narrower than the database: an Opportunity
+must have its exact hidden ID in Active Accounts. Generated current work outside
+that scope is cancelled. Human-authored database tasks outside it are preserved
+but not published. A company-name-only row is valid for People, but cannot
+authorize Actions until it is bound to an Opportunity ID.
+
 The current action must have an authoritative target contact before appearing
-in the owner-filterable `Actions` queue. An unresolved target stays on Active Accounts with
-`Attention = Needs contact`, never in a sender queue.  No workflow sends a
-message; it only creates a reminder or draft for review.
+in the owner-filterable `Actions` queue, except for an exact Opportunity-linked
+meeting-note commitment, which is deliberately account-level. An unresolved
+target stays on Active Accounts with `Attention = Needs contact`, never in a
+sender queue. No workflow sends a message; it only creates a reminder or draft
+for review.
 
 ## Operational invariants
 
 Every preview, first cutover, and routine refresh must preserve these checks:
 
 - Ramp is admitted from Sales Motion/Gmail/meeting evidence.
-- StackArmor can remain sales-relevant while its contacts stay `Don't send`.
+- StackArmor can remain sales-relevant while database suppression blocks outreach.
 - one-sided LinkedIn history is absent from Active Accounts.
 - every active row has a deterministic admission reason.
 - every action has one owner, one opportunity, and one target contact.
@@ -124,8 +144,8 @@ reversible inactive timestamp/reason. Only admitted evidence may create a new
 Account and primary Opportunity. Existing human owner, stage, motion step,
 value, probability, names, and nonblank domains are never overwritten.
 
-An exact Lead ID remains linkable when outreach is suppressed: Don't send is a
-delivery control, not account identity. A unique business email domain may fill
+An exact Lead ID remains linkable when database outreach controls suppress it:
+suppression is not account identity. A unique business email domain may fill
 a blank Account domain, while duplicate names, conflicting domains, missing
 stable IDs, and cross-account contact links fail closed. Expired automated
 bootstrap/system Opportunities are marked inactive without deletion or stage

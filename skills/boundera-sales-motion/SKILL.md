@@ -1,6 +1,6 @@
 ---
 name: boundera-sales-motion
-description: Create, populate, update, or verify account-specific Boundera sales-motion tabs by duplicating the canonical Template tab in the Sales Motion Google Sheet. Use when the user asks to create, clone, map, organize, or maintain a 15-step sales-motion tracker for an opportunity, including current FedRAMP Marketplace grounding for software-vendor and CSP accounts. Do not use for ordinary sales-message drafting that does not involve this tracker.
+description: Create, populate, update, or verify account-specific Boundera sales-motion tabs and prepare stage-appropriate discovery questions for those opportunities. Use for 15-step opportunity tracking, call preparation, stakeholder mapping, and current FedRAMP Marketplace grounding for software-vendor and CSP accounts. Do not use for ordinary sales-message drafting.
 ---
 
 # Boundera Sales Motion
@@ -23,6 +23,8 @@ Maintain one consistent account tracker without flattening, rebuilding, or casua
 - Python runtime: `.venv/bin/python`
 
 Read [references/format-contract.md](references/format-contract.md) before creating, populating, or structurally verifying a tab. It defines the protected framework, status meanings, account-specific fields, and next-call block.
+
+Read [references/discovery-question-design.md](references/discovery-question-design.md) whenever preparing, revising, or discussing call questions. It defines how to group a small set of main questions with selective follow-ups, listening signals, value-proposition implications, and stakeholder discovery without turning the conversation into a qualification script.
 
 For conversation-level reasoning, read the repo's concise [sales-motion summary](../../docs/sales-motion-summary.md). When exact task IDs or operating guidance matter, read the [detailed 15-step framework](../../docs/sales-motion-framework.md). The timestamped [video transcript reconstruction](../../docs/sales-motion-video-transcript.md) explains how the source conversation maps to the framework.
 
@@ -65,9 +67,9 @@ other partnership account.
 - Treat the live Marketplace as current evidence and record the product-page
   URL with the supporting context. If no exact match exists, preserve the
   status as unknown rather than inferring it from company copy or an old note.
-- Put already-known Marketplace facts into the account recap. Replace
-  questions that merely ask for those facts with confirmation and scoping
-  questions.
+- Put already-known Marketplace facts into the Confirm context line or
+  account-status fields. Replace questions that merely ask for those facts
+  with confirmation and scoping questions.
 - For an already-certified Rev5 offering, do not ask as though the vendor is
   beginning FedRAMP or choosing its first path and class. Ask whether the
   evaluation concerns ongoing operation of that package, another offering,
@@ -120,16 +122,11 @@ Past opportunities that can no longer follow a task are not automatically `Compl
 
 ### 6. Build the next-call block strategically
 
-Tailor the block to the actual participants and meeting stage. Include:
+Start with **Confirm context:** followed by one concise, evidence-backed sentence to say after the spoken introductions. Place the numbered questions immediately after that line. The block contains only this context confirmation and the grouped questions; omit welcome/intro scripts, setup, how-to-use instructions, separate purpose or recap sections, meeting metadata, pacing, preparation checklists, and closing scripts. Keep relevant logistics and preparation obligations in the account-status or task-detail fields instead.
 
-1. A brief welcome and specific introductions for Boundera and new stakeholders.
-2. A concise account recap for anyone joining late.
-3. The meeting purpose and expected outcome.
-4. A small, ordered set of unanswered questions that advances the relevant sales steps.
-5. Natural transitions into the demo, sandbox, or working session.
-6. A close that confirms testing, ownership, stakeholders, decision process, and the next meeting when relevant.
+Use the Xerox-style hierarchy in [discovery-question-design.md](references/discovery-question-design.md) as the default for new or revised next-call blocks: a bold main line in the form `1. SHORT TOPIC TITLE — “Spoken question?”`, separate indented scenario bullets with bold labels and regular follow-up text, then a deeper-indented, regular-weight `Listen →` note. Use a short uppercase topic title that makes each group easy to scan, and separate groups with a blank line. Preserve the native block dimensions and base formatting; apply native rich text within A5. This is a reusable layout preference, not a requirement to copy Xerox’s questions or sales stage, and does not authorize rewriting other account tabs.
 
-Do not repeat questions already answered in a preparation email or earlier call. Confirm the answer instead. Keep conditional questions visibly conditional, and avoid making the meeting feel like an interrogation.
+Tailor the questions to the actual participants and sales step. Ask a main question, listen, then select one or two branches for evidence, current process, friction/consequence, ownership, or desired outcome. Do not re-ask preparation-email answers. Put the appropriate next-participant and next-action question in the final group without pulling approval, procurement, or signature questions forward.
 
 ### 7. Verify before reporting success
 
@@ -139,7 +136,7 @@ After any account write, run:
 .venv/bin/python skills/boundera-sales-motion/scripts/clone_sales_motion.py "ACCOUNT NAME" --verify-only
 ```
 
-Also read back every range changed in the current operation. Report success only when verification passes. Link directly to the account tab using its returned sheet ID.
+The helper verifies structure and statuses, not A5 typography. When A5 changes, also read back its text and rich-text runs and check the topic/question hierarchy, indentation, and visual fit against the format contract. Read back every other range changed in the current operation. Report success only when verification passes. Link directly to the account tab using its returned sheet ID.
 
 ## Stop conditions
 

@@ -31,6 +31,14 @@ REFRESH_FINISHED_RE = re.compile(
     r"finished refresh_crm_v2 run_id=(?P<run_id>[0-9a-f]+) "
     r"exit_code=(?P<code>-?\d+)"
 )
+PEOPLE_FINISHED_RE = re.compile(
+    r"finished sync_active_account_people run_id=(?P<run_id>[0-9a-f]+) "
+    r"exit_code=(?P<code>-?\d+)"
+)
+LINKEDIN_PENDING_FINISHED_RE = re.compile(
+    r"finished sync_linkedin_pending run_id=(?P<run_id>[0-9a-f]+) "
+    r"exit_code=(?P<code>-?\d+)"
+)
 
 
 @dataclass(frozen=True)
@@ -151,15 +159,21 @@ def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
         reasons.append(f"Latest logged CRM v2 workflow exit code is {latest_exit_code}.")
     else:
         phase_codes = _latest_phase_exit_codes(latest_run_lines)
-        if phase_codes != {"context": 0, "refresh": 0}:
+        if phase_codes != {
+            "context": 0,
+            "refresh": 0,
+            "people": 0,
+            "linkedin_pending": 0,
+        }:
             status = _worse(status, "failed")
             reasons.append(
-                "The latest CRM v2 workflow did not complete both required phases successfully."
+                "The latest CRM v2 workflow did not complete all required phases successfully."
             )
 
     if not reasons:
         reasons.append(
-            "Task is present and the latest context and CRM v2 refresh phases finished successfully."
+            "Task is present and the latest context, CRM v2 refresh, People, "
+            "and LinkedIn Pending phases finished successfully."
         )
 
     return HealthResult(
@@ -264,6 +278,8 @@ def _latest_phase_exit_codes(lines: list[str]) -> dict[str, int]:
     for key, pattern in (
         ("context", CONTEXT_FINISHED_RE),
         ("refresh", REFRESH_FINISHED_RE),
+        ("people", PEOPLE_FINISHED_RE),
+        ("linkedin_pending", LINKEDIN_PENDING_FINISHED_RE),
     ):
         for line in reversed(lines):
             match = pattern.search(line)

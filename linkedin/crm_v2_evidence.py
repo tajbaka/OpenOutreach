@@ -21,11 +21,14 @@ from django.utils import timezone
 
 from crm.models.sales import normalize_account_name
 from linkedin.crm_v2_policy import (
+    COMPLETED_MEETING_ACTION_MAX_AGE_DAYS,
     AccountPolicyDecision,
     AccountPolicyFacts,
     ConversationEvidence,
+    ReminderState,
     evaluate_account,
 )
+from linkedin.operators import resolve_operator
 
 
 PUBLIC_EMAIL_DOMAINS = frozenset({
@@ -108,8 +111,29 @@ _SUBSTANTIVE_INTENT_MARKERS = (
     "what time",
     "when can",
 )
+_HIGH_INTENT_GMAIL_MARKERS = _SUBSTANTIVE_INTENT_MARKERS + (
+    "can we",
+    "can you send",
+    "could we",
+    "could you send",
+    "let's",
+    "next step",
+    "pilot",
+    "please send",
+    "pricing",
+    "procurement",
+    "proposal",
+    "sandbox",
+    "security review",
+)
 _SPACE_RE = re.compile(r"\s+")
 _WORD_RE = re.compile(r"[\w@.-]+", re.UNICODE)
+_ACTION_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(?P<body>.+?)\s*$")
+_ACTION_OWNER_SUFFIX_RE = re.compile(r"\s*\((?P<owner>[^()]*)\)\s*$")
+_ACTION_OWNER_PREFIX_RE = re.compile(
+    r"^(?:\*\*)?(?P<owner>[^:*]{1,80})(?:\*\*)?\s*:\s*(?P<body>.+)$"
+)
+_MARKDOWN_DECORATION_RE = re.compile(r"(?:\*\*|__|`)")
 
 
 @dataclass(frozen=True)
@@ -126,6 +150,8 @@ class ResolvedAccountEvidence:
     trigger_meeting_id: int | None
     facts: AccountPolicyFacts
     decision: AccountPolicyDecision
+    trigger_meeting_note_id: str | None = None
+    commitment_description: str = ""
     owner_is_override: bool = False
     reminder_do_not_outreach: bool = False
 
@@ -134,6 +160,13 @@ class ResolvedAccountEvidence:
 class _ConversationResolution:
     evidence: ConversationEvidence
     thread_key: tuple[int, str] | None = None
+
+
+@dataclass(frozen=True)
+class _MeetingCommitment:
+    note_id: str
+    occurred_at: datetime
+    description: str
 
 
 class _UnionFind:
@@ -182,7 +215,14 @@ def collect_account_evidence(
     now: datetime | None = None,
 ) -> list[ResolvedAccountEvidence]:
     """Build one deterministic policy decision per conservative account group."""
-    from crm.models import Lead, Meeting, Message, Opportunity, OpportunityAction
+    from crm.models import (
+        Lead,
+        Meeting,
+        MeetingNote,
+        Message,
+        Opportunity,
+        OpportunityAction,
+    )
 
     current_time = now or timezone.now()
     today = current_time.date()
@@ -346,6 +386,7 @@ def collect_account_evidence(
             messages_by_root[union.find(tokens[0])].append(message)
 
     meetings_by_root: dict[str, dict[int, object]] = defaultdict(dict)
+    meeting_roots: dict[int, set[str]] = defaultdict(set)
     meetings = Meeting.objects.prefetch_related("participants", "notes").order_by(
         "start_at", "id",
     )
@@ -355,13 +396,36 @@ def collect_account_evidence(
         for lead_id in participant_ids:
             tokens = lead_tokens.get(lead_id)
             if tokens:
-                meetings_by_root[union.find(tokens[0])][meeting.id] = meeting
+                root = union.find(tokens[0])
+                meetings_by_root[root][meeting.id] = meeting
+                meeting_roots[meeting.id].add(root)
+
+    notes_by_root: dict[str, dict[str, object]] = defaultdict(dict)
+    notes = (
+        MeetingNote.objects.select_related("meeting", "opportunity")
+        .filter(
+            detail_status=MeetingNote.DetailStatus.COMPLETE,
+            match_status=MeetingNote.MatchStatus.MATCHED,
+        )
+        .order_by("scheduled_start_at", "source", "id")
+    )
+    for note in notes:
+        note_roots: set[str] = set()
+        if note.opportunity_id is not None:
+            tokens = opportunity_tokens.get(note.opportunity_id, ())
+            if tokens and tokens[0] in union.parent:
+                note_roots.add(union.find(tokens[0]))
+        if note.meeting_id is not None:
+            note_roots.update(meeting_roots.get(note.meeting_id, ()))
+        for root in note_roots:
+            notes_by_root[root][str(note.id)] = note
 
     resolved: list[ResolvedAccountEvidence] = []
     for root in sorted(roots):
         lead_ids = tuple(sorted(root_lead_ids.get(root, ())))
         root_messages = messages_by_root.get(root, ())
         root_meetings = list(meetings_by_root.get(root, {}).values())
+        root_notes = list(notes_by_root.get(root, {}).values())
         root_opps = root_opportunities.get(root, ())
         opportunity = _canonical_opportunity(root_opps)
 
@@ -377,7 +441,34 @@ def collect_account_evidence(
             today=today,
             current_time=current_time,
         )
+        inferred_owner = _inferred_owner(
+            root_messages,
+            current_time=current_time,
+        )
+        owner_override = root_owner_overrides.get(root, "")
+        resolved_owner = (
+            owner_override
+            or (
+                opportunity.owner.handle
+                if opportunity and opportunity.owner
+                else inferred_owner
+            )
+        )
         action = _current_action(opportunity, OpportunityAction) if opportunity else None
+        note_dates = [
+            occurred_at.date()
+            for note in root_notes
+            if (occurred_at := _meeting_note_occurred_at(note)) is not None
+            and occurred_at <= current_time
+        ]
+        if note_dates:
+            completed = max(filter(None, (completed, max(note_dates))))
+        commitment = _latest_owner_commitment(
+            opportunity,
+            root_notes,
+            owner_handle=resolved_owner,
+            current_time=current_time,
+        )
         suppressed_lead_ids = {
             lead_id
             for lead_id in lead_ids
@@ -424,10 +515,13 @@ def collect_account_evidence(
             default=None,
         )
         post_meeting_followup_required = bool(
-            latest_completed_meeting_at
-            and (
-                latest_meeting_contact_outbound is None
-                or latest_meeting_contact_outbound < latest_completed_meeting_at
+            commitment
+            or (
+                latest_completed_meeting_at
+                and (
+                    latest_meeting_contact_outbound is None
+                    or latest_meeting_contact_outbound < latest_completed_meeting_at
+                )
             )
         )
 
@@ -482,19 +576,6 @@ def collect_account_evidence(
             post_meeting_followup_required=post_meeting_followup_required,
         )
         decision = evaluate_account(facts, today=today)
-        inferred_owner = _inferred_owner(
-            root_messages,
-            current_time=current_time,
-        )
-        owner_override = root_owner_overrides.get(root, "")
-        resolved_owner = (
-            owner_override
-            or (
-                opportunity.owner.handle
-                if opportunity and opportunity.owner
-                else inferred_owner
-            )
-        )
         target_lead_id, trigger_message_id, trigger_meeting_id = (
             _reminder_provenance(
                 decision=decision,
@@ -508,6 +589,35 @@ def collect_account_evidence(
                 },
             )
         )
+        commitment_is_current_action = bool(
+            commitment is not None
+            and action is not None
+            and action.idempotency_key
+            == f"v2:{opportunity.id}:meeting-note:{commitment.note_id}"[:255]
+        )
+        active_commitment = (
+            commitment
+            if commitment is not None
+            and (
+                decision.reminder.state == ReminderState.POST_MEETING_FOLLOWUP
+                or (
+                    commitment_is_current_action
+                    and decision.reminder.state in {
+                        ReminderState.OVERDUE_NEXT_ACTION,
+                        ReminderState.DUE_TODAY,
+                        ReminderState.SCHEDULED_NEXT_ACTION,
+                    }
+                )
+            )
+            else None
+        )
+        if active_commitment is not None:
+            # The note is exact opportunity provenance.  Do not invent a
+            # contact or attach an older Calendar meeting merely because the
+            # recorder note did not receive a Meeting row.
+            target_lead_id = None
+            trigger_message_id = None
+            trigger_meeting_id = None
         reminder_do_not_outreach = bool(
             all_suppressed
             or (
@@ -525,6 +635,7 @@ def collect_account_evidence(
             value
             for value in (
                 latest_completed_meeting_at,
+                active_commitment.occurred_at if active_commitment else None,
                 latest_outbound,
                 max(
                     (
@@ -551,6 +662,12 @@ def collect_account_evidence(
             trigger_meeting_id=trigger_meeting_id,
             facts=facts,
             decision=decision,
+            trigger_meeting_note_id=(
+                active_commitment.note_id if active_commitment else None
+            ),
+            commitment_description=(
+                active_commitment.description if active_commitment else ""
+            ),
             owner_is_override=bool(owner_override),
             reminder_do_not_outreach=reminder_do_not_outreach,
         ))
@@ -610,6 +727,16 @@ def _resolve_conversation(
         )
     ]
     if qualifying:
+        # Gmail may contain a newer courtesy reply alongside an older exact
+        # thread with clear buying/meeting intent.  Keep ordinary human Gmail
+        # available for Active Accounts admission, but select a high-intent
+        # thread for Actions whenever one exists.
+        if source == "gmail":
+            high_intent = [
+                item for item in qualifying
+                if item[1].substantive_inbound_count > 0
+            ]
+            qualifying = high_intent or qualifying
         thread_key, evidence = max(
             qualifying,
             key=lambda item: (_conversation_latest_at(item[1]), item[0]),
@@ -682,7 +809,9 @@ def _classify_conversation(messages: Iterable, *, source: str) -> ConversationEv
             declines.append(message)
         elif _is_acknowledgement(body):
             acknowledgements.append(message)
-        elif source == "gmail" or (message.id or id(message)) in substantive_linkedin_ids:
+        elif source == "gmail" and _has_high_intent_gmail(body):
+            substantive.append(message)
+        elif (message.id or id(message)) in substantive_linkedin_ids:
             substantive.append(message)
 
     return ConversationEvidence(
@@ -769,6 +898,10 @@ def _has_sales_intent(body: str) -> bool:
     return any(marker in body for marker in _SUBSTANTIVE_INTENT_MARKERS)
 
 
+def _has_high_intent_gmail(body: str) -> bool:
+    return any(marker in body for marker in _HIGH_INTENT_GMAIL_MARKERS)
+
+
 def _has_substantive_text(body: str) -> bool:
     words = _WORD_RE.findall(body)
     return len(words) >= 5 and len(body) >= 24
@@ -797,6 +930,125 @@ def _meeting_dates(meetings: Iterable, *, today: date, current_time: datetime):
         default=None,
     )
     return upcoming, completed
+
+
+def _meeting_note_occurred_at(note) -> datetime | None:
+    """Return the recording time used for commitment ordering."""
+    return note.scheduled_start_at or note.source_created_at
+
+
+def _meeting_note_text(note) -> str:
+    """Prefer the most structured stored note representation."""
+    return next(
+        (
+            str(value)
+            for value in (
+                note.summary_markdown,
+                note.summary_text,
+                note.content,
+            )
+            if str(value or "").strip()
+        ),
+        "",
+    )
+
+
+def _owner_commitments(text: str, *, owner_handle: str) -> tuple[str, ...]:
+    """Extract only explicitly owner-assigned note bullets.
+
+    Recorder summaries routinely format action items as ``- **Do X**
+    (Arian)``.  Ownership must be explicit and resolve to the opportunity
+    owner; unassigned bullets and customer-owned tasks are ignored rather than
+    guessed.
+    """
+    canonical_owner = resolve_operator(owner_handle)
+    if not canonical_owner:
+        return ()
+    commitments: list[str] = []
+    seen: set[str] = set()
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        bullet = _ACTION_BULLET_RE.match(line)
+        body = bullet.group("body") if bullet else line
+        assigned_owner = ""
+        suffix = _ACTION_OWNER_SUFFIX_RE.search(body)
+        if suffix:
+            assigned_owner = suffix.group("owner").strip()
+            body = body[:suffix.start()].strip()
+        else:
+            prefix = _ACTION_OWNER_PREFIX_RE.match(body)
+            if prefix:
+                assigned_owner = prefix.group("owner").strip()
+                body = prefix.group("body").strip()
+        if resolve_operator(assigned_owner) != canonical_owner:
+            continue
+        cleaned = _MARKDOWN_DECORATION_RE.sub("", body)
+        cleaned = " ".join(cleaned.strip(" -–—:.;").split())
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        commitments.append(cleaned[:500])
+    return tuple(commitments)
+
+
+def _latest_owner_commitment(
+    opportunity,
+    notes: Iterable,
+    *,
+    owner_handle: str,
+    current_time: datetime,
+) -> _MeetingCommitment | None:
+    """Select the newest unresolved owner commitment from matched notes.
+
+    Recording time wins.  Granola wins only when two sources represent the
+    same recording time; a newer Gemini note remains newer evidence.  A
+    completed note-keyed Action is the only automatic resolution signal.
+    Ordinary outbound messages never satisfy a commitment.
+    """
+    if opportunity is None or not owner_handle:
+        return None
+    cutoff = current_time - timedelta(days=COMPLETED_MEETING_ACTION_MAX_AGE_DAYS)
+    completed_keys = {
+        action.idempotency_key
+        for action in opportunity.actions.all()
+        if action.status == action.Status.COMPLETED
+    }
+    ranked = []
+    for note in notes:
+        occurred_at = _meeting_note_occurred_at(note)
+        if occurred_at is None or occurred_at > current_time or occurred_at < cutoff:
+            continue
+        ranked.append((
+            occurred_at,
+            int(note.source == note.Source.GRANOLA),
+            note.source_updated_at or occurred_at,
+            str(note.id),
+            note,
+        ))
+    for occurred_at, _source_rank, _updated_at, note_id, note in sorted(
+        ranked,
+        reverse=True,
+    ):
+        idempotency_key = f"v2:{opportunity.id}:meeting-note:{note_id}"[:255]
+        if idempotency_key in completed_keys:
+            continue
+        commitments = _owner_commitments(
+            _meeting_note_text(note),
+            owner_handle=owner_handle,
+        )
+        if not commitments:
+            continue
+        return _MeetingCommitment(
+            note_id=note_id,
+            occurred_at=occurred_at,
+            description="; ".join(commitments),
+        )
+    return None
 
 
 def _canonical_opportunity(opportunities: Iterable):
@@ -906,9 +1158,8 @@ def _reminder_provenance(
         )
 
     reason = decision.reminder.reason_code.value
-    if "gmail" in reason or "linkedin" in reason:
-        source = "gmail" if "gmail" in reason else "linkedin"
-        selected_thread = conversation_thread_keys.get(source)
+    if "gmail" in reason:
+        selected_thread = conversation_thread_keys.get("gmail")
         if selected_thread is None:
             return None, None, None
         direction = (
@@ -919,7 +1170,7 @@ def _reminder_provenance(
         candidates = [
             message
             for message in messages
-            if message.source == source
+            if message.source == "gmail"
             and message.direction == direction
             and (
                 message.lead_id,
@@ -927,9 +1178,8 @@ def _reminder_provenance(
             ) == selected_thread
             and not _is_automated(message)
             and (
-                source == "gmail"
-                or direction == "outbound"
-                or _is_substantive_linkedin_message(message, messages)
+                direction == "outbound"
+                or _has_high_intent_gmail(_normalized_body(message.body))
             )
         ]
         if candidates:
@@ -960,21 +1210,3 @@ def _reminder_provenance(
         if meeting is not None:
             return meeting.lead_id, None, meeting.id
     return None, None, None
-
-
-def _is_substantive_linkedin_message(message, messages) -> bool:
-    thread_key = message.thread_external_id or f"lead:{message.lead_id}"
-    thread = [
-        item for item in messages
-        if item.source == "linkedin"
-        and (item.thread_external_id or f"lead:{item.lead_id}") == thread_key
-    ]
-    evidence = conversation_evidence(thread, source="linkedin")
-    if not evidence.is_substantive_bidirectional:
-        return False
-    body = _normalized_body(message.body)
-    return bool(
-        not _is_acknowledgement(body)
-        and not _is_polite_decline(body)
-        and (_has_sales_intent(body) or _has_substantive_text(body))
-    )

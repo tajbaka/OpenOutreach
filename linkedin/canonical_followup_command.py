@@ -96,25 +96,7 @@ def _publish_crm_v2() -> None:
 
 def _canonical_queue() -> dict[str, object]:
     from crm.models import MeetingNote, MeetingNoteSyncState
-    from linkedin.conf import (
-        GOOGLE_SHEETS_ID,
-        SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID,
-    )
     from linkedin.crm_followup_analysis import serialize_crm_followup_queue
-    from linkedin.crm_sheet_import import read_people_dont_send_lead_ids
-    from linkedin.exceptions import SheetsError
-    from linkedin.notifications import sheets
-
-    spreadsheet = sheets._gspread_client()
-    live_id = str(getattr(spreadsheet, "id", ""))
-    if not GOOGLE_SHEETS_ID or live_id != GOOGLE_SHEETS_ID:
-        raise SheetsError("opened workbook does not match GOOGLE_SHEETS_ID")
-    if (
-        SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID
-        and live_id == SALES_MOTION_VERSIONS_GOOGLE_SHEETS_ID
-    ):
-        raise SheetsError("refusing to use the Sales Motion workbook as the CRM")
-    dont_send_ids = read_people_dont_send_lead_ids(spreadsheet)
     state = MeetingNoteSyncState.objects.filter(
         source=MeetingNote.Source.GRANOLA,
     ).first()
@@ -126,7 +108,6 @@ def _canonical_queue() -> dict[str, object]:
         }
     )
     return serialize_crm_followup_queue(
-        dont_send_lead_ids=dont_send_ids,
         granola_available=granola_available,
     )
 

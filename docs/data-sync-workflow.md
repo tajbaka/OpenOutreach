@@ -15,15 +15,11 @@ Google Sheets. `manage.py sync_crm_v2_context` is the scheduled context phase;
 | Drive-only Gemini notes | Interactive connector workflow | `crm.Meeting.gemini_notes_raw` | Secondary meeting context |
 | Granola notes | `sync_crm_v2_context` batch sync | `crm.MeetingNote` and match state | Primary meeting context |
 | LinkedIn messages | `backfill_messages` / daemon listeners | `crm.Message(source=linkedin)` | Communication timeline |
-| LinkedIn connection observations | Daemon connection sweep / explicit historical import | `crm.Deal.connected_at` | Sender-specific accepted/no-reply reporting |
+| LinkedIn connection observations | Daemon connection sweep / explicit historical import | `crm.Deal.connected_at` | Connection history and runtime state |
 
-The publication phase (`refresh_crm_v2`) also maintains the five-column
-`Accepted — Awaiting Reply` tab, newest recorded connection first. It removes
-only the matching Lead/sender row once a human inbound LinkedIn or Gmail Message
-has been ingested, not when we send a follow-up. This changes only the generated
-view, never database history or the People ledger. See
-[`crm-refresh-workflow.md`](crm-refresh-workflow.md#accepted-connections-awaiting-a-reply)
-for timestamp limits, sender attribution, and standalone preview/apply commands.
+The publication phase (`refresh_crm_v2`) writes only Actions. The retired
+`Accepted — Awaiting Reply` and `Upcoming Meetings` tabs are not inputs or
+outputs of the context, Actions, or People workflows.
 
 Granola is primary when a deterministic match exists. Stored Gemini content is
 the fallback. Meeting context is attached only after an Action is otherwise
@@ -199,7 +195,8 @@ If Gmail/Gemini/Granola also needs refreshing, run
 the Sheet publisher.
 
 Do not call `SheetIndex.upsert_row()` to advance People status/stage or compose
-AI Notes. Human sales fields belong on `Active Accounts`/`Actions` and are
+AI Notes; those generated People fields are retired. Human sales fields belong
+on `Active Accounts`/`Actions` and are
 imported by stable ID. System meeting context is published from the DB; account
 admission and queue placement come from the v2 evidence/action policy.
 
@@ -235,7 +232,15 @@ queue omit a new inbound or propose an obsolete next action.
 ## Out of scope
 
 - Sales-stage decisions and action eligibility: `refresh_crm_v2`.
-- People/Active Accounts/Actions publication: `refresh_crm_v2`.
+- Active Accounts/Actions publication: `refresh_crm_v2`.
+- People publication: `sync_active_account_people --apply` runs after the CRM
+  refresh and rebuilds only contacts whose exact company is in Active Accounts.
+  Notes, Priority, and custom columns are carried forward; AI Notes and Lead ID
+  are not part of the view.
+- LinkedIn response projection: `sync_linkedin_pending --apply` runs after
+  People in the daily wrapper and incrementally maintains the separate
+  `LinkedIn Pending` tab from already-persisted LinkedIn Messages. It performs
+  no live LinkedIn retrieval and is not part of context ingestion.
 - Draft generation: `generate_followups` and
   `docs/followup-generation-workflow.md`.
 - Message sending: always an operator action outside this workflow.
