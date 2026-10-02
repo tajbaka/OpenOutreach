@@ -1,5 +1,7 @@
 # Architecture
 
+**Stored-only Gemini context (2026-10-02):** The shared `sync_crm_v2_context` command used by hourly ingestion and the midnight CRM pipeline passes `skip_notes=True` to Gmail sync, including its initial pass. Gmail conversation discovery/relink and Granola ingestion are unchanged. Stored Gemini Meeting/MeetingNote data remains available to CRM and scan freshness is not advanced. No schema/data deletion or scheduler changes are required; standalone manual `sync_gmail_context` note imports remain supported.
+
 **Windows CRM health timing (2026-10-02):** `notify_sync_sheets_health` accepts `--expected-run-hour` (0-23, Toronto local time; default 9). This machine's midnight pipeline uses hour 0 and a 03:00 daily health task, posting to the regular `SLACK_WEBHOOK_URL`. The monitor checks scheduler freshness/results and completion of all four pipeline phases. Scheduling does not prove a successful live pipeline run.
 
 **CRM staged readback (2026-09-18):** Only declared human-owned columns use the existing merge semantic normalizer during verification, so unchanged accepted values such as blank unchecked checkboxes and `FALSE` agree. Baseline JSON, stable identities, system cells and row coverage remain exact; actual human-value changes still reject publication. This complements native sheet-end appends without weakening the atomic cutover gates.

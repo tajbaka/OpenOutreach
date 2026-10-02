@@ -1,10 +1,11 @@
-"""Refresh the primary Gmail/Gemini context used by the account-first CRM.
+"""Refresh Gmail conversations and Granola context for the account-first CRM.
 
 This command is deliberately separate from Sheet publication.  It never sends
-mail.  Apply mode refreshes stored Gmail threads/meeting-note emails, creates
+mail.  Apply mode refreshes stored Gmail threads, creates
 only strictly validated corporate email-first Leads from private discovery
 state, then re-reads Gmail once only when new Leads need their exact threads
-linked.  Routine output is aggregate-only.
+linked. Historical Gemini notes are retained but not fetched. Routine output
+is aggregate-only.
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ from linkedin.management.commands.sync_gmail_context import (
 
 class Command(BaseCommand):
     help = (
-        "Refresh Gmail/Gemini context and strictly reconcile email-first "
+        "Refresh Gmail/Granola context and strictly reconcile email-first "
         "contacts for CRM v2. Defaults to no-write dry-run; never sends."
     )
 
@@ -42,7 +43,7 @@ class Command(BaseCommand):
             "--since-days",
             type=int,
             default=365,
-            help="Known-thread and Gemini-note lookback (default: 365).",
+            help="Known Gmail thread lookback (default: 365).",
         )
         parser.add_argument(
             "--skip-gmail-refresh",
@@ -83,7 +84,7 @@ class Command(BaseCommand):
                 apply=apply,
                 since_days=options["since_days"],
                 skip_unmapped_discovery=False,
-                skip_notes=False,
+                skip_notes=True,
             )
 
         candidates = _private_discovery_candidates()

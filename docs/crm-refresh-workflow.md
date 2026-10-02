@@ -20,8 +20,10 @@ No CRM command sends Gmail or LinkedIn messages.
 Context ingestion and Sheet publication are separate on purpose.
 
 1. `sync_crm_v2_context --apply` refreshes configured Gmail threads,
-   Gmail-delivered Gemini notes, strictly validated corporate email-first
-   contacts, and Granola meeting context. It writes DB/context state only.
+   strictly validated corporate email-first contacts, and Granola meeting
+   context. It writes DB/context state only. Scheduled ingestion skips Gemini
+   note-email fetching; previously stored Gemini notes remain available to CRM.
+   The standalone `sync_gmail_context` command retains manual note import support.
 2. `refresh_crm_v2 --apply --routine` reads stored evidence plus the exact
    bound Opportunity scope and Owner/Stage edits from manual Active Accounts, reconciles
    Accounts/Opportunities/current Actions, and atomically publishes only

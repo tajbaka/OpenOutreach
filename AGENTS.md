@@ -2,6 +2,8 @@
 
 ## Rules
 
+- **Stored-only Gemini in CRM ingestion**: `sync_crm_v2_context` skips Gemini note emails in both Gmail passes. Hourly ingestion and the midnight pipeline still sync Gmail conversations and Granola. Preserve historical Gemini notes and their true last-scan timestamp; do not delete them or claim a new Gemini scan. Standalone manual note imports remain available.
+
 - **CRM health schedule**: Set `notify_sync_sheets_health --expected-run-hour 0` for a midnight Toronto pipeline. The default remains 9 for older schedules. Keep the health task after the pipeline window and check same-day scheduler freshness as well as all four logged phases.
 
 - **Gmail worker diagnostics**: Independent workers write account-scoped rotating logs under `data/logs/gmail-worker-<account>.log` (5 MB plus three backups). Record lifecycle, task IDs/types, failure stage, exception classes and stack locations only; never add raw exception messages, source lines, locals, tokens, email bodies, or Task payloads. Fatal failures still propagate for supervisor recovery, and restart Slack alerts point to the file. Pre-command startup failures and hard process kills may lack a crash entry.

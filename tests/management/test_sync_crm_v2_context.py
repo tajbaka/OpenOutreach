@@ -7,7 +7,7 @@ import pytest
 from django.core.management import call_command
 from django.utils import timezone
 
-from crm.models import Lead, MeetingNote, MeetingNoteSyncState
+from crm.models import Lead, Meeting, MeetingNote, MeetingNoteSyncState
 from linkedin.management.commands import sync_crm_v2_context as command_module
 
 
@@ -143,3 +143,66 @@ def test_relink_without_note_scan_does_not_claim_gemini_freshness(monkeypatch):
     assert not MeetingNoteSyncState.objects.filter(
         source=MeetingNote.Source.GEMINI,
     ).exists()
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_scheduled_context_skips_gemini_and_preserves_historical_notes(
+    monkeypatch, apply,
+):
+    old_time = timezone.now() - timedelta(days=30)
+    lead = Lead.objects.create(
+        linkedin_url="https://www.linkedin.com/in/historical-note-test/",
+    )
+    meeting = Meeting.objects.create(
+        source=Meeting.Source.GOOGLE_CALENDAR,
+        external_id="historical-event",
+        lead=lead,
+        start_at=old_time,
+        gemini_doc_id="historical-doc",
+        gemini_notes_raw="Previously imported Gemini notes",
+        gemini_notes_fetched_at=old_time,
+    )
+    note = MeetingNote.objects.create(
+        source=MeetingNote.Source.GEMINI,
+        external_id="historical-doc",
+        meeting=meeting,
+        content="Previously imported Gemini notes",
+        detail_status=MeetingNote.DetailStatus.COMPLETE,
+    )
+    state = MeetingNoteSyncState.objects.create(
+        source=MeetingNote.Source.GEMINI,
+        status=MeetingNoteSyncState.Status.SUCCESS,
+        last_success_at=old_time,
+    )
+    before = [
+        model.objects.filter(pk=row.pk).values().get()
+        for model, row in ((Meeting, meeting), (MeetingNote, note), (MeetingNoteSyncState, state))
+    ]
+    gmail_calls = []
+    granola_calls = []
+    monkeypatch.setattr(command_module, "_private_discovery_candidates", lambda: [])
+    monkeypatch.setattr(
+        command_module, "call_command",
+        lambda *args, **kwargs: gmail_calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        command_module, "_sync_granola",
+        lambda **kwargs: granola_calls.append(kwargs) or {"status": "success"},
+    )
+
+    call_command("sync_crm_v2_context", apply=apply)
+
+    assert len(gmail_calls) == 1
+    args, kwargs = gmail_calls[0]
+    assert args == ("sync_gmail_context",)
+    assert kwargs["skip_notes"] is True
+    assert kwargs.get("skip_threads", False) is False
+    assert kwargs["skip_unmapped_discovery"] is False
+    assert kwargs["dry_run"] is not apply
+    assert len(granola_calls) == 1
+    assert granola_calls[0]["apply"] is apply
+    after = [
+        model.objects.filter(pk=row.pk).values().get()
+        for model, row in ((Meeting, meeting), (MeetingNote, note), (MeetingNoteSyncState, state))
+    ]
+    assert after == before
