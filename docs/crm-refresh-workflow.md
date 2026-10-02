@@ -223,7 +223,11 @@ Get-Content -LiteralPath "data\logs\crm_v2_task.log" -Tail 100
 
 `notify_sync_sheets_health` intentionally retains its historical command/task
 name, but reads the v2 log. It reports healthy only when the newest wrapper run
-completed both context and refresh phases with exit code zero.
+completed context, refresh, People, and LinkedIn Pending phases with exit code zero.
+For a midnight Toronto pipeline, schedule the health command at 03:00 daily with
+`--expected-run-hour 0`. Without this option the freshness window still starts at
+09:00 for compatibility with older schedules. Health summaries use the regular
+`SLACK_WEBHOOK_URL`, not the high-signal feed channel.
 
 ## Recovery
 

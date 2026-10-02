@@ -3,6 +3,9 @@ import io
 from pathlib import Path
 import re
 
+import pytest
+from django.core.management.base import CommandError
+
 from linkedin.management.commands import notify_sync_sheets_health as health
 
 
@@ -172,3 +175,55 @@ def test_scheduled_wrapper_runs_context_then_routine_v2_refresh():
     ]
     assert '"crm_v2_task.log"' in wrapper
     assert "manage.py refresh_crm --apply" not in wrapper
+
+
+@pytest.mark.parametrize("check_hour", [3, 17])
+@pytest.mark.parametrize(
+    "last_run, last_result, expected_status",
+    [
+        ("2026-10-03T00:00:01-04:00", 0, "healthy"),
+        ("2026-10-02T00:00:01-04:00", 0, "warning"),
+        ("2026-10-03T00:00:01-04:00", 1, "failed"),
+    ],
+)
+def test_midnight_schedule_health(
+    monkeypatch, tmp_path, check_hour, last_run, last_result, expected_status,
+):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 3, check_hour, tzinfo=health.LOCAL_TZ)
+
+    monkeypatch.setattr(health, "datetime", Clock)
+    monkeypatch.setattr(
+        health, "_scheduled_task",
+        lambda _name: {"State": "Ready", "Enabled": True},
+    )
+    monkeypatch.setattr(
+        health, "_scheduled_task_info",
+        lambda _name: {"LastRunTime": last_run, "LastTaskResult": last_result},
+    )
+    log_path = tmp_path / "task.log"
+    log_path.write_text(_successful_log(), encoding="utf-8")
+    result = health.evaluate_health(
+        task_name="task", log_path=log_path, expected_run_hour=0,
+    )
+    assert result.status == expected_status
+
+
+def test_expected_run_hour_parser_and_forwarding(monkeypatch):
+    command = health.Command(stdout=io.StringIO())
+    parser = command.create_parser("manage.py", "notify_sync_sheets_health")
+    assert parser.parse_args([]).expected_run_hour == 9
+    options = vars(parser.parse_args(["--expected-run-hour", "0", "--no-slack"]))
+    captured = {}
+
+    def evaluate(**kwargs):
+        captured.update(kwargs)
+        return health.HealthResult("healthy", "OK", {}, {}, [], 0)
+
+    monkeypatch.setattr(health, "evaluate_health", evaluate)
+    command.handle(**options)
+    assert captured["expected_run_hour"] == 0
+    with pytest.raises(CommandError):
+        parser.parse_args(["--expected-run-hour", "24"])

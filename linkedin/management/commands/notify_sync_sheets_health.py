@@ -60,12 +60,17 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--task-name", default=TASK_NAME)
         parser.add_argument("--log-path", default=str(DEFAULT_LOG_PATH))
+        parser.add_argument(
+            "--expected-run-hour", type=int, choices=range(24), default=9,
+            help="First expected daily pipeline run, in Toronto time (default: 9).",
+        )
         parser.add_argument("--no-slack", action="store_true", help="Print only; do not post to Slack.")
 
     def handle(self, *args, **options):
         result = evaluate_health(
             task_name=options["task_name"],
             log_path=Path(options["log_path"]),
+            expected_run_hour=options.get("expected_run_hour", 9),
         )
         message = render_text(result)
         self.stdout.write(message)
@@ -101,7 +106,9 @@ class Command(BaseCommand):
         _post_to_slack(SLACK_WEBHOOK_URL, payload, "crm-v2-refresh-health")
 
 
-def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
+def evaluate_health(
+    *, task_name: str, log_path: Path, expected_run_hour: int = 9,
+) -> HealthResult:
     task = _scheduled_task(task_name)
     task_info = _scheduled_task_info(task_name) if task else {}
     last_log_lines = _tail_log(log_path, max_lines=128)
@@ -111,7 +118,9 @@ def evaluate_health(*, task_name: str, log_path: Path) -> HealthResult:
     status = "healthy"
     reasons: list[str] = []
     now = datetime.now(LOCAL_TZ)
-    expected_first_run = datetime.combine(now.date(), time(hour=9), tzinfo=LOCAL_TZ)
+    expected_first_run = datetime.combine(
+        now.date(), time(hour=expected_run_hour), tzinfo=LOCAL_TZ,
+    )
 
     if not task:
         status = "failed"
