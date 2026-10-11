@@ -2,6 +2,8 @@
 
 ## Rules
 
+- **CRM identity quarantine**: `refresh_crm_v2` rolls back and replans the whole DB pass when account/action reconciliation reports scoped identity issues. Skip the affected group and linked account/contact/Opportunity closure for the rest of that run; preserve its existing Actions cells and baselines and do not import its human edits. Write the private `artifacts/crm-audits/crm-v2-identity-issues.json` review file before publication. Unscoped issues, nonconvergence, structural Sheet errors, and other exceptions still fail closed. Do not use `--replace-sheet-state` to bypass quarantined identities. Health reports warning when safe work completed with skipped groups.
+
 - **Stored-only Gemini in CRM ingestion**: `sync_crm_v2_context` skips Gemini note emails in both Gmail passes. Hourly ingestion and the midnight pipeline still sync Gmail conversations and Granola. Preserve historical Gemini notes and their true last-scan timestamp; do not delete them or claim a new Gemini scan. Standalone manual note imports remain available.
 
 - **CRM health schedule**: Set `notify_sync_sheets_health --expected-run-hour 0` for a midnight Toronto pipeline. The default remains 9 for older schedules. Keep the health task after the pipeline window and check same-day scheduler freshness as well as all four logged phases.

@@ -233,6 +233,23 @@ For a midnight Toronto pipeline, schedule the health command at 03:00 daily with
 
 ## Recovery
 
+### Ambiguous identities
+
+Account/action reconciliation identity issues are quarantined per run rather
+than aborting safe work. Review `artifacts/crm-audits/crm-v2-identity-issues.json`
+for the reason, evidence group, and affected contact/Account/Opportunity IDs.
+This private Git-ignored file is refreshed on each run; `--identity-review-file`
+can select another path. A clear report means no identities were skipped.
+
+Each new issue rolls back the provisional database pass before safe rows are
+retried. Existing quarantined Actions rows and database records stay unchanged;
+their pending human edits are left for a later resolved run. Active Accounts is
+never rewritten. No company merge, contact reassignment, or outreach occurs.
+The health summary warns about skipped identities even when all phases finish.
+The next run re-evaluates the identities. Unscoped issues, nonconverging skips,
+Sheet structure/merge failures, and provider errors still stop publication.
+Do not combine quarantine with `--replace-sheet-state`.
+
 On any apply failure:
 
 1. Stop the scheduled task and do not repeat apply blindly.

@@ -112,6 +112,11 @@ class Command(BaseCommand):
             help="Gitignored directory for the private full-workbook backup.",
         )
         parser.add_argument(
+            "--identity-review-file",
+            default="artifacts/crm-audits/crm-v2-identity-issues.json",
+            help="Private JSON review file for skipped ambiguous CRM identities.",
+        )
+        parser.add_argument(
             "--context-max-age-hours",
             type=int,
             default=_DEFAULT_CONTEXT_MAX_AGE_HOURS,
@@ -129,6 +134,19 @@ class Command(BaseCommand):
         apply = bool(options["apply"])
         routine = bool(options["routine"])
         self._pending_cutover = None
+        from linkedin.crm_v2_quarantine import IdentityQuarantine, QuarantineExpanded
+        from linkedin.management.commands.preview_crm_v2 import _write_private_json
+
+        self._identity_quarantine = IdentityQuarantine()
+        review_path = Path(options["identity_review_file"])
+
+        def write_identity_review(status):
+            _write_private_json(review_path, {
+                **self._identity_quarantine.payload(),
+                "generated_at": timezone.now().isoformat(),
+                "mode": "apply" if apply else "dry-run", "status": status,
+            })
+        self._write_identity_review = write_identity_review
         if routine and not apply:
             raise CommandError("--routine is only valid with --apply")
         if routine and options["reviewed_preview"]:
@@ -147,10 +165,19 @@ class Command(BaseCommand):
         try:
             with crm_refresh_lock():
                 try:
-                    with transaction.atomic():
-                        report = self._run(options, apply=apply)
-                        if not apply:
-                            transaction.set_rollback(True)
+                    # Retry only after rolling back the entire pass, so even a
+                    # late action identity error leaves its account untouched.
+                    for attempt in range(10):
+                        try:
+                            with transaction.atomic():
+                                report = self._run(options, apply=apply)
+                                if not apply:
+                                    transaction.set_rollback(True)
+                            break
+                        except QuarantineExpanded:
+                            write_identity_review("review_required")
+                    else:
+                        raise SheetsError("CRM identity quarantine did not converge")
                 except Exception:
                     if self._pending_cutover is not None:
                         _compensate_cutover(self._pending_cutover)
@@ -195,6 +222,29 @@ class Command(BaseCommand):
         )
         from linkedin.notifications.crm_v2_layout import apply_layout
 
+        quarantine = self._identity_quarantine
+        raw_collect = collect_account_evidence
+        raw_reconcile = apply_reconciliation
+        raw_actions = apply_action_reconciliation
+        raw_view = build_crm_v2_database_view
+
+        def collect_account_evidence(**kwargs):
+            return quarantine.filter(raw_collect(**kwargs))
+
+        def apply_reconciliation(rows, **kwargs):
+            rows = tuple(rows)
+            return quarantine.check(raw_reconcile(rows, **kwargs), rows, phase="accounts")
+
+        def apply_action_reconciliation(rows, **kwargs):
+            rows = quarantine.filter(rows)
+            return quarantine.check(raw_actions(rows, **kwargs), rows, phase="actions")
+
+        def build_crm_v2_database_view(rows, **kwargs):
+            view = raw_view(quarantine.filter(rows), **kwargs)
+            if not quarantine.keys:
+                return view
+            return quarantine.preserve_actions(view, worksheets[crm_v2_sheets.ACTIONS_TAB])
+
         evaluated_at = timezone.now()
         sales_motion_accounts = set(options["sales_motion_account"])
         if not options["skip_sales_motion"]:
@@ -226,6 +276,8 @@ class Command(BaseCommand):
         if str(getattr(spreadsheet, "id", "")) != str(conf.GOOGLE_SHEETS_ID):
             raise SheetsError("CRM v2 publisher opened an unexpected workbook")
         worksheets = _worksheet_inventory(spreadsheet, crm_sheets=crm_sheets)
+        if quarantine.keys and options["replace_sheet_state"]:
+            raise SheetsError("Cannot replace Sheet state while CRM identities are quarantined")
         existing_mode = _publication_mode(worksheets, crm_v2_sheets=crm_v2_sheets)
         if apply and existing_mode != "in_place":
             raise SheetsError(
@@ -333,7 +385,8 @@ class Command(BaseCommand):
                     preliminary_action_plan.imports
                 )
             active_import = apply_opportunity_imports(
-                manual_active_read.imports,
+                [item for item in manual_active_read.imports
+                 if str(item.stable_id) not in quarantine.opportunity_ids],
                 dry_run=False,
                 now=evaluated_at,
             )
@@ -423,6 +476,11 @@ class Command(BaseCommand):
             },
             "evidence": _evidence_counts(reconciled_evidence),
             "reconciliation": _reconciliation_counts(reconcile_report),
+            "identity_review": {
+                "issue_count": len(quarantine.issues),
+                "skipped_groups": len(quarantine.keys),
+                "file": str(options["identity_review_file"]),
+            },
             "actions": _action_counts(action_report),
             "human_imports": import_reports,
             "sheet_plan": _sheet_plan_counts(
@@ -438,6 +496,8 @@ class Command(BaseCommand):
             },
             "baselines": {"committed": False, "rows": 0},
         }
+        # The review artifact must be writable before publishing anything.
+        self._write_identity_review("review_required" if quarantine.issues else "clear")
         if not apply:
             return report
 
@@ -564,6 +624,12 @@ def _build_action_plan(actions_ws, database_view, *, crm_v2_sheets):
         database_view.rows.actions,
         baseline_by_id=database_view.action_baselines,
     )
+    protected = getattr(database_view, "protected_action_ids", frozenset())
+    for field in ("changes", "imports", "conflicts", "baseline_updates"):
+        setattr(action_plan, field, [
+            item for item in getattr(action_plan, field)
+            if str(item.stable_id) not in protected
+        ])
     _assert_plan_safe(action_plan)
     return action_plan
 

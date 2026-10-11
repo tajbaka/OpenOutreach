@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 from datetime import timedelta
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,6 +45,18 @@ from linkedin.notifications.crm_v2_layout import build_layout_requests
 
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture(autouse=True)
+def isolated_identity_report(monkeypatch, tmp_path):
+    from linkedin.management.commands import preview_crm_v2
+
+    writer = preview_crm_v2._write_private_json
+    def write(path, payload):
+        if str(path).replace("\\", "/") == "artifacts/crm-audits/crm-v2-identity-issues.json":
+            path = tmp_path / "identity-issues.json"
+        return writer(path, payload)
+    monkeypatch.setattr(preview_crm_v2, "_write_private_json", write)
 
 
 @pytest.mark.parametrize("human_value", ["", "FALSE", "false"])
@@ -849,6 +862,140 @@ def test_routine_apply_stages_only_actions_then_swaps_and_cleans_after_db_commit
     assert live_actions.rows[1][live_actions.rows[0].index(v2.COL_CHANNEL)] == ""
     opportunity.refresh_from_db()
     assert opportunity.owner.handle == "Chuka"
+
+
+def test_identity_quarantine_protects_existing_domain_owner():
+    from linkedin.crm_v2_quarantine import IdentityQuarantine, QuarantineExpanded
+    from linkedin.crm_v2_reconcile import ReconciliationIssue
+
+    account = Account.objects.create(name="Existing Domain Owner", domain="shared.example")
+    opportunity = Opportunity.objects.create(account=account)
+    conflicting = SimpleNamespace(
+        account_key="new-name", account_name="New Name", lead_ids=(), opportunity_id="",
+    )
+    existing = SimpleNamespace(
+        account_key="existing", account_name=account.name, lead_ids=(),
+        opportunity_id=str(opportunity.id),
+    )
+    quarantine = IdentityQuarantine()
+    report = SimpleNamespace(issues=[ReconciliationIssue(
+        account_key="new-name", reason="business_domain_already_used", detail="shared.example",
+    )])
+    with pytest.raises(QuarantineExpanded):
+        quarantine.check(report, (conflicting, existing), phase="accounts")
+    assert str(account.id) in quarantine.account_ids
+    assert quarantine.filter((conflicting, existing)) == ()
+
+
+def test_identity_quarantine_rejects_unscoped_issues():
+    from linkedin.crm_v2_quarantine import IdentityQuarantine
+    from linkedin.crm_v2_reconcile import ReconciliationIssue
+    from linkedin.exceptions import SheetsError
+
+    report = SimpleNamespace(issues=[ReconciliationIssue(
+        account_key="missing", reason="missing_account_key", detail="",
+    )])
+    with pytest.raises(SheetsError, match="could not be scoped safely"):
+        IdentityQuarantine().check(report, (), phase="accounts")
+
+
+@pytest.mark.parametrize("phase", ["accounts", "actions"])
+def test_identity_quarantine_publishes_safe_rows_preserves_uncertain_rows(
+    monkeypatch, tmp_path, phase,
+):
+    from linkedin import conf, crm_v2_actions, crm_v2_evidence, crm_v2_reconcile
+    from linkedin.crm_v2_view_builder import build_crm_v2_database_view
+    from linkedin.notifications import crm_v2_layout, sheets
+
+    owner, _ = SalesOwner.objects.get_or_create(handle="Arian")
+    SalesOwner.objects.get_or_create(handle="Chuka")
+    opportunities = []
+    actions = []
+    leads = []
+    for name in ("Safe", "Uncertain", "Other"):
+        lead = Lead.objects.create(company_name=name, email=f"person@{name.lower()}.example")
+        account = Account.objects.create(name=name)
+        opportunity = Opportunity.objects.create(
+            account=account, owner=owner, source=Opportunity.Source.MANUAL, manual_pin=True,
+        )
+        OpportunityContact.objects.create(opportunity=opportunity, lead=lead)
+        action = OpportunityAction.objects.create(
+            opportunity=opportunity, target_lead=lead, description="Call today",
+            due_on=timezone.localdate(), idempotency_key=f"human:{name}",
+        )
+        opportunities.append(opportunity)
+        actions.append(action)
+        leads.append(lead)
+    original_collect = crm_v2_evidence.collect_account_evidence
+    view = build_crm_v2_database_view(original_collect(now=timezone.now()))
+    active = _manual_active_worksheet(view)
+    sheet_actions = MemoryWorksheet("Actions", 2)
+    v2.actions_adapter(sheet_actions).apply(v2.actions_adapter(sheet_actions).plan(
+        view.rows.actions, baseline_by_id=view.action_baselines,
+    ))
+    # Both safe and quarantined accounts have pending human Sheet edits.
+    for row in active.rows[1:]:
+        row[active.rows[0].index(manual_active.COL_OWNER)] = "Chuka"
+    for row in sheet_actions.rows[1:]:
+        row[sheet_actions.rows[0].index(v2.COL_CHANNEL)] = "LinkedIn"
+    protected_ids = {str(action.id) for action in actions[1:]}
+    before_sheet = {
+        row[sheet_actions.rows[0].index(v2.COL_ACTION_ID)]: list(row)
+        for row in sheet_actions.rows[1:]
+        if row[sheet_actions.rows[0].index(v2.COL_ACTION_ID)] in protected_ids
+    }
+    protected_opps = [opportunity.id for opportunity in opportunities[1:]]
+    before_db = list(Opportunity.objects.filter(id__in=protected_opps).order_by('id').values())
+    before_actions = list(OpportunityAction.objects.filter(opportunity_id__in=protected_opps).order_by('id').values())
+    spreadsheet = MemorySpreadsheet([active, sheet_actions], spreadsheet_id="quarantine-test")
+    monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", "quarantine-test")
+    monkeypatch.setattr(sheets, "_gspread_client", lambda: spreadsheet)
+    monkeypatch.setattr(crm_sheets, "backup_spreadsheet", lambda *a, **k: tmp_path / "backup.json")
+    monkeypatch.setattr(crm_v2_layout, "apply_layout", lambda *a, **k: 0)
+    uncertain_key = next(row.account_key for row in original_collect(now=timezone.now())
+                         if row.opportunity_id == str(opportunities[1].id))
+    if phase == "accounts":
+        def collect(**kwargs):
+            return tuple(
+                replace(row, lead_ids=(leads[1].id, leads[2].id))
+                if row.account_key == uncertain_key else row
+                for row in original_collect(**kwargs)
+            )
+        monkeypatch.setattr(crm_v2_evidence, "collect_account_evidence", collect)
+    else:
+        original_actions = crm_v2_actions.apply_action_reconciliation
+        def reconcile_actions(rows, **kwargs):
+            rows = tuple(rows)
+            report = original_actions(rows, **kwargs)
+            if any(row.account_key == uncertain_key for row in rows):
+                # Simulate a late issue after provisional writes have happened.
+                OpportunityAction.objects.filter(pk=actions[1].id).update(description="must roll back")
+                report.issues.append(crm_v2_actions.ActionReconciliationIssue(
+                    account_key=uncertain_key, reason="invalid_target",
+                    detail=str(opportunities[2].account_id),
+                ))
+            return report
+        monkeypatch.setattr(crm_v2_actions, "apply_action_reconciliation", reconcile_actions)
+    review = tmp_path / "review.json"
+    stdout = io.StringIO()
+    call_command("refresh_crm_v2", "--apply", "--routine", "--skip-sales-motion",
+                 "--identity-review-file", str(review), stdout=stdout)
+    report = json.loads(stdout.getvalue())
+    assert report["identity_review"]["issue_count"] == 1
+    assert report["identity_review"]["skipped_groups"] == 2
+    assert json.loads(review.read_text())["issues"][0]["phase"] == phase
+    assert list(Opportunity.objects.filter(id__in=protected_opps).order_by('id').values()) == before_db
+    assert list(OpportunityAction.objects.filter(opportunity_id__in=protected_opps).order_by('id').values()) == before_actions
+    opportunities[0].refresh_from_db()
+    actions[0].refresh_from_db()
+    assert opportunities[0].owner.handle == "Chuka"
+    assert actions[0].channel == "LinkedIn"
+    live = spreadsheet.worksheet("Actions")
+    after_sheet = {row[live.rows[0].index(v2.COL_ACTION_ID)]: row for row in live.rows[1:]
+                   if row[live.rows[0].index(v2.COL_ACTION_ID)] in protected_ids}
+    assert after_sheet == before_sheet
+    # The routine telemetry contains counts/path, not private identities.
+    assert uncertain_key not in stdout.getvalue()
 
 
 def test_post_swap_baseline_failure_compensates_titles_and_rolls_back_db(

@@ -26,6 +26,7 @@ class CrmV2DatabaseView:
     rows: CrmV2ViewRows
     active_baselines: Mapping[str, Mapping[str, str]]
     action_baselines: Mapping[str, Mapping[str, str]]
+    protected_action_ids: frozenset[str] = frozenset()
 
 
 def build_crm_v2_database_view(

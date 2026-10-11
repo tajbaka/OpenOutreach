@@ -179,6 +179,22 @@ def evaluate_health(
                 "The latest CRM v2 workflow did not complete all required phases successfully."
             )
 
+    for line in latest_run_lines:
+        try:
+            payload = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        review = payload.get("identity_review")
+        if isinstance(review, dict) and (_int_or_none(review.get("issue_count")) or 0) > 0:
+            status = _worse(status, "warning")
+            reasons.append(
+                f"CRM skipped ambiguous identities ({review['issue_count']} issue(s)); "
+                "review artifacts/crm-audits/crm-v2-identity-issues.json."
+            )
+            break
+
     if not reasons:
         reasons.append(
             "Task is present and the latest context, CRM v2 refresh, People, "

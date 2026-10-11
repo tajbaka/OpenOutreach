@@ -227,3 +227,17 @@ def test_expected_run_hour_parser_and_forwarding(monkeypatch):
     assert captured["expected_run_hour"] == 0
     with pytest.raises(CommandError):
         parser.parse_args(["--expected-run-hour", "24"])
+
+
+def test_success_with_quarantined_identities_is_warning(monkeypatch, tmp_path):
+    now = datetime.now(health.LOCAL_TZ)
+    monkeypatch.setattr(health, "_scheduled_task", lambda _name: {"State": "Ready", "Enabled": True})
+    monkeypatch.setattr(health, "_scheduled_task_info", lambda _name: {
+        "LastRunTime": now.isoformat(), "LastTaskResult": 0,
+    })
+    log = tmp_path / "task.log"
+    log.write_text(_successful_log() + '\n{"identity_review": {"issue_count": 2}}\n')
+    result = health.evaluate_health(task_name="task", log_path=log)
+    assert result.status == "warning"
+    assert "2 issue(s)" in result.reason
+    assert "crm-v2-identity-issues.json" in result.reason
