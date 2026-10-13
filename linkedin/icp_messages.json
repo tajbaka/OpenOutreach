@@ -2811,6 +2811,59 @@
         }
       ],
       "program_name": "FedRAMP Marketplace CSP Outreach"
+    },
+    "soc2-class-a-arian-2026-10-12": {
+      "program_name": "SOC2 Class A | Small-company search | Arian | 2026-10-12",
+      "icp_labels": {
+        "soc2-class-a-federal-prospects": "Business leaders | Small or unconfirmed | Class A exploration | Direct agency"
+      },
+      "messages": [
+        {
+          "audience_key": "soc2-class-a-federal-prospects",
+          "role_persona": "Business leaders",
+          "fedramp_segment": "Class A exploration",
+          "channel": "linkedin_connect",
+          "step_key": "connect",
+          "step_index": 0,
+          "delay_hours": 0,
+          "variant_key": "approved",
+          "subject": "",
+          "body": "{first_name}, interested in unlocking federal revenue? FedRAMP Class A can build on SOC 2 Type II without a separate FedRAMP assessor. Thought it made sense to connect if you’d like to learn more.",
+          "media": [],
+          "sender_override": "Arian",
+          "notes": "Approved in this chat. Markdown anchor converted to the exact official URL for the plain-text sender. Existing cadence reused."
+        },
+        {
+          "audience_key": "soc2-class-a-federal-prospects",
+          "role_persona": "Business leaders",
+          "fedramp_segment": "Class A exploration",
+          "channel": "linkedin_followup",
+          "step_key": "followup-1",
+          "step_index": 0,
+          "delay_hours": 0,
+          "variant_key": "approved",
+          "subject": "",
+          "body": "Thanks for connecting, {first_name}. We help SOC 2 companies prepare for FedRAMP Class A (https://www.fedramp.gov/2026/reference/20x/a/) for $5,000. This can help you assess whether Class A could open up federal revenue for {company_name}. Open to a quick discussion?",
+          "media": [],
+          "sender_override": "Arian",
+          "notes": "Approved in this chat. Markdown anchor converted to the exact official URL for the plain-text sender. Existing cadence reused."
+        },
+        {
+          "audience_key": "soc2-class-a-federal-prospects",
+          "role_persona": "Business leaders",
+          "fedramp_segment": "Class A exploration",
+          "channel": "linkedin_followup",
+          "step_key": "followup-2",
+          "step_index": 1,
+          "delay_hours": 72,
+          "variant_key": "approved",
+          "subject": "",
+          "body": "{first_name}, is federal revenue a priority for {company_name} this year? Happy to share what the $5,000 Class A package includes so you can see whether it fits your plans. Want me to send it over?",
+          "media": [],
+          "sender_override": "Arian",
+          "notes": "Approved in this chat. Markdown anchor converted to the exact official URL for the plain-text sender. Existing cadence reused."
+        }
+      ]
     }
   }
 }

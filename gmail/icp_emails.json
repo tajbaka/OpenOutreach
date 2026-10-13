@@ -2228,6 +2228,44 @@
         }
       ],
       "program_name": "FedRAMP Marketplace CSP Outreach"
+    },
+    "soc2-class-a-arian-2026-10-12": {
+      "program_name": "SOC2 Class A | Small-company search | Arian | 2026-10-12",
+      "icp_labels": {
+        "soc2-class-a-federal-prospects": "Business leaders | Small or unconfirmed | Class A exploration | Direct agency"
+      },
+      "messages": [
+        {
+          "audience_key": "soc2-class-a-federal-prospects",
+          "role_persona": "Business leaders",
+          "fedramp_segment": "Class A exploration",
+          "channel": "gmail",
+          "step_key": "email-1",
+          "step_index": 0,
+          "delay_hours": 0.33,
+          "variant_key": "approved",
+          "subject": "Federal revenue for {company_name}",
+          "body": "Hi {first_name},\n\nThanks for connecting on LinkedIn. We help SOC 2 companies prepare for FedRAMP Class A (https://www.fedramp.gov/2026/reference/20x/a/) for $5,000.\n\nWe can help you assess whether Class A could open up federal revenue for {company_name} and what’s still needed beyond SOC 2.\n\nOpen to a quick discussion?\n\nArian",
+          "media": [],
+          "sender_override": "Arian",
+          "notes": "Approved in this chat. Markdown anchor converted to the exact official URL for the plain-text sender. Existing cadence reused."
+        },
+        {
+          "audience_key": "soc2-class-a-federal-prospects",
+          "role_persona": "Business leaders",
+          "fedramp_segment": "Class A exploration",
+          "channel": "gmail",
+          "step_key": "email-2",
+          "step_index": 1,
+          "delay_hours": 192,
+          "variant_key": "approved",
+          "subject": "Class A scope",
+          "body": "Hi {first_name},\n\nWould it help if I sent over what’s included in our $5,000 Class A package and what we’d need from {company_name}?\n\nArian",
+          "media": [],
+          "sender_override": "Arian",
+          "notes": "Approved in this chat. Markdown anchor converted to the exact official URL for the plain-text sender. Existing cadence reused."
+        }
+      ]
     }
   }
 }

@@ -1,0 +1,2 @@
+# Optional, one-off encrypted SOC 2 campaign transfer. Not a worker dependency.
+cryptography
