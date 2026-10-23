@@ -29,7 +29,9 @@ Credentials, transcripts and private receipts never belong in Git.
 > promised windows, absence and booked meetings. Clearly label any recommended
 > review date as suggested, keep it stable between runs, and never turn a completed
 > delivery or decline into an outstanding obligation. Avoid repeated nudges and
-> preserve operator deferrals. Write concise Next action, Status, Next review,
+> preserve operator deferrals. Retain named-contact redirects and accepted direct
+> outreach steps even if the referrer declines an introduction; verify the target
+> and prior outreach without asking the referrer again. Write concise Next action, Status, Next review,
 > Last touch and Context cells, retaining detailed evidence privately/in hidden cells.
 > Join verified identities and reconcile specific requests chronologically across
 > all channels. Update only the existing Actions tab (formerly Followups), retain

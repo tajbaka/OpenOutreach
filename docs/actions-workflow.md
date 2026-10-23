@@ -180,6 +180,17 @@ meeting or purchase. Acknowledgements can confirm receipt without answering a
 different substantive question. A new inbound can make a planned check-in obsolete
 and replace it with the actual response owed.
 
+A declined introduction is narrower than a declined business conversation. When
+someone names a better contact, retain the redirect and any next step Arian
+accepts (for example, “I will reach out directly”). Close only the intro request;
+do not discard the separate outreach task or classify the account as lost from
+that refusal alone. Check for later contact across verified channels. If the named
+recipient is not yet identified, create one specific contact/prior-outreach
+verification step linked to the referrer's exact message. Keep the two people
+separate, do not invent an address, and do not imply an endorsement or promised
+introduction. Never remind Arian to ask the referrer again after an explicit no.
+
+
 **Timing is contextual, not a drip sequence.** Honor explicit promised dates,
 reconnect windows, booked meetings, decision windows, and operator deferrals first.
 Preserve approximate windows (e.g. next week), and distinguish proposed slots from
