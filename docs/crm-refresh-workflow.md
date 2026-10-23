@@ -1,3 +1,10 @@
+> **Superseded for the configured workbook (2026-10-23).** The current Actions
+> tab belongs to the [Codex contextual review](actions-workflow.md). Active
+> Accounts Next step has its [own Codex review](active-account-next-steps-workflow.md).
+> The Windows wrapper now runs only context, People and LinkedIn Pending.
+> Do not execute the historical generated-Actions/drafting commands below.
+> Existing database Action history is retained; the contextual schema is guarded.
+
 # Canonical CRM v2 refresh workflow
 
 The production CRM is account-first and deliberately small. The three working

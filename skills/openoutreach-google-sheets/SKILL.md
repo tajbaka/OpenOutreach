@@ -67,14 +67,18 @@ tab identifies context; it does not select browser automation.
 ## CRM boundaries
 
 - `Active Accounts` is an operator-owned manual ledger. A direct user request
-  authorizes its specified edit; never invoke a refresh, conversion, rebuild,
+  authorizes its specified edit. The daily Codex review in
+  `docs/active-account-next-steps-workflow.md` may update only Next step; never
+  invoke a refresh, conversion, rebuild,
   reorder or publisher to implement a manual change.
 - When adding an account, bind hidden Opportunity/Account IDs only to one
-  verified existing CRM identity. An unbound manual row is valid, but it cannot
-  authorize generated Actions. Do not create database identities merely to
+  verified existing CRM identity. An unbound manual row is valid and is included
+  in the contextual Next step review. Do not create database identities merely to
   fill hidden cells or change another account's IDs.
-- Generated Actions/People and their stable IDs/baselines remain governed by
-  the CRM contract. A Sheet edit does not authorize running publishers, writing
+- Contextual Actions (formerly Followups) uses `docs/actions-workflow.md`;
+  preserve its sheet ID and hidden Followup UUIDs. Never run the retired generated
+  Actions publisher or draft queue. People IDs/baselines retain the CRM contract.
+  A Sheet edit does not authorize running publishers, writing
   the database, syncing other tabs, importing message programs, changing
   campaigns or sending messages. Existing scheduled handling remains intact.
 

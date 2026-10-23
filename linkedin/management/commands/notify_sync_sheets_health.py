@@ -27,10 +27,6 @@ CONTEXT_FINISHED_RE = re.compile(
     r"finished sync_crm_v2_context run_id=(?P<run_id>[0-9a-f]+) "
     r"exit_code=(?P<code>-?\d+)"
 )
-REFRESH_FINISHED_RE = re.compile(
-    r"finished refresh_crm_v2 run_id=(?P<run_id>[0-9a-f]+) "
-    r"exit_code=(?P<code>-?\d+)"
-)
 PEOPLE_FINISHED_RE = re.compile(
     r"finished sync_active_account_people run_id=(?P<run_id>[0-9a-f]+) "
     r"exit_code=(?P<code>-?\d+)"
@@ -170,7 +166,6 @@ def evaluate_health(
         phase_codes = _latest_phase_exit_codes(latest_run_lines)
         if phase_codes != {
             "context": 0,
-            "refresh": 0,
             "people": 0,
             "linkedin_pending": 0,
         }:
@@ -197,8 +192,8 @@ def evaluate_health(
 
     if not reasons:
         reasons.append(
-            "Task is present and the latest context, CRM v2 refresh, People, "
-            "and LinkedIn Pending phases finished successfully."
+            "Task is present and the latest context, People, and LinkedIn "
+            "Pending phases finished successfully. Codex reviews run separately."
         )
 
     return HealthResult(
@@ -302,7 +297,6 @@ def _latest_phase_exit_codes(lines: list[str]) -> dict[str, int]:
     codes: dict[str, int] = {}
     for key, pattern in (
         ("context", CONTEXT_FINISHED_RE),
-        ("refresh", REFRESH_FINISHED_RE),
         ("people", PEOPLE_FINISHED_RE),
         ("linkedin_pending", LINKEDIN_PENDING_FINISHED_RE),
     ):

@@ -292,6 +292,12 @@ class Command(BaseCommand):
                 raise SheetsError(
                     "--routine requires all legacy canonical CRM tabs to be absent"
                 )
+        # The contextual Codex queue reuses this title, but owns a different
+        # schema and stable IDs. Refuse before any reconciliation, including
+        # --replace-sheet-state, so the retired publisher cannot replace it.
+        actions_ws = worksheets.get(crm_v2_sheets.ACTIONS_TAB)
+        if actions_ws is not None:
+            _assert_generated_actions_schema(actions_ws)
         manual_active_read = None
         active_account_opportunity_ids = None
         if existing_mode == "in_place":
@@ -1287,6 +1293,19 @@ def _obsolete_titles(*, crm_sheets) -> tuple[str, ...]:
 
 def _obsolete_tab_count(worksheets, *, crm_sheets) -> int:
     return sum(title in worksheets for title in _obsolete_titles(crm_sheets=crm_sheets))
+
+
+def _assert_generated_actions_schema(worksheet) -> None:
+    from linkedin.notifications.crm_v2_sheets import ACTION_HEADERS
+
+    values = worksheet.get_all_values()
+    headers = values[0] if values else []
+    if list(headers) != list(ACTION_HEADERS):
+        raise SheetsError(
+            "Actions is not the generated CRM queue. The contextual Codex "
+            "workflow owns this tab; use docs/actions-workflow.md. "
+            "No CRM reconciliation or Sheet replacement was performed."
+        )
 
 
 def _load_reviewed_preview(path: Path, *, now: datetime) -> dict[str, Any]:

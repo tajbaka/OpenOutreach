@@ -1,8 +1,9 @@
 $ErrorActionPreference = "Stop"
 
 # Keep this filename so the existing Windows Scheduled Task action remains
-# valid; the authoritative job refreshes CRM context, Actions, the
-# Active-Accounts-scoped People view, and LinkedIn Pending.
+# valid; this job refreshes CRM context, the Active-Accounts-scoped People
+# view, and LinkedIn Pending. Codex separately reviews contextual Actions
+# and Active Accounts' Next step; never run the retired Actions publisher here.
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $logDir = Join-Path $repoRoot "data\logs"
@@ -45,24 +46,6 @@ try {
     Write-Log "finished sync_crm_v2_context run_id=$runId exit_code=$contextExitCode"
     if ($contextExitCode -ne 0) {
         throw "sync_crm_v2_context exited with code $contextExitCode"
-    }
-
-    Write-Log "starting refresh_crm_v2 run_id=$runId"
-    $refreshExitCode = Invoke-LoggedPython -Arguments @(
-        "manage.py",
-        "refresh_crm_v2",
-        "--apply",
-        "--routine",
-        "--manual-pin",
-        "StackArmor",
-        "--owner-override",
-        "Ramp=Arian",
-        "--owner-override",
-        "StackArmor=Arian"
-    )
-    Write-Log "finished refresh_crm_v2 run_id=$runId exit_code=$refreshExitCode"
-    if ($refreshExitCode -ne 0) {
-        throw "refresh_crm_v2 exited with code $refreshExitCode"
     }
 
     Write-Log "starting sync_active_account_people run_id=$runId"

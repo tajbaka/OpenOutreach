@@ -14,7 +14,6 @@ def _successful_log(run_id: str = "abc123") -> str:
         (
             f"[2026-08-26T09:00:00-04:00] starting crm_v2_workflow run_id={run_id}",
             f"[2026-08-26T09:00:01-04:00] finished sync_crm_v2_context run_id={run_id} exit_code=0",
-            f"[2026-08-26T09:00:02-04:00] finished refresh_crm_v2 run_id={run_id} exit_code=0",
             f"[2026-08-26T09:00:03-04:00] finished sync_active_account_people run_id={run_id} exit_code=0",
             f"[2026-08-26T09:00:04-04:00] finished sync_linkedin_pending run_id={run_id} exit_code=0",
             f"[2026-08-26T09:00:05-04:00] finished crm_v2_workflow run_id={run_id} exit_code=0",
@@ -75,13 +74,12 @@ def test_latest_run_lines_ignore_an_older_failure():
     assert health._latest_exit_code(latest) == 0
     assert health._latest_phase_exit_codes(latest) == {
         "context": 0,
-        "refresh": 0,
         "people": 0,
         "linkedin_pending": 0,
     }
 
 
-def test_evaluate_health_requires_both_v2_phases(monkeypatch, tmp_path):
+def test_evaluate_health_rejects_old_refresh_only_success(monkeypatch, tmp_path):
     log_path = tmp_path / "crm_v2_task.log"
     log_path.write_text(
         "\n".join(
@@ -159,7 +157,7 @@ def test_evaluate_health_accepts_one_complete_v2_run(monkeypatch, tmp_path):
     assert result.latest_exit_code == 0
 
 
-def test_scheduled_wrapper_runs_context_then_routine_v2_refresh():
+def test_scheduled_wrapper_excludes_retired_actions_publisher():
     root = Path(__file__).resolve().parents[2]
     wrapper = (root / "scripts" / "run_sync_sheets.ps1").read_text(encoding="utf-8")
 
@@ -168,8 +166,6 @@ def test_scheduled_wrapper_runs_context_then_routine_v2_refresh():
                 re.findall(r'Invoke-LoggedPython -Arguments @\((.*?)\)', wrapper, re.S)]
     assert commands == [
         ["manage.py", "sync_crm_v2_context", "--apply"],
-        ["manage.py", "refresh_crm_v2", "--apply", "--routine", "--manual-pin",
-         "StackArmor", "--owner-override", "Ramp=Arian", "--owner-override", "StackArmor=Arian"],
         ["manage.py", "sync_active_account_people", "--apply"],
         ["manage.py", "sync_linkedin_pending", "--apply"],
     ]

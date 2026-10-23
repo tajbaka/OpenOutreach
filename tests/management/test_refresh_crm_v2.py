@@ -1248,3 +1248,28 @@ def test_aggregate_telemetry_contains_no_account_or_contact_identity():
     assert "Secret Account" not in rendered
     assert "secret.example" not in rendered
     assert "Arian" not in rendered
+
+
+@pytest.mark.parametrize("replace_state", [False, True])
+def test_contextual_actions_refused_before_reconciliation(monkeypatch, replace_state):
+    from linkedin import conf, crm_v2_evidence
+    from linkedin.notifications import sheets
+
+    spreadsheet = MemorySpreadsheet([
+        MemoryWorksheet("Active Accounts", 1, [list(manual_active.HEADERS)]),
+        MemoryWorksheet("Actions", 2, [[
+            "Requested (Toronto)", "Person", "Company", "Relevant ICP",
+            "What I owe", "Status", "Promised by", "Last activity (Toronto)",
+            "Context", "LinkedIn", "Email / conversation", "Notes",
+            "Reviewed (Toronto)", "Followup ID", "Contact identity", "Evidence (JSON)",
+        ]]),
+    ])
+    monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", spreadsheet.id)
+    monkeypatch.setattr(sheets, "_gspread_client", lambda: spreadsheet)
+    monkeypatch.setattr(crm_v2_evidence, "collect_account_evidence",
+                        lambda **kwargs: pytest.fail("must refuse before CRM reconciliation"))
+    before = {ws.title: ws.get_all_values() for ws in spreadsheet.worksheets()}
+    with pytest.raises(CommandError, match="contextual Codex"):
+        call_command("refresh_crm_v2", apply=True, routine=True,
+                     replace_sheet_state=replace_state, skip_sales_motion=True)
+    assert before == {ws.title: ws.get_all_values() for ws in spreadsheet.worksheets()}
