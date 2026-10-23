@@ -11,14 +11,24 @@ Credentials, transcripts and private receipts never belong in Git.
 > Review stored LinkedIn, live Arian Gmail including Sent, and Granola meetings
 > with full transcripts; use relevant stored Gemini notes only as dated supporting
 > evidence. Discover the last 14 days, extend over a missed interval, and recheck
-> every open obligation plus older relevant meeting commitments regardless of age.
+> every open item, every manual Active Account, and older relevant meeting
+> commitments regardless of age. Include both work Arian owes and justified
+> relationship follow-ups inside or outside Active Accounts: requested material
+> already delivered, stakeholder/proposal reviews, agreed reconnects, and evaluation
+> check-ins. Require a concrete engagement signal, outcome, last actual touch and
+> timing rationale; ordinary unanswered cold outreach is not an action. Honor
+> promised windows, absence and booked meetings. Clearly label any recommended
+> review date as suggested, keep it stable between runs, and never turn a completed
+> delivery or decline into an outstanding obligation. Avoid repeated nudges and
+> preserve operator deferrals. Write concise Next action, Status, Next review,
+> Last touch and Context cells, retaining detailed evidence privately/in hidden cells.
 > Join verified identities and reconcile specific requests chronologically across
 > all channels. Update only the existing Actions tab (formerly Followups), retain
 > its native sheet ID, hidden Followup IDs, operator Notes and formatting, and
 > include readable saved ICP labels or clearly marked suggestions. Save exact
 > completion evidence before removing resolved rows. Recheck live rows/sources,
 > take the publisher lock for final writes, and verify by API readback. Report
-> meaningful changes and incomplete coverage. No sends, drafts, CRM mutations,
+> meaningful changes, newly actionable follow-ups and incomplete coverage. No sends, drafts, CRM mutations,
 > other publishers, workers or schedule changes.
 
 ## Active Accounts Next step

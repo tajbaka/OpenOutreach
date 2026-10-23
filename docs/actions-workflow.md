@@ -1,6 +1,6 @@
 # Contextual Actions review
 
-`Actions` is Arian's separate cross-channel obligation list in the configured
+`Actions` is Arian's cross-channel work and relationship-follow-up list in the configured
 FedRampGPT workbook. This portable Codex review can run from any authorized
 OpenOutreach checkout. It is independent of the Windows CRM pipeline;
 `LinkedIn Pending` and its publisher remain unchanged. This workflow authorizes
@@ -58,8 +58,11 @@ Read stored `crm.Message` LinkedIn history using read-only database transactions
 Do not invoke a CRM importer, publisher, worker, or live LinkedIn collection.
 Read Gmail directly, including Sent and attachments' names, because stored CRM
 email history alone may omit personal replies. Never read drafts as sent work.
-Discover new requests from the previous 14 days and recheck every existing open
-row regardless of age. Extend the discovery interval back to the last successful review if a
+Discover new requests and meaningful relationship signals from the previous 14 days,
+review every manual Active Account (including unbound rows), and recheck every existing
+open row regardless of age. Also revisit recently fulfilled requests: requested material
+sent today can justify a future feedback check even though its delivery is complete.
+Extend the discovery interval back to the last successful review if a
 run was missed for more than 14 days. Paginate results; do not claim full coverage
 after truncation. Read full relevant threads after header/snippet discovery.
 
@@ -90,7 +93,7 @@ and existing business relationships. Exclude unsolicited vendor pitches,
 newsletters, bounces, out-of-office messages, routine system notices, and test
 leads. Check actual human messages even when Gmail categorizes them unexpectedly.
 
-## Decide what is still owed
+## Decide what is useful to do
 
 An AI review of the actual dated conversation makes the decision. There is no
 last-sender or keyword-only completion rule. Identify the specific question,
@@ -115,18 +118,69 @@ email, draft, bounce, internal forward, acknowledgement, or promise to send does
 not. An attachment filename alone is insufficient if its relevance is unclear.
 Inspect the attachment when necessary to establish fulfillment.
 
-Keep only outstanding obligations in Actions. `Owed` means Arian can act now;
-`Overdue promise` requires an explicit elapsed promise date.
-`Planned` means an explicit future commitment; preserve approximate windows
-(e.g. next week) rather than inventing a day. `Waiting on contact`
-means delivery remains open but a specific clarification is outstanding; do not
-treat it as overdue merely because Arian sent the last message. Use `Needs review`
-when identity or fulfillment is genuinely ambiguous. Do not silently mark these
-cases complete. If a response needs no further action, remove it from the active
-tab after recording its exact completion evidence in the private run receipt.
-Never remove an open item simply because it has aged past the discovery window.
+Keep three kinds of useful work, each with a specific outcome:
 
-Use Toronto dates. Do not invent due dates, assume a meeting happened, or confuse
+- **Owe:** an unanswered question, requested deliverable, introduction, or meeting
+  commitment Arian owns. Check fulfillment across all channels before retaining it.
+- **Follow-up:** an engaged relationship with a concrete reason to reconnect:
+  requested material delivered, an agreed reconnect, stakeholder review, a proposal
+  decision, a booked evaluation check-in, or an accepted partnership discussion.
+  Identify the signal, last actual touch, intended outcome, and reason for the timing.
+  This applies inside and outside Active Accounts. Account membership or age alone
+  does not justify another message.
+- **Verify:** a useful internal check where source coverage, identity, or completion
+  is uncertain. State exactly what to verify before contacting anyone. An operator's
+  specific dated Sheet note can justify this check, but cannot invent a verified
+  cross-channel identity or prove an unrecorded conversation's contents.
+
+Delivered material is complete even when a subsequent feedback check is useful.
+Record the delivery evidence, close the old obligation, and create one distinct
+follow-up with its own stable ID and timing. Do not relabel the material as still
+owed, duplicate the same outcome, or treat a forwarded overview as a confirmed
+meeting or purchase. Acknowledgements can confirm receipt without answering a
+different substantive question. A new inbound can make a planned check-in obsolete
+and replace it with the actual response owed.
+
+**Timing is contextual, not a drip sequence.** Honor explicit promised dates,
+reconnect windows, booked meetings, decision windows, and operator deferrals first.
+Preserve approximate windows (e.g. next week), and distinguish proposed slots from
+booked meetings. Allow time for internal circulation, holidays/absence and recent
+touches. Where there is a clear relationship signal but no agreed date, Codex may
+recommend one useful review date, explicitly marked **suggested**. For example,
+requested material delivered Friday might warrant a check mid-to-late next week;
+an internal handoff needs more room than a simple scheduling reply. Explain the
+specific rationale in Context/Evidence; never present a suggested date as a promise.
+A review date is a point to reassess fresh context, not automatic permission to send.
+
+Keep the selected date stable between daily runs. Reaching it changes readiness,
+not the underlying date; never move it forward just because another review ran.
+Move or retire it only with new evidence or an explicit contextual decision recorded
+in the receipt. After a retouch is sent, record the real touch and reassess whether
+another step is justified; do not regenerate an endless reminder after each gap.
+Several unanswered touches should prompt a deliberate pause/close-loop decision,
+not another routine ping. A stale relationship may warrant one specific reactivation
+check; it is not an overdue promise. Recheck contact-wide touches before suggesting
+another channel so an email and LinkedIn message do not become duplicate nudges.
+
+Exclude cold sequence touches without human engagement, generic “checking in,”
+newsletters, and completed declines. Respect Closed Lost, explicit no-interest,
+informal “keep in mind” agreements and trigger-based nurture. Record future nurture
+conditions in the receipt/account context; do not fill Actions with undated dormant
+rows. A missing reply does not override those conditions. Active Accounts Next step
+remains the account-level state; Actions contains only a concrete dated action or
+specific verification task, not a copy of every ledger row.
+
+`Ready` means there is a justified action now. `Planned` means a future promised,
+scheduled, or suggested action/review. `Waiting on contact` names the dependency
+and includes a sensible review point if appropriate; when chasing that dependency
+becomes useful, make the specific chase Ready. `Needs review` means verify before
+acting. `Overdue promise` requires Arian's explicit elapsed promise date, never a
+suggested check-in or someone else's missed deadline. Legacy Owed maps to Ready
+only after source review. Remove resolved/closed work after saving its evidence;
+never remove an open item solely because it aged past discovery.
+
+Use Toronto dates, including the year. Separate suggested dates from actual promises;
+do not invent an agreement, assume a meeting happened, or confuse
 requests in quoted email history with a new request. Preserve operator Notes and
 honor explicit instructions there, including handled/completed/deferred items;
 record them in the private receipt before removing a row so it does not reappear.
@@ -146,13 +200,21 @@ Actions is the former Followups tab, retaining its native sheet ID and stable
 UUIDs. The old generated Actions tab is backed up privately and removed. Never
 import its mechanical reminders as obligations without source review.
 
-The visible columns are: Requested (Toronto), Person, Company, Relevant ICP,
-What I owe, Status, Promised by, Last activity (Toronto), Context, LinkedIn,
-Email / conversation, Notes. Hidden columns are: Reviewed (Toronto), Followup ID,
+The visible columns are: Action type, Person, Company, Relevant ICP,
+Next action, Status, Next review (Toronto), Last touch (Toronto), Context, LinkedIn,
+Email / meeting, Notes. Hidden columns are: Reviewed (Toronto), Followup ID,
 Contact identity, Evidence. The historical hidden header `Followup ID` remains unchanged for identity
 continuity. These are sheet-specific stable UUIDs, not CRM
 Action IDs. Evidence holds source channel/mailbox, exact message/thread IDs,
-known addresses, and the basis for the decision. Preserve Notes by Followup ID.
+known addresses, original request/opened date, completion evidence, last meaningful
+touch, engagement signal, timing basis (promised/scheduled/suggested/conditional),
+and the basis for the decision. Preserve Notes by Followup ID. The 2026-10-23
+refinement repurposes the former Requested column as Action type and retains the
+original request date in Evidence; hidden columns stay in M:P. Keep Next action to
+one concrete sentence (usually under 30 words) and Context to one or two short
+sentences explaining why/what already happened. Detailed history belongs in Evidence,
+with the most relevant source link visible. Never claim Last touch is comprehensive
+when Slack/text or live LinkedIn is unavailable.
 
 Read live headers, native cell metadata, existing rows, and user notes before
 editing. Resolve the existing exact `Actions` tab by title and retain its native
@@ -167,8 +229,11 @@ last reviewed row, preserving its criteria and sort settings. Apply readable
 row heights to appended rows consistent with the wrapped table. Verify hidden
 identity columns and frozen panes remain intact. Deduplicate by contact plus
 specific request. Remove only reviewed resolved
-items, never clear or rebuild the whole workbook. Sort overdue promises first,
-then oldest actionable requests, followed by planned commitments, with waiting/uncertain rows clearly marked.
+items, never clear or rebuild the whole workbook. Sort overdue promises and Ready
+work first, then specific verification tasks, then planned/waiting work in review-date
+order. Prioritize a blocked near-term meeting or decision over an older low-urgency
+retouch. Keep status and date basis explicit so future work is not mistaken for
+something to send today.
 Read back every changed range and verify that LinkedIn Pending is unchanged.
 
 Save private source/decision/readback receipts in a new run directory under
@@ -182,8 +247,9 @@ and every open item. Label a contact-only diagnostic as partial, and never advan
 the full-review watermark from it. Do not replay an initial-creation helper or
 other historical one-off write script from the artifacts directory.
 
-The daily task should stay quiet when nothing meaningful changes, and report new obligations, completed items,
-materially changed commitments, or access failures. It never sends messages,
+The daily task should stay quiet when nothing meaningful changes, and report new obligations,
+justified follow-ups becoming actionable, completed items, materially changed commitments,
+or access failures. It never sends messages,
 creates email drafts, modifies CRM records, or changes schedules. It does not write Active Accounts;
 that is the separately scoped next-steps review. Acquire `crm_refresh_lock()`
 for final read/check/write/readback so same-workbook publishers cannot overlap.
