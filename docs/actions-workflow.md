@@ -162,7 +162,11 @@ immediately before writing and stop on a conflicting human edit or new message.
 Compare stable message IDs, headers and content, not transient Gmail attachment
 download tokens. Update only this exact tab, using literal values, preserving
 identity, notes, and formatting. Append after the last populated row, not an A1 logical
-table. Deduplicate by contact plus specific request. Remove only reviewed resolved
+table. After adding or removing rows, extend the existing filter through the
+last reviewed row, preserving its criteria and sort settings. Apply readable
+row heights to appended rows consistent with the wrapped table. Verify hidden
+identity columns and frozen panes remain intact. Deduplicate by contact plus
+specific request. Remove only reviewed resolved
 items, never clear or rebuild the whole workbook. Sort overdue promises first,
 then oldest actionable requests, followed by planned commitments, with waiting/uncertain rows clearly marked.
 Read back every changed range and verify that LinkedIn Pending is unchanged.
