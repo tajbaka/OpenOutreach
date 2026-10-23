@@ -235,6 +235,53 @@ requests in quoted email history with a new request. Preserve operator Notes and
 honor explicit instructions there, including handled/completed/deferred items;
 record them in the private receipt before removing a row so it does not reappear.
 
+## Rank by contextual priority
+
+After checking eligibility and fulfillment, sort the entire Actions list by
+Codex's judgment of the highest-value next work. Consider these factors together,
+not as a rigid status-first sort or a fixed numeric lead score:
+
+- **Time pressure and blockers:** actual deadlines, promised responses, imminent
+  meetings or decisions, and work that unlocks the next step. A small but urgent
+  commitment can outrank a larger deal with no action due yet.
+- **Deal value:** verified current opportunity value, the latest proposal/quote
+  or a clearly supported range. Distinguish a quote from committed revenue,
+  annual from one-time/total value, currencies, and an option from selected scope.
+  Record missing amounts as unknown, never zero. Company size, a famous logo or
+  generic list pricing alone is not a deal-size estimate. Do not invent win
+  probabilities or multiply speculative partner volume into booked revenue.
+- **Stage and buying evidence:** procurement/vendor selection, commercial review,
+  active evaluation or pilot, completed discovery, and early interest. Use dated
+  conversation evidence when recorded stages lag, labeling the contextual stage
+  without changing Active Accounts or CRM. A sandbox is not a won deal.
+- **Engagement and effect:** decision-maker involvement, recent substantive
+  replies, a credible customer need, competitive pressure, and how much this
+  specific action can advance the relationship. Concrete partner distribution
+  potential can matter when supported; keep it separate from known deal value.
+- **Actionability and confidence:** what Arian can unblock now, dependencies,
+  evidence gaps and freshness. A quick verification that protects an imminent
+  high-value decision may rank highly. Do not let old unanswered outreach outrank
+  engaged deals just because it is older, or discard an unknown-value lead solely
+  because its value is missing.
+
+Use a concise ordinal rank and High/Medium/Low band as review judgments, not
+measured probabilities. Explain the main reason and material uncertainty for
+higher-priority items. A commercially important future action can rank above a
+low-value Ready item; preserve its Planned/Waiting status and actual review date.
+Priority never makes a future meeting due today, changes a promise or authorizes
+sending. Distinct actions at the same company may rank differently according to
+what they unblock and when they matter.
+
+Store rank, band, rationale, value/source/basis, recorded and contextual stage,
+confidence and review timestamp under `priority` in hidden Evidence and the
+private receipt. Add a short priority explanation in a managed block in the
+Context cell's native note, preserving all existing operator note text outside
+that block; this avoids adding more visible columns. Reassess on each review,
+but retain previous order for materially tied items to avoid daily reshuffling.
+Use actual time pressure and then existing stable order to break ties, not an
+alphabetical company sort. Apply the ordering to whole rows, including hidden
+IDs, Notes and native formatting; never sort only the visible columns.
+
 ## ICP and sheet contract
 
 Read the current `General ICP Messages` labels. For assigned contacts, map the
@@ -279,11 +326,11 @@ last reviewed row, preserving its criteria and sort settings. Apply readable
 row heights to appended rows consistent with the wrapped table. Verify hidden
 identity columns and frozen panes remain intact. Deduplicate by contact plus
 specific request. Remove only items reviewed as resolved or excluded for a
-closed account; never clear or rebuild the whole workbook. Sort overdue promises and Ready
-work first, then specific verification tasks, then planned/waiting work in review-date
-order. Prioritize a blocked near-term meeting or decision over an older low-urgency
-retouch. Keep status and date basis explicit so future work is not mistaken for
-something to send today.
+closed account; never clear or rebuild the whole workbook. Order the full rows by
+the contextual priority review above, preserving stable IDs, operator Notes,
+cell notes outside the managed priority block, row heights and hidden fields.
+Keep status and date basis explicit so future work is not mistaken for something
+to send today.
 Read back every changed range and verify that LinkedIn Pending is unchanged.
 
 Save private source/decision/readback receipts in a new run directory under

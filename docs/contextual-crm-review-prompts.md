@@ -33,6 +33,13 @@ Credentials, transcripts and private receipts never belong in Git.
 > outreach steps even if the referrer declines an introduction; verify the target
 > and prior outreach without asking the referrer again. Write concise Next action, Status, Next review,
 > Last touch and Context cells, retaining detailed evidence privately/in hidden cells.
+> Rank and sort whole rows by contextual priority, weighing verified deal size,
+> current evidence-backed stage, urgency/blockers, buyer engagement, partner
+> potential and actionability. Treat missing value as unknown and distinguish
+> quotes/options from committed revenue; never infer value from company size.
+> Keep future dates/statuses intact. Save the rank and rationale in hidden
+> Evidence and a managed Context cell note, preserving operator notes and stable
+> order for ties. Highest priority does not automatically mean contact today.
 > Join verified identities and reconcile specific requests chronologically across
 > all channels. Update only the existing Actions tab (formerly Followups), retain
 > its native sheet ID, hidden Followup IDs, operator Notes and formatting, and
