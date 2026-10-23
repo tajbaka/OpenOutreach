@@ -12,7 +12,16 @@ Credentials, transcripts and private receipts never belong in Git.
 > with full transcripts; use relevant stored Gemini notes only as dated supporting
 > evidence. Discover the last 14 days, extend over a missed interval, and recheck
 > every open item, every manual Active Account, and older relevant meeting
-> commitments regardless of age. Include both work Arian owes and justified
+> commitments regardless of age. Before creating or retaining rows, exclude
+> Closed Won and Closed Lost companies across all action types. Determine this
+> from explicit user direction, recorded stages and clear dated LinkedIn/email/
+> meeting context, including companies outside Active Accounts or with stale
+> stages. Verify the account and relationship, check later reopening evidence,
+> and record the closure basis. Archive excluded rows with their Notes/IDs;
+> exclusion does not mean their obligations were fulfilled. Do not regenerate
+> customer-support or nurture actions for closed accounts or change account/CRM
+> stages. Hold ambiguous closure matches for review.
+> Include both work Arian owes and justified
 > relationship follow-ups inside or outside Active Accounts: requested material
 > already delivered, stakeholder/proposal reviews, agreed reconnects, and evaluation
 > check-ins. Require a concrete engagement signal, outcome, last actual touch and

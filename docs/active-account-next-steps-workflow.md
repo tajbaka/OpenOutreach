@@ -36,6 +36,9 @@ An account can be awaiting a counterpart while Actions holds a suggested future
 review of that dependency. Keep this ledger focused on the account's current
 state and next move; the Actions review owns concrete follow-up timing. Do not
 copy every Actions row here or write its suggested date into Next step due.
+The Actions-only closed-account exclusion does not remove or skip manual ledger
+rows in this review. Continue to preserve their identity/stage and update only
+Next step where the evidence supports a change.
 Respect Closed Won as a customer relationship and Closed Lost as deferred/lost:
 do not revive stale sales tasks or invent follow-up dates to fill the cell.
 Operator Notes and explicit handled/deferred decisions outrank mechanical aging.

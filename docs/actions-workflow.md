@@ -93,6 +93,45 @@ and existing business relationships. Exclude unsolicited vendor pitches,
 newsletters, bounces, out-of-office messages, routine system notices, and test
 leads. Check actual human messages even when Gmail categorizes them unexpectedly.
 
+## Exclude closed accounts
+
+Before creating or retaining any Actions row, determine the current relationship
+outcome for its verified company/account. **Exclude Closed Won and Closed Lost
+accounts from Actions**, including Owe, Follow-up and Verify items. This also
+excludes customer support, onboarding checks and dormant nurture for those
+accounts; unfinished work does not override the exclusion.
+
+Use explicit user instructions, the manual Active Accounts stage/Notes, existing
+CRM opportunity state, and dated LinkedIn, Gmail and full meeting context.
+Active Accounts membership is not required: clear conversation evidence of a
+completed sale, an established customer relationship, or a definitive lost/no-go
+decision can establish exclusion even when a Sheet stage is missing or stale.
+Record the exact evidence, date, verified account identity and whether the
+outcome is recorded or contextually inferred. Read any later evidence before
+deciding; an old closed outcome and a later explicitly reopened relationship
+must not be collapsed into one undated status.
+
+Confirm that the outcome belongs to the relationship behind the row. Buying an
+assessor's services is not evidence that the assessor bought Boundera, and a
+lost assessment selection does not by itself close a separately active channel
+partnership. A signed NDA, sandbox access, completed task, tentative enthusiasm,
+postponement or silence alone does not prove a won or lost account. If closure
+or identity is ambiguous, preserve the existing row and flag the uncertainty
+for review rather than silently infer an outcome.
+
+Apply a confirmed exclusion to every verified contact/action for that account,
+inside or outside Active Accounts. Save removed rows, operator Notes, stable IDs
+and the closure evidence in the private receipt with an **excluded: closed won**
+or **excluded: closed lost** decision. Exclusion is not proof that the underlying
+obligation was fulfilled. Do not recreate these rows on later reviews merely
+because their work is unfinished, new support messages arrive, or a review date
+passes. A later explicit reopening or new active opportunity requires a fresh,
+source-backed eligibility decision; routine replies do not reopen an account.
+
+This is an Actions eligibility rule only. Do not change Active Accounts rows,
+stages or other fields, CRM records or database Action history to implement it.
+The separate Active Accounts Next step review retains its existing scope.
+
 ## Decide what is useful to do
 
 An AI review of the actual dated conversation makes the decision. There is no
@@ -228,8 +267,8 @@ table. After adding or removing rows, extend the existing filter through the
 last reviewed row, preserving its criteria and sort settings. Apply readable
 row heights to appended rows consistent with the wrapped table. Verify hidden
 identity columns and frozen panes remain intact. Deduplicate by contact plus
-specific request. Remove only reviewed resolved
-items, never clear or rebuild the whole workbook. Sort overdue promises and Ready
+specific request. Remove only items reviewed as resolved or excluded for a
+closed account; never clear or rebuild the whole workbook. Sort overdue promises and Ready
 work first, then specific verification tasks, then planned/waiting work in review-date
 order. Prioritize a blocked near-term meeting or decision over an older low-urgency
 retouch. Keep status and date basis explicit so future work is not mistaken for
@@ -239,7 +278,8 @@ Read back every changed range and verify that LinkedIn Pending is unchanged.
 Save private source/decision/readback receipts in a new run directory under
 `artifacts/followups/YYYY-MM-DD/<run-id>/` (Git-ignored), without overwriting prior
 runs. Record coverage boundaries, unavailable sources, the workbook/tab IDs,
-changed Followup IDs, exact completion evidence and verification results. Read
+changed Followup IDs, exact completion or closed-account exclusion evidence,
+and verification results. Read
 prior receipts as audit evidence for handled/excluded requests and cross-channel resolution. If a source
 is inaccessible or stale, preserve existing rows, report the affected coverage,
 and do not infer that absence means completion. A full review checks discovery
