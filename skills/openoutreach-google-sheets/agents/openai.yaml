@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenOutreach Google Sheets"
+  short_description: "Update Sheets with existing auth and API readback"
+  default_prompt: "Use $openoutreach-google-sheets to update the requested workbook through OpenOutreach's existing Google authentication and verify the result through the API."
+policy:
+  allow_implicit_invocation: true
