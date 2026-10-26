@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from termcolor import colored
 
+from linkedin.browser.recovery import BrowserRecovery
 from linkedin.conf import (
     ACTIVE_END_HOUR,
     ACTIVE_START_HOUR,
@@ -886,6 +887,7 @@ def run_daemon(session):
     if node_monitor is not None:
         node_monitor.start()
     failure_tracker = TaskFailureTracker(our_operator)
+    browser_recovery = BrowserRecovery(sender=our_operator, notify=notify_degraded)
 
     # Single-threaded: one task at a time, no concurrent enqueuing,
     # so sleeping until the next scheduled_at is safe.
@@ -893,6 +895,14 @@ def run_daemon(session):
         # Close stale DB connections at the top of every loop iteration.
         # Neon's idle timeout can kill the SSL socket during any sleep.
         connections.close_all()
+
+        # Check before claiming: an offline Chrome document must not consume
+        # the queue. Keep supervisor controls and background workers alive
+        # during backoff or a latched review hold; never replay a failed send.
+        if not browser_recovery.can_claim(session.page):
+            _sync_listener_supervisor(listener_supervisor)
+            time.sleep(browser_recovery.POLL_SECONDS)
+            continue
 
         pause = seconds_until_active(session.linkedin_profile)
         claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
@@ -1073,6 +1083,12 @@ def run_daemon(session):
                     "payload": task.payload,
                 },
             )
+            if browser_recovery.task_failed(
+                exc,
+                read_only=task.task_type == Task.TaskType.SWEEP_CONNECTIONS,
+                task_id=task.id,
+            ):
+                continue
             # Self-rescheduling tasks (connect) never reach their own
             # reschedule path on crash.  Re-seed so the queue doesn't stall.
             if task.task_type == Task.TaskType.CONNECT:
@@ -1094,6 +1110,8 @@ def run_daemon(session):
             continue
 
         task.mark_completed()
+        if task.task_type != Task.TaskType.STATUS_SUMMARY:
+            browser_recovery.task_succeeded()
         if task.task_type == Task.TaskType.CONNECT:
             cid = task.payload.get("campaign_id")
             if cid:

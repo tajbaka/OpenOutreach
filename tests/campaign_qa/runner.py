@@ -43,6 +43,16 @@ def main():
         '-p', 'pytest_django.plugin', '-p', 'pytest_mock', '-p', 'tests.campaign_qa.reporting',
         '-q', '--tb=short', '-p', 'no:cacheprovider', '--strict-markers',
     ]
+    if os.environ.get('CAMPAIGN_QA_SUITE') == 'daemon-browser':
+        return pytest.main(common + [
+            'tests/test_browser_recovery.py', 'tests/test_daemon_resilience.py',
+            'tests/test_browser_nav.py', 'tests/test_browser_login.py',
+            'tests/test_daemon_supervisor_gmail.py', 'tests/test_daemon_supervisor_email_only.py',
+            'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',
+            'tests/test_daemon_supervisor_stop.py', 'tests/test_supervisor_safety.py',
+            'tests/realtime/test_supervisor.py',
+            'tests/tasks/test_follow_up_media.py', 'tests/tasks/test_drip_message_action.py',
+        ])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'slack-drafts':
         return pytest.main(common + [
             'tests/test_slack_reply_drafts.py', 'tests/test_slack_enrich.py',
@@ -98,6 +108,7 @@ def main():
         'tests/realtime/test_listener.py', 'tests/realtime/test_supervisor.py',
         'tests/realtime/test_listener_command.py',
         'tests/test_daemon_resilience.py',
+        'tests/test_browser_recovery.py',
         'tests/gmail/test_delivery.py', 'tests/gmail/test_client.py',
         'tests/gmail/test_templates.py',
         'tests/gmail/tasks', 'tests/test_icp_outbound.py',

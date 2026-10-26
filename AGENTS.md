@@ -4,6 +4,8 @@
 
 ## Rules
 
+- **Daemon offline-browser recovery (2026-10-26):** Before claiming a Task, inspect the working page for Chrome's error document or offline network state. `linkedin/browser/recovery.py` pauses claims and navigates only that page to the HTTPS LinkedIn feed after 15/30/60-second delays (30-second navigation timeout). Require a successful response and a non-error feed document; login/checkpoint redirects never count as recovery. Exhaustion latches a process-local hold with one degraded alert; the worker stays alive to avoid supervisor crash/restart loops, while background workers and supervisor controls remain available. A successful browser task resets the budget; a feed load or status summary alone does not. Recognized transport errors during a connection sweep may recover between tasks. During any potentially mutating task they instead latch a review hold, preserve the failed Task, and skip automatic connect reseeding. Recovery never replays handlers or repairs uncertain sends. Review delivery evidence before explicitly restarting a held worker. Unexpected browser errors propagate. No campaign, sender-control, historical failed-task, or runtime restart changes are part of installing this code.
+
 
 - **SOC 2 initial worker results (2026-10-13 18:32 UTC):** Campaign 55's Arian worker completed connect Tasks 51960/51962 without Task errors. Delivery 2206 has a confirmed send, matching invitation timestamp/sender, ActionLog 8491 and an independently verified saved note/render hash identical to the approved preview. Delivery 2205 is marked failed; its matching ConnectIssueLog 477 reports `More menu did not open`, with no invitation ledger/send timestamp. The snapshot has one sent, one failed and 59 planned connection deliveries, plus pending successor Task 51963. No manual retries or queue changes were performed. Review private `initial-worker-results.json`, `initial-connect-diagnostics.json` and `first-invitation-verification.json` under the setup artifact directory. Post-acceptance follow-up/Gmail execution and the remote checkout's exact Git revision remain unverified. Cleanup commit `0be6ff5` removed the tracked transfer and optional decryption requirement; the key is absent and private artifacts remain ignored.
 
@@ -161,6 +163,8 @@ pytest -k test_name                # single test
 # Focused reporting/CRM-sync regressions with the same private-Postgres and
 # blocked-network/credential protections; no campaign previews are claimed.
 .venv/bin/python scripts/qa_campaigns.py --suite accepted-connections
+# Focused browser recovery, supervisor, and send-safety regressions.
+.venv/bin/python scripts/qa_campaigns.py --suite daemon-browser
 
 # Shared campaign-message authoring and import. General ICP Messages is mutable
 # draft state; no command below creates a Task or sends anything. Render is a one-time migration helper: its
