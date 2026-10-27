@@ -70,6 +70,8 @@ def main():
             'tests/management/test_notify_sync_sheets_health.py', 'tests/management/test_generate_followups.py',
             'tests/test_crm_v2_policy.py', 'tests/test_crm_v2_evidence.py',
             'tests/test_crm_v2_actions.py', 'tests/test_crm_lock.py',
+            'tests/test_crm_v2_view_builder.py',
+            'tests/test_linkedin_pending.py', 'tests/test_linkedin_pending_sheet.py',
         ])
     return pytest.main(common + [
         'tests/campaign_qa/test_imported_campaigns.py',
