@@ -1,12 +1,14 @@
 # PDF field contract
 
-The renderer supports only these exact two-page letter-size files in OpenOutreach's `docs/outbound-collateral/`. Its source-hash constants are the contract: a changed template must be inspected and deliberately remapped, never accepted merely by updating a hash.
+The renderer supports only these exact letter-size files in OpenOutreach's `docs/outbound-collateral/`. Its source-hash constants are the contract: a changed template must be inspected and deliberately remapped, never accepted merely by updating a hash. Rev5 Authorized uses the three-page October 23, 2026 revision; the other two templates remain two pages.
 
-| template_key | Source | Current listing | Background bullets |
-| --- | --- | --- | --- |
-| initial-20x | initial-20x.pdf | Initial Implementation, 20x | 3 |
-| rev5-authorized | rev5-auth-20x.pdf | Ongoing Certification, FedRAMP Certified, Rev5, Class C | 2 |
-| rev5-ready | rev5-ready-to-20x.pdf | Legacy FedRAMP Ready, Rev5, Class C | 3 |
+| template_key | Source | Current listing | Background bullets | Pages |
+| --- | --- | --- | --- | --- |
+| initial-20x | initial-20x.pdf | Initial Implementation, 20x | 3 | 2 |
+| rev5-authorized | rev5-auth-20x.pdf | Ongoing Certification, FedRAMP Certified, Rev5, Class C | 2 | 3 |
+| rev5-ready | rev5-ready-to-20x.pdf | Legacy FedRAMP Ready, Rev5, Class C | 3 | 2 |
+
+The Rev5 Authorized map fills all three top-right logo placeholders and all company footers, plus the page 1 heading and page 2 company/offering/background fields. Page 3 capabilities and CTA stay unchanged. Its export uses visible outlined glyphs with invisible searchable text, so the mapped redactions remove contained glyph paths as well as text. Font weight, colors, background fill and field bounds are mapped explicitly; the existing pixel-difference guard still protects everything outside approved fields. Long text that exceeds the mapped subtitle, card or footer space fails rather than overlapping adjacent content.
 
 Background bullet order: company/market; published baseline or relevant offering context; exact offering/status and path caveat. Authorized has two bullets: company/market, then exact offering/class. Aim for 90-125 characters per bullet and no more than three rendered lines. Layout is the actual limit, not a character-count guarantee. Use ASCII hyphens in newly written copy.
 
@@ -22,7 +24,7 @@ One JSON object, inside the chosen company's `research/` folder:
 - `logo`: company-relative path to the reviewed high-resolution PNG, e.g. `assets/logo.png`.
 - `logo_background`: optional `#ffffff` default or a reviewed contrasting hex color.
 - `logo_source_url`: original official asset URL; for an inline SVG, its official page URL.
-- `marketplace`: object with `package_id`, `url`, `verified_at` (timezone-aware ISO timestamp), `type` (`20x`/`Rev5`), exact `phase` and `status`, `path`, `class` (`B`, `C`, `Unknown`), optional `target_class`.
+- `marketplace`: object with `package_id`, `url`, `verified_at` (timezone-aware ISO timestamp), `type` (`20x`/`Rev5`), exact `phase` and `status`, `path`, `class` (`B`, `C`, `Unknown`), optional `target_class`. Preserve `JAB` when the official certified Rev5 listing still displays that legacy path; do not relabel it Agency or Program.
 - `paragraphs`: array of two or three original, source-grounded strings.
 - `sources`: array of `{url, finding}` objects; include Marketplace, company-fact pages and the logo source/discovery page. Findings are concise paraphrases, not copied articles.
 - `paragraph_sources`: parallel array of source-URL arrays, one per paragraph.

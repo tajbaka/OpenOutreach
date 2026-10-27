@@ -23,7 +23,7 @@ All private output and support goes under `custom_media/<Company Name>/`: PDFs a
 
 ## Fill and verify
 
-Prepare one company-local JSON brief following the field contract. The approved editable areas are the two top logo placeholders, company-name placeholders, listed-offering placeholder and company-background bullets. No redesign, new marketing claims or silent edits to the general template copy.
+Prepare one company-local JSON brief following the field contract. The approved editable areas are each page's top logo placeholder (three for Rev5 Authorized, two for the other templates), company-name placeholders, listed-offering placeholder and company-background bullets. The Rev5 Authorized capabilities page is preserved apart from its logo and company footer. No redesign, new marketing claims or silent edits to the general template copy.
 
 Use the PDF skill for its authoring marker, rendering and delivery requirements. The user's `custom_media/` convention overrides its generic output paths. Use the repo's `.venv/bin/python`. Optional isolated dependencies are in `requirements/collateral.txt`; install with `--target custom_media/.generation/deps` if needed, not into the application's runtime. Set `PYTHONPATH` to that isolated directory. Poppler (`pdftoppm`) and Arial regular/bold are required; alternate fonts require explicit CLI paths and visual review.
 

@@ -74,6 +74,46 @@ class PersonalizationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     p.validate(case, self.root, self.brief)
 
+    def test_legacy_jab_path_only_for_certified_rev5(self):
+        for key, spec in p.TEMPLATES.items():
+            with self.subTest(key=key):
+                case = deepcopy(self.case)
+                case["template_key"] = key
+                case["marketplace"].update({k: spec[k] for k in ("type", "phase", "status")})
+                case["marketplace"]["path"] = "JAB"
+                case["paragraphs"] = case["paragraphs"][:spec["paragraph_count"]]
+                case["paragraph_sources"] = case["paragraph_sources"][:spec["paragraph_count"]]
+                if key == "rev5-authorized":
+                    p.validate(case, self.root, self.brief)
+                else:
+                    with self.assertRaisesRegex(ValueError, "Marketplace path"):
+                        p.validate(case, self.root, self.brief)
+
+    def test_render_all_templates_preserves_layout_and_capabilities(self):
+        for key, spec in p.TEMPLATES.items():
+            with self.subTest(key=key):
+                case = deepcopy(self.case)
+                case.update(template_key=key, slug=key)
+                case['marketplace'].update({k: spec[k] for k in ('type', 'phase', 'status')})
+                case['marketplace']['path'] = 'Program'
+                case['paragraphs'] = case['paragraphs'][:spec['paragraph_count']]
+                case['paragraph_sources'] = case['paragraph_sources'][:spec['paragraph_count']]
+                if spec['paragraph_count'] == 3:
+                    case['paragraphs'][2] = 'Fixture Offering: the next path is unconfirmed.'
+                receipt = p.build(case, self.root, self.brief, p.DEFAULT_FONTS)
+                with fitz.open(receipt['output']) as output:
+                    self.assertEqual(len(output), spec['pages'])
+                    for page in output:
+                        self.assertNotRegex(page.get_text(), p.PLACEHOLDER)
+                        self.assertEqual(len(page.get_images(full=True)), 2)
+                    if key == 'rev5-authorized':
+                        with fitz.open(self.root / 'docs/outbound-collateral' / spec['file']) as source:
+                            body = fitz.Rect(0, 80, 612, 740)
+                            self.assertEqual(source[2].get_text(clip=body), output[2].get_text(clip=body))
+                self.assertEqual(len(receipt['qa']), spec['pages'])
+                self.assertTrue(all(q['outside_allowed_regions_unchanged_except_existing_logo_resampling']
+                                    for q in receipt['qa']))
+
     def test_reject_wrong_listing_fields(self):
         for field in ("type", "phase", "status", "path", "package_id", "url"):
             with self.subTest(field=field):

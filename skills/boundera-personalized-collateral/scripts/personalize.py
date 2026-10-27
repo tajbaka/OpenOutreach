@@ -22,19 +22,21 @@ TEMPLATES = {
         "file": "initial-20x.pdf",
         "sha256": "b30ecf0cffcfc2353bb9fb56cd8cdf5792cd7bafe4ce5c7136c2b18b31c8ae32",
         "type": "20x", "phase": "Initial Implementation", "status": "Not yet certified",
-        "paragraph_count": 3, "last_baseline": 399,
+        "paragraph_count": 3, "last_baseline": 399, "pages": 2,
     },
     "rev5-authorized": {
         "file": "rev5-auth-20x.pdf",
-        "sha256": "ebab7329c02142bb9b6a9b825419316c24e4c8666e7f4a7bf00d3c07a5d886dc",
+        "sha256": "32bb82ea21ea32cc3ca881def8e4c19ab4d5da3bafba72fce863cb3339b489d9",
         "type": "Rev5", "phase": "Ongoing Certification", "status": "FedRAMP Certified",
-        "paragraph_count": 2, "last_baseline": 391,
+        "paragraph_count": 2, "pages": 3, "layout": "authorized-2026-10-23",
+        "logo_rect": (336.5, 33.5, 451, 68.5),
+        "logo_image_rect": (340, 37, 448, 65),
     },
     "rev5-ready": {
         "file": "rev5-ready-to-20x.pdf",
         "sha256": "9e02bf956b7d8ff3509f31d65a346f4b3406ed56a8b89e64ae18d420bb4746fb",
         "type": "Rev5", "phase": "Legacy FedRAMP Ready", "status": "Legacy FedRAMP Ready",
-        "paragraph_count": 3, "last_baseline": 413,
+        "paragraph_count": 3, "last_baseline": 413, "pages": 2,
     },
 }
 WHITE = (1, 1, 1)
@@ -74,7 +76,10 @@ def validate(case, root, brief):
     mp = case.get("marketplace", {})
     require(all(mp.get(k) == spec[k] for k in ("type", "phase", "status")),
             "Marketplace phase/type/status does not fit this template")
-    require(mp.get("path") in ({"Program"} if key == "initial-20x" else {"Program", "Agency"}),
+    allowed_paths = {"Program"} if key == "initial-20x" else {"Program", "Agency"}
+    if key == "rev5-authorized":
+        allowed_paths.add("JAB")  # Still displayed on certified legacy Marketplace listings.
+    require(mp.get("path") in allowed_paths,
             "Missing or inconsistent Marketplace path")
     require(mp.get("class") in {"B", "C", "Unknown"}, "Unsupported or missing Marketplace class")
     require(mp.get("target_class") not in {"D", "High"}, "Class D/High target is out of scope")
@@ -159,6 +164,73 @@ def image(page):
     return Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
 
 
+def authorized_edits(page, page_idx, case, fonts):
+    """Exact field map for the outlined-text October 23 three-page template.
+
+    Chromium exported visible glyphs as vector paths with invisible text for
+    extraction. Redact contained paths as well as text; do not infer weight or
+    color from those invisible spans. Other templates keep their original map.
+    """
+    edits = []
+    card = (0.9804, 0.9843, 0.9882)
+    blocks = [b for b in page.get_text('dict')['blocks'] if 'lines' in b]
+    line_text = lambda line: ''.join(s['text'] for s in line['spans'])
+    lines = [line for b in blocks for line in b['lines']]
+
+    def one_line(text):
+        matches = [line for line in lines if line_text(line) == text]
+        require(len(matches) == 1, f'Expected one mapped line: {text}')
+        return matches[0]
+
+    def add(old, values, fill, size, key, color, x, baseline, width, leading=0, centered=False):
+        old = fitz.Rect(old) + (-.8, -.8, .8, .8)
+        rect = fitz.Rect(old)
+        replacements = []
+        for n, text in enumerate(values):
+            length = fonts[key].text_length(text, fontsize=size)
+            require(length <= width, f'Text does not fit mapped field: {text}')
+            left = (612-length)/2 if centered else x
+            y = baseline+n*leading
+            bounds = fitz.Rect(left-.8, y-fonts[key].ascender*size-.8,
+                               left+length+.8, y-fonts[key].descender*size+.8)
+            rect |= bounds
+            replacements.append((text, (left, y), size, key, color))
+        require(rect.x0 >= 38 and rect.x1 <= 574, 'Mapped field exceeds page margins')
+        edits.append((rect, fill, replacements))
+
+    footer = one_line('BOUNDERA · [COMPANY] CR26 readiness')
+    add(footer['bbox'], [f"BOUNDERA · {case['company']} CR26 readiness"], WHITE,
+        8.625, 'normal', 0x6B7280, 39, 761.25, 174)
+    if page_idx == 0:
+        title = one_line("[COMPANY]'s Rev5 listing has")
+        add(title['bbox'], [f"{case['company']}'s Rev5 listing has"], WHITE,
+            25.5, 'bold', 0x16212B, 0, 106.5, 534, centered=True)
+    elif page_idx == 1:
+        title = one_line('Why [COMPANY], why now')
+        add(title['bbox'], [f"Why {case['company']}, why now"], WHITE,
+            26.025, 'bold', 0x16212B, 0, 114, 534, centered=True)
+        subtitle = [b for b in blocks if any('[LISTED OFFERING] certification' in line_text(l) for l in b['lines'])]
+        require(len(subtitle) == 1, 'Expected one mapped offering subtitle')
+        text = (f"{case['company']}'s active {case['offering']} certification, framed "
+                'against the 2026 Consolidated Rules, and where Boundera fits.')
+        wrapped = wrap(text, fonts['normal'], 11.325, 468)
+        require(len(wrapped) <= 2, 'Offering subtitle exceeds two lines')
+        add(subtitle[0]['bbox'], wrapped, WHITE, 11.325, 'normal', 0x596579,
+            0, 139.5, 468, 15.75, centered=True)
+        heading = page.search_for('Who is [COMPANY]?')
+        require(len(heading) == 1, 'Expected one mapped company card heading')
+        add(heading[0], [f"Who is {case['company']}?"], card, 12.375,
+            'bold', 0x1C477F, heading[0].x0, 244.5, 282-heading[0].x0)
+        for n, (top, baseline) in enumerate(((259, 267.75), (308, 316.5))):
+            body = [b for b in blocks if 68 < b['bbox'][0] < 69 and top < b['bbox'][1] < top+1]
+            require(len(body) == 1, 'Expected mapped company background block')
+            wrapped = wrap(case['paragraphs'][n], fonts['normal'], 10.8, 213.75)
+            require(len(wrapped) <= 3, 'Company background exceeds three lines')
+            add(body[0]['bbox'], wrapped, card, 10.8, 'normal', 0x16212B,
+                68.25, baseline, 213.75, 14.25)
+    return edits
+
+
 def build(case, root, brief, font_files):
     spec, company_dir, logo = validate(case, root, brief)
     FONTS = {k: fitz.Font(fontfile=v) for k, v in font_files.items()}
@@ -175,21 +247,25 @@ def build(case, root, brief, font_files):
     assert sha(source) == case['template_sha256'], 'Template changed; inspect before editing'
     original = fitz.open(source)
     doc = fitz.open(source)
-    assert len(doc) == 2 and all(tuple(p.rect) == (0, 0, 612, 792) for p in doc)
+    assert len(doc) == spec['pages'] and all(tuple(p.rect) == (0, 0, 612, 792) for p in doc)
     page_receipts = []
     for page_idx, page in enumerate(doc):
         modifications = []
         edits = []
-        logo_rect = fitz.Rect(192.5, 33.5, 307, 68.5)
+        logo_rect = fitz.Rect(spec.get('logo_rect', (192.5, 33.5, 307, 68.5)))
         page.add_redact_annot(logo_rect, fill=WHITE)
         page.apply_redactions(images=0, graphics=1)
         modifications.append(logo_rect)
         background = case.get("logo_background", "#ffffff")
         page.draw_rect(logo_rect, color=None, fill=tuple(int(background[i:i+2], 16)/255 for i in (1, 3, 5)))
-        page.insert_image(fitz.Rect(196, 37, 304, 65), filename=str(logo), keep_proportion=True)
+        page.insert_image(fitz.Rect(spec.get('logo_image_rect', (196, 37, 304, 65))), filename=str(logo), keep_proportion=True)
         paragraphs = iter(case['paragraphs'])
         body_count = 0
-        for block in page.get_text('dict')['blocks']:
+        outlined = spec.get('layout') == 'authorized-2026-10-23'
+        if outlined:
+            edits = authorized_edits(page, page_idx, case, FONTS)
+            body_count = len(case['paragraphs']) if page_idx == 1 else 0
+        for block in ([] if outlined else page.get_text('dict')['blocks']):
             if 'lines' not in block:
                 continue
             spans = [s for line in block['lines'] for s in line['spans']]
@@ -235,7 +311,7 @@ def build(case, root, brief, font_files):
         for rect, fill, _ in edits:
             page.add_redact_annot(rect, fill=fill)
             modifications.append(rect)
-        page.apply_redactions(images=0, graphics=0)
+        page.apply_redactions(images=0, graphics=1 if outlined else 0)
         for key,path in FONT_FILES.items():
             page.insert_font(fontname='Review'+key, fontfile=path)
         for _, _, lines in edits:
@@ -269,7 +345,7 @@ def build(case, root, brief, font_files):
     doc.set_metadata(metadata)
     doc.save(output, garbage=4, deflate=True)
     check = fitz.open(output)
-    assert len(check) == 2
+    assert len(check) == spec['pages']
     assert all(normalized_text(case['company']) in normalized_text(p.get_text()) for p in check)
     extracted = ' '.join(normalized_text(p.get_text()) for p in check)
     assert normalized_text(case['offering']) in extracted, repr(extracted[-1800:])
@@ -278,9 +354,9 @@ def build(case, root, brief, font_files):
     # image cache interactions across multiple input documents.
     prefix = work / f"{case['slug']}-page"
     subprocess.run(['pdftoppm','-scale-to','1500','-png',str(output),str(prefix)],check=True,timeout=60)
-    previews = [Path(f'{prefix}-{n}.png') for n in (1,2)]
+    previews = [Path(f'{prefix}-{n}.png') for n in range(1, spec['pages']+1)]
     images = [Image.open(p) for p in previews]
-    contact = Image.new('RGB', (1240, 820), '#e9edf3')
+    contact = Image.new('RGB', (620*spec['pages'], 820), '#e9edf3')
     for n,im in enumerate(images):
         im.thumbnail((600, 780))
         contact.paste(im, (10+n*620, 18))
