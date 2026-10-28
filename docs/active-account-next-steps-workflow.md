@@ -8,8 +8,9 @@ Actions in the same runner. One-time runs do not install or enable a timer.
 
 ## Read and reason
 
-Read `skills/openoutreach-google-sheets/SKILL.md`, the Gmail read/OAuth skills,
-and the Granola read skill. Verify the configured CRM workbook and Arian mailbox
+Read `skills/openoutreach-google-sheets/SKILL.md`, `skills/gmail-read/SKILL.md`,
+`skills/gmail-oauth/SKILL.md` and `skills/granola-read/SKILL.md` from this checkout.
+Verify the configured CRM workbook and Arian mailbox
 using existing auth. Use stored LinkedIn, live Gmail including Sent, full relevant
 Granola transcripts, and relevant stored-only Gemini notes. Never run importers,
 CRM reconciliation, publishers, workers, or send/draft tools to perform this review.

@@ -5,6 +5,14 @@ Arian Gmail and Granola credentials. Use the checkout-relative virtualenv
 (`.venv/Scripts/python.exe` on Windows; `.venv/bin/python` elsewhere).
 Credentials, transcripts and private receipts never belong in Git.
 
+Read the canonical skills directly from this checkout before either review:
+`skills/openoutreach-google-sheets/SKILL.md`, `skills/gmail-read/SKILL.md`,
+`skills/gmail-oauth/SKILL.md` and `skills/granola-read/SKILL.md`.
+These files travel with Git; a separate personal skill installation is not
+required to read them. Keep one maintained copy in the repo. Any personal
+discovery entry should link to the repo folder rather than duplicate it.
+If a required file is missing, safely update the checkout before recreating it.
+
 ## Actions
 
 > Read `docs/actions-workflow.md` and run one complete contextual Actions review.

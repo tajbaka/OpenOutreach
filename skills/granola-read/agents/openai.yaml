@@ -1,0 +1,4 @@
+interface:
+  display_name: "Granola Reader"
+  short_description: "Read and review Granola meetings through the API"
+  default_prompt: "Use $granola-read to find and review the requested meeting conversation through OpenOutreach's existing API integration."
