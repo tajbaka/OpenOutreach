@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import time
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -47,7 +49,7 @@ _FEED_STARTUP_RETRY_SECONDS = 3
 _CDP_CONNECT_TIMEOUT_MS = 30_000
 _FEED_NAVIGATION_TIMEOUT_MS = 45_000
 _FEED_LOG_PATH = Path(__file__).resolve().parent.parent / "data/logs/linkedin-feed-collector.log"
-_ACTIVITY_RE = re.compile(r"urn:li:(?:activity|share):\d+")
+_ACTIVITY_RE = re.compile(r"urn:li:(?:activity|share|ugcPost):\d+")
 _RELATIVE_TIME_RE = re.compile(r"\b(now|(\d+)\s*(mo|yr|s|m|h|d|w|y))\b", re.IGNORECASE)
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -118,7 +120,7 @@ def _collection_log():
 
 
 @contextmanager
-def _feed_page(browser):
+def _feed_page(browser, *, on_target=None):
     """Create the feed as the target's initial document and own its exact ID."""
     context = browser.contexts[0]
     cdp = browser.new_browser_cdp_session()
@@ -127,6 +129,8 @@ def _feed_page(browser):
         # With multiple CDP clients, about:blank -> goto can wedge a new
         # renderer. Starting the target at the feed URL avoids that transition.
         target_id = cdp.send("Target.createTarget", {"url": FEED_URL})["targetId"]
+        if on_target is not None:
+            on_target(target_id)
         deadline = time.monotonic() + _FEED_NAVIGATION_TIMEOUT_MS / 1000
         checked = set()
         while time.monotonic() < deadline:
@@ -365,13 +369,12 @@ def content_hash_for(
     author_name: str,
     post_text: str,
 ) -> str:
-    del activity_urn, post_url
-    basis = "\n".join(
-        [
-            _normalize_text(author_name).lower(),
-            _normalize_text(post_text),
-        ],
-    )
+    parts = [_normalize_text(author_name).lower(), _normalize_text(post_text)]
+    if not parts[1]:
+        # Every captionless post by an author would share author + empty text;
+        # only its exact identity distinguishes one media post from another.
+        parts.append(activity_urn or post_url)
+    basis = "\n".join(parts)
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 
@@ -579,10 +582,13 @@ def _scroll_feed_page(page) -> None:
     )
 
 
-def extract_posts_from_page(page) -> list[FeedPostRecord]:
+def extract_posts_from_page(
+    page, *, allow_menu_lookup: bool = True, visible_only: bool = False,
+    max_nodes: int | None = None, diagnostics: dict | None = None,
+) -> list[FeedPostRecord]:
     rows = page.evaluate(
         """
-        async ({actionDelayMinMs, actionDelayMaxMs}) => {
+        async ({actionDelayMinMs, actionDelayMaxMs, allowMenuLookup, visibleOnly, maxNodes}) => {
           const selectors = [
             'div.feed-shared-update-v2',
             'div[data-urn*="urn:li:activity"]',
@@ -602,9 +608,16 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
           for (const node of nodes) {
             if (seen.has(node)) continue;
             seen.add(node);
+            // A post and its identity-bearing descendants are one card.
+            if (nodes.some(other => other !== node && other.contains(node))) continue;
+            if (visibleOnly) {
+              const rect = node.getBoundingClientRect();
+              if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= innerHeight) continue;
+            }
             const text = (node.innerText || '').trim();
             if (!text || text.length < 20) continue;
             unique.push(node);
+            if (maxNodes && unique.length >= maxNodes) break;
           }
           const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const actionWait = async () => {
@@ -642,6 +655,38 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
           };
           const rows = [];
           const menuCache = window.__openoutreachFeedMenuCache ||= new WeakMap();
+          const reactionIdentity = (card) => {
+            // Current SDUI keeps the exact post ID on the already-rendered
+            // reaction component, rather than a DOM attribute or permalink.
+            // Inspect only fibers inside this card; never call its handlers.
+            const fiberOf = node => node[Object.keys(node).find(k => k.startsWith('__reactFiber$'))];
+            const boundary = fiberOf(card);
+            if (!boundary) return {urn: '', conflict: false};
+            // React keeps a current and a previous copy of every fiber, and a
+            // descendant can climb to either copy of the card's own fiber.
+            const atCard = fiber => fiber === boundary || fiber === boundary.alternate || fiber.stateNode === card;
+            const visited = new Set();
+            const identities = new Set();
+            let budget = 4000;
+            for (const node of [card, ...card.querySelectorAll('*')]) {
+              let fiber = fiberOf(node);
+              while (fiber && !atCard(fiber) && !visited.has(fiber) && budget-- > 0) {
+                visited.add(fiber);
+                // Read both renders: a binding that changed between them means
+                // the component was reused for another post, so it conflicts.
+                for (const props of [fiber.memoizedProps, fiber.alternate?.memoizedProps]) {
+                  const id = props?.selectedReactionStateBindingKey?.key?.value?.id;
+                  const match = typeof id === 'string' && id.match(/^reactionState-(urn:li:(?:activity|share|ugcPost):\\d+)$/);
+                  if (match) identities.add(match[1]);
+                }
+                fiber = fiber.return;
+              }
+              if (budget <= 0) return {urn: '', conflict: false};
+            }
+            // Comments have their own reaction bindings; the exact match above
+            // excludes them. Conflicting post bindings remain unresolved.
+            return {urn: identities.size === 1 ? [...identities][0] : '', conflict: identities.size > 1};
+          };
           for (const node of unique) {
             const attr = (name) => node.getAttribute(name) || '';
             const pickText = (items) => {
@@ -667,7 +712,7 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
                   const value = (el.getAttribute && el.getAttribute(name) || '').trim();
                   if (
                     value
-                    && (value.includes('urn:li:activity') || value.includes('urn:li:share'))
+                    && (value.includes('urn:li:activity') || value.includes('urn:li:share') || value.includes('urn:li:ugcPost'))
                   ) return value;
                 }
               }
@@ -693,31 +738,26 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
                 return false;
               }
             };
-            const looksLikeTimestampLink = (link) => {
-              const text = `${link.text} ${link.ariaLabel} ${link.className}`.toLowerCase();
-              return (
-                new RegExp('(^|\\s)(now|\\d+\\s*(s|m|h|d|w|mo|yr|y))(\\s|$)').test(text)
-                || text.includes('actor__sub-description')
-                || text.includes('feed-shared-actor__sub-description')
-              );
-            };
+            // Only the card's own timestamp permalink identifies it. Other post
+            // links may be quoted or embedded posts and are never guessed from.
+            const looksLikeTimestampLink = (link) => (
+              /^(?:now|\\d+\\s*(?:s|m|h|d|w|mo|yr|y))(?:\\s*[•·][\\s\\S]*)?$/i.test(link.text)
+              || link.className.includes('actor__sub-description')
+            );
             const postLink = (
-              links.find((link) => isSpecificPostLink(link.href) && looksLikeTimestampLink(link))
-              || links.find((link) => isSpecificPostLink(link.href))
-              || {href: pickHref([
-                'a[href*="/feed/update/"]',
-                'a[href*="urn:li:activity"]',
-                'a[href*="urn:li:share"]'
-              ])}
+              links.find((link) => isSpecificPostLink(link.href) && looksLikeTimestampLink(link)) || {}
             ).href || '';
             const descendantActivityUrn = findAttr([
-              'data-urn', 'data-id', 'data-activity-urn', 'data-chameleon-result-urn'
+              'data-urn', 'data-id', 'data-activity-urn', 'data-chameleon-result-urn',
+              'data-sdui-anchor-id'
             ]);
+            const reaction = reactionIdentity(node);
+            const reactionActivityUrn = reaction.urn;
             // Recycled virtual-feed nodes must not inherit another post's URL.
             const signature = node.innerText || '';
             const cached = menuCache.get(node);
             let menuPostUrn = '';
-            if (!postLink && !descendantActivityUrn) {
+            if (allowMenuLookup && !postLink && !descendantActivityUrn && !reactionActivityUrn) {
               menuPostUrn = cached && cached.signature === signature
                 ? cached.urn : await findMenuPostUrn(node);
               if ((node.innerText || '') !== signature) continue;
@@ -739,10 +779,25 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
               '.feed-shared-actor__sub-description',
               'time'
             ]);
+            const cardLines = (node.innerText || '').split('\\n').map(s => s.trim()).filter(Boolean);
+            const recommendationModule = cardLines[0] === 'Feed post' && (
+              (cardLines[1] === 'Recommended for you' && cardLines.filter(s => s === 'Follow').length >= 2)
+              || (cardLines[1] === 'Jobs recommended for you' && links.filter(l => (l.href.includes('/jobs/view/') || l.href.includes('/jobs/search-results/'))).length >= 2)
+            ) && !reactionActivityUrn && !descendantActivityUrn && !reaction.conflict;
             rows.push({
+              cardKey: attr('componentkey') || attr('data-urn') || attr('data-id'),
+              cardKind: recommendationModule ? 'recommendations' : 'post',
               dataUrn: attr('data-urn'),
               dataId: attr('data-id'),
               descendantActivityUrn,
+              reactionActivityUrn,
+              identityConflict: reaction.conflict,
+              media: [
+                ...Array.from(node.querySelectorAll('img')).filter(img => {
+                  const r = img.getBoundingClientRect(); return r.width > 150 || r.height > 150;
+                }).map(img => ({type: 'image', url: img.currentSrc || img.src || '', alt: img.alt || ''})),
+                ...Array.from(node.querySelectorAll('video')).map(video => ({type: 'video', poster: video.poster || ''}))
+              ].slice(0, 20),
               menuPostUrn,
               postUrl: postLink || menuPostUrn,
               candidateLinks: links.slice(0, 80),
@@ -768,62 +823,126 @@ def extract_posts_from_page(page) -> list[FeedPostRecord]:
         {
             "actionDelayMinMs": int(LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MIN_SECONDS * 1000),
             "actionDelayMaxMs": int(LINKEDIN_FEED_COLLECTION_ACTION_DELAY_MAX_SECONDS * 1000),
+            "allowMenuLookup": allow_menu_lookup,
+            "visibleOnly": visible_only,
+            "maxNodes": max_nodes,
         },
     )
     records: list[FeedPostRecord] = []
+    outcomes = []
     reference_time = timezone.now()
     for row in rows:
         rendered_text = row.get("text") or ""
+        card_key = row.get("cardKey") or hashlib.sha256(
+            (rendered_text or json.dumps(row, sort_keys=True)).encode("utf-8"),
+        ).hexdigest()
+        outcome = {"card_key": card_key, "status": "missing_identity", "post_url": ""}
+        outcomes.append(outcome)
+        if row.get("cardKind") == "recommendations":
+            outcome["status"] = "non_post_module"
+            continue
+        if row.get("identityConflict"):
+            outcome["status"] = "ambiguous_identity"
+            continue
         timestamp_text = _normalize_text(
             row.get("timestampText") or _extract_timestamp_from_rendered_text(rendered_text),
         )
         text = _normalize_text(
             row.get("postText") or _extract_post_text_from_rendered_text(rendered_text),
         )
-        if not text:
+        # The card-local reaction binding is authoritative; other sources only
+        # fill in when it is absent. activity/share/ugcPost IDs can name one
+        # post, but two different IDs in one namespace are a conflict.
+        identities = [
+            urn
+            for key in ("reactionActivityUrn", "dataUrn", "dataId", "descendantActivityUrn", "menuPostUrn", "postUrl")
+            if (urn := _extract_activity_urn(str(row.get(key) or "")))
+        ]
+        namespaces: dict[str, set[str]] = {}
+        for urn in identities:
+            namespaces.setdefault(urn.split(":")[2], set()).add(urn)
+        if any(len(urns) > 1 for urns in namespaces.values()):
+            outcome["status"] = "ambiguous_identity"
             continue
-        raw_url = row.get("postUrl") or ""
-        raw_identity = " ".join(
-            str(row.get(key) or "")
-            for key in ("dataUrn", "dataId", "descendantActivityUrn", "menuPostUrn", "postUrl")
+        activity_urn = identities[0] if identities else ""
+        # postUrl is only the card's own timestamp permalink or menu link.
+        post_url = post_url_for_activity_urn(activity_urn) or _normalize_url(row.get("postUrl") or "")
+        if not is_specific_post_url(post_url):
+            if any(is_specific_post_url(_normalize_url(link.get("href") or "")) for link in row.get("candidateLinks", [])):
+                outcome["status"] = "unverified_post_link"
+            continue
+        author_name = _normalize_text(
+            row.get("authorName") or _extract_author_from_rendered_text(rendered_text),
         )
-        activity_urn = _extract_activity_urn(raw_identity)
-        post_url = _normalize_url(raw_url)
-        if not is_specific_post_url(post_url):
-            post_url = post_url_for_activity_urn(activity_urn)
-        if not is_specific_post_url(post_url):
+        if not text and not author_name:
+            outcome["status"] = "missing_content"
             continue
+        # A valid post can consist solely of an image/video. Preserve its exact
+        # identity and available media metadata without inventing a caption.
+        row["contentStatus"] = "text" if text else "no_visible_caption"
+        author_profile_url = row.get("authorProfileUrl") or ""
+        if not row.get("authorName"):
+            # Current SDUI cards put a social-context profile before the author.
+            # Bind the author URL to its displayed name, not the first /in/ link.
+            if row.get("candidateLinks"):
+                author_profile_url = ""
+            for link in row.get("candidateLinks", []):
+                link_lines = _rendered_lines(link.get("text") or "")
+                path = urlsplit(link.get("href") or "").path
+                if link_lines and link_lines[0] == author_name and path.startswith(("/in/", "/company/", "/school/")):
+                    author_profile_url = link["href"]
+                    break
         records.append(
             FeedPostRecord(
                 activity_urn=activity_urn,
                 post_url=post_url,
-                author_name=_normalize_text(
-                    row.get("authorName") or _extract_author_from_rendered_text(rendered_text),
-                ),
+                author_name=author_name,
                 author_headline=_normalize_text(
                     row.get("authorHeadline") or _extract_headline_from_rendered_text(rendered_text),
                 ),
-                author_profile_url=_normalize_url(row.get("authorProfileUrl") or ""),
+                author_profile_url=_normalize_url(author_profile_url),
                 post_text=text,
                 timestamp_text=timestamp_text,
                 posted_at=parse_relative_timestamp(timestamp_text, reference=reference_time),
                 raw_payload=row,
             ),
         )
+        outcome.update(status="extracted", post_url=post_url)
+    if diagnostics is not None:
+        diagnostics["cards"] = outcomes
     return records
 
 
 def upsert_feed_record(
     record: FeedPostRecord,
     *,
-    job: LinkedInFeedCollectionJob,
+    job: LinkedInFeedCollectionJob | None = None,
+    operator: str = "",
+    account_username: str = "",
 ) -> tuple[bool, bool]:
+    if job is not None:
+        operator, account_username = job.operator, job.account_username
+    if not operator or not account_username:
+        raise ValueError("Feed observation requires an exact sender.")
     now = timezone.now()
     post = None
     if record.activity_urn:
         post = LinkedInFeedPost.objects.filter(activity_urn=record.activity_urn).first()
+    if post is None and record.post_url:
+        matches = LinkedInFeedPost.objects.filter(post_url=record.post_url)
+        if record.activity_urn:
+            matches = matches.filter(Q(activity_urn="") | Q(activity_urn=record.activity_urn))
+        post = matches.first()
+    other_identity = False
     if post is None:
         post = LinkedInFeedPost.objects.filter(content_hash=record.content_hash).first()
+        # The same author/text under another exact identity is either one post
+        # in another URN namespace or a different post. Never move the saved
+        # row to the other identity; record only this sighting.
+        other_identity = bool(
+            post and post.activity_urn and record.activity_urn
+            and post.activity_urn != record.activity_urn
+        )
 
     effective_activity_urn = record.activity_urn or (post.activity_urn if post else "")
     post_url = (
@@ -855,8 +974,15 @@ def upsert_feed_record(
             **defaults,
         )
         created = True
+    elif other_identity:
+        created = False
+        post.last_seen_at = now
+        post.save(update_fields=["last_seen_at", "updated_at"])
+        logger.warning("Feed sighting matched saved post %s under another identity; kept saved identity", post.pk)
     else:
         created = False
+        if not record.post_text and post.post_text:
+            defaults["post_text"] = post.post_text
         if record.posted_at is None and post.posted_at is not None:
             defaults["posted_at"] = post.posted_at
         for field, value in defaults.items():
@@ -873,8 +999,8 @@ def upsert_feed_record(
 
     observation, observation_created = LinkedInFeedObservation.objects.get_or_create(
         post=post,
-        operator=job.operator,
-        account_username=job.account_username,
+        operator=operator,
+        account_username=account_username,
         defaults={
             "job": job,
             "first_seen_at": now,
@@ -883,10 +1009,13 @@ def upsert_feed_record(
         },
     )
     if not observation_created:
-        observation.job = job
+        fields = ["last_seen_at", "seen_count"]
+        if job is not None:
+            observation.job = job
+            fields.append("job")
         observation.last_seen_at = now
         observation.seen_count += 1
-        observation.save(update_fields=["job", "last_seen_at", "seen_count"])
+        observation.save(update_fields=fields)
 
     return created, observation_created
 
@@ -929,8 +1058,13 @@ def _extract_author_from_rendered_text(value: str) -> str:
     lines = _feed_lines_after_marker(value)
     while lines and (
         lines[0] == "Recommended for you"
-        or " follow this Page" in lines[0]
-        or " follows this Page" in lines[0]
+        or lines[0].startswith("Followed by ")
+        or re.search(r" follows? this page$", lines[0], re.IGNORECASE)
+        or re.search(
+            r" (?:reposted(?: this)?|commented(?: on this)?"
+            r"|(?:likes?|liked|loves?|celebrates?|supports?) this|finds? this (?:funny|insightful))$",
+            lines[0],
+        )
     ):
         lines.pop(0)
     return lines[0] if lines else ""
@@ -941,6 +1075,8 @@ def _extract_headline_from_rendered_text(value: str) -> str:
     author = _extract_author_from_rendered_text(value)
     if author in lines:
         lines = lines[lines.index(author) + 1:]
+    while lines and re.fullmatch(r"[•·]?\s*(?:1st|2nd|3rd\+?)", lines[0]):
+        lines.pop(0)
     if not lines:
         return ""
     first = lines[0]
@@ -954,8 +1090,19 @@ def _extract_post_text_from_rendered_text(value: str) -> str:
     author = _extract_author_from_rendered_text(value)
     if author in lines:
         lines = lines[lines.index(author) + 1:]
-    while lines and not _looks_like_post_body_start(lines[0]):
-        lines.pop(0)
+    header_end = next((i for i, line in enumerate(lines[:12]) if _looks_like_timestamp(line) or re.match(r"^Promoted\b", line)), None)
+    if header_end is not None:
+        if lines[header_end].startswith("Promoted"):
+            # Partnership headers may put the sponsor on a separate line.
+            follow = next((i for i in range(header_end + 1, min(len(lines), header_end + 5)) if lines[i] == "Follow"), None)
+            if follow is not None:
+                header_end = follow
+        lines = lines[header_end + 1:]
+        while lines and lines[0] == "Follow":
+            lines.pop(0)
+    else:
+        while lines and not _looks_like_post_body_start(lines[0]):
+            lines.pop(0)
     stop_words = {
         "Like",
         "Comment",
@@ -964,6 +1111,10 @@ def _extract_post_text_from_rendered_text(value: str) -> str:
         "Follow",
         "Show more",
         "Unlock full document",
+        "… more",
+        "... more",
+        "Video Player is loading.",
+        "Play Video",
     }
     body: list[str] = []
     for line in lines:
@@ -1012,7 +1163,10 @@ def parse_relative_timestamp(value: str, *, reference: datetime) -> datetime | N
 
 
 def _looks_like_timestamp(value: str) -> bool:
-    return bool(_RELATIVE_TIME_RE.search(value or ""))
+    return bool(re.fullmatch(
+        r"(?:now|\d+\s*(?:mo|yr|s|m|h|d|w|y))(?:\s*[•·].*)?",
+        (value or "").strip(), re.IGNORECASE,
+    ))
 
 
 def _looks_like_post_body_start(value: str) -> bool:

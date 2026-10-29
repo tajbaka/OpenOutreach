@@ -61,10 +61,9 @@ def test_email_only_refuses_unknown_sender(monkeypatch, email_only):
 
 def test_email_only_never_checks_feed_backlog_even_when_feed_flag_is_on(monkeypatch, email_only):
     missed = Mock(side_effect=AssertionError("Paused feeds must not inspect or enqueue jobs"))
-    monkeypatch.setattr(supervisor, "_missed_feed_collection_due", missed)
+    monkeypatch.setattr(supervisor, "_feed_schedule", missed)
     now = datetime(2026, 9, 17, 19, tzinfo=ZoneInfo("America/Toronto"))
     assert supervisor._feed_collection_should_start(now) is False
-    assert supervisor._feed_collection_due_today(now) is False
     missed.assert_not_called()
 
 
@@ -81,7 +80,7 @@ def test_email_only_supervision_restarts_workers_without_linkedin(monkeypatch, e
     monkeypatch.setattr(supervisor, "_stop_daemon", lambda proc: None)
     monkeypatch.setattr(supervisor, "_stop_process", lambda proc, **kwargs: None)
     monkeypatch.setattr(supervisor, "_notify", lambda title, detail: notices.append(title))
-    monkeypatch.setattr(supervisor, "_missed_feed_collection_due", Mock(side_effect=AssertionError("No feed jobs")))
+    monkeypatch.setattr(supervisor, "_feed_schedule", Mock(side_effect=AssertionError("No feed jobs")))
 
     def sleep(seconds):
         clock.now += seconds

@@ -86,7 +86,7 @@ def test_every_supervisor_subprocess_is_registered_with_safety(monkeypatch, safe
     elif launcher == "gmail":
         supervisor._start_gmail_worker("eddy_boundera")
     elif launcher == "feed":
-        supervisor._start_feed_collector()
+        supervisor._start_feed_collector("a" * 32)
     else:
         assert supervisor._run(["git", "fetch"]).stdout == "ok"
     safety.launch.assert_called_once()

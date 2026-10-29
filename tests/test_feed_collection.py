@@ -819,3 +819,150 @@ def test_collect_linkedin_feed_backfill_days_runs_daily_windows(
         account_username="arian@example.com",
         status=LinkedInFeedCollectionJob.Status.COMPLETED,
     ).count() == 2
+
+
+@pytest.mark.parametrize('social_context', [
+    'Followed by Example Person', 'Example Person reposted this', 'Example Person commented',
+    'Example Person commented on this', 'Example Person finds this funny',
+    'Example Person finds this insightful', 'Example Person likes this',
+    'Example Person and 2 others like this', 'Example Person celebrates this',
+    'Example Person loves this', 'Example Person supports this',
+])
+def test_sdui_social_context_is_not_post_author_or_body(social_context):
+    class Page:
+        def evaluate(self, *args):
+            return [{
+                'descendantActivityUrn': 'urn:li:activity:9999',
+                'text': f'Feed post\n{social_context}\nAlex Author\n• 2nd\nSecurity engineer\n8h\nFollow\nLooking for FedRAMP evidence automation.\nSecond paragraph.\n… more\n20\n3',
+                'authorProfileUrl': 'https://www.linkedin.com/in/example-person/',
+                'candidateLinks': [
+                    {'href': 'https://www.linkedin.com/in/example-person/', 'text': 'Example Person'},
+                    {'href': 'https://www.linkedin.com/in/alex-author/', 'text': 'Alex Author\n• 2nd'},
+                ],
+            }]
+    post = extract_posts_from_page(Page())[0]
+    assert post.author_name == 'Alex Author'
+    assert post.author_profile_url == 'https://www.linkedin.com/in/alex-author/'
+    assert post.author_headline == 'Security engineer'
+    assert post.post_text == 'Looking for FedRAMP evidence automation. Second paragraph.'
+    assert post.timestamp_text == '8h'
+
+
+def test_resighting_same_permalink_with_corrected_text_updates_original_row():
+    job = ensure_collection_jobs(operator='Arian', account_username='arian@example.com')
+    first = _record(activity_urn='', post_url='https://www.linkedin.com/feed/update/urn:li:ugcPost:9999/', post_text='Old truncated text')
+    upsert_feed_record(first, job=job)
+    corrected = _record(activity_urn='urn:li:ugcPost:9999', post_url=first.post_url, post_text='Correctly extracted complete text')
+    created, _ = upsert_feed_record(corrected, job=job)
+    assert not created
+    assert LinkedInFeedPost.objects.count() == 1
+    assert LinkedInFeedPost.objects.get().activity_urn == 'urn:li:ugcPost:9999'
+
+
+@pytest.mark.parametrize('header', ['Promoted by Example Company', 'Promoted • Partnership with\nExample Company'])
+def test_promoted_body_excludes_header_sponsor_and_video_controls(header):
+    class Page:
+        def evaluate(self, *args):
+            return [{
+                'reactionActivityUrn': 'urn:li:ugcPost:12345',
+                'text': f'Feed post\nAlex Author\n• 2nd\nSecurity engineer\n{header}\nFollow\nLooking for FedRAMP support.\nVideo Player is loading.\nPlay Video\nLike\nComment',
+            }]
+    post = extract_posts_from_page(Page())[0]
+    assert post.author_name == 'Alex Author'
+    assert post.post_text == 'Looking for FedRAMP support.'
+
+
+def test_post_without_visible_caption_retains_exact_identity():
+    class Page:
+        def evaluate(self, *args):
+            return [{
+                'reactionActivityUrn': 'urn:li:ugcPost:12345',
+                'text': 'Feed post\nAlex Author\n• 2nd\nFounder\n1w\nFollow\n5,123\n724',
+                'media': [{'type': 'image', 'url': 'https://example.invalid/media.png', 'alt': ''}],
+            }]
+    diagnostics = {}
+    record = extract_posts_from_page(Page(), diagnostics=diagnostics)[0]
+    assert record.post_text == ''
+    assert record.author_name == 'Alex Author'
+    assert record.post_url == 'https://www.linkedin.com/feed/update/urn:li:ugcPost:12345/'
+    assert record.raw_payload['contentStatus'] == 'no_visible_caption'
+    assert diagnostics['cards'][0]['status'] == 'extracted'
+
+
+def test_captionless_resighting_preserves_previously_saved_caption():
+    job = ensure_collection_jobs(operator='Arian', account_username='arian@example.com')
+    upsert_feed_record(_record(post_text='An existing caption.'), job=job)
+    upsert_feed_record(_record(post_text=''), job=job)
+    assert LinkedInFeedPost.objects.get().post_text == 'An existing caption.'
+
+
+class _RowsPage:
+    def __init__(self, *rows):
+        self.rows = list(rows)
+
+    def evaluate(self, *args):
+        return self.rows
+
+
+_SDUI_TEXT = 'Feed post\nAlex Author\n• 2nd\nFounder\n1h\nFollow\nLooking for FedRAMP support.\nLike'
+
+
+@pytest.mark.django_db
+def test_distinct_captionless_posts_by_one_author_keep_separate_identities():
+    for urn in ('urn:li:ugcPost:111', 'urn:li:ugcPost:222'):
+        created, _ = upsert_feed_record(_record(
+            activity_urn=urn, post_url=post_url_for_activity_urn(urn), post_text='',
+            raw_payload={'media': [{'type': 'image', 'url': urn}]},
+        ), operator='Arian', account_username='arian@example.com')
+        assert created
+    posts = {post.activity_urn: post for post in LinkedInFeedPost.objects.all()}
+    assert set(posts) == {'urn:li:ugcPost:111', 'urn:li:ugcPost:222'}
+    for urn, post in posts.items():
+        assert post.post_url == post_url_for_activity_urn(urn)
+        assert post.raw_payload['media'][0]['url'] == urn
+
+
+@pytest.mark.django_db
+def test_text_match_never_rewrites_a_saved_post_to_another_identity():
+    first = _record(activity_urn='urn:li:activity:111', post_url=post_url_for_activity_urn('urn:li:activity:111'))
+    upsert_feed_record(first, operator='Arian', account_username='arian@example.com')
+    other = _record(
+        activity_urn='urn:li:ugcPost:222', post_url=post_url_for_activity_urn('urn:li:ugcPost:222'),
+        raw_payload={'source': 'other card'},
+    )
+    created, _ = upsert_feed_record(other, operator='Arian', account_username='arian@example.com')
+    post = LinkedInFeedPost.objects.get()
+    assert not created
+    assert (post.activity_urn, post.post_url) == ('urn:li:activity:111', first.post_url)
+    assert post.raw_payload['source'] == 'test'
+    assert LinkedInFeedObservation.objects.get().seen_count == 2
+
+
+def test_post_link_without_card_identity_is_reported_not_guessed():
+    diagnostics = {}
+    records = extract_posts_from_page(_RowsPage({
+        'candidateLinks': [{
+            'href': 'https://www.linkedin.com/feed/update/urn:li:ugcPost:777/',
+            'text': 'Black Mirror is officially real now A YouTuber showed a job interview',
+        }],
+        'text': _SDUI_TEXT,
+    }), diagnostics=diagnostics)
+    assert records == []
+    assert diagnostics['cards'][0]['status'] == 'unverified_post_link'
+
+
+@pytest.mark.parametrize('other_urn, expected_urn, expected_status', [
+    # A header anchor in another URN namespace can name the same post.
+    ('urn:li:activity:111', 'urn:li:ugcPost:999', 'extracted'),
+    # Two different posts in one namespace are a conflict, not a choice.
+    ('urn:li:ugcPost:111', None, 'ambiguous_identity'),
+])
+def test_reaction_binding_is_authoritative_card_identity(other_urn, expected_urn, expected_status):
+    diagnostics = {}
+    records = extract_posts_from_page(_RowsPage({
+        'descendantActivityUrn': f'feed-header-{other_urn}-0',
+        'reactionActivityUrn': 'urn:li:ugcPost:999',
+        'text': _SDUI_TEXT,
+    }), diagnostics=diagnostics)
+    assert [record.activity_urn for record in records] == ([expected_urn] if expected_urn else [])
+    assert diagnostics['cards'][0]['status'] == expected_status

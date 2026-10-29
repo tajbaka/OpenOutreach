@@ -18,13 +18,15 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from shutil import which
-from zoneinfo import ZoneInfo
 
 from linkedin.exceptions import SupervisorStopped
 from supervisor_safety import SupervisorSafety
+from linkedin.feed_sampling import (
+    FeedSampleSchedule, MAX_SECONDS, PROCESS_GRACE_SECONDS, close_sample_target,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -459,12 +461,12 @@ def _runtime_worker_label() -> str:
     return "Daemon" if _linkedin_daemon_enabled() else "Email enrichment worker"
 
 
-def _start_feed_collector() -> subprocess.Popen:
+def _start_feed_collector(run_id: str) -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
-    logger.warning("Starting LinkedIn feed collector child")
+    logger.warning("Starting bounded LinkedIn feed sample")
     return _launch(
-        [sys.executable, "manage.py", "collect_linkedin_feed"],
+        [sys.executable, "manage.py", "sample_linkedin_feed", "--run-id", run_id],
         cwd=ROOT_DIR,
         env=env,
     )
@@ -588,94 +590,39 @@ def _feed_collector_enabled() -> bool:
     return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_FEED_COLLECTOR", "false")
 
 
-def _feed_collection_local_now() -> datetime:
-    tz_name = os.getenv("LINKEDIN_FEED_COLLECTION_TIMEZONE", "America/Toronto")
-    return datetime.now(ZoneInfo(tz_name))
+def _feed_schedule() -> FeedSampleSchedule:
+    return FeedSampleSchedule(ROOT_DIR, os.getenv("LINKEDIN_USERNAME", ""))
 
 
-def _feed_collection_due_today(now: datetime | None = None) -> bool:
+def _feed_collection_should_start(now: datetime | None = None, *, schedule=None) -> bool:
     if not _feed_collector_enabled():
         return False
-    now = now or _feed_collection_local_now()
-    hour = int(os.getenv("LINKEDIN_FEED_COLLECTION_HOUR", "17") or 17)
-    minute = int(os.getenv("LINKEDIN_FEED_COLLECTION_MINUTE", "0") or 0)
-    return (now.hour, now.minute) >= (hour, minute)
+    return (schedule or _feed_schedule()).due(now or datetime.now(timezone.utc))
 
 
-def _missed_feed_collection_due() -> bool:
-    """Whether this sender has a previously due feed job waiting.
+def _close_owned_sample_tab(schedule: FeedSampleSchedule) -> None:
+    import json
 
-    The normal daily scheduler is wall-clock based. This catches the case where
-    the supervisor was offline at collection time and restarts before today's
-    configured collection time.
-    """
-    if not _feed_collector_enabled():
-        return False
     try:
-        import django
-        from django.utils import timezone
-
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
-        django.setup()
-
-        from linkedin.conf import get_daemon_handle
-        from linkedin.feed_collection import catchup_start_date, ensure_collection_jobs
-        from linkedin.models import LinkedInFeedCollectionJob, LinkedInProfile
-        from linkedin.operators import resolve_operator
-
-        handle = get_daemon_handle()
-        if not handle:
-            return False
-        profile = (
-            LinkedInProfile.objects
-            .filter(user__username=handle)
-            .only("linkedin_username")
-            .first()
-        )
-        if profile is None:
-            return False
-
-        account_username = profile.linkedin_username
-        operator = resolve_operator(account_username)
-        ensure_collection_jobs(operator=operator, account_username=account_username)
-        return LinkedInFeedCollectionJob.objects.filter(
-            operator=operator,
-            account_username=account_username,
-            collection_date__gte=catchup_start_date(),
-            status__in=[
-                LinkedInFeedCollectionJob.Status.PENDING,
-                LinkedInFeedCollectionJob.Status.FAILED,
-            ],
-            scheduled_for__lte=timezone.now(),
-        ).exists()
+        state = schedule.read()
+        path = schedule.receipt_path(state["run_id"])
+        if path.exists():
+            receipt = json.loads(path.read_text())
+            if receipt.get("target_id"):
+                close_sample_target(receipt["cdp_port"], receipt["target_id"])
     except Exception as exc:
-        logger.debug("Could not check missed feed collection job: %s", exc)
-        return False
+        logger.error("Feed target cleanup needs review: %s", type(exc).__name__)
 
 
-def _feed_collection_should_start(
-    now: datetime | None = None,
-    *,
-    spawned_date=None,
-) -> bool:
-    """Whether the supervisor should spawn the feed collector.
-
-    Due DB jobs override the once-per-local-day guard so a restarted machine
-    drains missed feed windows one child process at a time. The wall-clock
-    daily trigger still uses the guard to avoid spawning no-op collectors over
-    and over after today's queue is caught up.
-    """
-    if not _feed_collector_enabled():
-        return False
-    missed_due = _missed_feed_collection_due()
-    if missed_due:
-        return True
-    now = now or _feed_collection_local_now()
-    return _feed_collection_due_today(now) and spawned_date != now.date()
-
-
-def _feed_collection_retry_seconds() -> int:
-    return int(os.getenv("LINKEDIN_FEED_COLLECTION_RETRY_MINUTES", "60") or 60) * 60
+def _next_feed_check_delay(schedule, now: datetime) -> float:
+    delay = float(FEED_COLLECTOR_CHECK_SECONDS)
+    if schedule is not None:
+        due = schedule.read().get("next_due_at")
+        if due:
+            remaining = (datetime.fromisoformat(due) - now).total_seconds()
+            if remaining > 0:
+                delay = min(delay, remaining)
+    return delay
 
 
 def supervise(args: argparse.Namespace) -> int:
@@ -711,8 +658,9 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     gmail_child: subprocess.Popen | None = None
     gmail_account = _gmail_account_for_supervisor()
     feed_child: subprocess.Popen | None = None
-    feed_spawned_date = None
-    feed_retry_after = 0.0
+    feed_schedule = None
+    feed_started_at = None
+    feed_schedule_failed = False
 
     def _handle_signal(signum, _frame):
         nonlocal stop
@@ -723,8 +671,17 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
+    def hold_sample(reason: str) -> None:
+        nonlocal feed_schedule_failed
+        feed_schedule_failed = True
+        _close_owned_sample_tab(feed_schedule)
+        try:
+            feed_schedule.hold(reason)
+        except Exception as exc:
+            logger.error("Feed hold needs local state review: %s", type(exc).__name__)
+
     def restart_children(reason: str) -> bool:
-        nonlocal child, gmail_child, feed_child, feed_retry_after
+        nonlocal child, gmail_child, feed_child, feed_started_at
         result = _restart_managed_children(
             child=child, gmail_child=gmail_child, feed_child=feed_child,
             gmail_account=gmail_account, reason=reason,
@@ -734,8 +691,9 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
             return False
         child, gmail_child = result
         if feed_child is not None:
+            hold_sample("Collection interrupted by sender restart; review before resuming.")
             feed_child = None
-            feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
+            feed_started_at = None
         logger.warning("Restarted this sender's managed workers: %s", reason)
         return not stop and not safety.stopped.is_set()
 
@@ -796,38 +754,55 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
                 break
             if feed_child is not None and feed_child.poll() is None:
                 _stop_process(feed_child, label="LinkedIn feed collector")
+                hold_sample("Collection interrupted by worker exit; review before resuming.")
                 feed_child = None
-                feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
+                feed_started_at = None
             child = _start_runtime_worker(restart_reason="process_exit")
             continue
 
         if feed_child is not None:
             feed_code = feed_child.poll()
+            if feed_code is None and time.monotonic() - feed_started_at >= MAX_SECONDS + PROCESS_GRACE_SECONDS:
+                _close_owned_sample_tab(feed_schedule)
+                _stop_process(feed_child, label="LinkedIn feed sample")
+                feed_code = 124
             if feed_code is not None:
-                if feed_code == 0:
-                    feed_spawned_date = _feed_collection_local_now().date()
-                    logger.warning("LinkedIn feed collector exited cleanly")
+                if feed_code != 0:
+                    _close_owned_sample_tab(feed_schedule)
+                try:
+                    feed_schedule.finish(datetime.now(timezone.utc), feed_code)
+                    held = bool(feed_schedule.read().get("hold"))
+                except Exception:
+                    hold_sample("Sample completion state could not be saved; review before resuming.")
+                    held = True
+                if held:
+                    _notify("LinkedIn feed collection held", "A sample did not complete cleanly. Review its local receipt before resuming; no automatic retry will run.")
                 else:
-                    feed_retry_after = time.monotonic() + _feed_collection_retry_seconds()
-                    logger.error(
-                        "LinkedIn feed collector exited with status %s; retrying later",
-                        feed_code,
-                    )
-                    _notify(
-                        "LinkedIn feed collector failed",
-                        f"Exit status `{feed_code}`. Supervisor will retry later.",
-                    )
+                    logger.warning("Feed sample complete; next check: %s", feed_schedule.read()["next_due_at"])
                 feed_child = None
+                feed_started_at = None
 
         if time.monotonic() >= next_feed_check:
-            local_now = _feed_collection_local_now()
-            if (
-                _feed_collection_should_start(local_now, spawned_date=feed_spawned_date)
-                and feed_child is None
-                and time.monotonic() >= feed_retry_after
-            ):
-                feed_child = _start_feed_collector()
-            next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
+            if _feed_collector_enabled() and not feed_schedule_failed and feed_child is None:
+                try:
+                    feed_schedule = feed_schedule or _feed_schedule()
+                    if _feed_collection_should_start(schedule=feed_schedule):
+                        run_id = feed_schedule.begin(datetime.now(timezone.utc))
+                        feed_started_at = time.monotonic()
+                        feed_child = _start_feed_collector(run_id)
+                except Exception as exc:
+                    # Invalid/corrupt local scheduling state cannot trigger a loop
+                    # or take down unrelated sender/Gmail workers.
+                    feed_schedule_failed = True
+                    logger.error("Feed scheduling held: %s", type(exc).__name__)
+                    _notify("LinkedIn feed scheduling held", "Review local feed-sampling state and configuration before restarting the supervisor.")
+            delay = FEED_COLLECTOR_CHECK_SECONDS
+            if not feed_schedule_failed:
+                try:
+                    delay = _next_feed_check_delay(feed_schedule, datetime.now(timezone.utc))
+                except Exception:
+                    hold_sample("Invalid feed schedule; review before resuming.")
+            next_feed_check = time.monotonic() + delay
 
         time.sleep(1)
 
@@ -837,6 +812,7 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     if gmail_child is not None:
         _stop_process(gmail_child, label="Gmail worker")
     if feed_child is not None:
+        hold_sample("Collection interrupted by supervisor shutdown; review before resuming.")
         _stop_process(feed_child, label="LinkedIn feed collector")
     return 0
 

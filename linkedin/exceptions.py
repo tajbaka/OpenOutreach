@@ -177,3 +177,9 @@ class LinkedInMessageSubmissionUnclearError(Exception):
     """LinkedIn may have accepted a message, so automation must not retry it."""
 
     pass
+
+
+class FeedSampleInterruptedError(Exception):
+    """A feed sample reservation outlived its process; it is now held for review."""
+
+    pass

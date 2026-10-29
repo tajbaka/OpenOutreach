@@ -49,6 +49,7 @@ def main():
             'tests/test_browser_nav.py', 'tests/test_browser_login.py',
             'tests/test_daemon_supervisor_gmail.py', 'tests/test_daemon_supervisor_email_only.py',
             'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',
+            'tests/test_feed_sampling.py', 'tests/test_feed_collection.py',
             'tests/test_daemon_supervisor_stop.py', 'tests/test_supervisor_safety.py',
             'tests/realtime/test_supervisor.py',
             'tests/tasks/test_follow_up_media.py', 'tests/tasks/test_drip_message_action.py',

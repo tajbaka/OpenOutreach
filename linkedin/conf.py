@@ -295,7 +295,8 @@ ENABLE_REALTIME_LISTENER = os.getenv("ENABLE_REALTIME_LISTENER", "false").strip(
     "1", "true", "yes", "on",
 }
 
-# Kill-switch for daily LinkedIn home-feed collection. The outer
+# Kill-switch for bounded LinkedIn home-feed sampling every 55–65 minutes
+# during ACTIVE_* working hours. The outer
 # daemon_supervisor.py wakes the collector; the collector connects to this
 # daemon browser over CDP and opens its own /feed/ tab.
 ENABLE_LINKEDIN_FEED_COLLECTOR = os.getenv(
@@ -328,7 +329,8 @@ LISTENER_REST_DAYS = tuple(
 # collection needs a sibling process to attach to the shared browser context.
 LISTENER_CDP_PORT = int(os.getenv("LISTENER_CDP_PORT") or 9222)
 
-# Daily feed collector schedule/tuning. Time is local to
+# Legacy manual daily/backfill collector tuning (not used by the supervisor).
+# Time is local to
 # LINKEDIN_FEED_COLLECTION_TIMEZONE; the default is 5:00 PM Toronto time.
 LINKEDIN_FEED_COLLECTION_HOUR = int(os.getenv("LINKEDIN_FEED_COLLECTION_HOUR") or 17)
 LINKEDIN_FEED_COLLECTION_MINUTE = int(os.getenv("LINKEDIN_FEED_COLLECTION_MINUTE") or 0)
