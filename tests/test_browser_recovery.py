@@ -13,7 +13,8 @@ def browser(monkeypatch):
     monkeypatch.setattr(recovery, "time", SimpleNamespace(monotonic=lambda: clock.now))
     page = Mock(url="https://www.linkedin.com/feed/")
     page.locator.return_value.evaluate.return_value = False
-    page.goto.return_value = SimpleNamespace(ok=True)
+    page.locator.return_value.all_text_contents.return_value = []
+    page.goto.return_value = SimpleNamespace(ok=True, status=200)
     notify = Mock()
     guard = recovery.BrowserRecovery(sender="test", notify=notify)
     return SimpleNamespace(clock=clock, page=page, guard=guard, notify=notify)
@@ -22,6 +23,64 @@ def browser(monkeypatch):
 def test_healthy_page_does_not_navigate(browser):
     assert browser.guard.can_claim(browser.page)
     browser.page.goto.assert_not_called()
+    browser.notify.assert_not_called()
+
+
+def test_http_429_error_page_holds_without_recovery_requests(browser):
+    browser.page.locator.return_value.evaluate.return_value = True
+    browser.page.locator.return_value.all_text_contents.return_value = [" HTTP  ERROR\n429 "]
+    assert not browser.guard.can_claim(browser.page)
+    assert browser.guard.blocked
+    browser.page.locator.assert_called_with("#main-frame-error .error-code")
+    browser.clock.now = 10000
+    assert not browser.guard.can_claim(browser.page)
+    browser.page.goto.assert_not_called()
+    browser.notify.assert_called_once()
+    assert "HTTP 429" in browser.notify.call_args.kwargs["detail"]
+
+
+@pytest.mark.parametrize("error_text", ["HTTP ERROR 404", "HTTP ERROR 500", "ERR_INTERNET_DISCONNECTED", "429"])
+def test_other_error_codes_are_not_misclassified_as_rate_limits(browser, error_text):
+    browser.page.locator.return_value.all_text_contents.return_value = [error_text]
+    assert not browser.guard.task_failed(
+        PlaywrightError("Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE"),
+        page=browser.page, read_only=False, task_id=1,
+    )
+    assert not browser.guard.blocked
+    browser.notify.assert_not_called()
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_recovery_stops_at_first_confirmed_429(browser, raises):
+    browser.guard.task_failed(
+        PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET"),
+        page=browser.page, read_only=True, task_id=1,
+    )
+    browser.clock.now = 15
+    if raises:
+        browser.page.goto.side_effect = PlaywrightError("Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+        browser.page.locator.return_value.all_text_contents.return_value = ["HTTP ERROR 429"]
+    else:
+        browser.page.goto.return_value = SimpleNamespace(ok=False, status=429)
+    assert not browser.guard.can_claim(browser.page)
+    assert browser.guard.blocked
+    browser.clock.now = 10000
+    assert not browser.guard.can_claim(browser.page)
+    browser.page.goto.assert_called_once()
+    browser.notify.assert_called_once()
+    assert "HTTP 429" in browser.notify.call_args.kwargs["detail"]
+
+
+def test_unconfirmed_http_failure_during_recovery_still_propagates(browser):
+    browser.guard.task_failed(
+        PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET"),
+        page=browser.page, read_only=True, task_id=1,
+    )
+    browser.clock.now = 15
+    browser.page.goto.side_effect = PlaywrightError("Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE")
+    browser.page.locator.return_value.all_text_contents.return_value = ["HTTP ERROR 500"]
+    with pytest.raises(PlaywrightError, match="ERR_HTTP_RESPONSE_CODE_FAILURE"):
+        browser.guard.can_claim(browser.page)
     browser.notify.assert_not_called()
 
 
@@ -72,7 +131,7 @@ def test_three_attempts_then_latched_hold_without_claims_or_repeated_alerts(brow
 ])
 def test_redirect_is_not_successful_recovery(browser, url):
     browser.guard.task_failed(
-        PlaywrightError("Page.evaluate: TypeError: Failed to fetch"), read_only=True, task_id=1,
+        PlaywrightError("Page.evaluate: TypeError: Failed to fetch"), page=browser.page, read_only=True, task_id=1,
     )
     browser.clock.now = 15
     browser.page.url = url
@@ -81,10 +140,10 @@ def test_redirect_is_not_successful_recovery(browser, url):
     browser.notify.assert_called_once()
 
 
-@pytest.mark.parametrize("response", [None, SimpleNamespace(ok=False)])
+@pytest.mark.parametrize("response", [None, SimpleNamespace(ok=False, status=503)])
 def test_feed_url_without_successful_response_does_not_release_queue(browser, response):
     browser.guard.task_failed(
-        PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET"), read_only=True, task_id=1,
+        PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET"), page=browser.page, read_only=True, task_id=1,
     )
     browser.clock.now = 15
     browser.page.goto.return_value = response
@@ -95,10 +154,10 @@ def test_feed_url_without_successful_response_does_not_release_queue(browser, re
 def test_repeated_read_failures_do_not_reset_recovery_budget(browser):
     error = PlaywrightError("Page.evaluate: TypeError: Failed to fetch")
     for delay in (15, 30, 60):
-        assert browser.guard.task_failed(error, read_only=True, task_id=1)
+        assert browser.guard.task_failed(error, page=browser.page, read_only=True, task_id=1)
         browser.clock.now += delay
         assert browser.guard.can_claim(browser.page)
-    browser.guard.task_failed(error, read_only=True, task_id=1)
+    browser.guard.task_failed(error, page=browser.page, read_only=True, task_id=1)
     assert browser.guard.blocked
     assert not browser.guard.can_claim(browser.page)
     assert browser.page.goto.call_count == 3
@@ -106,18 +165,18 @@ def test_repeated_read_failures_do_not_reset_recovery_budget(browser):
 
 def test_successful_browser_task_resets_budget(browser):
     error = PlaywrightError("Page.evaluate: TypeError: Failed to fetch")
-    browser.guard.task_failed(error, read_only=True, task_id=1)
+    browser.guard.task_failed(error, page=browser.page, read_only=True, task_id=1)
     browser.clock.now = 15
     assert browser.guard.can_claim(browser.page)
     browser.guard.task_succeeded()
-    browser.guard.task_failed(error, read_only=True, task_id=2)
+    browser.guard.task_failed(error, page=browser.page, read_only=True, task_id=2)
     assert browser.guard.retry_at == 30
     assert browser.guard.attempts == 0
 
 
 def test_potential_send_failure_holds_without_navigating_or_retrying(browser):
     assert browser.guard.task_failed(
-        PlaywrightError("Page.evaluate: TypeError: Failed to fetch"), read_only=False, task_id=42,
+        PlaywrightError("Page.evaluate: TypeError: Failed to fetch"), page=browser.page, read_only=False, task_id=42,
     )
     assert not browser.guard.can_claim(browser.page)
     assert not browser.page.mock_calls
@@ -131,7 +190,7 @@ def test_potential_send_failure_holds_without_navigating_or_retrying(browser):
     PlaywrightTimeoutError("Locator.click: Timeout 30000ms exceeded"),
 ])
 def test_unrelated_task_errors_are_not_classified_as_network_failure(browser, error):
-    assert not browser.guard.task_failed(error, read_only=True, task_id=1)
+    assert not browser.guard.task_failed(error, page=browser.page, read_only=True, task_id=1)
     assert not browser.guard.pending
     assert not browser.guard.blocked
 
@@ -145,7 +204,7 @@ def test_unexpected_preflight_error_propagates(browser):
 
 def test_unexpected_recovery_navigation_error_propagates(browser):
     browser.guard.task_failed(
-        PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET"), read_only=True, task_id=1,
+        PlaywrightError("Page.goto: net::ERR_CONNECTION_RESET"), page=browser.page, read_only=True, task_id=1,
     )
     browser.clock.now = 15
     browser.page.goto.side_effect = PlaywrightError("Unexpected browser failure")
@@ -209,8 +268,9 @@ def test_daemon_never_claims_pending_tasks_while_offline(monkeypatch, fake_sessi
 
 
 @pytest.mark.parametrize("task_type", ["connect", "follow_up", "manual_reply", "drip_linkedin"])
+@pytest.mark.parametrize("rate_limited", [False, True])
 def test_daemon_mid_task_network_failure_is_failed_once_and_not_requeued(
-    monkeypatch, fake_session, browser, task_type,
+    monkeypatch, fake_session, browser, task_type, rate_limited,
 ):
     from linkedin.models import Task
     from django.utils import timezone
@@ -227,7 +287,11 @@ def test_daemon_mid_task_network_failure_is_failed_once_and_not_requeued(
     )
     claim = Mock(return_value=task)
     monkeypatch.setattr(Task.objects, "claim_next", claim)
-    handler = Mock(side_effect=PlaywrightError("Page.evaluate: TypeError: Failed to fetch"))
+    message = "Page.evaluate: TypeError: Failed to fetch"
+    if rate_limited:
+        message = "Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE"
+        browser.page.locator.return_value.all_text_contents.return_value = ["HTTP ERROR 429"]
+    handler = Mock(side_effect=PlaywrightError(message))
     monkeypatch.setitem(daemon._HANDLERS, task_type, handler)
     enqueue = Mock()
     monkeypatch.setattr("linkedin.tasks.connect.enqueue_connect", enqueue)
@@ -249,6 +313,8 @@ def test_daemon_mid_task_network_failure_is_failed_once_and_not_requeued(
     assert task.status == Task.Status.FAILED
     browser.page.goto.assert_not_called()
     browser.notify.assert_called_once()
+    if rate_limited:
+        assert "HTTP 429" in browser.notify.call_args.kwargs["detail"]
 
 
 def test_daemon_read_failure_recovers_then_claims_next_task_without_replay(

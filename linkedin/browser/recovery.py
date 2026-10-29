@@ -49,6 +49,15 @@ def _page_is_offline(page) -> bool:
     )
 
 
+def _page_is_rate_limited(page) -> bool:
+    # Match Chrome's actual error surface, never profile/post text containing
+    # "429". ERR_HTTP_RESPONSE_CODE_FAILURE alone doesn't identify a status.
+    return any(
+        " ".join(text.split()).upper() == "HTTP ERROR 429"
+        for text in page.locator("#main-frame-error .error-code").all_text_contents()
+    )
+
+
 class BrowserRecovery:
     RETRY_DELAYS = (15, 30, 60)
     POLL_SECONDS = 15
@@ -85,7 +94,23 @@ class BrowserRecovery:
         self.retry_at = time.monotonic() + delay
         logger.warning("LinkedIn browser unavailable; recovery attempt %d in %ss", self.attempts + 1, delay)
 
-    def task_failed(self, error: BaseException, *, read_only: bool, task_id: int) -> bool:
+    def _hold_rate_limit(self) -> None:
+        self._hold(
+            "LinkedIn returned HTTP 429 (rate limiting). Daemon task claims "
+            "and automatic browser recovery are paused; no reload or task "
+            "retry will be attempted. Allow the restriction to clear and "
+            "review any failed task's send evidence before restarting the "
+            "worker. LinkedIn's reset time is unknown."
+        )
+
+    def task_failed(self, error: BaseException, *, page, read_only: bool, task_id: int) -> bool:
+        if (
+            isinstance(error, PlaywrightError)
+            and "net::ERR_HTTP_RESPONSE_CODE_FAILURE" in str(error)
+            and _page_is_rate_limited(page)
+        ):
+            self._hold_rate_limit()
+            return True
         if not is_browser_network_error(error):
             return False
         if read_only:
@@ -111,6 +136,9 @@ class BrowserRecovery:
             try:
                 if not _page_is_offline(page):
                     return True
+                if _page_is_rate_limited(page):
+                    self._hold_rate_limit()
+                    return False
             except PlaywrightError as exc:
                 if not isinstance(exc, PlaywrightTimeoutError) and not is_browser_network_error(exc):
                     raise
@@ -126,9 +154,15 @@ class BrowserRecovery:
             response = page.goto(LINKEDIN_FEED_URL, wait_until="domcontentloaded", timeout=30000)
             offline = _page_is_offline(page)
         except PlaywrightError as exc:
+            if "net::ERR_HTTP_RESPONSE_CODE_FAILURE" in str(exc) and _page_is_rate_limited(page):
+                self._hold_rate_limit()
+                return False
             if not isinstance(exc, PlaywrightTimeoutError) and not is_browser_network_error(exc):
                 raise
             self._schedule()
+            return False
+        if (response is not None and response.status == 429) or (offline and _page_is_rate_limited(page)):
+            self._hold_rate_limit()
             return False
         if offline or response is None or not response.ok:
             self._schedule()

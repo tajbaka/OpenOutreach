@@ -1085,6 +1085,7 @@ def run_daemon(session):
             )
             if browser_recovery.task_failed(
                 exc,
+                page=session.page,
                 read_only=task.task_type == Task.TaskType.SWEEP_CONNECTIONS,
                 task_id=task.id,
             ):
