@@ -9,6 +9,7 @@ import hmac
 import importlib.util
 import json
 import pathlib
+import re
 import sys
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
@@ -703,7 +704,7 @@ def _icp_message(**overrides):
     return {
         "audience_key": "business-rev5-authorized-direct-agency",
         "role_persona": "CSP Any Size | Business leaders",
-        "fedramp_segment": "Rev5 Authorized to 20x",
+        "fedramp_segment": "Rev5 Authorized → 20x",
         "channel": "linkedin_followup", "step_index": 0,
         "sender_override": "", "subject": "",
         "body": "Approved business angle for {role}.",
@@ -855,6 +856,24 @@ def test_reply_prompt_gets_reviewed_role_and_only_matching_campaign_examples(mon
     # Summary and normal modal payload remain unchanged.
     assert "icp_messaging" not in slack_enrich._ai_context_payload(context)
     assert "role_tag" not in slack_enrich._ai_context_payload(context)["lead"]
+
+
+@pytest.mark.parametrize("messaging", [
+    {"status": "unavailable", "examples": []},
+    {"status": "matched", "audience_key": "frozen", "examples": [_icp_message(fedramp_segment="Class A exploration")]},
+])
+def test_reply_prompt_always_carries_every_cohort_playbook_and_verified_vdr_dates(messaging):
+    prompt = slack_enrich.reply_draft_prompt({
+        "lead": {"id": 42}, "operator": "Arian", "icp_messaging": messaging, "messages": [],
+    })
+    payload = json.loads(prompt[prompt.index('{"lead":'):])
+    for key in ("rev5_cr26_vdr_ver", "soc2_class_a", "fedramp_20x_entrant", "rev5_or_20x_path_unclear"):
+        assert f"- {key}: " in prompt
+    assert "December 7, 2026" in prompt and "March 7, 2027" in prompt
+    assert "$5,000" in prompt
+    assert "Always use one of the cohort playbooks below" in prompt
+    assert "cohort" not in payload
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", payload["today"])
 
 
 @pytest.mark.parametrize("method, body", [
