@@ -1623,6 +1623,81 @@ class SlackReplyDraftJob(models.Model):
         app_label = "linkedin"
 
 
+LINKEDIN_REPOST_PAYLOAD_FIELDS = frozenset({"external_ref", "operator", "post_url", "commentary"})
+
+
+class LinkedInRepostQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if LINKEDIN_REPOST_PAYLOAD_FIELDS & kwargs.keys():
+            from linkedin.exceptions import LinkedInRepostImmutableError
+
+            raise LinkedInRepostImmutableError("LinkedIn repost payload is immutable once created.")
+        return super().update(**kwargs)
+
+
+class LinkedInRepost(models.Model):
+    """One externally approved repost of a post, attempted once by its operator.
+
+    Never a daemon Task: running daemons must not claim or fail it. Boundera
+    Social Studio owns approval and scheduling and enqueues a row only when it
+    is due; the supervised ``run_linkedin_repost_once`` child executes it.
+    Empty commentary means LinkedIn's plain "Repost". See docs/linkedin-reposts.md.
+    """
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        UNCERTAIN = "uncertain", "Uncertain"
+        SKIPPED = "skipped", "Skipped"
+
+    external_ref = models.CharField(max_length=100, unique=True)
+    operator = models.CharField(max_length=80)
+    post_url = models.CharField(max_length=200)
+    commentary = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    click_attempted_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    result_url = models.CharField(max_length=200, blank=True, default="")
+    error_type = models.CharField(max_length=80, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = LinkedInRepostQuerySet.as_manager()
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(fields=["operator", "status", "created_at"], name="lrepost_op_status_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["queued", "running", "sent", "failed", "uncertain", "skipped"]),
+                name="lrepost_status_valid",
+            ),
+            # A sent repost always carries its verified permalink.
+            models.CheckConstraint(
+                condition=~models.Q(status="sent") | ~models.Q(result_url=""),
+                name="lrepost_sent_has_result_url",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            fields = sorted(LINKEDIN_REPOST_PAYLOAD_FIELDS)
+            stored = type(self).objects.filter(pk=self.pk).values(*fields).first()
+            if stored is not None and any(stored[name] != getattr(self, name) for name in fields):
+                from linkedin.exceptions import LinkedInRepostImmutableError
+
+                raise LinkedInRepostImmutableError("LinkedIn repost payload is immutable once created.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.operator} repost {self.external_ref} [{self.status}]"
+
+
 class WorkflowRun(models.Model):
     """Audit + freshness signal for high-level workflows the operator runs.
 

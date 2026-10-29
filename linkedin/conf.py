@@ -303,6 +303,14 @@ ENABLE_LINKEDIN_FEED_COLLECTOR = os.getenv(
     "ENABLE_LINKEDIN_FEED_COLLECTOR", "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
 
+# Kill-switch for the supervised one-shot repost worker
+# (`run_linkedin_repost_once`). It attaches to this daemon browser over CDP
+# and opens its own tab per queued, externally approved repost. Default OFF;
+# see docs/linkedin-reposts.md.
+ENABLE_LINKEDIN_REPOSTS = os.getenv(
+    "ENABLE_LINKEDIN_REPOSTS", "false",
+).strip().lower() in {"1", "true", "yes", "on"}
+
 # Startup catch-up threshold. If the listener heartbeat is older than this
 # many minutes when the daemon boots, the catch-up surfaces the gap (prompt
 # on a TTY, WARNING log when headless). A quick restart stays below it.
@@ -325,8 +333,9 @@ LISTENER_REST_DAYS = tuple(
 )
 
 # Fixed CDP port the daemon exposes on its Chromium (`--remote-debugging-port`).
-# Localhost-only. The daemon opens it when realtime listening or feed
-# collection needs a sibling process to attach to the shared browser context.
+# Localhost-only. The daemon opens it when realtime listening, feed
+# collection or reposts need a sibling process to attach to the shared
+# browser context.
 LISTENER_CDP_PORT = int(os.getenv("LISTENER_CDP_PORT") or 9222)
 
 # Legacy manual daily/backfill collector tuning (not used by the supervisor).
