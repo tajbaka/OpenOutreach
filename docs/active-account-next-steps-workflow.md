@@ -2,7 +2,9 @@
 
 This is a Codex contextual review, not a Python decision engine. It uses the
 source-reading and identity rules in `docs/actions-workflow.md`, then updates
-only the existing `Next step` column in manual `Active Accounts`. The daily
+only the existing `Next step` cell values in manual `Active Accounts`, then
+sorts complete account rows by their existing `Stage` on every run. Stage values
+remain operator-owned; sorting never changes an account's stage. The daily
 cadence is 09:00 America/Toronto on the designated receiving computer, after
 Actions in the same runner. One-time runs do not install or enable a timer.
 
@@ -54,7 +56,8 @@ because no new action was discovered. Keep unchanged accurate next steps intact.
 
 Resolve the live `Active Accounts` sheet ID and locate the unique exact `Next step`
 header (currently E). Preserve all other cell values, formulas, native formatting,
-notes, validation, rows, order and IDs, including `Next step due`. Do not update
+notes, validation and IDs by account, including `Next step due`. Preserve all
+rows; the sole row-order exception is the stage sort below. Do not update
 stale due dates, stage or Notes incidentally. Skip formula-owned Next step cells.
 Do not change a different tab as part of this workflow.
 
@@ -69,8 +72,40 @@ an exact unique full-row identity; conflicting/duplicate unbound rows are held.
 Write only changed Next step cells with literal string values. Do not clear or
 rewrite a rectangle covering adjacent columns. Read back the changed cells and
 verify every other user-entered value, formula and relevant native property is
-unchanged. Google Sheets does not provide a human-edit compare-and-swap here;
-record and report any detected race, never overwrite again to force a match.
+unchanged by account identity after the authorized sort. Google Sheets does not
+provide a human-edit compare-and-swap here; record and report any detected race,
+never overwrite again to force a match.
+
+## Sort by existing Stage after every review
+
+The user authorized this row-order exception on 2026-10-29, including runs with
+no Next step changes. Locate the unique exact `Stage` header (currently C).
+Use the existing consistent Stage dropdown order: Prospecting, Discovery,
+Demo Planning, Evaluation, Sandbox/Pilot, Commercial, Procurement/Legal,
+Closed Won, Expansion, Closed Lost. Read the live validation before sorting;
+if the configured order changes, use its unambiguous ordered list and record it.
+Keep equal-stage rows in their previous relative order. Put unknown/nonblank
+stages and then blank stages after recognized stages, preserving their relative
+order and reporting unknown labels. Do not rewrite Stage values or infer stages
+from conversation evidence for this sort.
+
+Sort all existing account rows, including unbound and closed rows, by moving
+complete native rows across the full sheet width, including hidden IDs, Notes,
+dates, cell notes, validation, formatting and row heights. Keep the header,
+sheet identity, filters, frozen panes and hidden-column settings intact. Do not
+sort Stage alone, rebuild the tab, add/delete accounts, or change CRM records.
+Keep empty slots outside the account list; hold unusual mixed/merged structures
+for review instead of moving unrelated content. Resolve accounts by unique bound
+IDs or exact unique full-row identities; never use old row numbers after sorting.
+
+Under `crm_refresh_lock()`, require a fresh matching full before-state before
+Next step edits and sorting. Write changed Next step cells before moving rows,
+or resolve their current indices afresh. Skip moves when already sorted. API
+readback must verify stage order, stable ties, the exact row multiset and each
+account's protected cell values/formulas/native properties and height. Verify
+Actions and LinkedIn Pending unchanged by this review. Save before/after order
+in the private receipt. A sort-only run is not a fresh contextual review and
+must not advance its full-review watermark.
 
 Save private before/source/decision/readback receipts in a new ignored run
 folder under `artifacts/followups/YYYY-MM-DD/`, separate from older receipts.

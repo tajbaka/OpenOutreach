@@ -68,9 +68,11 @@ tab identifies context; it does not select browser automation.
 
 - `Active Accounts` is an operator-owned manual ledger. A direct user request
   authorizes its specified edit. The daily Codex review in
-  `docs/active-account-next-steps-workflow.md` may update only Next step; never
-  invoke a refresh, conversion, rebuild,
-  reorder or publisher to implement a manual change.
+  `docs/active-account-next-steps-workflow.md` may update only Next step cell
+  values and, as authorized on 2026-10-29, stably sort complete native rows by
+  their existing Stage after every review. Stage values remain manual. Preserve
+  all protected data and native properties by account identity. Never invoke a
+  refresh, conversion, rebuild or publisher to implement this review.
 - When adding an account, bind hidden Opportunity/Account IDs only to one
   verified existing CRM identity. An unbound manual row is valid and is included
   in the contextual Next step review. Do not create database identities merely to

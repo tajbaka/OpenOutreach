@@ -51,8 +51,15 @@ If a required file is missing, safely update the checkout before recreating it.
 > Join verified identities and reconcile specific requests chronologically across
 > all channels. Update only the existing Actions tab (formerly Followups), retain
 > its native sheet ID, hidden Followup IDs, operator Notes and formatting, and
-> include readable saved ICP labels or clearly marked suggestions. Save exact
-> completion evidence before removing resolved rows. Recheck live rows/sources,
+> include readable saved ICP labels or clearly marked suggestions.
+> Keep one row per verified person/contact: combine distinct open items as
+> numbered actions with matching per-item type/status/review date/context,
+> preserving all item UUIDs, evidence, links and operator notes in hidden
+> action_items. Never merge people by name/company alone. Keep one canonical row
+> UUID and archive absorbed row IDs as merged, not completed; never recreate them.
+> Rank the grouped row by its leading eligible item without accelerating future
+> items. Verify all original items survive once and rerun the duplicate check.
+> Save exact completion evidence before removing resolved rows. Recheck live rows/sources,
 > take the publisher lock for final writes, and verify by API readback. Report
 > meaningful changes, newly actionable follow-ups and incomplete coverage. No sends, drafts, CRM mutations,
 > other publishers, workers or schedule changes.
@@ -63,9 +70,14 @@ If a required file is missing, safely update the checkout before recreating it.
 > every existing manual Active Accounts row, including unbound rows. Use the
 > latest dated LinkedIn, Gmail and full meeting context to identify the current
 > account-level next move or who we are waiting for. Update only changed cells in
-> the unique Next step column. Preserve rows, IDs, all other columns (including
-> due dates), Notes, formulas and formatting. Preserve uncertain cells and report
-> holds. Save source-backed decisions and verify all changes by API readback.
+> the unique Next step column, then stably sort complete native account rows by
+> their existing Stage using the runbook's dropdown-order rule on every run,
+> including when no Next step changes. Stage values remain manual. Preserve rows,
+> IDs, all other cell values (including due dates), Notes, formulas, formatting
+> and row heights by identity; only row order may change for this sort.
+> Verify the sorted order, stable ties and protected cells by API readback.
+> Preserve uncertain cells and report holds. Save source-backed decisions and
+> verify all changes by API readback.
 > No sends, drafts, CRM mutations, other publishers, workers or schedule changes.
 
 Add **Preview only; no Sheet writes** to either request for a preview.

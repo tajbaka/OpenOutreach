@@ -137,7 +137,8 @@ The separate Active Accounts Next step review retains its existing scope.
 An AI review of the actual dated conversation makes the decision. There is no
 last-sender or keyword-only completion rule. Identify the specific question,
 requested material, introduction, scheduling response, or promise. Track distinct
-requests separately when they can have different outcomes.
+requests separately as logical items when they can have different outcomes;
+the contact-row rule below combines their display without combining outcomes.
 
 Join channels only through verified identity: an exact Lead identity and its
 unambiguous email, or an address explicitly supplied in that person's message.
@@ -174,8 +175,9 @@ Keep three kinds of useful work, each with a specific outcome:
 
 Delivered material is complete even when a subsequent feedback check is useful.
 Record the delivery evidence, close the old obligation, and create one distinct
-follow-up with its own stable ID and timing. Do not relabel the material as still
-owed, duplicate the same outcome, or treat a forwarded overview as a confirmed
+follow-up item with its own stable ID and timing, inside the person's existing
+row when present. Do not relabel the material as still owed, duplicate the same
+outcome, or treat a forwarded overview as a confirmed
 meeting or purchase. Acknowledgements can confirm receipt without answering a
 different substantive question. A new inbound can make a planned check-in obsolete
 and replace it with the actual response owed.
@@ -235,6 +237,54 @@ requests in quoted email history with a new request. Preserve operator Notes and
 honor explicit instructions there, including handled/completed/deferred items;
 record them in the private receipt before removing a row so it does not reappear.
 
+## One row per verified person/contact
+
+The user authorized contact consolidation on 2026-10-29. After reviewing item
+eligibility and completion, display one Actions row per verified person/contact
+identity. Combine multiple open items into numbered lines, not duplicate person
+rows. An existing explicitly identified participant group can stay together;
+never merge different people merely because a name, employer, referrer or shared
+mailbox overlaps. Join different identity keys only with verified cross-channel
+alias evidence. Hold ambiguous matches and conflicting account relationships.
+
+Keep every distinct item's outcome, original stable UUID/request key, evidence,
+type, status, date/basis, last touch, links and operator notes in an `action_items`
+array in hidden Evidence and in the private receipt. Number Next action, Action
+type, Status, Next review and Context consistently for multi-item rows. Other
+columns can share identical values; retain distinct links and meaningful notes
+without losing their item association. Keep each action sentence concise. A
+future or waiting item stays explicitly future/waiting even beside a Ready item;
+never collapse dates or mark the whole bundle complete from one response. Read
+native validation first; do not bypass a conflicting strict cell constraint.
+
+Keep the highest-priority existing row's Followup UUID as the canonical row ID
+on first consolidation, then keep that row ID stable across later item changes.
+Record all absorbed row IDs and preserve their full before-values/native notes
+in a private archive with decision `merged into contact row`, not fulfilled or
+excluded. Preserve operator Notes verbatim, combining nonidentical notes with
+item labels; preserve native cell notes outside the managed priority block.
+Store absorbed IDs as aliases so a later run adds/updates an item inside the
+canonical row instead of recreating a duplicate. Check item UUID/request key
+before adding work; do not recursively wrap an existing action_items bundle.
+Resolving one item leaves the other open items intact. Remove a contact row
+only after all items are resolved/excluded and their evidence is archived.
+
+Rank a grouped row by its most important eligible open item, preserving the
+other items' individual priority rationale and timing. Position each group at
+its highest-priority existing row during a presentation-only consolidation;
+keep other groups' order stable. Adjust wrapped row height for readable numbered
+items without changing column geometry, hidden identifiers or frozen panes.
+Recheck source activity for substantive decision changes; a consolidation-only
+run preserves reviewed decisions and review timestamps, uses a fresh Sheet
+preflight under the publisher lock, and does not claim a fresh full review.
+
+After saving all merged IDs/notes/evidence, delete only the absorbed native rows
+and extend the existing filter through the resulting data. API readback must
+prove that every original logical item survives exactly once, each verified
+identity has one row, all timings and operator data survive, and unrelated tabs
+are unchanged. Rerun the duplicate check after applying; a second consolidation
+pass should propose no changes. Report unresolved identity collisions separately.
+
 ## Rank by contextual priority
 
 After checking eligibility and fulfillment, sort the entire Actions list by
@@ -269,8 +319,8 @@ measured probabilities. Explain the main reason and material uncertainty for
 higher-priority items. A commercially important future action can rank above a
 low-value Ready item; preserve its Planned/Waiting status and actual review date.
 Priority never makes a future meeting due today, changes a promise or authorizes
-sending. Distinct actions at the same company may rank differently according to
-what they unblock and when they matter.
+sending. Distinct logical items may rank differently according to what they
+unblock and when they matter; a grouped contact row uses its leading item.
 
 Store rank, band, rationale, value/source/basis, recorded and contextual stage,
 confidence and review timestamp under `priority` in hidden Evidence and the
@@ -308,8 +358,9 @@ touch, engagement signal, timing basis (promised/scheduled/suggested/conditional
 and the basis for the decision. Preserve Notes by Followup ID. The 2026-10-23
 refinement repurposes the former Requested column as Action type and retains the
 original request date in Evidence; hidden columns stay in M:P. Keep Next action to
-one concrete sentence (usually under 30 words) and Context to one or two short
-sentences explaining why/what already happened. Detailed history belongs in Evidence,
+one concrete sentence per numbered item (usually under 30 words) and Context to
+one or two short sentences per item explaining why/what already happened.
+Detailed history belongs in Evidence,
 with the most relevant source link visible. Never claim Last touch is comprehensive
 when Slack/text or live LinkedIn is unavailable.
 
@@ -324,10 +375,11 @@ identity, notes, and formatting. Append after the last populated row, not an A1 
 table. After adding or removing rows, extend the existing filter through the
 last reviewed row, preserving its criteria and sort settings. Apply readable
 row heights to appended rows consistent with the wrapped table. Verify hidden
-identity columns and frozen panes remain intact. Deduplicate by contact plus
-specific request. Remove only items reviewed as resolved or excluded for a
-closed account; never clear or rebuild the whole workbook. Order the full rows by
-the contextual priority review above, preserving stable IDs, operator Notes,
+identity columns and frozen panes remain intact. Deduplicate logical items by
+verified contact plus specific request, then consolidate to one contact row.
+Remove only resolved/excluded items or absorbed rows archived under the explicit
+contact-consolidation rule; never clear or rebuild the whole workbook. Order the
+full rows by the contextual priority review above, preserving stable IDs, operator Notes,
 cell notes outside the managed priority block, row heights and hidden fields.
 Keep status and date basis explicit so future work is not mistaken for something
 to send today.
