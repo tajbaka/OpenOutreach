@@ -183,3 +183,90 @@ class FeedSampleInterruptedError(Exception):
     """A feed sample reservation outlived its process; it is now held for review."""
 
     pass
+
+
+class LinkedInRepostError(Exception):
+    """Base class for the queued LinkedIn repost ledger and its worker."""
+
+
+class LinkedInRepostValidationError(LinkedInRepostError, ValueError):
+    """A repost request failed strict validation; nothing was written."""
+
+
+class LinkedInRepostConflictError(LinkedInRepostValidationError):
+    """An external_ref already exists with a different payload; nothing changed."""
+
+
+class LinkedInRepostImmutableError(LinkedInRepostError):
+    """A stored repost payload (ref, operator, post, commentary) cannot change."""
+
+
+class LinkedInRepostStateError(LinkedInRepostError):
+    """A repost row is not in a state that allows the requested change."""
+
+
+class LinkedInRepostWorkerRefused(LinkedInRepostError):
+    """The local repost worker cannot run safely for this checkout's sender."""
+
+
+class RepostSendError(RuntimeError):
+    """A repost failed before its final click; LinkedIn was not mutated.
+
+    ``error_type`` is a class name only. Messages never carry page text.
+    """
+
+    def __init__(self, message: str = "", *, error_type: str | None = None):
+        super().__init__(message or type(self).__name__)
+        self.error_type = error_type or type(self).__name__
+
+
+class RepostUncertainError(RepostSendError):
+    """The final repost click was attempted; LinkedIn may have accepted it."""
+
+
+class RepostBrowserUnavailableError(RepostSendError):
+    """The daemon browser could not be attached over loopback CDP."""
+
+
+class RepostLoginWallError(RepostSendError):
+    """LinkedIn showed a login, checkpoint or authwall page."""
+
+
+class RepostCheckpointError(RepostSendError):
+    """LinkedIn showed a captcha or checkpoint form."""
+
+
+class RepostPostUnavailableError(RepostSendError):
+    """The post page redirected away from a LinkedIn post permalink."""
+
+
+class RepostControlNotFoundError(RepostSendError):
+    """No unique Repost menu trigger was found on the post."""
+
+
+class RepostOptionNotFoundError(RepostSendError):
+    """The Repost menu did not show exactly one requested option."""
+
+
+class RepostComposerError(RepostSendError):
+    """The commentary composer, editor or Post button was missing or not empty."""
+
+
+class RepostCommentaryMismatchError(RepostSendError):
+    """The editor text differed from the approved commentary before Post."""
+
+
+class RepostStateChangedError(RepostSendError):
+    """The ledger row changed before the final click, so nothing was clicked."""
+
+
+class RepostInterruptedError(RepostSendError):
+    """The worker process was asked to stop."""
+
+
+class RepostRejectedError(RepostUncertainError):
+    """LinkedIn showed an error after the final click."""
+
+
+class RepostUnverifiedError(RepostUncertainError):
+    """The final click was attempted but no new permalink could be verified."""

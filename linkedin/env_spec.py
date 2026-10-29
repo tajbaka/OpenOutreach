@@ -99,6 +99,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Enable the realtime inbound-DM listener child process."),
     EnvVar("ENABLE_LINKEDIN_FEED_COLLECTOR", False, False, "false", "feature_flags",
            "Enable bounded fresh-feed samples every 55–65 minutes during working hours."),
+    EnvVar("ENABLE_LINKEDIN_REPOSTS", False, False, "false", "feature_flags",
+           "Enable the supervised one-shot worker that executes queued, externally approved reposts."),
     EnvVar("ENABLE_NODE_MONITOR", False, False, "true", "feature_flags",
            "Enable peer-node liveness and degraded-state monitoring."),
     EnvVar("ENABLE_ACTIVE_HOURS", False, False, "true", "feature_flags",
