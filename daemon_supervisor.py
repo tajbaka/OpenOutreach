@@ -488,7 +488,7 @@ def _start_repost_worker() -> subprocess.Popen:
 
 
 def _repost_work_queued() -> bool:
-    """Bounded read: does this exact sender have a queued repost? Fails closed."""
+    """Bounded read: does this exact sender have a queued repost that is due? Fails closed."""
     from linkedin.operators import resolve_operator
 
     operator = resolve_operator(os.getenv("LINKEDIN_USERNAME", "").strip())
@@ -519,8 +519,9 @@ def _repost_work_queued() -> bool:
         logger.warning("Repost queue check unavailable (%s); queued rows wait for the next check", type(exc).__name__)
         return False
     except ProgrammingError as exc:
-        if getattr(exc.__cause__, "sqlstate", None) == "42P01":
-            logger.error("LinkedIn repost table is missing; apply migration 0035 before enabling reposts")
+        # 42P01: no table; 42703: no scheduled_for column yet.
+        if getattr(exc.__cause__, "sqlstate", None) in ("42P01", "42703"):
+            logger.error("LinkedIn repost table is missing or not migrated; apply migrations 0035-0036 before enabling reposts")
             return False
         raise
     finally:

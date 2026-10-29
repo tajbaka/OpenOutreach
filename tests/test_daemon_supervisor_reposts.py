@@ -261,14 +261,15 @@ def test_queue_check_outage_waits_without_details(monkeypatch, database_check, c
     assert "private-dsn" not in caplog.text
 
 
-def test_missing_repost_table_is_reported_not_crashing(monkeypatch, database_check, caplog):
-    cause = Exception('relation "linkedin_linkedinrepost" does not exist')
-    cause.sqlstate = "42P01"
+@pytest.mark.parametrize("sqlstate", ["42P01", "42703"])
+def test_missing_repost_table_or_column_is_reported_not_crashing(monkeypatch, database_check, caplog, sqlstate):
+    cause = Exception("relation or column does not exist")
+    cause.sqlstate = sqlstate
     error = ProgrammingError("schema")
     error.__cause__ = cause
     monkeypatch.setattr("linkedin.reposts.has_queued_repost", Mock(side_effect=error))
     assert supervisor._repost_work_queued() is False
-    assert "migration 0035" in caplog.text
+    assert "migrations 0035-0036" in caplog.text
 
 
 def test_non_repost_sender_never_opens_the_database(monkeypatch):

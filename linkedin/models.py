@@ -1639,9 +1639,11 @@ class LinkedInRepost(models.Model):
     """One externally approved repost of a post, attempted once by its operator.
 
     Never a daemon Task: running daemons must not claim or fail it. Boundera
-    Social Studio owns approval and scheduling and enqueues a row only when it
-    is due; the supervised ``run_linkedin_repost_once`` child executes it.
-    Empty commentary means LinkedIn's plain "Repost". See docs/linkedin-reposts.md.
+    Social Studio owns approval and scheduling: its dashboard writes a queued
+    row with ``scheduled_for`` when the user schedules a repost, and the
+    supervised ``run_linkedin_repost_once`` child executes it once that time
+    has come (a row without a time is due at once). Empty commentary means
+    LinkedIn's plain "Repost". See docs/linkedin-reposts.md.
     """
 
     class Status(models.TextChoices):
@@ -1657,6 +1659,8 @@ class LinkedInRepost(models.Model):
     post_url = models.CharField(max_length=200)
     commentary = models.TextField(blank=True, default="")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    # Not before this time; Social Studio may move it while the row is queued.
+    scheduled_for = models.DateTimeField(null=True, blank=True)
     click_attempted_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -1671,6 +1675,7 @@ class LinkedInRepost(models.Model):
         app_label = "linkedin"
         indexes = [
             models.Index(fields=["operator", "status", "created_at"], name="lrepost_op_status_idx"),
+            models.Index(fields=["operator", "status", "scheduled_for"], name="lrepost_op_due_idx"),
         ]
         constraints = [
             models.CheckConstraint(
