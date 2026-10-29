@@ -524,7 +524,7 @@ class RepostWatchdog:
 
 
 def announce(row) -> None:
-    """One Slack message (ops channel) for a finished row. Never changes its outcome."""
+    """One Slack message (feed channel) for a finished row. Never changes its outcome."""
     try:
         from linkedin.notifications.slack import notify_repost_outcome
 

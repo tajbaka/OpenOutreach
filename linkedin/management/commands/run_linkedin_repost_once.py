@@ -2,7 +2,7 @@
 
 Attaches to the running daemon browser over loopback CDP only and opens its
 own tabs. One attempt per row; uncertain rows are never retried. Each finished
-row posts one message to the ops Slack channel (SLACK_WEBHOOK_URL).
+row posts one message to the feed Slack channel (SLACK_HIGH_SIGNAL_URL).
 """
 import json
 import os

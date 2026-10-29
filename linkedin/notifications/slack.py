@@ -44,11 +44,11 @@ Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
     + `notify_status_summary` + `notify_sweep_summary` + `notify_connect_button_missing`
     + `notify_connect_send_failed` + `notify_supervisor_restart`
-    + `notify_repost_outcome`
-    → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics, reposts).
+    → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
     (replies: a lead replied, and the enrichment results that follow).
-  - LinkedIn feed intent and FedRAMP marketplace signals → SLACK_HIGH_SIGNAL_URL.
+  - LinkedIn feed intent and FedRAMP marketplace signals, and Arian's and Eddy's
+    repost results (`notify_repost_outcome`) → SLACK_HIGH_SIGNAL_URL, the feed channel.
   - `notify_supervisor_stop` → SLACK_REPLIES_WEBHOOK_URL, with ops fallback
     only when the replies webhook is missing or posting fails.
 
@@ -1223,15 +1223,16 @@ _REPOST_NAMES = {"Chuka": "Eddy"}
 def notify_repost_outcome(
     *, operator: str, status: str, post_url: str, result_url: str | None = None, error_type: str | None = None,
 ) -> None:
-    """Post one finished repost's outcome to the ops channel (SLACK_WEBHOOK_URL).
+    """Post one finished repost's outcome to the feed channel (SLACK_HIGH_SIGNAL_URL).
 
     ``sent`` carries the verified new repost link; ``failed`` means nothing was
     posted; anything else (``uncertain``) may have posted, so the person checks
     their LinkedIn activity and it is never sent twice. This is the only Slack
     message for a repost: Social Studio's dashboard records the same outcome
-    from the repost table but sends nothing. Silent no-op when the webhook is unset.
+    from the repost table but sends nothing. It goes where feed posts and their
+    Like results appear (user decision, 2026-10-29). Silent no-op when unset.
     """
-    if not SLACK_WEBHOOK_URL:
+    if not SLACK_HIGH_SIGNAL_URL:
         return
     name = _REPOST_NAMES.get(operator, operator)
     original = f"<{post_url}|Original post>"
@@ -1254,7 +1255,7 @@ def notify_repost_outcome(
         ]},
     ]
     payload = {"text": f"{emoji} {title}", "blocks": blocks}
-    _post_to_slack(SLACK_WEBHOOK_URL, payload, f"repost ({operator}, {status})")
+    _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"repost ({operator}, {status})")
 
 
 def _supervisor_control_payload(
