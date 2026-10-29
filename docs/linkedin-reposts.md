@@ -8,8 +8,9 @@ that time or cancel the row while it is still queued, and reads the result back
 (see "Social Studio's dashboard" below). This repo only executes due queued rows
 for the local operator, once each. It is the confirmation of whether a repost
 posted: each finished row (sent with its new link, failed with nothing posted,
-or uncertain, including interrupted rows) sends one message to the ops Slack
-channel (`SLACK_WEBHOOK_URL`, `notify_repost_outcome`). Social Studio sends no
+or uncertain, including interrupted rows) sends one message to the feed Slack
+channel, where feed posts and their Like results appear (`SLACK_HIGH_SIGNAL_URL`,
+`notify_repost_outcome`; user decision, 2026-10-29). Social Studio sends no
 Slack for reposts; it only shows the result it reads from this table.
 
 Empty commentary uses LinkedIn's plain **Repost**. Non-empty commentary uses

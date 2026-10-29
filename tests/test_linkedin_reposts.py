@@ -372,20 +372,21 @@ def test_each_finished_repost_sends_one_slack_message_and_slack_never_changes_th
     assert LinkedInRepost.objects.get(external_ref="chuka-1").status == "sent"
 
 
-def test_repost_slack_messages_go_to_the_ops_channel(monkeypatch):
+def test_repost_slack_messages_go_to_the_feed_channel_not_ops(monkeypatch):
     from linkedin.notifications import slack
 
     posted = []
     monkeypatch.setattr(slack, "_post_to_slack", lambda url, payload, label: posted.append((url, payload, label)))
-    monkeypatch.setattr(slack, "SLACK_WEBHOOK_URL", "")
-    slack.notify_repost_outcome(operator="Chuka", status="sent", post_url=POST, result_url=NEW)
-    assert posted == [], "no ops webhook: nothing is sent"
-
     monkeypatch.setattr(slack, "SLACK_WEBHOOK_URL", "https://hooks.slack.test/ops")
+    monkeypatch.setattr(slack, "SLACK_HIGH_SIGNAL_URL", "")
+    slack.notify_repost_outcome(operator="Chuka", status="sent", post_url=POST, result_url=NEW)
+    assert posted == [], "no feed webhook: nothing is sent, and never to ops instead"
+
+    monkeypatch.setattr(slack, "SLACK_HIGH_SIGNAL_URL", "https://hooks.slack.test/feed")
     slack.notify_repost_outcome(operator="Chuka", status="sent", post_url=POST, result_url=NEW)
     slack.notify_repost_outcome(operator="Arian", status="failed", post_url=POST, error_type="RepostControlNotFound")
     slack.notify_repost_outcome(operator="Arian", status="uncertain", post_url=POST, error_type="RepostUnverifiedError")
-    assert [url for url, _, _ in posted] == ["https://hooks.slack.test/ops"] * 3
+    assert [url for url, _, _ in posted] == ["https://hooks.slack.test/feed"] * 3
     texts = [payload["text"] for _, payload, _ in posted]
     assert texts == [
         ":white_check_mark: Eddy reposted a Boundera post",
