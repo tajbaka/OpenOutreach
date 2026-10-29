@@ -94,6 +94,23 @@ Output: `{"cancelled": true, "external_ref": "...", "status": "skipped"}`
 
 Only a `queued` row becomes `skipped`. Every other status is refused.
 
+### `retry_linkedin_repost`
+
+```
+manage.py retry_linkedin_repost --external-ref <ref>
+```
+
+Output: `{"external_ref": "...", "retried": true, "retries_left": 1, "retry_count": 1, "status": "queued"}`
+
+After fixing what made a repost fail (a LinkedIn page change, a bug), this
+queues the **same row** again, due at once: Social Studio's dashboard keeps
+following it, and its Slack message goes out as usual. Only a `failed` row whose
+final click was never attempted (so nothing was posted) qualifies, and each row
+can be retried at most twice (`MAX_REPOST_RETRIES`, three tries in all).
+`uncertain`, `sent`, `skipped`, `queued` and `running` rows are refused. Nothing
+retries on its own: a retry happens only when someone runs this. Never enqueue a
+new row for the same repost; the dashboard would not see it.
+
 ### `run_linkedin_repost_once`
 
 The supervised child. Do not run it by hand while the supervisor has reposts
@@ -188,7 +205,8 @@ copy of `DATABASE_URL` (user decision, 2026-10-29) and touches only the
   reference per scheduled version), `operator` (`Arian` or `Chuka`), the canonical
   `post_url`, the exact `commentary`, `status='queued'`, `scheduled_for`,
   `result_url=''`, `error_type=''`, `created_at` and `updated_at`. It applies the
-  same validation as `enqueue_linkedin_repost`.
+  same validation as `enqueue_linkedin_repost` and leaves `retry_count` to its
+  database default (0).
 - It may change `scheduled_for` of a row that is still `queued`, and cancel a
   `queued` row (`skipped`, as `cancel_linkedin_repost` does). It never changes a
   row in any other status and never edits the payload.

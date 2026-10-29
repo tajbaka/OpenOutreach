@@ -28,6 +28,8 @@ REPOST_OPERATORS = ("Arian", "Chuka")
 _OPERATOR_INPUTS = frozenset({"arian", "chuka", "eddy"})
 
 MAX_COMMENTARY_CHARS = 3000
+# retry_linkedin_repost after a fix: at most two more tries per row (three in all).
+MAX_REPOST_RETRIES = 2
 MAX_COMMENTARY_FILE_BYTES = 16_384
 MAX_EXTERNAL_REF_CHARS = 100
 POST_URL_RE = re.compile(
@@ -266,6 +268,7 @@ def repost_status(external_ref: str, now: datetime | None = None) -> dict:
         "error_type": row.error_type or None,
         "click_attempted_at": _iso(row.click_attempted_at),
         "completed_at": _iso(row.completed_at),
+        "retry_count": row.retry_count,
     }
 
 
@@ -283,6 +286,44 @@ def cancel_repost(external_ref: str) -> dict:
         row.refresh_from_db()
         raise LinkedInRepostStateError(f"Only queued reposts can be cancelled; status is {row.status}.")
     return {"external_ref": row.external_ref, "status": "skipped", "cancelled": True}
+
+
+def retry_repost(external_ref: str) -> dict:
+    """Queue a failed row again, as the same row, after its cause was fixed.
+
+    Only a ``failed`` row whose final click was never attempted (so nothing was
+    posted) qualifies, at most MAX_REPOST_RETRIES times. Nothing retries on its
+    own: this runs only when someone calls it. Uncertain, sent, skipped,
+    queued and running rows are refused. The row keeps its reference, so
+    Social Studio's dashboard follows the retry.
+    """
+    from django.db.models import F
+
+    from linkedin.exceptions import LinkedInRepostStateError
+    from linkedin.models import LinkedInRepost
+
+    row = _row(external_ref)
+    now = _now()
+    updated = LinkedInRepost.objects.filter(
+        pk=row.pk, status=LinkedInRepost.Status.FAILED, click_attempted_at__isnull=True,
+        retry_count__lt=MAX_REPOST_RETRIES,
+    ).update(
+        status=LinkedInRepost.Status.QUEUED, started_at=None, completed_at=None, error_type="",
+        retry_count=F("retry_count") + 1, updated_at=now,
+    )
+    row.refresh_from_db()
+    if updated != 1:
+        if row.status == LinkedInRepost.Status.FAILED and row.click_attempted_at is None:
+            raise LinkedInRepostStateError(
+                f"This repost was already retried {row.retry_count} times, the limit; it is not retried again."
+            )
+        raise LinkedInRepostStateError(
+            f"Only a failed repost that never clicked can be retried; status is {row.status}."
+        )
+    return {
+        "external_ref": row.external_ref, "status": row.status, "retried": True,
+        "retry_count": row.retry_count, "retries_left": MAX_REPOST_RETRIES - row.retry_count,
+    }
 
 
 def has_queued_repost(operator: str, now: datetime | None = None) -> bool:

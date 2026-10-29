@@ -176,7 +176,7 @@ def test_status_contract_and_stale_running_reads_as_uncertain():
     _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-1")
     assert _command("linkedin_repost_status", "--external-ref", "r-1") == {
         "external_ref": "r-1", "status": "queued", "scheduled_for": None, "result_url": None, "error_type": None,
-        "click_attempted_at": None, "completed_at": None,
+        "click_attempted_at": None, "completed_at": None, "retry_count": 0,
     }
     started = timezone.now() - timedelta(seconds=reposts.budget_seconds("") + reposts.PROCESS_GRACE_SECONDS + 5)
     LinkedInRepost.objects.filter(external_ref="r-1").update(status="running", started_at=started)
@@ -220,6 +220,54 @@ def test_cancel_only_skips_queued_rows():
         with pytest.raises(CommandError, match=f"status is {status}"):
             call_command("cancel_linkedin_repost", "--external-ref", "r-1", stdout=StringIO())
         assert LinkedInRepost.objects.get(external_ref="r-1").status == status
+
+
+def test_retry_requeues_only_a_failed_row_that_never_clicked_at_most_twice():
+    _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-1")
+    with pytest.raises(CommandError, match="status is queued"):
+        call_command("retry_linkedin_repost", "--external-ref", "r-1", stdout=StringIO())
+    for attempt in (1, 2):
+        LinkedInRepost.objects.filter(external_ref="r-1").update(
+            status="failed", error_type="RepostControlNotFound", started_at=timezone.now(), completed_at=timezone.now(),
+        )
+        assert _command("retry_linkedin_repost", "--external-ref", "r-1") == {
+            "external_ref": "r-1", "status": "queued", "retried": True, "retry_count": attempt, "retries_left": 2 - attempt,
+        }
+        row = LinkedInRepost.objects.get(external_ref="r-1")
+        assert (row.status, row.started_at, row.completed_at, row.error_type) == ("queued", None, None, ""), "the same row, ready again"
+    LinkedInRepost.objects.filter(external_ref="r-1").update(status="failed", completed_at=timezone.now())
+    with pytest.raises(CommandError, match="already retried 2 times"):
+        call_command("retry_linkedin_repost", "--external-ref", "r-1", stdout=StringIO())
+    assert LinkedInRepost.objects.get(external_ref="r-1").status == "failed", "the third retry is refused"
+
+
+@pytest.mark.parametrize("status", ["uncertain", "sent", "skipped", "running"])
+def test_retry_refuses_anything_that_may_have_posted_or_is_not_failed(status):
+    _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-1")
+    LinkedInRepost.objects.filter(external_ref="r-1").update(status=status, result_url=NEW if status == "sent" else "")
+    with pytest.raises(CommandError, match=f"status is {status}"):
+        call_command("retry_linkedin_repost", "--external-ref", "r-1", stdout=StringIO())
+    assert LinkedInRepost.objects.get(external_ref="r-1").status == status
+
+
+def test_retry_refuses_a_failed_row_that_recorded_a_click():
+    _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-1")
+    LinkedInRepost.objects.filter(external_ref="r-1").update(status="failed", click_attempted_at=timezone.now())
+    with pytest.raises(CommandError, match="never clicked"):
+        call_command("retry_linkedin_repost", "--external-ref", "r-1", stdout=StringIO())
+
+
+def test_a_retried_row_is_claimed_again_by_the_worker(senders, tmp_path):
+    row = _queued("chuka-1", "Chuka")
+    LinkedInRepost.objects.filter(pk=row.pk).update(status="failed", error_type="Error", completed_at=timezone.now())
+    reposts.retry_repost("chuka-1")
+
+    def posts(open_page, *, post_url, commentary, on_click_attempt):
+        on_click_attempt()
+        return NEW
+
+    assert _worker(tmp_path, posts)["claimed"] == "chuka-1", "the same reference, so Social Studio follows it"
+    assert LinkedInRepost.objects.get(pk=row.pk).status == "sent"
 
 
 # --------------------------------------------------------------------------- worker

@@ -1666,6 +1666,9 @@ class LinkedInRepost(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     result_url = models.CharField(max_length=200, blank=True, default="")
     error_type = models.CharField(max_length=80, blank=True, default="")
+    # Manual retries after a fix (retry_linkedin_repost), capped at MAX_REPOST_RETRIES.
+    # A database default too, so Social Studio's inserts need not name it.
+    retry_count = models.PositiveSmallIntegerField(default=0, db_default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
