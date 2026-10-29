@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "TodoWrite",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(.venv/bin/python *)",
+      "Write(artifacts/followups/**)",
+      "Write(artifacts/claude-review/**)",
+      "Edit(artifacts/followups/**)",
+      "Edit(artifacts/claude-review/**)"
+    ],
+    "deny": [
+      "WebFetch",
+      "WebSearch",
+      "Read(./.env)",
+      "Read(./secrets/**)",
+      "Read(./data/*cookies*)",
+      "Bash(*refresh_crm*)",
+      "Bash(*generate_followups*)",
+      "Bash(*sync_crm_v2_context*)",
+      "Bash(*sync_active_account_people*)",
+      "Bash(*sync_linkedin_pending*)"
+    ]
+  }
+}

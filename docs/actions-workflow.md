@@ -10,6 +10,7 @@ only reads from existing LinkedIn/Gmail/meeting sources and precise writes to `A
 
 Open the receiving computer's OpenOutreach checkout in Codex and use the request
 in `docs/contextual-crm-review-prompts.md`. A one-time run does not require a chat timer.
+To run it with Claude Code instead, see `docs/claude-crm-review.md`.
 The review is performed by Codex; this is not a new `manage.py` command and
 never runs through `generate_followups` or `refresh_crm_v2`. Those are
 retired database-queue paths, unrelated to this contextual Actions sheet.
