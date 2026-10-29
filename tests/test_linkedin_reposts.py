@@ -175,7 +175,7 @@ def test_migration_matches_model_on_sqlite():
 def test_status_contract_and_stale_running_reads_as_uncertain():
     _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-1")
     assert _command("linkedin_repost_status", "--external-ref", "r-1") == {
-        "external_ref": "r-1", "status": "queued", "result_url": None, "error_type": None,
+        "external_ref": "r-1", "status": "queued", "scheduled_for": None, "result_url": None, "error_type": None,
         "click_attempted_at": None, "completed_at": None,
     }
     started = timezone.now() - timedelta(seconds=reposts.budget_seconds("") + reposts.PROCESS_GRACE_SECONDS + 5)
@@ -194,6 +194,15 @@ def test_status_reports_sent_result():
     result = _command("linkedin_repost_status", "--external-ref", "r-1")
     assert result["status"] == "sent" and result["result_url"] == NEW
     assert result["click_attempted_at"] == now.isoformat()
+
+
+def test_enqueue_post_at_sets_the_time_and_needs_a_zone():
+    _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-1", "--post-at", "2026-10-30T13:15:00Z")
+    assert _command("linkedin_repost_status", "--external-ref", "r-1")["scheduled_for"] == "2026-10-30T13:15:00+00:00"
+    for bad in ["2026-10-30T13:15:00", "tomorrow"]:
+        with pytest.raises(CommandError, match="--post-at"):
+            _enqueue("--operator", "Arian", "--post-url", POST, "--external-ref", "r-2", "--post-at", bad)
+    assert not LinkedInRepost.objects.filter(external_ref="r-2").exists()
 
 
 def test_status_of_unknown_ref_is_an_error():
@@ -271,6 +280,56 @@ def test_worker_claims_only_its_own_operators_oldest_row(senders, tmp_path):
     assert rows["chuka-old"].click_attempted_at is not None and rows["chuka-old"].completed_at is not None
     assert rows["chuka-new"].status == "queued"
     assert rows["arian-1"].status == "queued"
+
+
+def test_worker_waits_for_each_rows_time_then_takes_the_earliest_due(senders, tmp_path):
+    now = timezone.now()
+    later = _queued("chuka-later", "Chuka", age_seconds=600)
+    LinkedInRepost.objects.filter(pk=later.pk).update(scheduled_for=now + timedelta(minutes=15))
+    assert reposts.has_queued_repost("Chuka") is False, "nothing is due yet, so the supervisor starts no child"
+    calls = []
+
+    def perform(open_page, *, post_url, commentary, on_click_attempt):
+        calls.append(commentary)
+        on_click_attempt()
+        return NEW
+
+    assert _worker(tmp_path, perform)["claimed"] is None
+    assert calls == [] and LinkedInRepost.objects.get(pk=later.pk).status == "queued"
+
+    due_late = _queued("chuka-due-late", "Chuka", commentary="Second.", age_seconds=10)
+    LinkedInRepost.objects.filter(pk=due_late.pk).update(scheduled_for=now - timedelta(minutes=1))
+    due_early = _queued("chuka-due-early", "Chuka", commentary="First.", age_seconds=5)
+    LinkedInRepost.objects.filter(pk=due_early.pk).update(scheduled_for=now - timedelta(minutes=5))
+    assert reposts.has_queued_repost("Chuka") is True
+    assert _worker(tmp_path, perform)["claimed"] == "chuka-due-early", "earliest time first, not oldest row"
+    assert reposts.claim_next("Chuka", now=now + timedelta(minutes=16)) is not None
+    assert {r.external_ref: r.status for r in LinkedInRepost.objects.filter(operator="Chuka")} == {
+        "chuka-later": "queued", "chuka-due-late": "running", "chuka-due-early": "sent",
+    }, "a later row waits behind the due one; the next due row is claimed once the first is done"
+
+
+def test_a_row_written_with_social_studios_columns_is_claimed_when_due(senders, tmp_path):
+    """Social Studio's dashboard inserts rows with SQL; these are exactly the columns it writes."""
+    from django.db import connection
+
+    now = timezone.now()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO linkedin_linkedinrepost (external_ref, operator, post_url, commentary, status, scheduled_for,"
+            " result_url, error_type, created_at, updated_at) VALUES (%s, %s, %s, %s, 'queued', %s, '', '', %s, %s)",
+            ["social-studio-attempt-1", "Chuka", POST, "From the dashboard.", now - timedelta(seconds=30), now, now],
+        )
+    seen = []
+
+    def perform(open_page, *, post_url, commentary, on_click_attempt):
+        seen.append((post_url, commentary))
+        on_click_attempt()
+        return NEW
+
+    assert _worker(tmp_path, perform)["status"] == "sent"
+    assert seen == [(POST, "From the dashboard.")]
+    assert _command("linkedin_repost_status", "--external-ref", "social-studio-attempt-1")["result_url"] == NEW
 
 
 def test_worker_marks_stale_running_rows_uncertain_and_never_retries_them(senders, tmp_path):

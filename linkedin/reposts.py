@@ -1,8 +1,9 @@
 """Queued LinkedIn reposts: strict validation, ledger transitions and one worker run.
 
-Boundera Social Studio owns approval and scheduling. When an approved repost
-is due it enqueues one ``LinkedInRepost`` row here and later reads the result
-back. This module never retries: one attempt per row, and anything after the
+Boundera Social Studio owns approval and scheduling. When the user schedules
+an approved repost, its dashboard writes one queued ``LinkedInRepost`` row with
+``scheduled_for`` and later reads the result back; the worker claims a row only
+once that time has come. This module never retries: one attempt per row, and anything after the
 final click is attempted is ``uncertain``. Module import stays stdlib-only so
 the supervisor can read constants before Django setup. See
 docs/linkedin-reposts.md.
@@ -181,11 +182,26 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def enqueue_repost(*, operator: str, post_url: str, external_ref: str, commentary: str = ""):
+def _due(now: datetime):
+    """Queued rows whose time has come; a row without a time is due at once."""
+    from django.db.models import Q
+
+    return Q(scheduled_for__isnull=True) | Q(scheduled_for__lte=now)
+
+
+def validate_scheduled_for(value: datetime | None) -> datetime | None:
+    if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+        raise _invalid("--post-at must include a time zone, for example 2026-10-30T13:15:00Z.")
+    return value
+
+
+def enqueue_repost(*, operator: str, post_url: str, external_ref: str, commentary: str = "",
+                   scheduled_for: datetime | None = None):
     """Create one queued row, or return the identical existing row.
 
     Returns ``(row, created)``. A different payload under the same
     external_ref raises ``LinkedInRepostConflictError`` and changes nothing.
+    ``scheduled_for`` (not before this time) is set only when the row is created.
     """
     from django.db import IntegrityError, transaction
 
@@ -198,6 +214,7 @@ def enqueue_repost(*, operator: str, post_url: str, external_ref: str, commentar
         "commentary": validate_commentary(commentary),
     }
     external_ref = validate_external_ref(external_ref)
+    scheduled_for = validate_scheduled_for(scheduled_for)
 
     def existing():
         row = LinkedInRepost.objects.get(external_ref=external_ref)
@@ -211,7 +228,7 @@ def enqueue_repost(*, operator: str, post_url: str, external_ref: str, commentar
         return existing()
     try:
         with transaction.atomic():
-            return LinkedInRepost.objects.create(external_ref=external_ref, **payload), True
+            return LinkedInRepost.objects.create(external_ref=external_ref, scheduled_for=scheduled_for, **payload), True
     except IntegrityError:
         # A concurrent enqueue of the same ref won; compare against it.
         return existing()
@@ -244,6 +261,7 @@ def repost_status(external_ref: str, now: datetime | None = None) -> dict:
     return {
         "external_ref": row.external_ref,
         "status": status,
+        "scheduled_for": _iso(row.scheduled_for),
         "result_url": row.result_url or None,
         "error_type": row.error_type or None,
         "click_attempted_at": _iso(row.click_attempted_at),
@@ -267,10 +285,11 @@ def cancel_repost(external_ref: str) -> dict:
     return {"external_ref": row.external_ref, "status": "skipped", "cancelled": True}
 
 
-def has_queued_repost(operator: str) -> bool:
+def has_queued_repost(operator: str, now: datetime | None = None) -> bool:
+    """Does this operator have a queued row whose time has come?"""
     from linkedin.models import LinkedInRepost
 
-    return LinkedInRepost.objects.filter(operator=operator, status=LinkedInRepost.Status.QUEUED).exists()
+    return LinkedInRepost.objects.filter(_due(now or _now()), operator=operator, status=LinkedInRepost.Status.QUEUED).exists()
 
 
 def sweep_stale_running(operator: str, now: datetime | None = None) -> list[str]:
@@ -307,11 +326,13 @@ def sweep_stale_running(operator: str, now: datetime | None = None) -> list[str]
 
 
 def claim_next(operator: str, now: datetime | None = None):
-    """Atomically move this operator's oldest queued row to running.
+    """Atomically move this operator's earliest due queued row to running.
 
-    Returns None while another of this operator's rows is still running.
+    Rows scheduled for later stay queued. Returns None while another of this
+    operator's rows is still running.
     """
     from django.db import transaction
+    from django.db.models.functions import Coalesce
 
     from linkedin.models import LinkedInRepost
 
@@ -321,13 +342,13 @@ def claim_next(operator: str, now: datetime | None = None):
             return None
         row = (
             LinkedInRepost.objects.select_for_update(skip_locked=True)
-            .filter(operator=operator, status=LinkedInRepost.Status.QUEUED)
-            .order_by("created_at", "pk")
+            .filter(_due(now), operator=operator, status=LinkedInRepost.Status.QUEUED)
+            .order_by(Coalesce("scheduled_for", "created_at"), "pk")
             .first()
         )
         if row is None:
             return None
-        updated = LinkedInRepost.objects.filter(pk=row.pk, status=LinkedInRepost.Status.QUEUED).update(
+        updated = LinkedInRepost.objects.filter(_due(now), pk=row.pk, status=LinkedInRepost.Status.QUEUED).update(
             status=LinkedInRepost.Status.RUNNING, started_at=now, updated_at=now,
         )
         if updated != 1:

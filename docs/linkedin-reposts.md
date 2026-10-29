@@ -2,10 +2,12 @@
 
 User decision, 2026-10-29. Arian and Eddy (operator handle `Chuka`) repost a
 Boundera company post from their own, already signed-in LinkedIn sessions. Boundera
-Social Studio owns approval and scheduling: when an approved repost is due, it
-enqueues one row here and later reads the result back. This repo only executes
-queued rows for the local operator, once each. It sends no Slack messages for
-reposts; the other repo reports outcomes.
+Social Studio owns approval and scheduling: when the user schedules an approved
+repost, its dashboard writes one queued row here with `scheduled_for`, may move
+that time or cancel the row while it is still queued, and reads the result back
+(see "Social Studio's dashboard" below). This repo only executes due queued rows
+for the local operator, once each. It sends no Slack messages for reposts; the
+other repo reports outcomes.
 
 Empty commentary uses LinkedIn's plain **Repost**. Non-empty commentary uses
 **Repost with your thoughts** with exactly that text.
@@ -19,9 +21,10 @@ refuses to run. The flag only takes effect with `ENABLE_LINKEDIN_DAEMON=true`
 
 To enable reposts on a worker computer:
 
-1. Apply migration `linkedin.0035_linkedinrepost` (an additive `LinkedInRepost`
-   table) **before** turning the flag on. Without the table, the supervisor logs
-   that the migration is missing and starts no repost child.
+1. Apply migrations `linkedin.0035_linkedinrepost` (an additive `LinkedInRepost`
+   table) and `linkedin.0036_linkedinrepost_scheduled_for` (an additive nullable
+   time) **before** turning the flag on. Without them, the supervisor logs that a
+   migration is missing and starts no repost child.
 2. Set `ENABLE_LINKEDIN_REPOSTS=true` in that checkout's `.env`.
 3. Restart the **whole supervisor** on that computer. Environment flags are not
    hot-reloaded, and a database child-restart request cannot load the new
@@ -42,7 +45,7 @@ message on stderr and change nothing.
 ```
 manage.py enqueue_linkedin_repost --operator <Arian|Chuka|Eddy> \
     --post-url https://www.linkedin.com/feed/update/urn:li:activity:<digits>/ \
-    --external-ref <ref> [--commentary-file <path>]
+    --external-ref <ref> [--commentary-file <path>] [--post-at <ISO 8601 time with zone>]
 ```
 
 Output: `{"created": true, "external_ref": "...", "id": 12, "operator": "Chuka", "status": "queued"}`
@@ -58,6 +61,9 @@ Output: `{"created": true, "external_ref": "...", "id": 12, "operator": "Chuka",
   exactly. It must not start or end with whitespace and may contain `\n` line
   breaks but no other control characters (no tab, no `\r`) or byte-order mark.
   Omit the option, or pass an empty file, for a plain repost.
+- `--post-at`: not before this time (for example `2026-10-30T13:15:00Z`); it
+  needs a time zone. Omit it to post at the next check. It is set only when the
+  row is created.
 - Idempotent per `external_ref`. The same payload (operator, post URL,
   commentary) returns the existing row in its current status with
   `"created": false`. A different payload is refused and nothing changes. A stored
@@ -69,7 +75,7 @@ Output: `{"created": true, "external_ref": "...", "id": 12, "operator": "Chuka",
 manage.py linkedin_repost_status --external-ref <ref>
 ```
 
-Output: `{"click_attempted_at": null, "completed_at": null, "error_type": null, "external_ref": "...", "result_url": null, "status": "queued"}`
+Output: `{"click_attempted_at": null, "completed_at": null, "error_type": null, "external_ref": "...", "result_url": null, "scheduled_for": null, "status": "queued"}`
 
 Read-only. Timestamps are ISO 8601 UTC or `null`. A `running` row older than its
 child bound (below) is reported as `uncertain`; the stored row is not changed.
@@ -120,8 +126,10 @@ text.
    than its bound. They are never retried.
 4. If a row is queued, attach to the daemon browser over loopback CDP. If the
    browser is not available, exit and leave the row queued for the next check.
-5. Atomically claim this operator's oldest queued row (none while another of its
-   rows is still running). A worker only ever claims its own operator's rows.
+5. Atomically claim this operator's earliest due queued row: `scheduled_for` at or
+   before now (or no time), earliest time first (none while another of its rows
+   is still running). Rows scheduled for later stay queued. A worker only ever
+   claims its own operator's rows.
 6. Read the member's own activity page (`/in/me/recent-activity/all/`) as a
    baseline, in its own tab.
 7. Open its own tab directly at the post URL. A login, checkpoint or authwall URL,
@@ -149,7 +157,7 @@ text.
 ## Bounds and supervision
 
 - The supervisor checks every 120 seconds, and only when no repost child is
-  running, whether this sender has a queued row, using a bounded database read
+  running, whether this sender has a due queued row, using a bounded database read
   (5-second connect and statement timeouts). Only then does it start
   `run_linkedin_repost_once`.
 - Each row is bounded by an in-process watchdog: 240 seconds plus the slowest
@@ -163,7 +171,29 @@ text.
   stopped child records an attempted click as `uncertain` (after a hard kill,
   such as `terminate()` on Windows, the next run does).
 - Reposts are not limited to `ACTIVE_*` working hours: the other repo decides when
-  a repost is due.
+  a repost is due. A row posts within about two minutes of its `scheduled_for`
+  while this computer's supervisor and daemon are running.
+
+## Social Studio's dashboard
+
+Boundera Social Studio's hosted dashboard connects to this database with its own
+copy of `DATABASE_URL` (user decision, 2026-10-29) and touches only the
+`linkedin_linkedinrepost` table:
+
+- When the user schedules a repost, it inserts one row: `external_ref` (a new
+  reference per scheduled version), `operator` (`Arian` or `Chuka`), the canonical
+  `post_url`, the exact `commentary`, `status='queued'`, `scheduled_for`,
+  `result_url=''`, `error_type=''`, `created_at` and `updated_at`. It applies the
+  same validation as `enqueue_linkedin_repost`.
+- It may change `scheduled_for` of a row that is still `queued`, and cancel a
+  `queued` row (`skipped`, as `cancel_linkedin_repost` does). It never changes a
+  row in any other status and never edits the payload.
+- It reads `status`, `result_url`, `error_type`, `started_at` and `completed_at`
+  back to record the outcome (a `running` row past its bound is treated as
+  `uncertain`, as `linkedin_repost_status` does).
+
+`tests/test_linkedin_reposts.py` inserts a row with exactly these columns, so a
+schema change that would break the dashboard fails here first.
 
 ## Safety rules
 
