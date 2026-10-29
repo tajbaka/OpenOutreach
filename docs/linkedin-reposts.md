@@ -6,8 +6,11 @@ Social Studio owns approval and scheduling: when the user schedules an approved
 repost, its dashboard writes one queued row here with `scheduled_for`, may move
 that time or cancel the row while it is still queued, and reads the result back
 (see "Social Studio's dashboard" below). This repo only executes due queued rows
-for the local operator, once each. It sends no Slack messages for reposts; the
-other repo reports outcomes.
+for the local operator, once each. It is the confirmation of whether a repost
+posted: each finished row (sent with its new link, failed with nothing posted,
+or uncertain, including interrupted rows) sends one message to the ops Slack
+channel (`SLACK_WEBHOOK_URL`, `notify_repost_outcome`). Social Studio sends no
+Slack for reposts; it only shows the result it reads from this table.
 
 Empty commentary uses LinkedIn's plain **Repost**. Non-empty commentary uses
 **Repost with your thoughts** with exactly that text.

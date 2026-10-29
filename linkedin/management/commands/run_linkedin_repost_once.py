@@ -1,7 +1,8 @@
 """Supervisor-owned child: execute at most one queued repost for this sender.
 
 Attaches to the running daemon browser over loopback CDP only and opens its
-own tabs. One attempt per row; uncertain rows are never retried. No Slack.
+own tabs. One attempt per row; uncertain rows are never retried. Each finished
+row posts one message to the ops Slack channel (SLACK_WEBHOOK_URL).
 """
 import json
 import os

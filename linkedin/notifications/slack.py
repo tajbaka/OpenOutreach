@@ -44,7 +44,8 @@ Routing across two channels:
   - `notify_connection_accepted` + `notify_error` + `notify_degraded`
     + `notify_status_summary` + `notify_sweep_summary` + `notify_connect_button_missing`
     + `notify_connect_send_failed` + `notify_supervisor_restart`
-    → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics).
+    + `notify_repost_outcome`
+    → SLACK_WEBHOOK_URL (ops: bugs, invites, monitoring, sweep analytics, reposts).
   - `notify_message_received` + `notify_phone_enriched` → SLACK_REPLIES_WEBHOOK_URL
     (replies: a lead replied, and the enrichment results that follow).
   - LinkedIn feed intent and FedRAMP marketplace signals → SLACK_HIGH_SIGNAL_URL.
@@ -1213,6 +1214,47 @@ def notify_degraded(*, sender: str, title: str, detail: str) -> None:
     ]
     payload = {"text": f":warning: {title}", "blocks": blocks}
     _post_to_slack(SLACK_WEBHOOK_URL, payload, f"degraded ({sender})")
+
+
+# Reposts by Arian and Eddy (operator handle Chuka), see linkedin/reposts.py.
+_REPOST_NAMES = {"Chuka": "Eddy"}
+
+
+def notify_repost_outcome(
+    *, operator: str, status: str, post_url: str, result_url: str | None = None, error_type: str | None = None,
+) -> None:
+    """Post one finished repost's outcome to the ops channel (SLACK_WEBHOOK_URL).
+
+    ``sent`` carries the verified new repost link; ``failed`` means nothing was
+    posted; anything else (``uncertain``) may have posted, so the person checks
+    their LinkedIn activity and it is never sent twice. This is the only Slack
+    message for a repost: Social Studio's dashboard records the same outcome
+    from the repost table but sends nothing. Silent no-op when the webhook is unset.
+    """
+    if not SLACK_WEBHOOK_URL:
+        return
+    name = _REPOST_NAMES.get(operator, operator)
+    original = f"<{post_url}|Original post>"
+    if status == "sent":
+        emoji, title = ":white_check_mark:", f"{name} reposted a Boundera post"
+        detail = f"<{result_url}|View {name}'s repost> · {original}"
+    elif status == "failed":
+        emoji, title = ":warning:", f"{name}'s repost didn't go out"
+        detail = (f"OpenOutreach stopped before clicking (`{error_type or 'RepostError'}`), so nothing was posted. "
+                  f"Schedule it again in Social Studio to retry. {original}")
+    else:
+        emoji, title = ":warning:", f"{name}'s repost may have posted"
+        detail = (f"OpenOutreach couldn't confirm it (`{error_type or 'RepostError'}`). Check {name}'s LinkedIn "
+                  f"activity before anything else; it is never sent twice. {original}")
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} *{title}*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+        {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f"*Sender:* {operator}"},
+        ]},
+    ]
+    payload = {"text": f"{emoji} {title}", "blocks": blocks}
+    _post_to_slack(SLACK_WEBHOOK_URL, payload, f"repost ({operator}, {status})")
 
 
 def _supervisor_control_payload(

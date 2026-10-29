@@ -523,15 +523,33 @@ class RepostWatchdog:
         self.timer.cancel()
 
 
-def run_once(*, linkedin_username: str, root: Path, port: int, attach=None, perform=None, page_opener=None) -> dict:
+def announce(row) -> None:
+    """One Slack message (ops channel) for a finished row. Never changes its outcome."""
+    try:
+        from linkedin.notifications.slack import notify_repost_outcome
+
+        notify_repost_outcome(
+            operator=row.operator, status=row.status, post_url=row.post_url,
+            result_url=row.result_url or None, error_type=row.error_type or None,
+        )
+    except Exception as exc:
+        logger.warning("LinkedIn repost %s Slack message failed: %s", row.external_ref, type(exc).__name__)
+
+
+def run_once(*, linkedin_username: str, root: Path, port: int, attach=None, perform=None, page_opener=None,
+             notify=None) -> dict:
     """Run at most one queued row for this checkout's sender.
 
     The row is claimed only after the daemon browser is attached, so a browser
     that is not up yet leaves the row queued. Every outcome after the claim is
     terminal: sent (verified permalink), failed (no final click) or uncertain.
+    Each terminal outcome, including interrupted rows swept to uncertain, gets
+    one Slack message through ``notify`` (``announce`` by default).
     """
     from linkedin.exceptions import RepostSendError, RepostUncertainError
+    from linkedin.models import LinkedInRepost
 
+    notify = notify or announce
     if perform is None or attach is None or page_opener is None:
         from linkedin.actions import repost as actions
 
@@ -544,6 +562,8 @@ def run_once(*, linkedin_username: str, root: Path, port: int, attach=None, perf
     # Tabs left by a killed child belong to this feature only.
     receipt.close_all()
     summary = {"operator": operator, "swept": sweep_stale_running(operator), "claimed": None}
+    for ref in summary["swept"]:
+        notify(LinkedInRepost.objects.get(external_ref=ref))
     if not has_queued_repost(operator):
         return summary
 
@@ -574,6 +594,7 @@ def run_once(*, linkedin_username: str, root: Path, port: int, attach=None, perf
             # Unexpected: record conservatively, then crash. A persisted click
             # attempt always makes the row uncertain.
             record_failure(row.pk, error_type=type(exc).__name__, uncertain=False)
+            notify(LinkedInRepost.objects.get(pk=row.pk))
             raise
         else:
             status = record_sent(row.pk, result_url)
@@ -587,4 +608,5 @@ def run_once(*, linkedin_username: str, root: Path, port: int, attach=None, perf
     logger.warning(
         "LinkedIn repost %s finished: %s %s", summary["claimed"], summary["status"], summary["error_type"] or "",
     )
+    notify(LinkedInRepost.objects.get(pk=row.pk))
     return summary
