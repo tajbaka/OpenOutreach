@@ -246,11 +246,12 @@ class FakeAttach:
         yield object()
 
 
-def _worker(tmp_path, perform, *, login=CHUKA_LOGIN, attach=None):
+def _worker(tmp_path, perform, *, login=CHUKA_LOGIN, attach=None, notify=None):
     return reposts.run_once(
         linkedin_username=login, root=tmp_path, port=9222,
         attach=attach or FakeAttach(), perform=perform,
         page_opener=lambda browser, url, **hooks: pytest.fail("fake perform never opens pages"),
+        notify=notify or (lambda row: None),
     )
 
 
@@ -330,6 +331,71 @@ def test_a_row_written_with_social_studios_columns_is_claimed_when_due(senders, 
     assert _worker(tmp_path, perform)["status"] == "sent"
     assert seen == [(POST, "From the dashboard.")]
     assert _command("linkedin_repost_status", "--external-ref", "social-studio-attempt-1")["result_url"] == NEW
+
+
+def test_each_finished_repost_sends_one_slack_message_and_slack_never_changes_the_outcome(senders, tmp_path, monkeypatch):
+    from linkedin.exceptions import RepostSendError
+
+    sent = []
+
+    def notify(row):
+        sent.append((row.external_ref, row.status))
+
+    def posts(open_page, *, post_url, commentary, on_click_attempt):
+        on_click_attempt()
+        return NEW
+
+    _queued("chuka-1", "Chuka")
+    _worker(tmp_path, posts, notify=notify)
+    assert sent == [("chuka-1", "sent")]
+
+    _queued("chuka-2", "Chuka")
+
+    def fails(open_page, *, post_url, commentary, on_click_attempt):
+        raise RepostSendError("no control", error_type="RepostControlNotFound")
+
+    _worker(tmp_path, fails, notify=notify)
+    assert sent[-1] == ("chuka-2", "failed")
+
+    interrupted = _queued("chuka-3", "Chuka")
+    LinkedInRepost.objects.filter(pk=interrupted.pk).update(status="running", started_at=timezone.now(), click_attempted_at=timezone.now())
+    _worker(tmp_path, lambda *a, **k: pytest.fail("nothing queued"), notify=notify)
+    assert sent[-1] == ("chuka-3", "uncertain"), "an interrupted row swept to uncertain is announced too"
+    assert len(sent) == 3
+
+    # The real announcer: a broken Slack call is logged, never raised.
+    def broken(**kwargs):
+        raise RuntimeError("slack down")
+
+    monkeypatch.setattr("linkedin.notifications.slack.notify_repost_outcome", broken)
+    reposts.announce(LinkedInRepost.objects.get(external_ref="chuka-1"))
+    assert LinkedInRepost.objects.get(external_ref="chuka-1").status == "sent"
+
+
+def test_repost_slack_messages_go_to_the_ops_channel(monkeypatch):
+    from linkedin.notifications import slack
+
+    posted = []
+    monkeypatch.setattr(slack, "_post_to_slack", lambda url, payload, label: posted.append((url, payload, label)))
+    monkeypatch.setattr(slack, "SLACK_WEBHOOK_URL", "")
+    slack.notify_repost_outcome(operator="Chuka", status="sent", post_url=POST, result_url=NEW)
+    assert posted == [], "no ops webhook: nothing is sent"
+
+    monkeypatch.setattr(slack, "SLACK_WEBHOOK_URL", "https://hooks.slack.test/ops")
+    slack.notify_repost_outcome(operator="Chuka", status="sent", post_url=POST, result_url=NEW)
+    slack.notify_repost_outcome(operator="Arian", status="failed", post_url=POST, error_type="RepostControlNotFound")
+    slack.notify_repost_outcome(operator="Arian", status="uncertain", post_url=POST, error_type="RepostUnverifiedError")
+    assert [url for url, _, _ in posted] == ["https://hooks.slack.test/ops"] * 3
+    texts = [payload["text"] for _, payload, _ in posted]
+    assert texts == [
+        ":white_check_mark: Eddy reposted a Boundera post",
+        ":warning: Arian's repost didn't go out",
+        ":warning: Arian's repost may have posted",
+    ]
+    details = [payload["blocks"][1]["text"]["text"] for _, payload, _ in posted]
+    assert f"<{NEW}|View Eddy's repost>" in details[0] and f"<{POST}|Original post>" in details[0]
+    assert "nothing was posted" in details[1] and "RepostControlNotFound" in details[1]
+    assert "never sent twice" in details[2]
 
 
 def test_worker_marks_stale_running_rows_uncertain_and_never_retries_them(senders, tmp_path):
