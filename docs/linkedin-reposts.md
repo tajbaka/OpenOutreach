@@ -212,16 +212,29 @@ schema change that would break the dashboard fails here first.
   campaigns, feed like/comment or Slack handlers.
 - Logs and stored errors contain row references, statuses and class names only.
 
-## Selectors are unverified
+## Live verification scope
 
-The Repost menu, option, composer, editor, Post button, toast and activity-page
-selectors were written on 2026-10-29 without a live LinkedIn check. They use
-aria-label, role and visible text with several candidates, and any missing or
-ambiguous control fails before the final click. `/in/me/recent-activity/all/`
-is assumed to redirect to the signed-in member's activity; if it does not, the
-baseline is skipped and only a toast link can prove success. **Supervise the first
-live repost for each operator**, both plain and with commentary, and check the
-recorded status against LinkedIn.
+The October 29 local investigation reproduced and repaired stale CDP page-list
+entries after closing the activity tab, and Playwright-only text selectors
+being passed to native `closest()`. Live preflight also identified the SDUI
+`Repost with thoughts` / `Repost instantly` buttons and native ShareCompose
+dialog, whose final button says `Repost`. That final control is restricted to
+the exact ShareCompose screen on `/sharing/compose`; messaging overlays are
+excluded from editor discovery. These fixes preserve exact tab ownership.
+
+A supervised Arian commentary retry succeeded on October 29 at 22:51 UTC:
+row 2 posted `https://www.linkedin.com/feed/update/urn:li:activity:7521705262689333248/`
+and independent published-page readback matched the original approved text
+exactly. Original failed row 1 was preserved with no click marker. Do not retry
+this post again. All 408 isolated daemon-browser tests passed; private evidence
+is under ignored `artifacts/qa/repost-local-2026-10-29/`.
+
+Selectors use aria-label, role and visible text; missing or ambiguous controls
+fail before the final click. Plain reposts, other operators and the activity
+fallback remain unverified live. `/in/me/recent-activity/all/` is assumed to
+redirect to the signed-in member's activity; otherwise the baseline is skipped
+and only a toast link can prove success. **Supervise the first live repost for
+each unverified operator/mode**, and compare the recorded status with LinkedIn.
 
 Known limits: mentions (`@name`) and hashtags can open LinkedIn typeahead that
 rewrites the text; the exact-text check then fails the row before posting.

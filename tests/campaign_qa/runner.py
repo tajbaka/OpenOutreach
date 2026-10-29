@@ -15,7 +15,8 @@ def audit(event, args):
         raise QASafetyError(f'Blocked in campaign QA: {event}')
     if event == 'open' and isinstance(args[0], (str, bytes, os.PathLike)):
         path = Path(os.fsdecode(args[0])).resolve()
-        if path.name.startswith('.env') or any(path.is_relative_to(ROOT / name) for name in ('data', 'secrets')):
+        # The tracked, non-secret example is a configuration contract fixture.
+        if (path.name.startswith('.env') and path != ROOT / '.env.example') or any(path.is_relative_to(ROOT / name) for name in ('data', 'secrets')):
             raise QASafetyError('QA cannot read environment files, tokens, cookies, or private data')
 
 
@@ -46,6 +47,8 @@ def main():
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'daemon-browser':
         return pytest.main(common + [
             'tests/test_browser_recovery.py', 'tests/test_daemon_resilience.py',
+            'tests/test_repost_action.py', 'tests/test_linkedin_reposts.py',
+            'tests/test_daemon_supervisor_reposts.py',
             'tests/test_browser_nav.py', 'tests/test_browser_login.py',
             'tests/test_daemon_supervisor_gmail.py', 'tests/test_daemon_supervisor_email_only.py',
             'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',

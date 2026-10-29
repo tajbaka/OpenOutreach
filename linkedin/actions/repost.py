@@ -5,9 +5,10 @@ AccountSession/StandaloneLinkedInSession, which launch and log in) and opens
 its own targets directly at their URLs. Leaving ``attached_browser`` only
 disconnects; the daemon child owns the browser.
 
-Selectors are UNVERIFIED against live LinkedIn (written 2026-10-29). They are
-aria/role/text based with several candidates, and every ambiguity fails before
-the final click. The first live repost per operator must be supervised.
+The SDUI commentary flow was verified live for Arian on 2026-10-29. Selectors
+are aria/role/text based with several candidates, and every ambiguity fails
+before the final click. Other operators and plain reposts still need a
+supervised first run; see docs/linkedin-reposts.md for verification scope.
 
 Error rules: anything raised before the final click is a ``RepostSendError``
 (nothing was mutated, row ``failed``). Once the final click is attempted every
@@ -91,8 +92,12 @@ MENU_ITEM_SELECTOR = ", ".join([
     '[role="menu"] button',
     ".artdeco-dropdown__item",
     '.artdeco-dropdown__content [role="button"]',
+    '[role="button"]:has-text("Repost with thoughts")',
+    '[role="button"]:has-text("Repost instantly")',
 ])
+SDUI_COMPOSER_SELECTOR = '[data-sdui-screen="com.linkedin.sdui.flagshipnav.sharing.ShareCompose"]'
 DIALOG_SELECTOR = ", ".join([
+    f'dialog[open]:has({SDUI_COMPOSER_SELECTOR})',
     '[role="dialog"]',
     ".share-box-v2__modal",
     ".artdeco-modal",
@@ -103,6 +108,7 @@ EDITOR_SELECTOR = ", ".join([
     '[contenteditable="true"][aria-label*="text editor" i]',
 ])
 POST_BUTTON_SELECTOR = ", ".join([
+    f'{SDUI_COMPOSER_SELECTOR} button:has-text("Repost")',
     "button.share-actions__primary-action",
     'button:has-text("Post")',
     '[role="button"]:has-text("Post")',
@@ -205,6 +211,27 @@ def _is_linkedin_url(url: str) -> bool:
     return parts.scheme == "https" and parts.hostname == "www.linkedin.com"
 
 
+def _page_target_id(context, page) -> str | None:
+    """Ignore only pages that disappear while CDP refreshes its page list."""
+    if page.is_closed():
+        return None
+    session = None
+    try:
+        session = context.new_cdp_session(page)
+        return session.send("Target.getTargetInfo")["targetInfo"]["targetId"]
+    except PlaywrightError as exc:
+        if page.is_closed() or "No target with given id found" in str(exc):
+            return None
+        raise
+    finally:
+        if session is not None:
+            try:
+                session.detach()
+            except PlaywrightError:
+                if not page.is_closed():
+                    raise
+
+
 @contextmanager
 def owned_page(browser, url: str, *, on_target=None, on_closed=None, timeout_ms: int = _TARGET_TIMEOUT_MS):
     """Create a target whose initial document is ``url`` and own its exact ID.
@@ -225,13 +252,9 @@ def owned_page(browser, url: str, *, on_target=None, on_closed=None, timeout_ms:
             for page in context.pages:
                 if page in checked:
                     continue
-                session = context.new_cdp_session(page)
-                try:
-                    info = session.send("Target.getTargetInfo")["targetInfo"]
-                finally:
-                    session.detach()
+                page_target_id = _page_target_id(context, page)
                 checked.add(page)
-                if info["targetId"] == target_id:
+                if page_target_id == target_id:
                     page.wait_for_url(
                         _is_linkedin_url, wait_until="domcontentloaded",
                         timeout=max(1, int((deadline - time.monotonic()) * 1000)),
@@ -293,7 +316,17 @@ def _page_url_urns(page) -> set[str]:
 
 
 def _context(element, excluded: str, own_selector: str) -> dict:
-    return element.evaluate(_ELEMENT_CONTEXT_JS, [excluded, own_selector]) or {}
+    # Native closest() cannot parse Playwright's :has-text(). These two
+    # control lists only need a native button ancestor to reject nesting;
+    # labels are still matched by Playwright and the exact-text checks.
+    ancestor_selector = (
+        'button, [role="button"]'
+        if own_selector in (REPOST_TRIGGER_SELECTOR, POST_BUTTON_SELECTOR)
+        else own_selector
+    )
+    if own_selector == MENU_ITEM_SELECTOR:
+        ancestor_selector = '[role="menuitem"], button, [role="button"], .artdeco-dropdown__item'
+    return element.evaluate(_ELEMENT_CONTEXT_JS, [excluded, ancestor_selector]) or {}
 
 
 def _visible_candidates(scope, selector: str, *, excluded: str = "", enabled: bool = False, limit: int = 20) -> list:
@@ -359,7 +392,7 @@ def _repost_trigger(page):
 def _option_kind(item) -> str | None:
     label, text = _label_and_text(item)
     value = text or label
-    if "with your thoughts" in value or "with your thoughts" in label:
+    if any(phrase in value or phrase in label for phrase in ("with your thoughts", "with thoughts")):
         return "thoughts"
     if value.startswith("repost") and not any(word in value for word in ("undo", "remove", "thoughts")):
         return "plain"
@@ -383,7 +416,9 @@ def _menu_option(page, kind: str):
 def _composer(page):
     def find():
         pairs = []
-        for dialog in _visible_candidates(page, DIALOG_SELECTOR):
+        for dialog in _visible_candidates(
+            page, DIALOG_SELECTOR, excluded='[data-view-name="message-overlay-conversation-bubble-item"]',
+        ):
             for editor in _visible_candidates(dialog, EDITOR_SELECTOR):
                 pairs.append((dialog, editor))
         return pairs[0] if len(pairs) == 1 else None
@@ -403,7 +438,12 @@ def _post_button(page, dialog):
         buttons = []
         for item in _visible_candidates(dialog, POST_BUTTON_SELECTOR, enabled=True):
             label, text = _label_and_text(item)
-            if text == "post" or label == "post":
+            is_sdui_repost = (
+                text == "repost" and _is_linkedin_url(page.url)
+                and urlsplit(page.url).path == "/sharing/compose"
+                and dialog.locator(SDUI_COMPOSER_SELECTOR).count() == 1
+            )
+            if text == "post" or label == "post" or is_sdui_repost:
                 buttons.append(item)
         return buttons[0] if len(buttons) == 1 else None
 

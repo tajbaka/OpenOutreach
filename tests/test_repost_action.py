@@ -1,5 +1,6 @@
 """UI logic for the repost worker against a small fake page (no browser)."""
 from contextlib import contextmanager
+from unittest.mock import Mock
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
@@ -18,6 +19,57 @@ from linkedin.exceptions import (
 
 POST_URL = "https://www.linkedin.com/feed/update/urn:li:activity:91/"
 NEW_URL = "https://www.linkedin.com/feed/update/urn:li:activity:555/"
+
+
+def test_owned_target_skips_a_stale_page_without_touching_other_tabs():
+    browser = Mock()
+    cdp = browser.new_browser_cdp_session.return_value
+    cdp.send.return_value = {"targetId": "owned"}
+    stale, unrelated, owned = Mock(), Mock(), Mock()
+    for page in (stale, unrelated, owned):
+        page.is_closed.return_value = False
+    context = Mock(pages=[stale, unrelated, owned])
+    browser.contexts = [context]
+    unrelated_session, owned_session = Mock(), Mock()
+    unrelated_session.send.return_value = {"targetInfo": {"targetId": "other"}}
+    owned_session.send.return_value = {"targetInfo": {"targetId": "owned"}}
+    context.new_cdp_session.side_effect = [
+        PlaywrightError("Protocol error (Target.attachToTarget): No target with given id found"),
+        unrelated_session, owned_session,
+    ]
+    with action.owned_page(browser, POST_URL) as page:
+        assert page is owned
+    assert [c for c in cdp.send.call_args_list if c.args[0] == 'Target.closeTarget'][0].args == (
+        'Target.closeTarget', {'targetId': 'owned'},
+    )
+    unrelated.close.assert_not_called()
+    browser.close.assert_not_called()
+    unrelated_session.detach.assert_called_once()
+    owned_session.detach.assert_called_once()
+
+
+def test_closed_page_is_not_attached():
+    page, context = Mock(), Mock()
+    page.is_closed.return_value = True
+    assert action._page_target_id(context, page) is None
+    context.new_cdp_session.assert_not_called()
+
+
+def test_unexpected_target_attach_errors_propagate():
+    page, context = Mock(), Mock()
+    page.is_closed.return_value = False
+    context.new_cdp_session.side_effect = PlaywrightError("Unexpected protocol failure")
+    with pytest.raises(PlaywrightError, match='Unexpected protocol failure'):
+        action._page_target_id(context, page)
+
+
+@pytest.mark.parametrize('selector', [action.REPOST_TRIGGER_SELECTOR, action.POST_BUTTON_SELECTOR])
+def test_control_ancestor_filter_uses_native_css(selector):
+    element = Mock()
+    action._context(element, 'aside', selector)
+    element.evaluate.assert_called_once_with(
+        action._ELEMENT_CONTEXT_JS, ['aside', 'button, [role="button"]'],
+    )
 
 
 class FakeKeyboard:
@@ -80,6 +132,8 @@ class FakeElement:
 
     def evaluate(self, script, arg=None):
         if script is action._ELEMENT_CONTEXT_JS:
+            assert ':has-text(' not in arg[1], 'Native closest cannot parse Playwright selectors'
+            assert ':text-is(' not in arg[1], 'Native closest cannot parse Playwright selectors'
             return {"excluded": self.excluded, "nested": self.nested}
         if script is action._CARD_URNS_JS:
             return self.urns
@@ -342,6 +396,49 @@ def test_missing_requested_option_fails_before_final_click():
     with pytest.raises(RepostOptionNotFoundError):
         s.run("")
     assert ("click_attempt_recorded", None) not in s.events
+
+
+def test_sdui_menu_labels_select_the_exact_requested_repost_kind():
+    s = Scenario()
+    s.thoughts.text = "Repost with thoughts"
+    s.plain.text = "Repost instantly"
+    assert s.run("Approved commentary") == NEW_URL
+    assert s.thoughts.clicks == 1
+    assert s.plain.clicks == 0
+    assert s.editor.value == "Approved commentary"
+
+
+def test_sdui_composer_repost_button_submits_exact_commentary_once():
+    s = Scenario()
+    s.post.url = 'https://www.linkedin.com/sharing/compose'
+    s.post_button.text = 'Repost'
+    s.dialog.children[action.SDUI_COMPOSER_SELECTOR] = [FakeElement(s.post)]
+    assert action._post_button(s.post, s.dialog) is s.post_button
+    # The full flow enters this route only after selecting thoughts.
+    s.post.url = POST_URL
+    original_open = s.open_composer
+
+    def open_sdui():
+        original_open()
+        s.post.url = 'https://www.linkedin.com/sharing/compose'
+
+    s.thoughts.on_click = open_sdui
+    assert s.run('Approved commentary') == NEW_URL
+    assert s.editor.value == 'Approved commentary'
+    assert s.post_button.clicks == 1 and s.plain.clicks == 0
+
+
+@pytest.mark.parametrize('wrong_route', [True, False])
+def test_repost_button_without_exact_sdui_composer_is_refused(wrong_route):
+    s = Scenario()
+    s.post_button.text = 'Repost'
+    if wrong_route:
+        s.dialog.children[action.SDUI_COMPOSER_SELECTOR] = [FakeElement(s.post)]
+    else:
+        s.post.url = 'https://www.linkedin.com/sharing/compose'
+    with pytest.raises(RepostComposerError):
+        action._post_button(s.post, s.dialog)
+    assert s.post_button.clicks == 0
 
 
 def test_toast_link_to_the_original_post_is_not_proof_but_new_activity_is():
