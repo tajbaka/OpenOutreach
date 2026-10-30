@@ -94,6 +94,23 @@ def test_guidance_editor_is_preserved_across_all_updates(state):
     assert after == before  # Stable Slack IDs preserve the live typed guidance.
 
 
+@pytest.mark.parametrize("state", ["loading", "error", "ready"])
+def test_lead_context_stays_above_reply_across_all_updates(state):
+    value = payload()
+    metadata = json.loads(value["view"]["private_metadata"])
+    context = {"lead": {"id": 42, "first_name": "Ada", "last_name": "Lovelace", "description": "{}"},
+               "operator": "Arian", "artifacts": {"ai_summary": "Saved summary"}}
+    lead_blocks = api.render_reply_lead_context_blocks(context)
+    thread_blocks = api.render_thread_preview_blocks([{"direction": "inbound", "body": "Hi"}])
+    value["view"]["blocks"] = api.render_reply_modal_blocks(
+        metadata=metadata, context_blocks=lead_blocks, thread_blocks=thread_blocks, initial_reply="My text")
+    result = drafts.modal(drafts.parse_job(encode(value), api), api, state=state, content="Generated reply")
+    reply_at = next(i for i, b in enumerate(result["blocks"])
+                    if b.get("element", {}).get("action_id") == api._REPLY_BODY_ACTION_ID)
+    assert result["blocks"][:len(lead_blocks) + len(thread_blocks)] == lead_blocks + thread_blocks
+    assert reply_at == len(lead_blocks) + len(thread_blocks)
+
+
 def test_recovery_keeps_guidance_but_an_edit_creates_a_new_job():
     data = drafts.parse_job(encode(with_instructions(payload(), "Include my 20-minute link")), api)
     data["job_known"] = True

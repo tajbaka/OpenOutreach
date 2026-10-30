@@ -386,12 +386,17 @@ def _reply_draft_action_value(metadata: dict) -> str:
 def render_reply_modal_blocks(
     *,
     metadata: dict,
+    context_blocks: list | None = None,
     thread_blocks: list | None = None,
     initial_reply: str = "",
     loading: str = "",
     draft_error: str = "",
 ) -> list[dict]:
-    """Render the Slack modal body for composing a manual LinkedIn reply."""
+    """Render the Slack modal body for composing a manual LinkedIn reply.
+
+    Lead context sits above the thread preview so the operator sees who they
+    are replying to before reading the conversation.
+    """
     input_element = {
         "type": "plain_text_input",
         "action_id": _REPLY_BODY_ACTION_ID,
@@ -408,6 +413,7 @@ def render_reply_modal_blocks(
         )
 
     blocks: list[dict] = [
+        *(context_blocks or []),
         *(thread_blocks or []),
         {
             "type": "input",
@@ -644,9 +650,14 @@ def open_reply_modal(
     response_url: str = "",
     original_blocks: list,
     thread_external_id: str = "",
+    context_blocks: list | None = None,
     thread_blocks: list | None = None,
 ) -> None:
-    """Open the Slack modal used to collect a manual LinkedIn reply."""
+    """Open the Slack modal used to collect a manual LinkedIn reply.
+
+    Lead context blocks are rendered but not copied into private_metadata:
+    draft updates reuse the open view's blocks, so metadata stays small.
+    """
     metadata = _compact_metadata({
         "lead_id": lead_id,
         "operator": operator,
@@ -669,6 +680,7 @@ def open_reply_modal(
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": render_reply_modal_blocks(
                 metadata=metadata_obj,
+                context_blocks=context_blocks or [],
                 thread_blocks=thread_blocks or [],
             ),
         },
@@ -1226,21 +1238,9 @@ def _full_name(lead: dict) -> str:
     )
 
 
-def render_lead_context_blocks(
-    context: dict,
-    *,
-    ai_summary: str = "",
-    ai_error: str = "",
-    draft_reply: str = "",
-    draft_error: str = "",
-    loading: str = "",
-    newest_artifact: str = "",
-) -> list[dict]:
-    """Render deterministic lead context, optionally with AI-generated output."""
+def render_lead_profile_blocks(context: dict) -> list[dict]:
+    """Render the deterministic Lead header, fields and profile summary."""
     lead = context["lead"]
-    artifacts = context.get("artifacts") or {}
-    ai_summary = ai_summary or artifacts.get(_ARTIFACT_AI_SUMMARY, "")
-    draft_reply = draft_reply or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")
     bits = _profile_bits(lead.get("description", ""))
     name = _slack_escape(_full_name(lead))
     company = lead.get("company_name") or ""
@@ -1281,15 +1281,53 @@ def render_lead_context_blocks(
                 "text": f"*Profile summary*\n{_slack_escape(_compact_message(bits['summary'], limit=650))}",
             },
         })
+    return blocks
+
+
+def _lead_ai_summary_block(ai_summary: str) -> dict:
+    return {
+        "type": "section",
+        "block_id": "lead_context_ai_summary",
+        "text": {"type": "mrkdwn", "text": f"*AI summary*\n{_slack_escape(ai_summary)}"},
+    }
+
+
+def render_reply_lead_context_blocks(context: dict) -> list[dict]:
+    """Render Lead context for the top of the manual-reply modal.
+
+    Shows the Lead context modal's profile plus any saved AI summary for this
+    sender/thread. Its buttons stay in that modal: they update a Lead context
+    view, and the reply modal already drafts into its own Reply field.
+    """
+    blocks = render_lead_profile_blocks(context)
+    ai_summary = (context.get("artifacts") or {}).get(_ARTIFACT_AI_SUMMARY, "")
+    if ai_summary:
+        blocks.append(_lead_ai_summary_block(ai_summary))
+    blocks.append({"type": "divider"})
+    return blocks
+
+
+def render_lead_context_blocks(
+    context: dict,
+    *,
+    ai_summary: str = "",
+    ai_error: str = "",
+    draft_reply: str = "",
+    draft_error: str = "",
+    loading: str = "",
+    newest_artifact: str = "",
+) -> list[dict]:
+    """Render deterministic lead context, optionally with AI-generated output."""
+    lead = context["lead"]
+    artifacts = context.get("artifacts") or {}
+    ai_summary = ai_summary or artifacts.get(_ARTIFACT_AI_SUMMARY, "")
+    draft_reply = draft_reply or artifacts.get(_ARTIFACT_DRAFT_REPLY, "")
+    blocks = render_lead_profile_blocks(context)
 
     ai_blocks: list[dict] = []
     if ai_summary:
         ai_blocks.append({"type": "divider"})
-        ai_blocks.append({
-            "type": "section",
-            "block_id": "lead_context_ai_summary",
-            "text": {"type": "mrkdwn", "text": f"*AI summary*\n{_slack_escape(ai_summary)}"},
-        })
+        ai_blocks.append(_lead_ai_summary_block(ai_summary))
     elif ai_error:
         ai_blocks.append({"type": "divider"})
         ai_blocks.append({
@@ -1630,18 +1668,22 @@ class handler(BaseHTTPRequestHandler):
     def _handle_reply_button(self, body: str) -> None:
         try:
             data = parse_reply_button(body)
+            context_blocks: list = []
             thread_blocks: list = []
             try:
+                # One read serves both sections; its messages are the same
+                # sender-thread-scoped preview the reply modal always showed.
                 with psycopg.connect(DATABASE_URL) as conn:
-                    thread_blocks = render_thread_preview_blocks(
-                        fetch_linkedin_thread_preview(
-                            conn,
-                            data["lead_id"],
-                            thread_external_id=data.get("thread_external_id", ""),
-                        ),
+                    context = fetch_lead_context(
+                        conn,
+                        data["lead_id"],
+                        operator=data["operator"],
+                        thread_external_id=data.get("thread_external_id", ""),
                     )
+                context_blocks = render_reply_lead_context_blocks(context)
+                thread_blocks = render_thread_preview_blocks(context["messages"])
             except Exception as exc:  # noqa: BLE001 — modal should still open
-                print(f"manual reply thread preview failed: {exc}")
+                print(f"manual reply context failed: {exc}")
             open_reply_modal(
                 trigger_id=data["trigger_id"],
                 lead_id=data["lead_id"],
@@ -1651,6 +1693,7 @@ class handler(BaseHTTPRequestHandler):
                 response_url=data["response_url"],
                 original_blocks=data["blocks"],
                 thread_external_id=data.get("thread_external_id", ""),
+                context_blocks=context_blocks,
                 thread_blocks=thread_blocks,
             )
         except (ValueError, json.JSONDecodeError):

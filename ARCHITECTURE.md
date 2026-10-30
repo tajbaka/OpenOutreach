@@ -85,7 +85,7 @@ Private draft modal updates are hash-conditional. Loading and failures preserve 
 
 **2026-09-14 balanced campaigns committed:** Campaigns 50/Arian and 51/Chuka (display Eddy) each hold 475 leads across 16 ICPs, explicitly post-acceptance and disabled, on immutable message version 1. The one-time helper under ignored `artifacts/leads/marketplace-balanced-campaigns-2026-09-14/` reads live Sheet rows and exact reviewed metadata, honors historical alternate-sender routing, and balances each ICP subject to sender eligibility. It holds active-campaign, replied, suppressed, ambiguous, or unclassified leads rather than changing Lead metadata. Canonical enrollment/delivery helpers validated all 4,750 sequence renders before the atomic commit; independent committed readback verified 950 disjoint recipients, 950 planned connection notes, zero Tasks/sends, and unchanged older campaign settings and message sources. No runtime routing, Sheet content, sender controls, or monitoring changes occurred. Never rerun staging; use its private plan/receipt and read-only live checks. Creation is not activation or proof of post-acceptance enrichment/Gmail health; the existing pilots' email handoff still requires investigation before scaling that lane.
 
-Slack Lead context displays `Lead.role_tag` as Role, with `Not assigned` for blank tags. The modal omits the Campaign/deal context and Recent LinkedIn messages sections; their underlying data remains available to AI context generation, and the separate reply-modal transcript is unchanged. This is display-only and requires no migration.
+Slack Lead context displays `Lead.role_tag` as Role, with `Not assigned` for blank tags. The modal omits the Campaign/deal context and Recent LinkedIn messages sections; their underlying data remains available to AI context generation, and the separate reply-modal transcript is unchanged. This is display-only and requires no migration. The Reply on LinkedIn modal also shows this Lead context profile (plus any saved AI summary) at its top, above the thread transcript; the Lead context button and modal are unchanged.
 
 **Slack reply-draft ICP references (2026-09-16):** `fetch_reply_draft_context` wraps the existing context loader only for the two private reply-draft actions. Its raw-SQL `fetch_reply_icp_messaging` matches the exact Lead/canonical sender, rejects conflicting thread owners, and uses exact thread enrollment evidence when available or a unique enrollment with confirmed LinkedIn sends otherwise. Ambiguous/missing/unsupported matches omit examples rather than infer a cohort. It reads only that enrollment's frozen message version, filters the exact audience and effective sender overrides, and passes the approved LinkedIn/email examples plus reviewed Role Tag into the reply prompt. The frozen audience replaces mutable Lead ICP only in this transient payload; other campaigns' Deal context is excluded. No Sheet/JSON import, Django dependency in the serverless path, delivery creation, lead mutation or new schema is added. Conversation content takes precedence, templates are explicitly references rather than sent-message history or regulatory proof, and generated text remains draft-only until manual submission. The general summary/context modal and public-comment lane retain their existing paths. Regression checks cover isolation, fallback, sender overrides, prompt contents and no enqueue; read-only checks matched eight real sender/cohort enrollments and rejected their opposite senders. No production deployment or live model call is implied.
 
@@ -722,8 +722,14 @@ available, while daemon sent/failed status uses `chat.update` with the task's
 saved Slack blocks. Manual reply sends opt into detailed send exceptions, so a
 browser/UI send failure records the underlying send reason plus the diagnostic
 screenshot/HTML folder path in `Task.error` instead of only a generic lead id.
-The reply modal fetches the recent LinkedIn `crm.Message`
-thread via raw SQL and renders a compact transcript above the reply textbox;
+The reply modal makes one raw-SQL `fetch_lead_context` read and renders, top
+to bottom, the Lead context profile (`render_reply_lead_context_blocks`: the
+same name/ICP/Role/company/title/sender fields and profile summary as the Lead
+context modal, plus any saved sender/thread AI summary, without that modal's
+buttons or saved draft), then a compact transcript of the recent LinkedIn
+`crm.Message` thread, then the reply textbox. The Lead context blocks are not
+copied into `private_metadata`; draft updates keep them because they reuse the
+open view's blocks;
 its bottom-left "Draft reply" action calls the configured OpenAI-compatible
 endpoint (`LLM_API_KEY`, `AI_MODEL`, optional `LLM_API_BASE`) and fills the
 reply textbox with the suggested LinkedIn reply. Drafts use a larger recent
@@ -743,8 +749,8 @@ replace the source notification. The loading row and newly generated section
 render at the bottom of the active modal so progress and result appear below
 existing context. The queued Slack status includes a cancel button whose
 payload points at the inserted task id; cancelling deletes the task only if it
-is still pending. If the preview fetch fails, the reply modal falls back to a
-plain textbox. The `Task` table is the entire contract between
+is still pending. If the context/preview fetch fails, the reply modal falls
+back to a plain textbox. The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
 against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
 `(lead, provider)` (best-effort — a duplicate is harmless); two *different*

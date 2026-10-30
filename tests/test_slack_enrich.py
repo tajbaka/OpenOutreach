@@ -526,6 +526,11 @@ def test_cancel_manual_reply_task_returns_false_when_not_pending():
 
 def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+    context_blocks = [{
+        "type": "section",
+        "block_id": "lead_context_header",
+        "text": {"type": "mrkdwn", "text": "*Lead context: Ada Lovelace*"},
+    }]
     thread_blocks = [{
         "type": "section",
         "block_id": "linkedin_thread_preview_header",
@@ -542,6 +547,7 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
             response_url="https://hooks.slack.com/actions/T/B/R",
             original_blocks=[],
             thread_external_id="thread-arian",
+            context_blocks=context_blocks,
             thread_blocks=thread_blocks,
         )
     req = mock_open.call_args[0][0]
@@ -549,7 +555,8 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     sent = json.loads(req.data.decode("utf-8"))
     assert sent["trigger_id"] == "trigger-123"
     assert sent["view"]["callback_id"] == "linkedin_reply_modal"
-    assert sent["view"]["blocks"][0]["block_id"] == "linkedin_thread_preview_header"
+    assert sent["view"]["blocks"][0]["block_id"] == "lead_context_header"
+    assert sent["view"]["blocks"][1]["block_id"] == "linkedin_thread_preview_header"
     assert sent["view"]["blocks"][-2]["type"] == "input"
     assert sent["view"]["blocks"][-1]["block_id"] == "linkedin_reply_actions"
     assert sent["view"]["blocks"][-1]["elements"][0]["action_id"] == "linkedin_reply_draft_button"
@@ -557,6 +564,102 @@ def test_open_reply_modal_calls_slack_views_open(monkeypatch):
     assert metadata["response_url"] == "https://hooks.slack.com/actions/T/B/R"
     assert metadata["thread_external_id"] == "thread-arian"
     assert metadata["thread_blocks"][0]["block_id"] == "linkedin_thread_preview_header"
+    assert "lead_context_header" not in sent["view"]["private_metadata"]
+
+
+def _reply_context(**overrides):
+    return {
+        "lead": {
+            "id": 42,
+            "first_name": "Jacquelyn",
+            "last_name": "Bell",
+            "company_name": "JB Choices",
+            "linkedin_url": "https://www.linkedin.com/in/jacquelyn-bell/",
+            "public_identifier": "jacquelyn-bell",
+            "description": json.dumps({
+                "headline": "FedRAMP advisor",
+                "summary": "Works with public sector compliance teams.",
+            }),
+            "icp": "Advisor",
+            "role_tag": "CFO/Finance",
+        },
+        "deals": [],
+        "messages": [{"direction": "inbound", "sender": "Jacquelyn Bell", "body": "Tell me more."}],
+        "artifacts": {},
+        "operator": "Arian",
+        "thread_external_id": "thread-arian",
+        **overrides,
+    }
+
+
+def test_render_reply_lead_context_blocks_shows_profile_without_modal_actions():
+    blocks = slack_enrich.render_reply_lead_context_blocks(_reply_context(
+        artifacts={"ai_summary": "Saved summary", "draft_reply": "Saved draft"},
+    ))
+
+    assert [b.get("block_id") for b in blocks] == [
+        "lead_context_header",
+        "lead_context_fields",
+        "lead_context_profile_summary",
+        "lead_context_ai_summary",
+        None,
+    ]
+    assert blocks[-1] == {"type": "divider"}
+    body = json.dumps(blocks)
+    assert "*Role:*\\nCFO/Finance" in body
+    assert "FedRAMP advisor" in body
+    assert "Saved summary" in body
+    assert "Saved draft" not in body
+    assert "Tell me more." not in body
+    assert not any(b["type"] == "actions" for b in blocks)
+
+
+def test_render_reply_lead_context_blocks_omits_missing_ai_summary():
+    blocks = slack_enrich.render_reply_lead_context_blocks(_reply_context())
+
+    assert "lead_context_ai_summary" not in json.dumps(blocks)
+    assert blocks[0]["block_id"] == "lead_context_header"
+
+
+def _reply_button_handler(monkeypatch, fetch):
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", MagicMock())
+    monkeypatch.setattr(slack_enrich, "fetch_lead_context", fetch)
+    opened = MagicMock()
+    monkeypatch.setattr(slack_enrich, "open_reply_modal", opened)
+    handler = object.__new__(slack_enrich.handler)
+    handler._respond_text = MagicMock()
+    value = json.dumps({"lead_id": 42, "operator": "Arian", "thread_external_id": "thread-arian"})
+    handler._handle_reply_button(_reply_button_body(value=value))
+    handler._respond_text.assert_called_once_with(200, "")
+    return opened.call_args.kwargs
+
+
+def test_reply_button_puts_lead_context_above_thread_preview(monkeypatch):
+    fetch = MagicMock(return_value=_reply_context())
+
+    kwargs = _reply_button_handler(monkeypatch, fetch)
+
+    assert fetch.call_args.args[1] == 42
+    assert fetch.call_args.kwargs == {"operator": "Arian", "thread_external_id": "thread-arian"}
+    assert kwargs["context_blocks"][0]["block_id"] == "lead_context_header"
+    assert kwargs["thread_blocks"][0]["block_id"] == "linkedin_thread_preview_header"
+    assert "Tell me more." in json.dumps(kwargs["thread_blocks"])
+    blocks = slack_enrich.render_reply_modal_blocks(
+        metadata={"lead_id": 42},
+        context_blocks=kwargs["context_blocks"],
+        thread_blocks=kwargs["thread_blocks"],
+    )
+    ids = [b.get("block_id") for b in blocks]
+    assert ids.index("lead_context_header") < ids.index("linkedin_thread_preview_header")
+    assert ids.index("linkedin_thread_preview_header") < ids.index("linkedin_reply_message")
+
+
+def test_reply_button_still_opens_modal_when_context_fetch_fails(monkeypatch):
+    kwargs = _reply_button_handler(monkeypatch, MagicMock(side_effect=ValueError("lead 42 not found")))
+
+    assert kwargs["context_blocks"] == []
+    assert kwargs["thread_blocks"] == []
+    assert kwargs["lead_id"] == 42
 
 
 def test_update_slack_view_can_persist_lead_context_metadata(monkeypatch):
