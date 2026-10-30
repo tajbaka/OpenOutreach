@@ -4,6 +4,7 @@
   "buildCommand": null,
   "installCommand": null,
   "functions": {
-    "api/slack_enrich.py": { "maxDuration": 120 }
+    "api/slack_enrich.py": { "maxDuration": 120 },
+    "api/rb2b_webhook.py": { "maxDuration": 30 }
   }
 }

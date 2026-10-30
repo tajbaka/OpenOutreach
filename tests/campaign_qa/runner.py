@@ -44,6 +44,8 @@ def main():
         '-p', 'pytest_django.plugin', '-p', 'pytest_mock', '-p', 'tests.campaign_qa.reporting',
         '-q', '--tb=short', '-p', 'no:cacheprovider', '--strict-markers',
     ]
+    if os.environ.get('CAMPAIGN_QA_SUITE') == 'rb2b-intake':
+        return pytest.main(common + ['tests/test_rb2b_webhook.py'])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'daemon-browser':
         return pytest.main(common + [
             'tests/test_browser_recovery.py', 'tests/test_daemon_resilience.py',

@@ -39,7 +39,7 @@ def source_fingerprint() -> tuple[str, int]:
 def run() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, help='New directory for QA reports; never overwritten')
-    parser.add_argument('--suite', choices=('campaigns', 'accepted-connections', 'slack-drafts', 'daemon-browser'), default='campaigns',
+    parser.add_argument('--suite', choices=('campaigns', 'accepted-connections', 'slack-drafts', 'daemon-browser', 'rb2b-intake'), default='campaigns',
                         help='Full campaign QA or a focused isolated regression suite')
     args = parser.parse_args()
     expected_python = ROOT / '.venv/bin/python'
