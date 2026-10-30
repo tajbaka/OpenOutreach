@@ -557,6 +557,7 @@ class LinkedInProfile(models.Model):
             "Remains set until explicitly cleared; clearing does not restart workers."
         ),
     )
+    connect_restricted_on = models.DateField(null=True, blank=True)
     connect_daily_limit = models.PositiveIntegerField(default=20)
     connect_weekly_limit = models.PositiveIntegerField(default=100)
     follow_up_daily_limit = models.PositiveIntegerField(default=30)
@@ -588,10 +589,10 @@ class LinkedInProfile(models.Model):
             del self._exhausted[action_type]
 
         daily_field, weekly_field = _RATE_LIMIT_FIELDS[action_type]
-        self.refresh_from_db(fields=[daily_field] + ([weekly_field] if weekly_field else []))
+        self.refresh_from_db(fields=[daily_field, "connect_restricted_on"] + ([weekly_field] if weekly_field else []))
 
         reasons: set[str] = set()
-        if action_type in self._exhausted:
+        if action_type in self._exhausted or (action_type == "connect" and self.connect_restricted_on == active_local_date()):
             reasons.add(RateLimitReason.EXTERNAL)
 
         if MAX_TOTAL_DAILY_ACTIONS and self._total_daily_count() >= MAX_TOTAL_DAILY_ACTIONS:
@@ -613,6 +614,10 @@ class LinkedInProfile(models.Model):
         exhausted_date = self._exhausted.get(action_type)
         if exhausted_date is not None and exhausted_date != active_local_date():
             del self._exhausted[action_type]
+        if action_type == "connect":
+            self.refresh_from_db(fields=["connect_restricted_on"])
+            if self.connect_restricted_on == active_local_date():
+                return True
         return action_type in self._exhausted
 
     def record_action(self, action_type: str, campaign: Campaign) -> None:
@@ -624,22 +629,29 @@ class LinkedInProfile(models.Model):
     def mark_exhausted(self, action_type: str) -> None:
         """Mark the action type as externally exhausted for today."""
         self._exhausted[action_type] = active_local_date()
+        if action_type == "connect":
+            type(self).objects.filter(pk=self.pk).update(connect_restricted_on=active_local_date())
         logger.warning("Rate limit: %s externally exhausted for today", action_type)
 
     def _daily_count(self, action_type: str) -> int:
-        return ActionLog.objects.filter(
+        from linkedin.rb2b import budget_count
+        reserved = budget_count(self.pk, active_day_start()) if action_type == "connect" else 0
+        return reserved + ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
             created_at__gte=active_day_start(),
         ).count()
 
     def _total_daily_count(self) -> int:
-        return ActionLog.objects.filter(
+        from linkedin.rb2b import budget_count
+        return budget_count(self.pk, active_day_start()) + ActionLog.objects.filter(
             linkedin_profile=self,
             created_at__gte=active_day_start(),
         ).count()
 
     def _weekly_count(self, action_type: str) -> int:
-        return ActionLog.objects.filter(
+        from linkedin.rb2b import budget_count
+        reserved = budget_count(self.pk, active_week_start()) if action_type == "connect" else 0
+        return reserved + ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
             created_at__gte=active_week_start(),
         ).count()
@@ -1217,6 +1229,16 @@ class TaskQuerySet(models.QuerySet):
         """
         if candidate is None:
             return None
+        from linkedin.rb2b import sender_blocked, task_profile
+        with transaction.atomic():
+            profile = task_profile(candidate)
+            if profile:
+                LinkedInProfile.objects.select_for_update().get(pk=profile.pk)
+                if sender_blocked(profile.pk, pacing=candidate.task_type in {"connect", "follow_up", "drip_linkedin"}):
+                    return None
+            return self._mark_claimed(candidate)
+
+    def _mark_claimed(self, candidate):
         started_at = timezone.now()
         updated = self.model.objects.filter(
             pk=candidate.pk,
@@ -1321,6 +1343,10 @@ class TaskQuerySet(models.QuerySet):
         next_task = qs.first()
         if next_task is None:
             return None
+        from linkedin.rb2b import sender_blocked, task_profile
+        profile = task_profile(next_task)
+        if profile and sender_blocked(profile.pk, pacing=next_task.task_type in {"connect", "follow_up", "drip_linkedin"}):
+            return 30.0
         return max((next_task.scheduled_at - timezone.now()).total_seconds(), 0)
 
     def next_enrichment(self) -> "Task | None":
@@ -1804,6 +1830,7 @@ class DaemonHeartbeat(models.Model):
     last_alive = models.DateTimeField(null=True, blank=True)
     down_alerted_at = models.DateTimeField(null=True, blank=True)
     activity_alerted_at = models.DateTimeField(null=True, blank=True)
+    rb2b_coordination = models.JSONField(default=dict, blank=True, db_default={})
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1812,3 +1839,6 @@ class DaemonHeartbeat(models.Model):
     def __str__(self):
         state = self.last_alive.isoformat() if self.last_alive else "stopped"
         return f"{self.sender} — {state}"
+
+# Kept separate from campaign models; no Deal or campaign is synthesized.
+from linkedin.rb2b_models import RB2BNotification, RB2BVisitor  # noqa: E402,F401

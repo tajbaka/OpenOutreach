@@ -215,6 +215,12 @@ class LinkedInProfileAdmin(admin.ModelAdmin):
 
 @admin.register(LinkedInDiscoveryLead)
 class LinkedInDiscoveryLeadAdmin(admin.ModelAdmin):
+    def get_queryset(self, request):
+        # Historical RB2B-only rows are retained, but moved out of the discovery UI.
+        return super().get_queryset(request).exclude(
+            profile_data__source="rb2b_webhook", profile_data__rb2b_migrated_to__isnull=False,
+        )
+
     list_display = (
         "full_name", "company_name", "headline", "stored_by_operator",
         "potential_icp", "linkedin_url", "created_at",

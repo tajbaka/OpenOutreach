@@ -29,7 +29,7 @@ def test_stop_migration_defaults_false_and_preserves_existing_profile_and_restar
         old_profile = old_apps.get_model("linkedin", "LinkedInProfile")
         assert "stop_requested" not in {field.name for field in old_profile._meta.fields}
         assert list(old_profile.objects.order_by("pk").values()) == [
-            {key: value for key, value in profile.items() if key != "stop_requested"}
+            {key: value for key, value in profile.items() if key in {f.attname for f in old_profile._meta.fields}}
             for profile in expected
         ]
         MigrationExecutor(connection).migrate(leaves)

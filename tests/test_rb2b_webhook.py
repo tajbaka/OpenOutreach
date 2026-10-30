@@ -8,7 +8,7 @@ import pytest
 
 from api import rb2b_webhook as api
 from crm.models import Lead, Deal, Message
-from linkedin.models import Campaign, LinkedInDiscoveryLead, LinkedInProfile, Task
+from linkedin.models import Campaign, LinkedInDiscoveryLead, LinkedInProfile, Task, RB2BVisitor
 from tests.factories import UserFactory
 
 
@@ -62,35 +62,34 @@ def test_receipt_merge_preserves_review_and_original_source():
 
 
 def test_real_postgres_intake_does_not_start_outreach(owner):
-    before = [m.objects.count() for m in (Lead, Deal, Campaign, Task, Message)]
+    before = [m.objects.count() for m in (Lead, Deal, Campaign, Task, Message, LinkedInDiscoveryLead)]
     v = api.normalize_visitor(visitor())
     result = api.store_visitor(connection.connection, v)
-    row = LinkedInDiscoveryLead.objects.get(pk=result["discovery_id"])
-    assert row.potential_icp == "RB2B: needs review"
-    assert row.profile_data["identity_verified"] is False
-    assert row.stored_by_operator == "Arian"
+    row = RB2BVisitor.objects.get(pk=result["visitor_id"])
+    assert row.status == "new" and row.lead_id is None
+    assert row.linkedin_profile_id == owner.pk
     assert row.linkedin_url == v["url"]
-    assert [m.objects.count() for m in (Lead, Deal, Campaign, Task, Message)] == before
+    assert [m.objects.count() for m in (Lead, Deal, Campaign, Task, Message, LinkedInDiscoveryLead)] == before
     result2 = api.store_visitor(connection.connection, v)
-    assert result2["duplicate"] and result2["discovery_id"] == row.pk
-    assert LinkedInDiscoveryLead.objects.count() == 1
+    assert result2["duplicate"] and result2["visitor_id"] == row.pk
+    assert RB2BVisitor.objects.count() == 1
 
 
-def test_existing_discovery_fields_and_existing_crm_preserved(owner):
+def test_existing_review_crm_and_discovery_preserved(owner):
     v = api.normalize_visitor(visitor())
     lead = Lead.objects.create(linkedin_url=v["url"], public_identifier=v["public_id"], icp="Advisors")
+    discovery = LinkedInDiscoveryLead.objects.create(public_identifier=v["public_id"], linkedin_url=v["url"],
+                                                    potential_icp="collector-owned")
     result = api.store_visitor(connection.connection, v)
-    row = LinkedInDiscoveryLead.objects.get(pk=result["discovery_id"])
-    assert row.profile_data["existing_crm_lead_ids_at_intake"] == [lead.pk]
-    row.headline = "verified collector headline"
-    row.potential_icp = "reviewed ICP"
+    row = RB2BVisitor.objects.get(pk=result["visitor_id"])
+    row.review = {"decision": "hold"}
+    row.status = "held"
     row.save()
     api.store_visitor(connection.connection, api.normalize_visitor(visitor(**{"Seen At": "2026-10-31T18:00:00Z"})))
-    row.refresh_from_db()
-    lead.refresh_from_db()
-    assert row.headline == "verified collector headline" and row.potential_icp == "reviewed ICP"
-    assert lead.icp == "Advisors"
-    assert len(row.profile_data[api.META_KEY]["events"]) == 2
+    row.refresh_from_db(); lead.refresh_from_db(); discovery.refresh_from_db()
+    assert row.status == "held" and row.review == {"decision": "hold"}
+    assert lead.icp == "Advisors" and discovery.potential_icp == "collector-owned"
+    assert len(row.events) == 2
 
 
 def test_provider_test_and_company_only_never_create_people(owner):
@@ -99,6 +98,7 @@ def test_provider_test_and_company_only_never_create_people(owner):
         result = api.store_visitor(connection.connection, api.normalize_visitor(raw))
         assert not result["stored"]
     assert not LinkedInDiscoveryLead.objects.exists()
+    assert not RB2BVisitor.objects.exists()
 
 
 def fake_handler(raw, token, content_type="application/json"):
@@ -135,3 +135,27 @@ def test_http_storage_failure_never_acknowledged(monkeypatch):
     h.do_POST()
     h.send_response.assert_called_once_with(503)
     assert b"private diagnostic" not in h.wfile.getvalue()
+
+
+def test_rolling_deployment_keeps_collecting_before_new_schema(owner):
+    # Simulate only schema detection for a v1 database. All fallback SQL really
+    # runs on the isolated PostgreSQL database; no new code/schema is assumed.
+    from unittest.mock import Mock
+    class BeforeMigration:
+        def execute(self, sql, args=None):
+            if sql == "SELECT to_regclass('linkedin_rb2bvisitor')":
+                return Mock(fetchone=lambda: (None,))
+            return connection.connection.execute(sql, args)
+    v = api.normalize_visitor(visitor())
+    old = api.store_visitor(BeforeMigration(), v)
+    assert old['storage_version'] == 1 and old['stored']
+    assert LinkedInDiscoveryLead.objects.filter(pk=old['discovery_id']).exists()
+    assert not RB2BVisitor.objects.exists()
+    # After migration the same receiver switches to v2, then the explicit
+    # receipt migration reconciles both histories without losing either.
+    new = api.store_visitor(connection.connection, v)
+    assert new['storage_version'] == 2
+    from linkedin.rb2b import migrate_discovery
+    migrate_discovery(); migrate_discovery()
+    row = RB2BVisitor.objects.get(pk=new['visitor_id'])
+    assert row.events[v['fingerprint']]['receipt_count'] == 2

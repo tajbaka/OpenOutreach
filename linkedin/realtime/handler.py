@@ -94,6 +94,7 @@ def _handle(event: dict, *, operator: str) -> None:
     lead = resolve_lead_for_realtime(
         conversation_urn=parsed.conversation_urn,
         sender_member_urn=parsed.sender_member_urn,
+        operator=operator,
     )
     if lead is None:
         logger.warning(
@@ -113,6 +114,13 @@ def _handle(event: dict, *, operator: str) -> None:
         thread_external_id=parsed.conversation_urn,
         outbound_senders={operator} if operator else set(),
     )
+    from linkedin.models import RB2BVisitor
+    from linkedin.rb2b import flush_notifications
+    if RB2BVisitor.objects.filter(lead=lead).exists():
+        flush_notifications()
+        # The durable outbox uses the same Slack reply controls. Do not emit a
+        # second notification through the legacy path.
+        return
     if not created:
         logger.debug("Realtime event already persisted (%s)", parsed.entity_urn)
         return

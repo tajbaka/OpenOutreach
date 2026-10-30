@@ -1,4 +1,4 @@
-"""RB2B -> existing OpenOutreach discovery inbox, without campaign enrollment.
+"""RB2B -> durable intake queue; reviewed people become CRM contacts.
 
 RB2B supports a self-contained HTTPS URL, not custom auth headers. Configure
 ?token=<RB2B_WEBHOOK_TOKEN>; never log the request path. The token only accepts
@@ -124,6 +124,67 @@ def merge_receipt(profile_data: object, visitor: dict, *, received_at: str):
 
 
 def verify_storage(conn):
+    """Read-only readiness check; deploying before migration fails closed."""
+    conn.execute("SELECT events,lead_id,status FROM linkedin_rb2bvisitor LIMIT 0")
+    profiles = conn.execute(
+        "SELECT p.id FROM linkedin_linkedinprofile p "
+        "JOIN auth_user u ON u.id=p.user_id WHERE u.username=%s AND p.active=true",
+        ("ariantajbakh",),
+    ).fetchall()
+    if len(profiles) != 1:
+        raise IdentityConflict("arian_owner_not_unique")
+    return profiles[0][0]
+
+
+def store_visitor(conn, visitor: dict) -> dict:
+    # Main is auto-deployed by Vercel. Preserve intake until the connected
+    # Windows host applies the additive schema. The migration commits atomically;
+    # subsequent requests switch to the new table without dropping an event.
+    if conn.execute("SELECT to_regclass('linkedin_rb2bvisitor')").fetchone()[0] is None:
+        return store_legacy_visitor(conn, visitor)
+    profile_id = verify_storage(conn)
+    if visitor["kind"] != "person":
+        return {"accepted": True, "kind": visitor["kind"], "stored": False, "storage_version": 2}
+    pid, canonical = visitor["public_id"], visitor["url"]
+    lock = int.from_bytes(hashlib.sha256(("rb2b:" + pid).encode()).digest()[:8], "big", signed=True)
+    conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock,))
+    rows = conn.execute(
+        "SELECT id,events,linkedin_profile_id FROM linkedin_rb2bvisitor "
+        "WHERE public_identifier=%s FOR UPDATE", (pid,),
+    ).fetchall()
+    now = datetime.now(timezone.utc).isoformat()
+    events = rows[0][1] if rows else {}
+    if isinstance(events, str):
+        events = json.loads(events)
+    if rows and rows[0][2] != profile_id:
+        raise IdentityConflict("sender_conflict")
+    merged, duplicate = merge_receipt({META_KEY: {"schema_version": 1, "events": events}},
+                                      visitor, received_at=now)
+    events = merged[META_KEY]["events"]
+    if rows:
+        record_id = rows[0][0]
+        # Receipt changes cannot reset review, CRM linkage or send evidence.
+        conn.execute("UPDATE linkedin_rb2bvisitor SET events=%s,updated_at=NOW() WHERE id=%s",
+                     (Jsonb(events), record_id))
+    else:
+        record_id = conn.execute("""
+            INSERT INTO linkedin_rb2bvisitor
+            (public_identifier,linkedin_url,linkedin_profile_id,events,review,member_urn,note,status,
+             outcome,created_at,updated_at)
+            VALUES (%s,%s,%s,%s,'{}','','','new','{}',NOW(),NOW()) RETURNING id
+        """, (pid, canonical, profile_id, Jsonb(events))).fetchone()[0]
+    check = conn.execute("SELECT events FROM linkedin_rb2bvisitor WHERE id=%s", (record_id,)).fetchone()[0]
+    if isinstance(check, str):
+        check = json.loads(check)
+    if check[visitor["fingerprint"]] != events[visitor["fingerprint"]]:
+        raise IdentityConflict("receipt_readback_mismatch")
+    return {"accepted": True, "kind": "person", "stored": True, "storage_version": 2,
+            "visitor_id": record_id, "event_hash": visitor["fingerprint"], "duplicate": duplicate}
+
+
+# Transitional v1 writer only while migration 0038 is absent. It may be
+# removed after all hosts and the live receiver have verified the v2 cutover.
+def verify_legacy_storage(conn):
     """Read-only readiness check for the existing table and exact owner."""
     conn.execute("SELECT profile_data, public_identifier, linkedin_url FROM linkedin_linkedindiscoverylead LIMIT 0")
     profiles = conn.execute(
@@ -136,10 +197,10 @@ def verify_storage(conn):
     return profiles[0][0]
 
 
-def store_visitor(conn, visitor: dict) -> dict:
-    username = verify_storage(conn)
+def store_legacy_visitor(conn, visitor: dict) -> dict:
+    username = verify_legacy_storage(conn)
     if visitor["kind"] != "person":
-        return {"accepted": True, "kind": visitor["kind"], "stored": False}
+        return {"accepted": True, "kind": visitor["kind"], "stored": False, "storage_version": 1}
     pid, canonical = visitor["public_id"], visitor["url"]
     # Transaction-scoped only: released on commit/rollback, including through
     # poolers. Serializes webhook retries even before a discovery row exists.
@@ -190,7 +251,37 @@ def store_visitor(conn, visitor: dict) -> dict:
     if check[META_KEY]["events"][visitor["fingerprint"]] != merged[META_KEY]["events"][visitor["fingerprint"]]:
         raise IdentityConflict("receipt_readback_mismatch")
     return {"accepted": True, "kind": "person", "stored": True,
-            "discovery_id": record_id, "event_hash": visitor["fingerprint"], "duplicate": duplicate}
+            "storage_version": 1, "discovery_id": record_id, "event_hash": visitor["fingerprint"], "duplicate": duplicate}
+
+
+_last_failure_alert = 0.0
+
+
+def notify_intake_failure(reason):
+    """Best-effort provider-independent alert when intake cannot be committed.
+
+    No visitor data, request path, database exception or URL credential leaves
+    the receiver. Warm-process throttling is not a global outage deduplicator.
+    The non-2xx response remains the provider's retry signal even if Slack fails.
+    """
+    import time
+    import ssl
+    from urllib import request
+    import certifi
+    global _last_failure_alert
+    token, channel = os.getenv("SLACK_BOT_TOKEN", ""), os.getenv("RB2B_SLACK_CHANNEL_ID", "")
+    if not token or not channel or (_last_failure_alert and time.monotonic() - _last_failure_alert < 300):
+        return
+    _last_failure_alert = time.monotonic()
+    req = request.Request("https://slack.com/api/chat.postMessage", method="POST",
+        data=json.dumps({"channel": channel, "text": "RB2B intake failed: " + reason +
+                         ". Visitor was not acknowledged; check receiver health."}).encode(),
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    try:
+        with request.urlopen(req, timeout=3, context=ssl.create_default_context(cafile=certifi.where())) as response:
+            response.read()
+    except Exception:
+        pass  # Never mask the original intake failure or expose secrets.
 
 
 class handler(BaseHTTPRequestHandler):
@@ -246,9 +337,11 @@ class handler(BaseHTTPRequestHandler):
                 result = store_visitor(conn, visitor)
             # The connection context commits before a 2xx acknowledgement.
         except IdentityConflict:
+            notify_intake_failure("identity_or_storage_review_required")
             self._reply(409, {"error": "identity_or_storage_review_required"})
             return
         except psycopg.Error:
+            notify_intake_failure("storage_unavailable")
             self._reply(503, {"error": "storage_unavailable"})
             return
         self._reply(200, result)

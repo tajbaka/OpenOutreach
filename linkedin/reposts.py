@@ -379,6 +379,14 @@ def claim_next(operator: str, now: datetime | None = None):
 
     now = now or _now()
     with transaction.atomic():
+        from linkedin.models import LinkedInProfile
+        from linkedin.rb2b import sender_blocked
+        from linkedin.operators import resolve_operator
+        profiles = [p for p in LinkedInProfile.objects.all() if resolve_operator(p.linkedin_username) == operator]
+        for profile in profiles:
+            LinkedInProfile.objects.select_for_update().get(pk=profile.pk)
+            if sender_blocked(profile.pk):
+                return None
         if LinkedInRepost.objects.filter(operator=operator, status=LinkedInRepost.Status.RUNNING).exists():
             return None
         row = (

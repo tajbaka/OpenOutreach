@@ -45,7 +45,10 @@ def main():
         '-q', '--tb=short', '-p', 'no:cacheprovider', '--strict-markers',
     ]
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'rb2b-intake':
-        return pytest.main(common + ['tests/test_rb2b_webhook.py'])
+        return pytest.main(common + ['tests/test_rb2b_webhook.py', 'tests/test_rb2b_workflow.py',
+                                    'tests/realtime/test_handler.py', 'tests/realtime/test_lead_lookup.py',
+                                    'tests/tasks/test_tasks.py',
+                                    'tests/test_linkedin_reposts.py'])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'daemon-browser':
         return pytest.main(common + [
             'tests/test_browser_recovery.py', 'tests/test_daemon_resilience.py',
@@ -81,6 +84,7 @@ def main():
         ])
     return pytest.main(common + [
         'tests/campaign_qa/test_imported_campaigns.py',
+        'tests/test_rb2b_webhook.py', 'tests/test_rb2b_workflow.py',
         'tests/test_general_icp_json.py', 'tests/test_general_icp_messages.py',
         'tests/test_message_roles.py', 'tests/test_message_delivery.py',
         'tests/test_slack_reply_drafts.py',
