@@ -7,6 +7,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connection
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from api.rb2b_webhook import normalize_visitor, merge_receipt
 from crm.models import Lead, Deal, Message, Account, Opportunity
@@ -14,6 +15,8 @@ from linkedin import rb2b
 from linkedin.models import (RB2BVisitor, RB2BNotification, LinkedInProfile, LinkedInDiscoveryLead,
                              Campaign, Task, DaemonHeartbeat, ActionLog, OutreachSuppression)
 from tests.factories import UserFactory
+from linkedin.actions.connect import send_connection_request as REAL_SEND
+from linkedin.exceptions import InvitationWithdrawalError
 
 
 @pytest.fixture
@@ -34,11 +37,11 @@ def row(owner):
 
 def decision(row):
     return {"decision": "qualify", "event_hash": next(iter(row.events)), "linkedin_url": row.linkedin_url,
-            "member_urn": "urn:li:fsd_profile:SYNTHETIC", "identity_verified": True, "fit_verified": True,
-            "relationships_checked": True, "invitations_checked": True, "evidence_urls": [row.linkedin_url],
-            "fit_reason": "Synthetic sourced review", "checked_at": timezone.now().isoformat(),
-            "first_name": "New", "last_name": "Visitor", "company_name": "Example", "title": "Security lead",
-            "icp": "Advisors", "note": "Hi New, good to connect."}
+            "identity_verified": True, "fit_verified": True, "relationships_checked": True,
+            "evidence_urls": [row.linkedin_url], "fit_reason": "Synthetic sourced review",
+            "checked_at": timezone.now().isoformat(), "first_name": "New", "last_name": "Visitor",
+            "company_name": "Example", "title": "Security lead", "icp": "Advisors",
+            "note": "Hi New, good to connect."}
 
 
 @pytest.fixture
@@ -47,39 +50,99 @@ def ready(row):
 
 
 @pytest.fixture
-def enabled(monkeypatch, owner):
-    monkeypatch.setenv("RB2B_IAB_SENDS_ENABLED", "true")
+def slack_calls(monkeypatch):
+    from linkedin.notifications import slack
+    calls = []
+    monkeypatch.setattr(slack, "_slack_api", lambda method, payload, label: calls.append((method, payload)) or True)
+    monkeypatch.setattr(slack, "notify_message_received", lambda **kw: calls.append(("reply", kw)) or True)
+    return calls
+
+
+@pytest.fixture
+def enabled(monkeypatch, owner, slack_calls):
     monkeypatch.setenv("RB2B_SLACK_CHANNEL_ID", "C_SYNTHETIC_RB2B")
+    monkeypatch.setattr(rb2b.conf, "ENABLE_RB2B_CONNECT", True)
     monkeypatch.setattr(rb2b.conf, "SLACK_BOT_TOKEN", "synthetic")
     monkeypatch.setattr(rb2b.conf, "SLACK_REPLIES_WEBHOOK_URL", "synthetic")
     monkeypatch.setattr(rb2b.conf, "ENABLE_CONNECT", True)
     monkeypatch.setattr(rb2b.conf, "ENABLE_REALTIME_LISTENER", True)
-    monkeypatch.setattr(rb2b.conf, "ENABLE_LINKEDIN_DAEMON", True)
-    monkeypatch.setattr(rb2b.conf, "ENABLE_ACTIVE_HOURS", False)
-    monkeypatch.setattr(rb2b.conf, "REST_DAYS", ())
-    DaemonHeartbeat.objects.create(sender="Arian", last_alive=timezone.now(),
-                                   rb2b_coordination=rb2b.coordination_config())
 
 
-def preflight(row):
-    return {"sender": "Arian", "linkedin_url": row.linkedin_url, "checked_at": timezone.now().isoformat(),
-            **{k: True for k in ("sender_verified", "identity_verified", "no_pending_invitation", "not_connected",
-                                "no_conversation", "relationships_checked", "no_platform_restriction")}}
+LIVE = {"public_identifier": "new-visitor", "urn": "urn:li:fsd_profile:SYNTHETIC", "first_name": "New",
+        "last_name": "Visitor, CISSP", "connection_degree": 2}
 
 
-def sent(row):
-    return {"status": "sent", "sender": "Arian", "linkedin_url": row.linkedin_url, "note": row.note,
-            "checked_at": timezone.now().isoformat(), "sent_invitations_verified": True, "screenshot": "private.png"}
+class Session:
+    """The daemon's browser session, reduced to what the handler reads."""
+
+    def __init__(self, profile):
+        self.linkedin_profile, self.campaign = profile, None
+
+    def ensure_browser(self):
+        pass
 
 
-def test_review_creates_normal_crm_contact_without_discovery_or_enrollment(row):
-    counts = [m.objects.count() for m in (Deal, Campaign, Task, LinkedInDiscoveryLead)]
+@pytest.fixture
+def worker(monkeypatch, owner):
+    """Run one rb2b_connect Task with LinkedIn replaced by synthetic doubles."""
+    from linkedin.enums import ProfileState
+    from linkedin.actions.invitations import SentInvitationMatch, SentInvitationScan
+    # "listed" is the synthetic Sent Invitations page: only an invitation the
+    # fake helper actually sent appears there, unless a test overrides it.
+    state = {"live": dict(LIVE), "status": ProfileState.QUALIFIED, "send": ProfileState.PENDING,
+             "sends": [], "listed": set(), "sent_page": None}
+
+    def send(session, profile, note):
+        state["sends"].append((profile["public_identifier"], note))
+        if isinstance(state["send"], Exception):
+            raise state["send"]
+        if state["send"] == ProfileState.PENDING:
+            state["listed"].add(profile["public_identifier"])
+        return state["send"]
+
+    def sent_page(session, targets, approximate_max_age_days=None):
+        if isinstance(state["sent_page"], Exception):
+            raise state["sent_page"]
+        listed = state["listed"] if state["sent_page"] is None else state["sent_page"]
+        return SentInvitationScan(matches=tuple(
+            SentInvitationMatch(t.public_identifier, t.expected_name, "Sent 1 minute ago")
+            for t in targets if t.public_identifier in listed), cards_seen=1, scroll_rounds=0, reached_end=True)
+
+    def live(session, public_id):
+        if isinstance(state["live"], Exception):
+            raise state["live"]
+        return state["live"]
+
+    monkeypatch.setattr("linkedin.tasks.rb2b_connect._live_profile", live)
+    monkeypatch.setattr("linkedin.actions.status.get_connection_status", lambda session, profile: state["status"])
+    monkeypatch.setattr("linkedin.actions.connect.send_connection_request", send)
+    monkeypatch.setattr("linkedin.actions.invitations.scan_sent_invitations", sent_page)
+    monkeypatch.setattr("linkedin.tasks.connect.recommended_action_delay", lambda profile, action: 600.0)
+
+    def run(task=None):
+        from linkedin.tasks.rb2b_connect import handle_rb2b_connect
+        task = task or Task.objects.filter(task_type="rb2b_connect", status="pending").order_by("pk").first()
+        task.status = "running"; task.save()
+        try:
+            handle_rb2b_connect(task, Session(owner), {})
+        finally:
+            task.status = "completed"; task.save()
+        return state
+    run.state = state
+    return run
+
+
+def test_review_creates_normal_crm_contact_and_one_worker_task(row):
+    counts = [m.objects.count() for m in (Deal, Campaign, LinkedInDiscoveryLead)]
     result = rb2b.review(row.pk, decision(row))
-    assert result.status == "ready" and result.lead.icp == "Advisors"
+    assert result.status == "ready" and result.lead.icp == "Advisors" and result.member_urn == ""
     assert json.loads(result.lead.description)["source"] == "rb2b"
-    assert [m.objects.count() for m in (Deal, Campaign, Task, LinkedInDiscoveryLead)] == counts
+    assert [m.objects.count() for m in (Deal, Campaign, LinkedInDiscoveryLead)] == counts
+    task = Task.objects.get(task_type="rb2b_connect")
+    assert task.status == "pending" and task.payload == {"operator": "Arian", "visitor_id": row.pk}
     assert rb2b.review(row.pk, decision(row)).lead_id == result.lead_id
     assert Lead.objects.filter(linkedin_url=row.linkedin_url).count() == 1
+    assert Task.objects.filter(task_type="rb2b_connect").count() == 1
 
 
 def test_existing_contact_is_reused_without_overwriting_operator_fields(row):
@@ -91,11 +154,12 @@ def test_existing_contact_is_reused_without_overwriting_operator_fields(row):
     assert (lead.first_name, lead.icp, lead.description) == ("Operator value", "Channel", "Private notes")
 
 
-@pytest.mark.parametrize("guard", ["identity_verified", "fit_verified", "relationships_checked", "invitations_checked"])
-def test_uncertain_review_does_not_create_contact(row, guard):
-    data = decision(row); data[guard] = False
+@pytest.mark.parametrize("guard", ["identity_verified", "fit_verified", "relationships_checked", "first_name"])
+def test_uncertain_review_does_not_create_contact_or_task(row, guard):
+    data = decision(row); data[guard] = "" if guard == "first_name" else False
     with pytest.raises(rb2b.RB2BHeld): rb2b.review(row.pk, data)
     assert not Lead.objects.filter(linkedin_url=row.linkedin_url).exists()
+    assert not Task.objects.filter(task_type="rb2b_connect").exists()
 
 
 def test_holds_suppression_customer_existing_history_and_duplicate_email(row):
@@ -103,6 +167,7 @@ def test_holds_suppression_customer_existing_history_and_duplicate_email(row):
     result = rb2b.review(row.pk, decision(row))
     assert result.status == "held" and result.lead_id is None
     assert RB2BNotification.objects.filter(kind="held").count() == 1
+    assert not Task.objects.filter(task_type="rb2b_connect").exists()
     OutreachSuppression.objects.all().delete()
     account = Account.objects.create(name="Example")
     Opportunity.objects.create(account=account, stage="closed_won")
@@ -122,73 +187,8 @@ def test_historical_sent_people_cannot_be_reinvited(row, monkeypatch):
     assert rb2b.review(row.pk, decision(row)).status == "held"
 
 
-def test_begin_counts_shared_budget_and_cannot_repeat(ready, enabled, owner):
-    before = owner._daily_count("connect")
-    result = rb2b.begin(ready.pk, preflight(ready))
-    assert result.status == "attempting" and result.attempt_token
-    assert owner._daily_count("connect") == before + 1
-    assert owner._total_daily_count() >= 1 and owner._weekly_count("connect") >= 1
-    with pytest.raises(rb2b.RB2BHeld): rb2b.begin(ready.pk, preflight(ready))
-    with pytest.raises(rb2b.RB2BHeld): rb2b.review(ready.pk, decision(ready))
-
-
-def test_disabled_or_old_worker_cannot_reserve(ready, enabled, monkeypatch):
-    monkeypatch.setenv("RB2B_IAB_SENDS_ENABLED", "false")
-    with pytest.raises(rb2b.RB2BHeld, match="not_enabled"): rb2b.begin(ready.pk, preflight(ready))
-    monkeypatch.setenv("RB2B_IAB_SENDS_ENABLED", "true")
-    DaemonHeartbeat.objects.update(rb2b_coordination={})
-    with pytest.raises(rb2b.RB2BHeld, match="updated_arian"): rb2b.begin(ready.pk, preflight(ready))
-
-
-def test_existing_worker_task_excludes_iab_and_reservation_excludes_task(ready, enabled, owner):
-    campaign = Campaign.objects.create(user=owner.user, name="Existing campaign")
-    task = Task.objects.create(task_type="connect", payload={"campaign_id": campaign.pk},
-                               scheduled_at=timezone.now(), status="running")
-    with pytest.raises(rb2b.RB2BHeld, match="worker_busy"): rb2b.begin(ready.pk, preflight(ready))
-    task.status = "pending"; task.save()
-    rb2b.begin(ready.pk, preflight(ready))
-    assert Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk]) is None
-    task.refresh_from_db(); assert task.status == "pending"
-    assert Task.objects.seconds_to_next(operator="Arian", campaign_ids=[campaign.pk]) >= 30
-
-
-def test_restriction_persists_across_profile_instances(ready, enabled, owner):
-    owner.mark_exhausted("connect")
-    other = LinkedInProfile.objects.get(pk=owner.pk)
-    assert not other.can_execute("connect")
-    with pytest.raises(rb2b.RB2BHeld, match="shared_sender_limit"): rb2b.begin(ready.pk, preflight(ready))
-
-
-def test_fresh_suppression_after_review_blocks_send(ready, enabled):
-    OutreachSuppression.objects.create(kind="lead", value="New Visitor", public_identifier=ready.public_identifier)
-    with pytest.raises(rb2b.RB2BHeld, match="suppressed"): rb2b.begin(ready.pk, preflight(ready))
-
-
-def test_sent_receipt_is_exact_and_repeat_safe(ready, enabled, owner):
-    row = rb2b.begin(ready.pk, preflight(ready))
-    data = sent(row); data["note"] = "wrong"
-    with pytest.raises(rb2b.RB2BHeld): rb2b.finish(row.pk, row.attempt_token, data)
-    good = sent(row)
-    result = rb2b.finish(row.pk, row.attempt_token, good)
-    assert result.status == "sent" and result.confirmed_at
-    rb2b.finish(row.pk, row.attempt_token, good)
-    assert RB2BNotification.objects.filter(kind="sent").count() == 1
-    assert owner._daily_count("connect") == 1
-
-
-def test_uncertain_never_refunds_or_retries(ready, enabled, owner):
-    row = rb2b.begin(ready.pk, preflight(ready))
-    with pytest.raises(rb2b.RB2BHeld): rb2b.finish(row.pk, row.attempt_token, {"status": "failed"})
-    rb2b.finish(row.pk, row.attempt_token, {"status": "uncertain", "reason": "No confirmation"})
-    with pytest.raises(rb2b.RB2BHeld): rb2b.begin(row.pk, preflight(row))
-    assert owner._daily_count("connect") == 1
-
-
-def test_outcomes_to_rb2b_replies_to_existing_reply_controls(ready, enabled, monkeypatch):
-    from linkedin.notifications import slack
-    calls = []
-    monkeypatch.setattr(slack, "_slack_api", lambda method, payload, label: calls.append((method, payload)) or True)
-    monkeypatch.setattr(slack, "notify_message_received", lambda **kw: calls.append(("reply", kw)) or True)
+def test_outcomes_to_rb2b_replies_to_existing_reply_controls(ready, enabled, slack_calls):
+    calls = slack_calls
     rb2b._notify(ready, "sent")
     rb2b._notify(ready, "failed", "synthetic")
     message = Message.objects.create(lead=ready.lead, source="linkedin", external_id="urn:li:msg:one",
@@ -211,6 +211,8 @@ def test_slack_failure_retries_notification_only(ready, enabled, monkeypatch):
 
 def test_first_reply_resolves_without_deal_and_is_notified_once(ready):
     from linkedin.realtime.handler import handle_realtime_event
+    # The worker stores the verified member URN before it sends.
+    ready.member_urn = LIVE["urn"]; ready.save()
     from linkedin.realtime.parser import ParsedRealtimeMessage
     msg = ParsedRealtimeMessage(entity_urn="urn:li:msg:first", conversation_urn="urn:li:msg_conversation:new",
         sender_member_urn=ready.member_urn, sender_name="New Visitor", text="Thanks, let's talk",
@@ -223,17 +225,6 @@ def test_first_reply_resolves_without_deal_and_is_notified_once(ready):
     assert not Deal.objects.filter(lead=ready.lead).exists()
     from linkedin.realtime.lead_lookup import resolve_lead_for_realtime
     assert resolve_lead_for_realtime(conversation_urn="", sender_member_urn=ready.member_urn, operator="Chuka") is None
-
-
-def test_catchup_import_is_idempotent_and_note_echo_is_outbound(ready):
-    data = {"sender": "Arian", "linkedin_url": ready.linkedin_url, "checked_at": timezone.now().isoformat(),
-            "identity_verified": True, "thread_external_id": "urn:li:msg_conversation:catchup", "messages": [
-                {"entity_urn": "urn:li:msg:note", "sender": "New Visitor", "text": ready.note, "timestamp": "2026-10-30 12:00"},
-                {"entity_urn": "urn:li:msg:reply", "sender": "New Visitor", "text": "Yes please", "timestamp": "2026-10-30 12:01"}]}
-    assert rb2b.ingest_replies(ready.pk, data) == 2
-    assert rb2b.ingest_replies(ready.pk, data) == 0
-    assert Message.objects.get(external_id="urn:li:msg:note").direction == "outbound"
-    assert RB2BNotification.objects.filter(kind="reply").count() == 1
 
 
 def test_migration_preserves_receipts_and_is_idempotent(row):
@@ -256,21 +247,7 @@ def test_command_preview_cannot_register_or_reserve(row, tmp_path):
     call_command("rb2b_workflow", "review", id=row.pk, input=path, stdout=out)
     assert json.loads(out.getvalue())["applied"] is False
     row.refresh_from_db(); assert row.lead_id is None
-
-
-def test_reservation_enforces_combined_daily_and_total_limits(ready, enabled, owner, monkeypatch):
-    import linkedin.models as models
-    campaign = Campaign.objects.create(user=owner.user, name="Quota history")
-    ActionLog.objects.create(linkedin_profile=owner, campaign=campaign, action_type="connect")
-    owner.connect_daily_limit = 1; owner.save()
-    monkeypatch.setitem(models._LIMIT_OVERRIDES, "connect_daily_limit", None)
-    with pytest.raises(rb2b.RB2BHeld, match="shared_sender_limit"):
-        rb2b.begin(ready.pk, preflight(ready))
-    owner.connect_daily_limit = 20; owner.save()
-    monkeypatch.setattr(models, "MAX_TOTAL_DAILY_ACTIONS", 1)
-    with pytest.raises(rb2b.RB2BHeld, match="shared_sender_limit"):
-        rb2b.begin(ready.pk, preflight(ready))
-    ready.refresh_from_db(); assert ready.attempted_at is None
+    assert not Task.objects.filter(task_type="rb2b_connect").exists()
 
 
 def test_late_webhook_preserves_ready_or_sent_review(row, ready):
@@ -295,68 +272,6 @@ def test_discovery_migration_hides_only_original_rb2b_rows(row):
     shown = LinkedInDiscoveryLeadAdmin(LinkedInDiscoveryLead, AdminSite()).get_queryset(None)
     assert not shown.filter(pk=old.pk).exists()
     assert shown.filter(pk=collector.pk).exists()
-
-
-def test_stale_unknown_or_unsafe_send_evidence_is_rejected(ready, enabled):
-    data = preflight(ready); data["checked_at"] = (timezone.now() - timedelta(minutes=6)).isoformat()
-    with pytest.raises(rb2b.RB2BHeld, match="fresh"): rb2b.begin(ready.pk, data)
-    data = preflight(ready); data["not_connected"] = False
-    with pytest.raises(rb2b.RB2BHeld, match="not_connected"): rb2b.begin(ready.pk, data)
-
-
-def test_live_and_catchup_share_one_reply_notification(ready):
-    from linkedin.realtime.handler import handle_realtime_event
-    from linkedin.realtime.parser import ParsedRealtimeMessage
-    msg = ParsedRealtimeMessage(entity_urn="urn:li:msg:overlap", conversation_urn="urn:li:msg_conversation:overlap",
-        sender_member_urn=ready.member_urn, sender_name="New Visitor", text="Hello", timestamp="2026-10-30 12:10")
-    data = {"sender": "Arian", "linkedin_url": ready.linkedin_url, "checked_at": timezone.now().isoformat(),
-            "identity_verified": True, "thread_external_id": msg.conversation_urn, "messages": [
-                {"entity_urn": msg.entity_urn, "sender": msg.sender_name, "text": msg.text, "timestamp": msg.timestamp}]}
-    with patch("linkedin.realtime.handler.parse_realtime_event", return_value=msg), patch("linkedin.rb2b.flush_notifications"):
-        handle_realtime_event({}, operator="Arian")
-        rb2b.ingest_replies(ready.pk, data)
-    assert RB2BNotification.objects.filter(kind="reply").count() == 1
-
-
-@pytest.mark.django_db(transaction=True)
-def test_parallel_iab_reservations_cannot_take_same_sender_budget(monkeypatch):
-    if connection.vendor != "postgresql": pytest.skip("PostgreSQL row locks required")
-    import threading
-    from django.db import connections
-    profile = LinkedInProfile.objects.create(user=UserFactory(username="ariantajbakh"), linkedin_username="ariantajbakh")
-    monkeypatch.setenv("RB2B_IAB_SENDS_ENABLED", "true")
-    monkeypatch.setenv("RB2B_SLACK_CHANNEL_ID", "C_SYNTHETIC")
-    monkeypatch.setattr(rb2b.conf, "SLACK_BOT_TOKEN", "synthetic")
-    monkeypatch.setattr(rb2b.conf, "SLACK_REPLIES_WEBHOOK_URL", "synthetic")
-    monkeypatch.setattr(rb2b.conf, "ENABLE_CONNECT", True)
-    monkeypatch.setattr(rb2b.conf, "ENABLE_REALTIME_LISTENER", True)
-    monkeypatch.setattr(rb2b.conf, "ENABLE_LINKEDIN_DAEMON", True)
-    monkeypatch.setattr(rb2b.conf, "ENABLE_ACTIVE_HOURS", False)
-    monkeypatch.setattr(rb2b.conf, "REST_DAYS", ())
-    monkeypatch.setattr(rb2b, "worker_ready", lambda: None)
-    rows = []
-    for index in range(2):
-        url = f"https://www.linkedin.com/in/concurrent-{index}/"
-        lead = Lead.objects.create(linkedin_url=url, public_identifier=f"concurrent-{index}")
-        rows.append(RB2BVisitor.objects.create(public_identifier=lead.public_identifier, linkedin_url=url,
-                    linkedin_profile=profile, lead=lead, member_urn=f"urn:li:fsd_profile:CONCURRENT{index}", status="ready", note="Hello"))
-    barrier = threading.Barrier(2)
-    results = []
-    def run(row):
-        try:
-            barrier.wait(timeout=5)
-            result = rb2b.begin(row.pk, preflight(row))
-            results.append(result.status)
-        except rb2b.RB2BHeld as exc:
-            results.append(str(exc))
-        finally:
-            connections.close_all()
-    threads = [threading.Thread(target=run, args=(row,)) for row in rows]
-    for thread in threads: thread.start()
-    for thread in threads: thread.join(timeout=10)
-    assert results.count("attempting") == 1
-    assert results.count("sender_reserved_or_pacing") == 1
-    assert profile._daily_count("connect") == 1
 
 
 def test_published_audience_requires_an_arian_connect_route(row):
@@ -402,7 +317,516 @@ def test_additive_schema_accepts_older_heartbeat_writer_and_preserves_profiles()
     assert DaemonHeartbeat.objects.get(sender="OldWriter").rb2b_coordination == {}
 
 
-def test_disabled_listener_blocks_iab_readiness(ready, enabled, monkeypatch):
+def _campaign_connect(owner, *, at=None):
+    campaign = Campaign.objects.create(user=owner.user, name="Existing campaign")
+    task = Task.objects.create(task_type="connect", payload={"campaign_id": campaign.pk},
+                               scheduled_at=at or timezone.now())
+    return campaign, task
+
+
+def test_disabled_rb2b_work_is_never_claimed_and_never_blocks_campaigns(ready, owner):
+    campaign, connect = _campaign_connect(owner)
+    assert Task.objects.seconds_to_next(operator="Arian", campaign_ids=[campaign.pk]) == 0
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk])
+    assert claimed.pk == connect.pk
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk]) is None
+    assert Task.objects.get(task_type="rb2b_connect").status == "pending"
+
+
+def test_enabled_rb2b_takes_the_campaign_connect_turn_and_stays_with_arian(ready, enabled, owner):
+    campaign, connect = _campaign_connect(owner, at=timezone.now() - timedelta(minutes=5))
+    assert Task.objects.claim_next(operator="Chuka", campaign_ids=[]) is None
+    claimed = Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk])
+    assert claimed.task_type == "rb2b_connect"
+    connect.refresh_from_db(); assert connect.status == "pending"
+
+
+def test_due_follow_ups_keep_their_place_ahead_of_rb2b(ready, enabled, owner):
+    campaign, connect = _campaign_connect(owner)
+    followup = Task.objects.create(task_type="follow_up", scheduled_at=timezone.now() - timedelta(hours=1),
+                                   payload={"campaign_id": campaign.pk, "operator": "Arian", "public_id": "other"})
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk]).pk == followup.pk
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk]).task_type == "rb2b_connect"
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[campaign.pk]).pk == connect.pk
+
+
+def test_worker_sends_reviewed_note_and_shares_budget_and_pacing(ready, enabled, owner, worker, slack_calls):
+    campaign, connect = _campaign_connect(owner)
+    before = owner._daily_count("connect")
+    state = worker()
+    ready.refresh_from_db()
+    assert state["sends"] == [(ready.public_identifier, "Hi New, good to connect.")]
+    assert ready.status == "sent" and ready.confirmed_at and ready.attempted_at
+    assert ready.member_urn == LIVE["urn"]
+    assert owner._daily_count("connect") == before + 1
+    assert owner._total_daily_count() >= 1 and owner._weekly_count("connect") >= 1
+    # No synthetic campaign records; the campaign's next connect waits one gap.
+    assert not ActionLog.objects.exists() and not Deal.objects.exists()
+    connect.refresh_from_db()
+    assert connect.scheduled_at == ready.cooldown_until > timezone.now() + timedelta(seconds=590)
+    assert ready.outcome["result"]["sent_invitations_label"] == "Sent 1 minute ago"
+    assert RB2BNotification.objects.get(kind="sent").sent_at
+    text = [payload["text"] for method, payload in slack_calls if method == "chat.postMessage"][0]
+    assert "connection request sent" in text and "Hi New, good to connect." in text
+    # A sent visitor is never contacted again, whatever later work appears.
+    rb2b.enqueue_connect_task(ready)
+    worker()
+    assert len(state["sends"]) == 1
+    with pytest.raises(rb2b.RB2BHeld): rb2b.review(ready.pk, decision(ready))
+
+
+def test_worker_waits_for_shared_pacing_and_holds_campaign_slot(ready, enabled, owner, worker):
+    campaign, connect = _campaign_connect(owner)
+    ActionLog.objects.create(linkedin_profile=owner, campaign=campaign, action_type="connect")
+    state = worker()
+    assert state["sends"] == []
+    paced = Task.objects.get(task_type="rb2b_connect", status="pending")
+    not_before = datetime.fromisoformat(paced.payload["not_before"])
+    assert paced.scheduled_at == not_before
+    connect.refresh_from_db(); assert connect.scheduled_at == not_before
+    # Once that slot arrives the same pacing decision is honored, not re-rolled.
+    Task.objects.filter(pk=paced.pk).update(scheduled_at=timezone.now())
+    paced.payload["not_before"] = (timezone.now() - timedelta(seconds=1)).isoformat()
+    paced.save()
+    worker()
+    assert len(state["sends"]) == 1
+    ready.refresh_from_db(); assert ready.status == "sent"
+
+
+def test_worker_respects_shared_daily_limit(ready, enabled, owner, worker, monkeypatch):
+    import linkedin.models as models
+    campaign, _ = _campaign_connect(owner)
+    ActionLog.objects.create(linkedin_profile=owner, campaign=campaign, action_type="connect")
+    owner.connect_daily_limit = 1; owner.save()
+    monkeypatch.setitem(models._LIMIT_OVERRIDES, "connect_daily_limit", None)
+    state = worker()
+    assert state["sends"] == []
+    ready.refresh_from_db(); assert ready.status == "ready" and ready.attempted_at is None
+    assert Task.objects.get(task_type="rb2b_connect", status="pending").scheduled_at > timezone.now()
+
+
+@pytest.mark.parametrize("change,reason", [
+    ({"first_name": "Someone", "last_name": "Else"}, "linkedin_name_does_not_match_review"),
+    ({"public_identifier": "renamed-visitor"}, "linkedin_alias_requires_review"),
+    ({"connection_degree": 1}, "already_connected"),
+])
+def test_worker_holds_when_live_identity_is_not_provably_the_reviewed_person(ready, enabled, worker, change, reason):
+    worker.state["live"] = {**LIVE, **change}
+    worker()
+    ready.refresh_from_db()
+    assert worker.state["sends"] == [] and ready.status == "held" and ready.attempted_at is None
+    assert ready.review["hold_reason"] == reason
+    assert RB2BNotification.objects.filter(kind="held", detail=reason).exists()
+
+
+def test_worker_holds_pending_invitations_duplicates_and_new_suppression(ready, enabled, worker, owner):
+    from linkedin.enums import ProfileState
+    worker.state["status"] = ProfileState.PENDING
+    worker()
+    ready.refresh_from_db(); assert ready.status == "held" and ready.review["hold_reason"] == "pending_invitation_exists"
+    # The held receipt keeps the verified URN; model an alias that claimed it first.
+    RB2BVisitor.objects.filter(pk=ready.pk).update(status="ready", member_urn="")
+    other = RB2BVisitor.objects.create(public_identifier="alias", linkedin_url="https://www.linkedin.com/in/alias/",
+                                       linkedin_profile=owner, member_urn=LIVE["urn"], status="sent")
+    rb2b.enqueue_connect_task(ready)
+    worker.state["status"] = ProfileState.QUALIFIED
+    worker()
+    ready.refresh_from_db(); assert ready.review["hold_reason"] == "duplicate_rb2b_identity"
+    other.delete()
+    RB2BVisitor.objects.filter(pk=ready.pk).update(status="ready")
+    OutreachSuppression.objects.create(kind="lead", value="New Visitor", public_identifier=ready.public_identifier)
+    rb2b.enqueue_connect_task(ready)
+    worker()
+    ready.refresh_from_db(); assert ready.review["hold_reason"] == "suppressed"
+    assert worker.state["sends"] == []
+
+
+def test_failures_before_reservation_retry_then_fail_without_sending(ready, enabled, worker):
+    worker.state["live"] = IOError("synthetic Voyager outage")
+    for attempt in (1, 2):
+        with pytest.raises(IOError): worker()
+        ready.refresh_from_db(); assert ready.status == "ready" and ready.attempted_at is None
+        assert Task.objects.get(task_type="rb2b_connect", status="pending").payload["precheck_attempts"] == attempt
+    with pytest.raises(IOError): worker()
+    ready.refresh_from_db()
+    assert ready.status == "failed" and ready.attempted_at is None and worker.state["sends"] == []
+    assert not Task.objects.filter(task_type="rb2b_connect", status="pending").exists()
+    # Nothing was reserved, so the next scheduled review may qualify it again.
+    assert rb2b.review(ready.pk, decision(ready)).status == "ready"
+
+
+@pytest.mark.parametrize("outcome,status", [
+    ("exception", "uncertain"),
+    ("qualified", "uncertain"),
+    ("note_limit", "failed"),
+])
+def test_after_reservation_nothing_is_retried(ready, enabled, owner, worker, outcome, status):
+    from linkedin.enums import ProfileState
+    from linkedin.exceptions import ReachedConnectionLimit
+    worker.state["send"] = {
+        "exception": RuntimeError("browser closed mid-send"),
+        "qualified": ProfileState.QUALIFIED,
+        "note_limit": ReachedConnectionLimit("out of free custom notes. Invitation not sent; retry later."),
+    }[outcome]
+    if outcome == "exception":
+        with pytest.raises(RuntimeError): worker()
+    else:
+        worker()
+    ready.refresh_from_db()
+    assert ready.status == status and ready.attempted_at
+    assert owner._daily_count("connect") == 1
+    assert not Task.objects.filter(task_type="rb2b_connect", status="pending").exists()
+    if outcome == "note_limit":
+        assert not LinkedInProfile.objects.get(pk=owner.pk).can_execute("connect")
+    with pytest.raises(rb2b.RB2BHeld): rb2b.review(ready.pk, decision(ready))
+    assert RB2BNotification.objects.filter(kind=status).count() == 1
+
+
+def test_interrupted_reservation_becomes_uncertain_on_restart(ready, enabled, worker):
+    task = Task.objects.get(task_type="rb2b_connect")
+    RB2BVisitor.objects.filter(pk=ready.pk).update(status="attempting", attempted_at=timezone.now())
+    worker(task)
+    ready.refresh_from_db()
+    assert ready.status == "uncertain" and worker.state["sends"] == []
+
+
+def test_startup_reconcile_requeues_only_unreserved_ready_visitors(ready, enabled, owner):
+    Task.objects.filter(task_type="rb2b_connect").update(status="failed")
+    assert rb2b.reconcile_connect_tasks(owner) == 1
+    assert rb2b.reconcile_connect_tasks(owner) == 0
+    Task.objects.filter(task_type="rb2b_connect").delete()
+    RB2BVisitor.objects.filter(pk=ready.pk).update(status="sent", attempted_at=timezone.now())
+    assert rb2b.reconcile_connect_tasks(owner) == 0
+
+
+def test_daemon_runs_rb2b_with_connect_hours_and_no_campaign(monkeypatch):
+    from linkedin import daemon
+    assert daemon._HANDLERS["rb2b_connect"].__name__ == "handle_rb2b_connect"
+    monkeypatch.setattr(daemon, "ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr(daemon, "ENABLE_PACING_CATCH_UP", True)
+    monkeypatch.setattr(daemon, "REST_DAYS", ())
+    monkeypatch.setattr(daemon, "ACTIVE_END_HOUR", 0)
+    monkeypatch.setattr(daemon, "_is_behind_normal_window_pace", lambda profile, action: action == "connect")
+    assert daemon._catch_up_task_types(object()) == {"connect", "rb2b_connect"}
+
+
+def test_preflight_reports_whether_the_live_worker_will_send(ready, enabled, owner):
+    from linkedin.monitoring.node_monitor import write_heartbeat
+    out = StringIO()
+    call_command("rb2b_workflow", "preflight", stdout=out)
+    assert json.loads(out.getvalue())["result"]["worker_connect_ready"] is False
+    write_heartbeat("Arian")
+    out = StringIO()
+    call_command("rb2b_workflow", "preflight", stdout=out)
+    result = json.loads(out.getvalue())["result"]
+    assert result["worker_alive"] and result["worker_connect_ready"] and result["pending_connect_tasks"] == 1
+
+
+def test_listener_disabled_is_never_send_ready(enabled, monkeypatch):
     monkeypatch.setattr(rb2b.conf, "ENABLE_REALTIME_LISTENER", False)
-    with pytest.raises(rb2b.RB2BHeld, match="reply_listener"):
-        rb2b.begin(ready.pk, preflight(ready))
+    assert not rb2b.connect_ready()
+
+
+def test_review_changed_during_checks_is_never_sent(ready, enabled, worker, monkeypatch):
+    from linkedin.enums import ProfileState
+
+    def re_reviewed(session, profile):
+        updated = decision(ready)
+        updated.update(first_name="Different", last_name="Person", note="Hi Different, another reviewed note.")
+        rb2b.review(ready.pk, updated)
+        return ProfileState.QUALIFIED
+    monkeypatch.setattr("linkedin.actions.status.get_connection_status", re_reviewed)
+    worker()
+    ready.refresh_from_db()
+    assert worker.state["sends"] == [] and ready.status == "ready" and ready.attempted_at is None
+    # The re-review's own Task re-runs every check against the new decision.
+    assert Task.objects.filter(task_type="rb2b_connect", status="pending").count() == 1
+
+
+@pytest.mark.parametrize("sent_page,reason", [
+    (set(), "not on Sent Invitations"),
+    (InvitationWithdrawalError("name mismatch"), "check failed"),
+])
+def test_clicked_send_without_sent_invitations_receipt_is_uncertain(ready, enabled, worker, sent_page, reason):
+    worker.state["sent_page"] = sent_page
+    worker()
+    ready.refresh_from_db()
+    assert len(worker.state["sends"]) == 1 and ready.status == "uncertain"
+    assert reason in ready.outcome["result"]["reason"]
+
+
+def test_click_only_helper_result_is_not_confirmation(ready, enabled, worker, monkeypatch):
+    # The real helper with only its UI steps stubbed: Send is "clicked" and it
+    # returns PENDING, but LinkedIn's Sent Invitations page never lists anyone.
+    from linkedin.actions import connect
+    monkeypatch.setattr(connect, "_connect_direct", lambda *a: True)
+    monkeypatch.setattr(connect, "_click_with_note", lambda *a, **kw: True)
+    monkeypatch.setattr(connect, "_check_weekly_invitation_limit", lambda *a: None)
+    monkeypatch.setattr(connect, "send_connection_request", REAL_SEND)
+    worker()
+    ready.refresh_from_db()
+    assert ready.status == "uncertain" and ready.attempted_at
+
+
+def test_outcome_write_failure_never_leaves_a_silent_reservation(ready, enabled, worker, owner):
+    with patch("linkedin.rb2b.record_outcome", side_effect=RuntimeError("synthetic DB interruption after click")):
+        with pytest.raises(RuntimeError): worker()
+    Task.objects.filter(task_type="rb2b_connect").update(status="failed")
+    rb2b.reconcile_connect_tasks(owner)
+    ready.refresh_from_db()
+    assert ready.status == "uncertain" and len(worker.state["sends"]) == 1
+    assert RB2BNotification.objects.filter(kind="uncertain").count() == 1
+
+
+def test_dead_db_connection_on_outcome_write_is_retried_once(ready, enabled, worker, monkeypatch):
+    from types import SimpleNamespace
+    from django.db.utils import OperationalError
+    from linkedin.tasks import rb2b_connect
+    real = rb2b.record_outcome
+    calls, recycled = [], []
+    # The daemon recycles with close_all(); inside a test transaction that
+    # would drop the fixture data, so only record the recycle here.
+    monkeypatch.setattr(rb2b_connect, "connections", SimpleNamespace(close_all=lambda: recycled.append(1)))
+
+    def flaky(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OperationalError("synthetic dropped connection")
+        return real(*args, **kwargs)
+    with patch("linkedin.rb2b.record_outcome", side_effect=flaky):
+        worker()
+    ready.refresh_from_db()
+    assert ready.status == "sent" and len(calls) == 2 and recycled == [1]
+
+
+class _FakeAPI:
+    def __init__(self, session):
+        pass
+
+
+SELF_URN = "urn:li:fsd_profile:ARIAN"
+
+
+def _conversation(urn, thread, *, at=None, others=1):
+    participants = [{"hostIdentityUrn": SELF_URN}, {"hostIdentityUrn": urn}]
+    participants += [{"hostIdentityUrn": f"urn:li:fsd_profile:EXTRA{i}"} for i in range(others - 1)]
+    conversation = {"entityUrn": thread, "conversationParticipants": participants}
+    if at is not None:
+        conversation["lastActivityAt"] = int(at.timestamp() * 1000)
+    return conversation
+
+
+def _messages(*items):
+    return {"data": {"messengerMessagesBySyncToken": {"elements": [
+        {"entityUrn": urn, "body": {"text": text}, "deliveredAt": 1793500000000,
+         "sender": {"participantType": {"member": {"firstName": {"text": first}, "lastName": {"text": "Visitor"}}}}}
+        for urn, text, first in items]}}}
+
+
+@pytest.fixture
+def reply_scan(monkeypatch, ready, owner):
+    """A sent RB2B visitor plus a synthetic, paged Voyager inbox."""
+    from linkedin.tasks import rb2b_replies
+    invited = timezone.now() - timedelta(days=3)
+    RB2BVisitor.objects.filter(pk=ready.pk).update(status="sent", attempted_at=invited, member_urn=LIVE["urn"])
+    old = _conversation("urn:li:fsd_profile:OLD", "urn:li:msg_conversation:old", at=invited - timedelta(days=30))
+    inbox = {"pages": [[_conversation(LIVE["urn"], "urn:li:msg_conversation:rb2b", at=timezone.now()), old]],
+             "messages": _messages(("urn:li:msg:note", ready.note, "New"), ("urn:li:msg:reply", "Happy to talk", "New")),
+             "reads": 0, "older": []}
+
+    def page(index):
+        inbox["reads"] += 1
+        pages = inbox["pages"]
+        return {"data": {"messengerConversationsBySyncToken": {
+            "elements": pages[index] if index < len(pages) else []}}}
+    monkeypatch.setattr(rb2b_replies, "PAGE_DELAY_SECONDS", 0)
+    monkeypatch.setattr("linkedin.api.client.PlaywrightLinkedinAPI", _FakeAPI)
+    monkeypatch.setattr("linkedin.api.messaging.utils.get_self_urn", lambda api: SELF_URN)
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations", lambda api, **kw: page(0))
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations_by_category",
+                        lambda api, **kw: inbox["older"].append(kw) or page(1))
+    monkeypatch.setattr("linkedin.api.messaging.fetch_messages", lambda api, thread: inbox["messages"])
+
+    def run():
+        from linkedin.tasks.rb2b_replies import handle_rb2b_replies
+        task = Task.objects.filter(task_type="rb2b_replies", status="pending").first()
+        if task:
+            task.status = "running"; task.save()
+        handle_rb2b_replies(task or Task(task_type="rb2b_replies", payload={"operator": "Arian"}), Session(owner), {})
+        if task:
+            task.status = "completed"; task.save()
+    # "conversations" is the first page itself, for probes that page by token.
+    inbox["conversations"] = inbox["pages"][0]
+    run.inbox, run.invited = inbox, invited
+    return run
+
+
+def _next_scan():
+    return Task.objects.get(task_type="rb2b_replies", status="pending")
+
+
+def test_reply_catchup_posts_a_missed_reply_once_and_reschedules(reply_scan, ready, enabled, slack_calls):
+    reply_scan()
+    reply_scan()
+    inbound = Message.objects.filter(lead=ready.lead, direction="inbound")
+    assert list(inbound.values_list("external_id", flat=True)) == ["urn:li:msg:reply"]
+    assert Message.objects.get(external_id="urn:li:msg:note").direction == "outbound"
+    assert RB2BNotification.objects.filter(kind="reply").count() == 1
+    assert [call for call in slack_calls if call[0] == "reply"][0][1]["operator"] == "Arian"
+    assert _next_scan().scheduled_at > timezone.now() + timedelta(minutes=55)
+    assert not Deal.objects.exists()
+
+
+def test_reply_pushed_onto_an_older_inbox_page_is_still_found(reply_scan, ready, enabled):
+    # Newer chatter fills page one; the RB2B reply sits on page two.
+    recent = [_conversation(f"urn:li:fsd_profile:BUSY{i}", f"urn:li:msg_conversation:busy{i}",
+                            at=timezone.now() - timedelta(minutes=i)) for i in range(3)]
+    rb2b_thread, old = reply_scan.inbox["pages"][0]
+    rb2b_thread["lastActivityAt"] = int((timezone.now() - timedelta(hours=5)).timestamp() * 1000)
+    reply_scan.inbox["pages"] = [recent, [rb2b_thread, old]]
+    reply_scan()
+    assert reply_scan.inbox["reads"] == 2
+    oldest_recent = min(c["lastActivityAt"] for c in recent)
+    assert reply_scan.inbox["older"] == [{"last_updated_before": oldest_recent, "count": 20}]
+    assert Message.objects.filter(lead=ready.lead, external_id="urn:li:msg:reply", direction="inbound").exists()
+    # A complete pass moves the window to this run's start.
+    assert parse_datetime(_next_scan().payload["since"]) > timezone.now() - timedelta(minutes=1)
+
+
+def test_page_capped_scan_keeps_its_window_for_the_next_run(reply_scan, ready, enabled, monkeypatch):
+    from linkedin.tasks import rb2b_replies
+    monkeypatch.setattr(rb2b_replies, "MAX_PAGES", 2)
+    reply_scan.inbox["pages"] = [
+        [_conversation(f"urn:li:fsd_profile:P{page}C{i}", f"urn:li:msg_conversation:p{page}c{i}",
+                       at=timezone.now() - timedelta(minutes=page * 10 + i)) for i in range(3)]
+        for page in range(2)]
+    reply_scan()
+    assert reply_scan.inbox["reads"] == 2
+    assert parse_datetime(_next_scan().payload["since"]) == reply_scan.invited
+
+
+def test_reply_catchup_skips_group_threads_and_other_leads_threads(reply_scan, ready, enabled):
+    rb2b_thread, old = reply_scan.inbox["pages"][0]
+    group = _conversation(LIVE["urn"], "urn:li:msg_conversation:group", at=timezone.now(), others=2)
+    reply_scan.inbox["pages"] = [[group, old]]
+    reply_scan()
+    other = Lead.objects.create(linkedin_url="https://www.linkedin.com/in/someone-else/")
+    Message.objects.create(lead=other, source="linkedin", external_id="urn:li:msg:other", direction="inbound",
+                           body="Hi", sent_at=timezone.now(), thread_external_id="urn:li:msg_conversation:rb2b")
+    reply_scan.inbox["pages"] = [[rb2b_thread, old]]
+    reply_scan()
+    assert not Message.objects.filter(lead=ready.lead).exists()
+
+
+def test_reply_catchup_is_inert_until_rb2b_is_ready(reply_scan, ready, owner):
+    reply_scan()
+    assert not Message.objects.filter(lead=ready.lead).exists()
+    Task.objects.create(task_type="rb2b_replies", scheduled_at=timezone.now(), payload={"operator": "Arian"})
+    assert Task.objects.claim_next(operator="Arian", campaign_ids=[]) is None
+
+
+def test_linkedin_message_times_are_utc_on_a_toronto_host(monkeypatch, ready):
+    import time
+    from linkedin.actions.conversations import parse_messages
+    from linkedin.db.messages import persist_thread
+    monkeypatch.setenv("TZ", "America/Toronto")
+    time.tzset()
+    try:
+        parsed = parse_messages(_messages(("urn:li:msg:tz", "Hello", "New")))
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+    delivered = datetime.fromtimestamp(1793500000, tz=dtz.utc)
+    assert parsed[0]["timestamp"] == delivered.strftime("%Y-%m-%d %H:%M")
+    persist_thread(lead=ready.lead, parsed=parsed, thread_external_id="urn:li:msg_conversation:tz")
+    assert Message.objects.get(external_id="urn:li:msg:tz").sent_at == delivered.replace(second=0)
+
+
+def test_startup_reconcile_schedules_one_reply_scan(ready, enabled, owner):
+    rb2b.reconcile_connect_tasks(owner)
+    rb2b.reconcile_connect_tasks(owner)
+    assert Task.objects.filter(task_type="rb2b_replies", status="pending").count() == 1
+
+
+def test_stale_hold_never_overwrites_a_newer_review(ready, enabled, worker, monkeypatch):
+    real = rb2b.exclusion
+
+    def re_review_then_check(lead, row):
+        if not getattr(re_review_then_check, "done", False):
+            re_review_then_check.done = True
+            updated = decision(ready); updated["note"] = "Hi New, a newer reviewed note."
+            rb2b.review(ready.pk, updated)
+            return "suppressed"
+        return real(lead, row)
+    monkeypatch.setattr(rb2b, "exclusion", re_review_then_check)
+    worker()
+    ready.refresh_from_db()
+    assert ready.status == "ready" and ready.note == "Hi New, a newer reviewed note."
+    assert not RB2BNotification.objects.filter(kind="held").exists()
+
+
+def test_inbox_paging_falls_back_to_the_sync_token(reply_scan, ready, enabled, monkeypatch):
+    tokens = []
+
+    def base(api, *, sync_token=None, **kwargs):
+        tokens.append(sync_token)
+        if sync_token == "older":
+            return {"data": {"messengerConversationsBySyncToken": {"elements": reply_scan.inbox["conversations"]}}}
+        return {"data": {"messengerConversationsBySyncToken": {
+            "elements": [_conversation("urn:li:fsd_profile:OTHER", "urn:li:msg_conversation:recent")],
+            "nextSyncToken": "older"}}}
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations", base)
+    reply_scan()
+    assert tokens == [None, "older"]
+    assert Message.objects.filter(lead=ready.lead, external_id="urn:li:msg:reply").exists()
+
+
+def _since_kept(reply_scan):
+    return parse_datetime(_next_scan().payload["since"]) == reply_scan.invited
+
+
+def test_graphql_error_body_fails_the_scan_and_keeps_the_checkpoint(reply_scan, ready, enabled, monkeypatch):
+    from linkedin.exceptions import LinkedInInboxResponseError
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations", lambda api, **kw: {
+        "data": None, "errors": [{"message": "synthetic GraphQL failure"}]})
+    with pytest.raises(LinkedInInboxResponseError): reply_scan()
+    assert _since_kept(reply_scan)
+
+
+def test_thread_read_error_fails_the_scan_and_keeps_the_checkpoint(reply_scan, ready, enabled, monkeypatch):
+    from linkedin.exceptions import LinkedInInboxResponseError
+    monkeypatch.setattr("linkedin.api.messaging.fetch_messages", lambda api, thread: {"errors": [{}], "data": {}})
+    with pytest.raises(LinkedInInboxResponseError): reply_scan()
+    assert _since_kept(reply_scan) and not Message.objects.filter(lead=ready.lead).exists()
+
+
+def test_duplicate_page_follows_its_cursor_to_older_threads(reply_scan, ready, enabled, monkeypatch):
+    recent = _conversation("urn:li:fsd_profile:OTHER", "urn:li:msg_conversation:recent", at=timezone.now())
+    threads, older_reads = reply_scan.inbox["conversations"], []
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations", lambda api, **kw: {
+        "data": {"messengerConversationsBySyncToken": {"elements": [recent]}}})
+
+    def older(api, **kwargs):
+        older_reads.append(kwargs)
+        if len(older_reads) == 1:  # overlap: only seen conversations, but a further cursor
+            return {"data": {"messengerConversationsByCategoryQuery": {
+                "elements": [recent], "metadata": {"nextCursor": "older"}}}}
+        return {"data": {"messengerConversationsByCategoryQuery": {"elements": threads}}}
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations_by_category", older)
+    reply_scan()
+    assert older_reads[1] == {"next_cursor": "older", "count": 20}
+    assert Message.objects.filter(lead=ready.lead, external_id="urn:li:msg:reply").exists()
+    assert not _since_kept(reply_scan)
+
+
+@pytest.mark.parametrize("pages", ["repeat", "empty_first"])
+def test_unproven_completion_keeps_the_checkpoint(reply_scan, ready, enabled, monkeypatch, pages):
+    recent = _conversation("urn:li:fsd_profile:OTHER", "urn:li:msg_conversation:recent", at=timezone.now())
+    first = [] if pages == "empty_first" else [recent]
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations", lambda api, **kw: {
+        "data": {"messengerConversationsBySyncToken": {"elements": first}}})
+    # The older query keeps returning the same page: no progress, not the end.
+    monkeypatch.setattr("linkedin.api.messaging.fetch_conversations_by_category", lambda api, **kw: {
+        "data": {"messengerConversationsByCategoryQuery": {"elements": [recent]}}})
+    reply_scan()
+    assert _since_kept(reply_scan)

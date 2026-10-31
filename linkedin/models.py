@@ -1175,11 +1175,19 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
         | (Q(task_type=Task.TaskType.FEED_LIKE) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.DISCOVERY) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.RB2B_CONNECT) & Q(payload__operator=operator))
+        | (Q(task_type=Task.TaskType.RB2B_REPLIES) & Q(payload__operator=operator))
         | (
             Q(task_type=Task.TaskType.CONNECT)
             & Q(payload__campaign_id__in=owned)
         )
     )
+
+
+def rb2b_connect_ready() -> bool:
+    from linkedin.rb2b import connect_ready
+
+    return connect_ready()
 
 
 def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
@@ -1192,7 +1200,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     account.
 
     - follow_up / manual_reply / feed_comment / feed_like / sweep_connections /
-      discovery: claimable when `payload.operator` matches.
+      discovery / rb2b_connect / rb2b_replies: claimable when `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
       account that owns the campaign.
@@ -1229,16 +1237,6 @@ class TaskQuerySet(models.QuerySet):
         """
         if candidate is None:
             return None
-        from linkedin.rb2b import sender_blocked, task_profile
-        with transaction.atomic():
-            profile = task_profile(candidate)
-            if profile:
-                LinkedInProfile.objects.select_for_update().get(pk=profile.pk)
-                if sender_blocked(profile.pk, pacing=candidate.task_type in {"connect", "follow_up", "drip_linkedin"}):
-                    return None
-            return self._mark_claimed(candidate)
-
-    def _mark_claimed(self, candidate):
         started_at = timezone.now()
         updated = self.model.objects.filter(
             pk=candidate.pk,
@@ -1262,8 +1260,8 @@ class TaskQuerySet(models.QuerySet):
         daemon is logged in as; `campaign_ids` are the pks of the
         campaigns that account owns. When `operator` is supplied:
 
-          - follow_up/manual_reply/feed_comment/feed_like/discovery Tasks are
-            filtered to those whose `payload.operator` matches;
+          - follow_up/manual_reply/feed_comment/feed_like/discovery/rb2b_*
+            Tasks are filtered to those whose `payload.operator` matches;
           - drip_linkedin Tasks are filtered to their frozen lane operator;
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
@@ -1281,10 +1279,15 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
+        # Disabled RB2B work stays pending, untouched, until the flag is on.
+        if not rb2b_connect_ready():
+            qs = qs.exclude(task_type__in=Task.rb2b_task_types())
         # Manual replies remain latency-critical. A maintenance sweep receives
         # fairness priority only after it has waited beyond the configured
         # bound; otherwise delivery work wins and a sweep uses the next pacing
-        # gap. Sweeps themselves have a hard runtime budget.
+        # gap. Sweeps themselves have a hard runtime budget. A reviewed RB2B
+        # invitation is a connect: it keeps the connect lane's place relative
+        # to follow-ups and takes a due campaign connect's turn.
         priority_queries = [
             qs.filter(task_type=Task.TaskType.MANUAL_REPLY),
             qs.filter(task_type=Task.TaskType.FEED_COMMENT),
@@ -1300,6 +1303,7 @@ class TaskQuerySet(models.QuerySet):
                 task_type__in=[
                     Task.TaskType.FOLLOW_UP,
                     Task.TaskType.CONNECT,
+                    Task.TaskType.RB2B_CONNECT,
                 ],
             ),
             qs.exclude(
@@ -1308,6 +1312,7 @@ class TaskQuerySet(models.QuerySet):
                     Task.TaskType.FEED_COMMENT,
                     Task.TaskType.FEED_LIKE,
                     Task.TaskType.STATUS_SUMMARY,
+                    Task.TaskType.RB2B_CONNECT,
                     Task.TaskType.FOLLOW_UP,
                     Task.TaskType.CONNECT,
                     Task.TaskType.SWEEP_CONNECTIONS,
@@ -1318,6 +1323,9 @@ class TaskQuerySet(models.QuerySet):
         for priority_qs in priority_queries:
             candidate = priority_qs.first()
             if candidate is not None:
+                if candidate.task_type == Task.TaskType.CONNECT:
+                    # A due RB2B invitation takes this connect's turn.
+                    candidate = qs.filter(task_type=Task.TaskType.RB2B_CONNECT).first() or candidate
                 return self._claim_candidate(candidate)
         return None
 
@@ -1340,13 +1348,11 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
+        if not rb2b_connect_ready():
+            qs = qs.exclude(task_type__in=Task.rb2b_task_types())
         next_task = qs.first()
         if next_task is None:
             return None
-        from linkedin.rb2b import sender_blocked, task_profile
-        profile = task_profile(next_task)
-        if profile and sender_blocked(profile.pk, pacing=next_task.task_type in {"connect", "follow_up", "drip_linkedin"}):
-            return 30.0
         return max((next_task.scheduled_at - timezone.now()).total_seconds(), 0)
 
     def next_enrichment(self) -> "Task | None":
@@ -1386,6 +1392,8 @@ class Task(models.Model):
         FEED_LIKE = "feed_like"
         STATUS_SUMMARY = "status_summary"
         DISCOVERY = "discovery"
+        RB2B_CONNECT = "rb2b_connect"
+        RB2B_REPLIES = "rb2b_replies"
 
     class Status(models.TextChoices):
         PENDING = "pending"
@@ -1415,7 +1423,13 @@ class Task(models.Model):
             cls.TaskType.FEED_LIKE,
             cls.TaskType.SWEEP_CONNECTIONS,
             cls.TaskType.DISCOVERY,
+            cls.TaskType.RB2B_CONNECT,
+            cls.TaskType.RB2B_REPLIES,
         ]
+
+    @classmethod
+    def rb2b_task_types(cls) -> list[str]:
+        return [cls.TaskType.RB2B_CONNECT, cls.TaskType.RB2B_REPLIES]
 
     @classmethod
     def non_linkedin_outbound_task_types(cls) -> list[str]:
@@ -1509,6 +1523,22 @@ class Task(models.Model):
                 )
             if payload.get("section_cursor") is None:
                 errors.append("discovery tasks require payload.section_cursor")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.RB2B_CONNECT
+        ):
+            if not payload.get("operator"):
+                errors.append("rb2b_connect tasks require non-empty payload.operator")
+            if not payload.get("visitor_id"):
+                errors.append("rb2b_connect tasks require payload.visitor_id")
+
+        if (
+            self.status in {self.Status.PENDING, self.Status.RUNNING}
+            and self.task_type == self.TaskType.RB2B_REPLIES
+            and not payload.get("operator")
+        ):
+            errors.append("rb2b_replies tasks require non-empty payload.operator")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}

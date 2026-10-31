@@ -1,7 +1,7 @@
 # linkedin/actions/conversations.py
 """Retrieve past LinkedIn conversations for a given profile."""
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 
 from linkedin.api.client import PlaywrightLinkedinAPI
 from linkedin.api.messaging import fetch_conversations, fetch_messages, encode_urn
@@ -78,8 +78,11 @@ def parse_messages(raw: dict) -> list[dict]:
         last = (participant.get("lastName") or {}).get("text", "")
         sender_name = f"{first} {last}".strip()
 
+        # UTC, like the realtime parser: persist_thread reads these strings in
+        # Django's UTC time zone, so host-local time would shift on Windows.
         delivered_at = msg.get("deliveredAt")
-        ts = datetime.fromtimestamp(delivered_at / 1000).strftime("%Y-%m-%d %H:%M") if delivered_at else ""
+        ts = (datetime.fromtimestamp(delivered_at / 1000, tz=dt_timezone.utc).strftime("%Y-%m-%d %H:%M")
+              if delivered_at else "")
 
         messages.append({
             "entity_urn": entity_urn,

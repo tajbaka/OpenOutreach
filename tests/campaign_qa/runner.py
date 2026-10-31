@@ -47,7 +47,9 @@ def main():
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'rb2b-intake':
         return pytest.main(common + ['tests/test_rb2b_webhook.py', 'tests/test_rb2b_workflow.py',
                                     'tests/realtime/test_handler.py', 'tests/realtime/test_lead_lookup.py',
-                                    'tests/tasks/test_tasks.py',
+                                    'tests/tasks/test_tasks.py', 'tests/test_heal.py',
+                                    'tests/test_schedule.py', 'tests/discovery/test_daemon_schedule.py',
+                                    'tests/test_daemon_resilience.py',
                                     'tests/test_linkedin_reposts.py'])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'daemon-browser':
         return pytest.main(common + [

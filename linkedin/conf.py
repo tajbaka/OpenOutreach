@@ -193,6 +193,13 @@ ENABLE_CONNECT = os.getenv("ENABLE_CONNECT", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
+# Reviewed RB2B visitors: the Arian daemon claims rb2b_connect Tasks ahead of
+# campaign connects, inside the same hours, limits and pacing. Default OFF;
+# while off those Tasks stay pending and are never claimed.
+ENABLE_RB2B_CONNECT = os.getenv("ENABLE_RB2B_CONNECT", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 # Independent kill-switch for the connection sweep (acceptance detection).
 # When true, the daemon visits the Connections page every
 # CONNECTION_SWEEP_INTERVAL_HOURS and transitions PENDING → CONNECTED for
