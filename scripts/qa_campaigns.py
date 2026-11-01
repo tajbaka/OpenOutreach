@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 from datetime import datetime, timezone
 
@@ -57,6 +58,9 @@ def run() -> int:
     fingerprints = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in INPUTS}
     source_sha256, source_file_count = source_fingerprint()
     clean_env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR') if key in os.environ}
+    # Hosted Python uses a shared libpython. Derive its library directory from
+    # this interpreter rather than inheriting arbitrary loader paths/secrets.
+    clean_env['LD_LIBRARY_PATH'] = str(Path(sysconfig.get_config_var('LIBDIR')).resolve())
     # A short private Unix-socket path avoids both TCP exposure and macOS's
     # socket path limit. This cluster contains synthetic data only.
     cluster = Path(tempfile.mkdtemp(prefix='campaign-qa-', dir='/tmp')).resolve()
