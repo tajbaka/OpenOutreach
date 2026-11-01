@@ -18,7 +18,7 @@ jobs:
       - name: Prepare credential-free test environment
         run: |
           python -m venv .venv
-          .venv/bin/pip install -r requirements/local.txt
+          .venv/bin/pip install -r requirements/local.txt -r requirements/slack.txt
           chown -R postgres:postgres "$GITHUB_WORKSPACE"
       - name: Isolated PostgreSQL priority and campaign regressions
         shell: bash
