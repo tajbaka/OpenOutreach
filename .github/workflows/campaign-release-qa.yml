@@ -8,7 +8,7 @@ permissions:
 jobs:
   postgres:
     runs-on: ubuntu-latest
-    container: postgres:17-bookworm
+    container: postgres:17-trixie
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
