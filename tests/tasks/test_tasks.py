@@ -33,6 +33,12 @@ from linkedin.actions.connections import ConnectionScrapeResult
 from tests.factories import UserFactory
 
 
+@pytest.fixture(autouse=True)
+def _offline_profile_embedding(monkeypatch):
+    # These workflow tests exercise scheduling/delivery, not model inference.
+    monkeypatch.setattr("linkedin.db.leads.embed_profile", lambda *a, **kw: True)
+
+
 SAMPLE_PROFILE = {
     "first_name": "Alice",
     "last_name": "Smith",

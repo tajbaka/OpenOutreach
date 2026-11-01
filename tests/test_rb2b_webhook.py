@@ -155,7 +155,7 @@ def test_rolling_deployment_keeps_collecting_before_new_schema(owner):
     # receipt migration reconciles both histories without losing either.
     new = api.store_visitor(connection.connection, v)
     assert new['storage_version'] == 2
-    from linkedin.rb2b import migrate_discovery
+    from linkedin.legacy_rb2b import migrate_discovery
     migrate_discovery(); migrate_discovery()
     row = RB2BVisitor.objects.get(pk=new['visitor_id'])
     assert row.events[v['fingerprint']]['receipt_count'] == 2

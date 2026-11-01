@@ -70,3 +70,91 @@ def flush_notifications(limit=50):
             n.save(update_fields=["attempts", "sent_at", "next_attempt_at"])
     return delivered
 
+
+
+class LegacyReceiptHold(ValueError):
+    pass
+
+
+def owner():
+    from linkedin.models import LinkedInProfile
+    from linkedin.operators import resolve_operator
+    profiles = list(LinkedInProfile.objects.filter(user__username="ariantajbakh", active=True))
+    if len(profiles) != 1 or resolve_operator(profiles[0].linkedin_username) != SENDER:
+        raise LegacyReceiptHold("arian_owner_not_unique")
+    return profiles[0]
+
+
+def canonical_url(url):
+    from api.rb2b_webhook import normalize_visitor
+    return normalize_visitor({"LinkedIn URL": url, "Seen At": "identity-check"})["url"]
+
+
+def migrate_discovery():
+    """Copy legacy receipts idempotently, retaining original row IDs and fields.
+
+    Run after the v2 receiver is deployed, then once more to catch a request
+    already in flight at cutover. No historical discovery row is deleted.
+    """
+    from copy import deepcopy
+    from api.rb2b_webhook import normalize_visitor
+    from django.db import connection
+    from linkedin.models import LinkedInDiscoveryLead
+    profile = owner()
+    migrated = []
+    for pk, pid in LinkedInDiscoveryLead.objects.filter(
+        profile_data__rb2b_intake__isnull=False,
+    ).values_list("pk", "public_identifier"):
+        with transaction.atomic():
+            if connection.vendor == "postgresql":
+                lock = int.from_bytes(hashlib.sha256(("rb2b:" + pid.lower()).encode()).digest()[:8], "big", signed=True)
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock])
+            old = LinkedInDiscoveryLead.objects.select_for_update().get(pk=pk)
+            meta = old.profile_data.get("rb2b_intake", {})
+            if not isinstance(meta.get("events"), dict) or meta.get("schema_version") != 1:
+                raise LegacyReceiptHold("invalid_legacy_receipts")
+            url = canonical_url(old.linkedin_url)
+            if url != f"https://www.linkedin.com/in/{pid.lower()}/":
+                raise LegacyReceiptHold("legacy_identity_conflict")
+            row, _ = RB2BVisitor.objects.select_for_update().get_or_create(
+                public_identifier=pid.lower(), defaults={"linkedin_url": url, "linkedin_profile": profile},
+            )
+            if row.linkedin_profile_id != profile.pk or row.linkedin_url != url:
+                raise LegacyReceiptHold("legacy_sender_or_identity_conflict")
+            imports = row.review.setdefault("legacy_imports", {})
+            prior = imports.get(str(pk), {}).get("events", {})
+            for key, event in meta["events"].items():
+                normalized = normalize_visitor(event.get("payload"))
+                if normalized.get("fingerprint") != key or normalized.get("url") != url:
+                    raise LegacyReceiptHold("legacy_payload_conflict")
+                existing = row.events.get(key)
+                if existing:
+                    if existing["payload"] != event["payload"]:
+                        raise LegacyReceiptHold("legacy_payload_conflict")
+                    previous_count = prior.get(key, {}).get("receipt_count", 0)
+                    existing["receipt_count"] += max(0, event["receipt_count"] - previous_count)
+                    existing["first_received_at"] = min(existing["first_received_at"], event["first_received_at"])
+                    existing["last_received_at"] = max(existing["last_received_at"], event["last_received_at"])
+                    if event.get("review") and existing.get("review") not in ({}, event["review"]):
+                        raise LegacyReceiptHold("legacy_review_conflict")
+                    if event.get("review"):
+                        existing["review"] = deepcopy(event["review"])
+                    if event.get("review_status") not in {None, "new", "pending"}:
+                        existing["review_status"] = event["review_status"]
+                else:
+                    row.events[key] = deepcopy(event)
+                # Any old processing evidence requires review before a new send.
+                if event.get("review") or event.get("review_status") not in {None, "new", "pending"}:
+                    row.review["legacy_processing_hold"] = True
+                    if not row.attempted_at:
+                        row.status = "held"
+            imports[str(pk)] = {"events": deepcopy(meta["events"]), "discovery_id": pk}
+            row.save()
+            data = deepcopy(old.profile_data)
+            data["rb2b_migrated_to"] = row.pk
+            old.profile_data = data
+            old.save(update_fields=["profile_data", "updated_at"])
+            migrated.append({"discovery_id": pk, "visitor_id": row.pk})
+    return migrated
+

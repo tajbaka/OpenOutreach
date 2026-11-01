@@ -1,5 +1,26 @@
 # Priority on normal campaigns
 
+## Compatibility publication
+
+The release now retains the deployed `api/rb2b_webhook.py` unchanged so publishing
+campaign capability does not remove the current collection endpoint. Passive
+historical reservation accounting and exact-member reply lookup/notification
+delivery remain in `linkedin/legacy_rb2b.py`. That module cannot enqueue or send
+invitations. Its outbox drain only handles historical `visitor:` and `reply:`
+keys; the external integration owns its separate `event:` and `review:` notices.
+Generic enrollment also refuses historical attempted/ready/terminal visitor
+records even under a new source/reference. Retired connection Tasks remain
+unclaimed and unchanged.
+
+These compatibility measures permit code publication with existing campaigns
+at their default priority and external enrollment disabled. They do not clear
+the separate historical handover or authorize new RB2B enrollments. Keep the
+replacement review paused until that gate, explicit campaign/version/audience
+approval, receiver/callback configuration and runtime readiness are verified.
+The older removal/pinning warnings below describe the pre-compatibility
+revision; do not remove the retained endpoint or passive guards in a later
+cleanup without a separately verified cutover.
+
 Implementation prepared for publication and review. No campaign has been created, activated or
 reconfigured, and no worker has been restarted. This worktree also contains the
 selective reversal documented in `campaign-priority-clean-start.md`. Do not
