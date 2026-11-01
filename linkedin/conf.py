@@ -129,6 +129,17 @@ REST_DAYS = tuple(
     int(day.strip()) for day in os.getenv("REST_DAYS", "5,6").split(",") if day.strip()
 )      # 0=Mon … 6=Sun; default Sat+Sun off
 
+# Explicit campaign connection-only exceptions to hours AND rest days. Empty
+# preserves every existing schedule. Ownership, activity and all send controls
+# are still checked by the normal worker; this never enables follow-ups.
+CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS = tuple(
+    int(value.strip())
+    for value in os.getenv("CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", "").split(",")
+    if value.strip()
+)
+if any(value <= 0 for value in CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS):
+    raise ValueError("CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS requires positive campaign IDs")
+
 # How often to sweep the My Network → Connections page to detect accepted
 # invitations in bulk (replaces per-profile check_pending visits).
 CONNECTION_SWEEP_INTERVAL_HOURS = float(os.getenv("CONNECTION_SWEEP_INTERVAL_HOURS", "2"))

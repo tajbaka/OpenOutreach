@@ -3,14 +3,15 @@
 Only LinkedIn/HTTP boundaries are faked. Run with smoke_campaign_priority.py,
 which separately denies network, subprocesses, .env reads and PostgreSQL.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.utils import timezone
 
 from crm.models import Deal, Message
-from linkedin import campaign_callbacks, campaign_integrations, conf
+from linkedin import campaign_callbacks, campaign_integrations, conf, daemon
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign, CampaignSubmission, OutboundDelivery, Task
 from linkedin.tasks.connect import ConnectStrategy, enqueue_follow_up, handle_connect
@@ -46,7 +47,21 @@ def test_fake_visitor_priority_invitation_callback_retry_and_sequence(fake_sessi
     result = campaign_integrations.submit(body, apply=True)
     assert campaign_integrations.submit(body, apply=True) == result
     assert CampaignSubmission.objects.count() == 1
-    task = Task.objects.claim_next(operator="Arian", campaign_ids=[low.pk, high.pk])
+    # A Saturday night exercises the same normal handler through the narrow
+    # campaign-hours exception; the older ordinary campaign stays parked.
+    monkeypatch.setattr(daemon, "ENABLE_ACTIVE_HOURS", True)
+    monkeypatch.setattr(daemon, "ENABLE_PACING_CATCH_UP", False)
+    monkeypatch.setattr(daemon, "REST_DAYS", (5, 6))
+    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (high.pk,))
+    monkeypatch.setattr(daemon, "_discovery_available_now", lambda *a, **kw: False)
+    after_hours = datetime(2026, 10, 31, 22, tzinfo=ZoneInfo("America/Toronto"))
+    scope = daemon._connection_campaign_ids_now(fake_session.linkedin_profile, now=after_hours)
+    kinds = daemon._claimable_task_types_now(fake_session.linkedin_profile, now=after_hours)
+    assert scope == (high.pk,) and kinds == {"connect"}
+    assert daemon.seconds_until_active(fake_session.linkedin_profile, now=after_hours) == 0
+    task = daemon._task_queue_for_connection_scope(scope).claim_next(
+        operator="Arian", campaign_ids=[low.pk, high.pk], task_types=kinds,
+    )
     assert task.payload["campaign_id"] == high.pk
     old.refresh_from_db()
     assert old.status == "pending" and old.scheduled_at == old_date

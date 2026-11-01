@@ -47,6 +47,7 @@ def main():
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'campaign-priority':
         return pytest.main(common + [
             'tests/test_campaign_priority.py', 'tests/test_campaign_integrations.py',
+            'tests/test_campaign_hours.py', 'tests/test_schedule.py',
             'tests/test_retired_connection_tasks.py', 'tests/test_legacy_rb2b.py',
             'tests/test_rb2b_webhook.py', 'tests/tasks/test_claim_filter.py',
             'tests/test_action_log.py', 'tests/test_heal.py', 'tests/test_daemon_resilience.py',
@@ -90,6 +91,7 @@ def main():
             'tests/test_linkedin_pending.py', 'tests/test_linkedin_pending_sheet.py',
         ])
     return pytest.main(common + [
+        'tests/test_campaign_hours.py', 'tests/test_schedule.py',
         'tests/campaign_qa/test_imported_campaigns.py',
         'tests/test_general_icp_json.py', 'tests/test_general_icp_messages.py',
         'tests/test_message_roles.py', 'tests/test_message_delivery.py',

@@ -28,6 +28,29 @@ deploy that combined reversal without the Windows receipt handover below.
 
 ## Scheduling contract
 
+### Explicit connection-hours exception
+
+External qualification and enrollment are independent of sender working hours.
+For an explicitly approved campaign, set `CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS`
+to a comma-separated list of its actual numeric IDs in that sender's worker
+environment. The default is empty. Only normal connection Tasks for active,
+owned, listed campaigns can run outside working hours and on rest days.
+The recurring RB2B review does not change this setting or enable a campaign.
+
+This exception does not enable follow-ups, Gmail, discovery, another sender or
+another campaign outside its existing schedule. Existing catch-up behavior is
+preserved. Daily/weekly/total limits, LinkedIn restrictions, sender stops,
+campaign activity, frozen messages, due times, and normal pacing still apply.
+An exhausted opted-in campaign rechecks those same guards at local midnight
+(including DST), rather than waiting for the next workday. A quota is never
+reset or increased by the exception. Preflight reports the configured IDs;
+this is configuration evidence, not proof a remote worker has loaded them.
+
+The intended RB2B rollout selects only Arian's campaign 58. Keep this setting
+unset in the live environment until the historical handover, callbacks and
+runtime readiness gates are cleared; source publication alone activates none
+of these exceptions and requires no database migration.
+
 `Campaign.connection_priority` is an integer from 0 to 32767. Existing campaigns
 receive 0. Larger values get the next **due connection** turn ahead of smaller
 values, within the same sender's eligible campaigns. Equal priorities retain

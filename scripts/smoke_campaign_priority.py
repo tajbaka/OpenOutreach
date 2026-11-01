@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE_TESTS = (
     "tests/test_campaign_smoke.py",
     "tests/test_campaign_priority.py", "tests/test_campaign_integrations.py",
+    "tests/test_campaign_hours.py", "tests/test_schedule.py",
     "tests/test_retired_connection_tasks.py", "tests/test_legacy_rb2b.py", "tests/test_rb2b_webhook.py", "tests/tasks/test_claim_filter.py",
     "tests/test_action_log.py", "tests/tasks/test_message_program_runtime.py",
     "tests/test_daemon_resilience.py",

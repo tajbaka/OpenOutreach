@@ -20,6 +20,7 @@ from linkedin.conf import (
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     CONNECT_LOW_POOL_THRESHOLD,
+    CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS,
     ENABLE_AUTO_DISCOVERY,
     ENABLE_CONNECT,
     ENABLE_FOLLOW_UP,
@@ -185,10 +186,10 @@ def _build_qualifiers(campaigns, cfg, kit_model=None):
 # ------------------------------------------------------------------
 
 
-def seconds_until_active(profile=None) -> float:
+def seconds_until_active(profile=None, *, now=None) -> float:
     """Return seconds until outbound work or dynamically gated discovery."""
     tz = ZoneInfo(ACTIVE_TIMEZONE)
-    now = timezone.localtime(timezone=tz)
+    now = now or timezone.localtime(timezone=tz)
     is_workday = now.weekday() not in REST_DAYS
     is_normal_active = ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR
     is_catch_up_active = bool(_catch_up_task_types(profile, now=now))
@@ -198,10 +199,48 @@ def seconds_until_active(profile=None) -> float:
         not ENABLE_ACTIVE_HOURS
         or (is_workday and (is_normal_active or is_catch_up_active))
         or is_discovery_active
+        or bool(_connection_campaign_ids_now(profile, now=now))
     ):
         return 0.0
 
     return _seconds_until_next_active_start(now)
+
+
+def _connection_campaign_ids_now(profile=None, *, now=None):
+    """None permits the existing connect lane; a tuple scopes its exception.
+
+    A task-type gate alone would wake every campaign when one is opted in.
+    Use this campaign scope for BOTH claiming and computing the next wake-up.
+    """
+    tz = ZoneInfo(ACTIVE_TIMEZONE)
+    now = now or timezone.localtime(timezone=tz)
+    if (
+        not ENABLE_ACTIVE_HOURS
+        or (now.weekday() not in REST_DAYS and ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR)
+        or Task.TaskType.CONNECT in _catch_up_task_types(profile, now=now)
+    ):
+        return None
+    if not ENABLE_CONNECT or not CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS or profile is None:
+        return ()
+    from linkedin.models import Campaign
+
+    return tuple(Campaign.objects.filter(
+        pk__in=CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS,
+        user_id=profile.user_id,
+        status=Campaign.Status.ACTIVE,
+    ).values_list("pk", flat=True))
+
+
+def _task_queue_for_connection_scope(campaign_ids):
+    from django.db.models import Q
+
+    queue = Task.objects.all()
+    if campaign_ids is not None:
+        references = [value for pk in campaign_ids for value in (pk, str(pk))]
+        queue = queue.filter(
+            ~Q(task_type=Task.TaskType.CONNECT) | Q(payload__campaign_id__in=references),
+        )
+    return queue
 
 
 def _seconds_until_next_active_start(now=None) -> float:
@@ -263,10 +302,10 @@ def _browser_task_types_without_discovery() -> set[str]:
     )
 
 
-def _claimable_task_types_now(profile=None):
+def _claimable_task_types_now(profile=None, *, now=None):
     """Gate discovery dynamically while preserving every other browser lane."""
     tz = ZoneInfo(ACTIVE_TIMEZONE)
-    now = timezone.localtime(timezone=tz)
+    now = now or timezone.localtime(timezone=tz)
     discovery_active = _discovery_available_now(profile, now=now)
     if not ENABLE_ACTIVE_HOURS:
         return None if discovery_active else _browser_task_types_without_discovery()
@@ -275,12 +314,13 @@ def _claimable_task_types_now(profile=None):
     # On weekdays discovery_active means the connect lane is genuinely parked:
     # either no connectable candidates remain or its work is scheduled beyond
     # today. Do not let pacing catch-up for an empty pool mask that handoff.
+    exception = {Task.TaskType.CONNECT} if _connection_campaign_ids_now(profile, now=now) else set()
     if discovery_active:
-        return {Task.TaskType.DISCOVERY}
+        return {Task.TaskType.DISCOVERY} | exception
     catch_up = _catch_up_task_types(profile, now=now)
     if catch_up:
-        return catch_up
-    return set()
+        return catch_up | exception
+    return exception
 
 
 def listener_should_run_now(*, now=None) -> bool:
@@ -915,8 +955,11 @@ def run_daemon(session):
             time.sleep(browser_recovery.POLL_SECONDS)
             continue
 
-        pause = seconds_until_active(session.linkedin_profile)
-        claimable_task_types = _claimable_task_types_now(session.linkedin_profile)
+        schedule_now = timezone.localtime(timezone=ZoneInfo(ACTIVE_TIMEZONE))
+        connection_campaign_ids = _connection_campaign_ids_now(session.linkedin_profile, now=schedule_now)
+        task_queue = _task_queue_for_connection_scope(connection_campaign_ids)
+        pause = seconds_until_active(session.linkedin_profile, now=schedule_now)
+        claimable_task_types = _claimable_task_types_now(session.linkedin_profile, now=schedule_now)
         outside_hours_bypass = False
         if pause > 0:
             always_on_task_types = {
@@ -957,7 +1000,7 @@ def run_daemon(session):
                 Task.TaskType.STATUS_SUMMARY,
             }
 
-        task = Task.objects.claim_next(
+        task = task_queue.claim_next(
             operator=our_operator, campaign_ids=our_campaign_ids,
             task_types=claimable_task_types,
         )
@@ -968,6 +1011,8 @@ def run_daemon(session):
                 or Task.TaskType.CONNECT in claimable_task_types
             ):
                 for campaign in campaigns:
+                    if connection_campaign_ids is not None and campaign.pk not in connection_campaign_ids:
+                        continue
                     if _ensure_connect_task_for_campaign(campaign, delay_seconds=0):
                         logger.warning(
                             "[%s] connect queue was empty while work remained — queued recovery task",
@@ -978,7 +1023,7 @@ def run_daemon(session):
             if recovered_missing_connect:
                 continue
 
-            wait = Task.objects.seconds_to_next(
+            wait = task_queue.seconds_to_next(
                 operator=our_operator, campaign_ids=our_campaign_ids,
                 task_types=claimable_task_types,
             )

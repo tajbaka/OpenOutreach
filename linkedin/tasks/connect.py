@@ -24,6 +24,7 @@ from linkedin.conf import (
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     CONNECT_DAILY_LIMIT,
+    CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS,
     ENABLE_ACTIVE_HOURS,
     ENABLE_CONNECT,
     ENABLE_PACING_CATCH_UP,
@@ -242,6 +243,17 @@ def _outside_active_window() -> bool:
     return now.weekday() in REST_DAYS or not (ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR)
 
 
+def _connection_limit_delay(campaign_id: int) -> float:
+    if campaign_id not in CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS:
+        return _seconds_until_next_active_start()
+    # Recheck unchanged quotas/restrictions after LOCAL midnight rather than
+    # parking an opted-in campaign until the next weekday's opening hour.
+    now = timezone.localtime(timezone=ZoneInfo(ACTIVE_TIMEZONE))
+    tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    # UTC subtraction also accounts for the DST offset changing overnight.
+    return max((tomorrow.astimezone(ZoneInfo("UTC")) - now.astimezone(ZoneInfo("UTC"))).total_seconds(), 1.0)
+
+
 def _active_window_progress_seconds(profile, action_type: str) -> tuple[float, float]:
     """Return (remaining, normal_window) seconds in ACTIVE_TIMEZONE.
 
@@ -417,7 +429,7 @@ def handle_connect(task, session, qualifiers):
 
     # --- Rate limit check ---
     if not session.linkedin_profile.can_execute(ActionLog.ActionType.CONNECT):
-        enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
+        enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign_id))
         return
 
     # --- Get candidate ---
@@ -664,7 +676,7 @@ def handle_connect(task, session, qualifiers):
             )
         logger.warning("Rate limited: %s", e)
         session.linkedin_profile.mark_exhausted(ActionLog.ActionType.CONNECT)
-        enqueue_connect(campaign_id, delay_seconds=_seconds_until_next_active_start())
+        enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign_id))
         return
     except ExistingPendingInvite:
         if connection_delivery is not None:
