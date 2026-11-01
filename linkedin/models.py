@@ -193,6 +193,14 @@ class Campaign(models.Model):
     booking_link = models.URLField(max_length=500, blank=True)
     is_freemium = models.BooleanField(default=False)
     action_fraction = models.FloatField(default=0.2)
+    connection_priority = models.PositiveSmallIntegerField(
+        default=0,
+        db_default=0,
+        help_text=(
+            "Higher values take earlier due connection slots for this sender. "
+            "0 preserves normal ordering; limits, hours and follow-ups are unchanged."
+        ),
+    )
     seed_public_ids = models.JSONField(default=list, blank=True)
     model_blob = models.BinaryField(null=True, blank=True)
     active_message_version = models.ForeignKey(
@@ -557,6 +565,7 @@ class LinkedInProfile(models.Model):
             "Remains set until explicitly cleared; clearing does not restart workers."
         ),
     )
+    # Keep the persisted LinkedIn restriction and the already-applied 0038 schema.
     connect_restricted_on = models.DateField(null=True, blank=True)
     connect_daily_limit = models.PositiveIntegerField(default=20)
     connect_weekly_limit = models.PositiveIntegerField(default=100)
@@ -634,24 +643,19 @@ class LinkedInProfile(models.Model):
         logger.warning("Rate limit: %s externally exhausted for today", action_type)
 
     def _daily_count(self, action_type: str) -> int:
-        from linkedin.rb2b import budget_count
-        reserved = budget_count(self.pk, active_day_start()) if action_type == "connect" else 0
-        return reserved + ActionLog.objects.filter(
+        return ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
             created_at__gte=active_day_start(),
         ).count()
 
     def _total_daily_count(self) -> int:
-        from linkedin.rb2b import budget_count
-        return budget_count(self.pk, active_day_start()) + ActionLog.objects.filter(
+        return ActionLog.objects.filter(
             linkedin_profile=self,
             created_at__gte=active_day_start(),
         ).count()
 
     def _weekly_count(self, action_type: str) -> int:
-        from linkedin.rb2b import budget_count
-        reserved = budget_count(self.pk, active_week_start()) if action_type == "connect" else 0
-        return reserved + ActionLog.objects.filter(
+        return ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
             created_at__gte=active_week_start(),
         ).count()
@@ -1175,19 +1179,11 @@ def _linked_operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
         | (Q(task_type=Task.TaskType.FEED_LIKE) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.SWEEP_CONNECTIONS) & Q(payload__operator=operator))
         | (Q(task_type=Task.TaskType.DISCOVERY) & Q(payload__operator=operator))
-        | (Q(task_type=Task.TaskType.RB2B_CONNECT) & Q(payload__operator=operator))
-        | (Q(task_type=Task.TaskType.RB2B_REPLIES) & Q(payload__operator=operator))
         | (
             Q(task_type=Task.TaskType.CONNECT)
             & Q(payload__campaign_id__in=owned)
         )
     )
-
-
-def rb2b_connect_ready() -> bool:
-    from linkedin.rb2b import connect_ready
-
-    return connect_ready()
 
 
 def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
@@ -1200,7 +1196,7 @@ def _operator_scope_q(operator: str, campaign_ids: "list[int] | None"):
     account.
 
     - follow_up / manual_reply / feed_comment / feed_like / sweep_connections /
-      discovery / rb2b_connect / rb2b_replies: claimable when `payload.operator` matches.
+      discovery: claimable when `payload.operator` matches.
     - connect: claimable only when `payload.campaign_id` is one of this
       daemon's campaigns — the connection request goes out from the
       account that owns the campaign.
@@ -1248,6 +1244,46 @@ class TaskQuerySet(models.QuerySet):
         candidate.started_at = started_at
         return candidate
 
+    def _prioritize_campaign_connect(self, candidate, eligible):
+        """Substitute only a due connect with strictly higher campaign priority.
+
+        The caller has already selected the existing lane and applied sender,
+        due-time and task-type gates. Reuse that exact queryset. In particular,
+        a high-priority connect cannot take a follow-up or maintenance turn.
+        Equal priorities return the original candidate without reordering it.
+        """
+        priorities = dict(Campaign.objects.filter(
+            status=Campaign.Status.ACTIVE, connection_priority__gt=0,
+        ).values_list("pk", "connection_priority"))
+        if not priorities:
+            return candidate
+        reference = (candidate.payload or {}).get("campaign_id")
+        # JSON payloads from older importers may store the numeric ID as text.
+        current_priority = next((priority for pk, priority in priorities.items()
+                                 if reference in (pk, str(pk))), 0)
+        higher = {pk: priority for pk, priority in priorities.items()
+                  if priority > current_priority}
+        if not higher:
+            return candidate
+        references = [value for pk in higher for value in (pk, str(pk))]
+        connections = eligible.filter(
+            task_type=Task.TaskType.CONNECT,
+            payload__campaign_id__in=references,
+        )
+        # Preserve follow-up positions across successive claims, not just this
+        # claim. Pulling a connection from after a due follow-up would leave
+        # the displaced older connection ahead of it and postpone that reply.
+        # Reorder only the due connection group before the next follow-up.
+        followup = eligible.filter(task_type=Task.TaskType.FOLLOW_UP).first()
+        if followup is not None:
+            connections = connections.filter(scheduled_at__lt=followup.scheduled_at)
+        return connections.annotate(
+            _campaign_priority=models.Case(*[
+                models.When(payload__campaign_id__in=[pk, str(pk)], then=models.Value(priority))
+                for pk, priority in higher.items()
+            ], default=models.Value(0), output_field=models.IntegerField()),
+        ).order_by("-_campaign_priority", "scheduled_at").first() or candidate
+
     def claim_next(
         self,
         operator: str | None = None,
@@ -1260,8 +1296,8 @@ class TaskQuerySet(models.QuerySet):
         daemon is logged in as; `campaign_ids` are the pks of the
         campaigns that account owns. When `operator` is supplied:
 
-          - follow_up/manual_reply/feed_comment/feed_like/discovery/rb2b_*
-            Tasks are filtered to those whose `payload.operator` matches;
+          - follow_up/manual_reply/feed_comment/feed_like/discovery Tasks are
+            filtered to those whose `payload.operator` matches;
           - drip_linkedin Tasks are filtered to their frozen lane operator;
           - connect Tasks are filtered to those whose
             `payload.campaign_id` is one of `campaign_ids` — a connection
@@ -1279,15 +1315,10 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
-        # Disabled RB2B work stays pending, untouched, until the flag is on.
-        if not rb2b_connect_ready():
-            qs = qs.exclude(task_type__in=Task.rb2b_task_types())
         # Manual replies remain latency-critical. A maintenance sweep receives
         # fairness priority only after it has waited beyond the configured
         # bound; otherwise delivery work wins and a sweep uses the next pacing
-        # gap. Sweeps themselves have a hard runtime budget. A reviewed RB2B
-        # invitation is a connect: it keeps the connect lane's place relative
-        # to follow-ups and takes a due campaign connect's turn.
+        # gap. Sweeps themselves have a hard runtime budget.
         priority_queries = [
             qs.filter(task_type=Task.TaskType.MANUAL_REPLY),
             qs.filter(task_type=Task.TaskType.FEED_COMMENT),
@@ -1303,7 +1334,6 @@ class TaskQuerySet(models.QuerySet):
                 task_type__in=[
                     Task.TaskType.FOLLOW_UP,
                     Task.TaskType.CONNECT,
-                    Task.TaskType.RB2B_CONNECT,
                 ],
             ),
             qs.exclude(
@@ -1312,7 +1342,6 @@ class TaskQuerySet(models.QuerySet):
                     Task.TaskType.FEED_COMMENT,
                     Task.TaskType.FEED_LIKE,
                     Task.TaskType.STATUS_SUMMARY,
-                    Task.TaskType.RB2B_CONNECT,
                     Task.TaskType.FOLLOW_UP,
                     Task.TaskType.CONNECT,
                     Task.TaskType.SWEEP_CONNECTIONS,
@@ -1324,8 +1353,7 @@ class TaskQuerySet(models.QuerySet):
             candidate = priority_qs.first()
             if candidate is not None:
                 if candidate.task_type == Task.TaskType.CONNECT:
-                    # A due RB2B invitation takes this connect's turn.
-                    candidate = qs.filter(task_type=Task.TaskType.RB2B_CONNECT).first() or candidate
+                    candidate = self._prioritize_campaign_connect(candidate, qs)
                 return self._claim_candidate(candidate)
         return None
 
@@ -1348,8 +1376,6 @@ class TaskQuerySet(models.QuerySet):
             qs = qs.filter(task_type__in=list(task_types))
         if operator:
             qs = qs.filter(_operator_scope_q(operator, campaign_ids))
-        if not rb2b_connect_ready():
-            qs = qs.exclude(task_type__in=Task.rb2b_task_types())
         next_task = qs.first()
         if next_task is None:
             return None
@@ -1392,6 +1418,7 @@ class Task(models.Model):
         FEED_LIKE = "feed_like"
         STATUS_SUMMARY = "status_summary"
         DISCOVERY = "discovery"
+        # Historical choices from migration 0039; no execution handlers remain.
         RB2B_CONNECT = "rb2b_connect"
         RB2B_REPLIES = "rb2b_replies"
 
@@ -1423,13 +1450,7 @@ class Task(models.Model):
             cls.TaskType.FEED_LIKE,
             cls.TaskType.SWEEP_CONNECTIONS,
             cls.TaskType.DISCOVERY,
-            cls.TaskType.RB2B_CONNECT,
-            cls.TaskType.RB2B_REPLIES,
         ]
-
-    @classmethod
-    def rb2b_task_types(cls) -> list[str]:
-        return [cls.TaskType.RB2B_CONNECT, cls.TaskType.RB2B_REPLIES]
 
     @classmethod
     def non_linkedin_outbound_task_types(cls) -> list[str]:
@@ -1438,6 +1459,9 @@ class Task(models.Model):
             cls.TaskType.ENRICH_EMAIL,
             cls.TaskType.GMAIL_FOLLOW_UP,
             cls.TaskType.DRIP_GMAIL,
+            # Preserve legacy tasks as receipts, without claiming or rewriting them.
+            cls.TaskType.RB2B_CONNECT,
+            cls.TaskType.RB2B_REPLIES,
         ]
 
     class Meta:
@@ -1523,22 +1547,6 @@ class Task(models.Model):
                 )
             if payload.get("section_cursor") is None:
                 errors.append("discovery tasks require payload.section_cursor")
-
-        if (
-            self.status in {self.Status.PENDING, self.Status.RUNNING}
-            and self.task_type == self.TaskType.RB2B_CONNECT
-        ):
-            if not payload.get("operator"):
-                errors.append("rb2b_connect tasks require non-empty payload.operator")
-            if not payload.get("visitor_id"):
-                errors.append("rb2b_connect tasks require payload.visitor_id")
-
-        if (
-            self.status in {self.Status.PENDING, self.Status.RUNNING}
-            and self.task_type == self.TaskType.RB2B_REPLIES
-            and not payload.get("operator")
-        ):
-            errors.append("rb2b_replies tasks require non-empty payload.operator")
 
         if (
             self.status in {self.Status.PENDING, self.Status.RUNNING}
@@ -1860,6 +1868,7 @@ class DaemonHeartbeat(models.Model):
     last_alive = models.DateTimeField(null=True, blank=True)
     down_alerted_at = models.DateTimeField(null=True, blank=True)
     activity_alerted_at = models.DateTimeField(null=True, blank=True)
+    # Passive schema compatibility for the earlier Windows release (0038).
     rb2b_coordination = models.JSONField(default=dict, blank=True, db_default={})
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1870,5 +1879,8 @@ class DaemonHeartbeat(models.Model):
         state = self.last_alive.isoformat() if self.last_alive else "stopped"
         return f"{self.sender} — {state}"
 
-# Kept separate from campaign models; no Deal or campaign is synthesized.
+
+# Historical receipt schemas only. Removal/ownership transfer needs a reviewed
+# forward migration; the superseded intake and send paths have been removed.
 from linkedin.rb2b_models import RB2BNotification, RB2BVisitor  # noqa: E402,F401
+from linkedin.campaign_integration_models import CampaignSubmission  # noqa: E402,F401

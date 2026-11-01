@@ -55,6 +55,11 @@ class Command(BaseCommand):
             "action_fraction": payload.get("action_fraction", 0.2),
             "seed_public_ids": payload.get("seed_public_ids") or [],
         }
+        if "connection_priority" in payload:
+            value = payload["connection_priority"]
+            if type(value) is not int or not 0 <= value <= 32767:
+                raise CommandError("connection_priority must be an integer from 0 to 32767.")
+            defaults["connection_priority"] = value
         if "status" in payload:
             defaults["status"] = payload["status"]
         program_key = str(payload.get("message_program_key") or "").strip()
@@ -89,6 +94,7 @@ class Command(BaseCommand):
                     f"Campaign preview: {name}; owner_username={campaign.user.username}; "
                     f"status={campaign.status}; "
                     f"gmail_start_mode={campaign.gmail_start_mode} ({campaign.get_gmail_start_mode_display()}); "
+                    f"connection_priority={campaign.connection_priority}; "
                     f"message_program_key={program_key or '(unchanged/legacy)'}"
                 )
                 if options["dry_run"]:

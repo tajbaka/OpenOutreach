@@ -43,6 +43,7 @@ class Command(BaseCommand):
             "booking_link": campaign.booking_link,
             "is_freemium": campaign.is_freemium,
             "action_fraction": campaign.action_fraction,
+            "connection_priority": campaign.connection_priority,
         }
         if campaign.active_message_version_id:
             payload["message_program_key"] = campaign.active_message_version.program.key

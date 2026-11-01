@@ -62,7 +62,7 @@ class CampaignAdmin(admin.ModelAdmin):
     form = CampaignAdminForm
     list_display = (
         "name", "user", "status", "gmail_start_mode", "active_message_version", "booking_link",
-        "is_freemium", "action_fraction",
+        "is_freemium", "action_fraction", "connection_priority",
     )
     list_filter = ("status", "is_freemium", "gmail_start_mode")
     raw_id_fields = ("user", "active_message_version")
@@ -215,12 +215,6 @@ class LinkedInProfileAdmin(admin.ModelAdmin):
 
 @admin.register(LinkedInDiscoveryLead)
 class LinkedInDiscoveryLeadAdmin(admin.ModelAdmin):
-    def get_queryset(self, request):
-        # Historical RB2B-only rows are retained, but moved out of the discovery UI.
-        return super().get_queryset(request).exclude(
-            profile_data__source="rb2b_webhook", profile_data__rb2b_migrated_to__isnull=False,
-        )
-
     list_display = (
         "full_name", "company_name", "headline", "stored_by_operator",
         "potential_icp", "linkedin_url", "created_at",

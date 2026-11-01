@@ -114,16 +114,23 @@ class TestExhaustion:
         lp.mark_exhausted(ActionLog.ActionType.CONNECT)
         assert not lp.can_execute(ActionLog.ActionType.CONNECT)
 
-    def test_exhaustion_resets_next_day(self, fake_session):
-        from datetime import date, timedelta
+    def test_exhaustion_resets_next_day(self, fake_session, monkeypatch):
+        from datetime import timedelta
+        from linkedin.models import active_local_date
 
         lp = fake_session.linkedin_profile
         lp.mark_exhausted(ActionLog.ActionType.CONNECT)
         assert not lp.can_execute(ActionLog.ActionType.CONNECT)
+        # The restriction survives a fresh worker/model instance.
+        fresh = type(lp).objects.get(pk=lp.pk)
+        assert not fresh.can_execute(ActionLog.ActionType.CONNECT)
 
-        # Simulate next day by backdating the exhaustion marker
-        lp._exhausted[ActionLog.ActionType.CONNECT] = date.today() - timedelta(days=1)
+        # Advance the date instead of only changing the old in-memory marker:
+        # migration 0038 also persists the date in connect_restricted_on.
+        next_day = active_local_date() + timedelta(days=1)
+        monkeypatch.setattr("linkedin.models.active_local_date", lambda: next_day)
         assert lp.can_execute(ActionLog.ActionType.CONNECT)
+        assert fresh.can_execute(ActionLog.ActionType.CONNECT)
 
 
 @pytest.mark.django_db

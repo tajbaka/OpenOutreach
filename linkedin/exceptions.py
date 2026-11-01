@@ -25,11 +25,6 @@ class SkipProfile(Exception):
     pass
 
 
-class LinkedInInboxResponseError(IOError):
-    """A Voyager inbox or thread response lacks its expected list; nothing is proven read."""
-    pass
-
-
 class ReachedConnectionLimit(Exception):
     """LinkedIn reported a connection or personalized-invitation note limit."""
     pass

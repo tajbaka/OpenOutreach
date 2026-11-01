@@ -193,12 +193,10 @@ ENABLE_CONNECT = os.getenv("ENABLE_CONNECT", "true").strip().lower() in {
     "1", "true", "yes", "on",
 }
 
-# Reviewed RB2B visitors: the Arian daemon claims rb2b_connect Tasks ahead of
-# campaign connects, inside the same hours, limits and pacing. Default OFF;
-# while off those Tasks stay pending and are never claimed.
-ENABLE_RB2B_CONNECT = os.getenv("ENABLE_RB2B_CONNECT", "false").strip().lower() in {
-    "1", "true", "yes", "on",
-}
+# Generic external campaign enrollment and completion delivery are opt-in.
+ENABLE_CAMPAIGN_INTEGRATIONS = os.getenv("ENABLE_CAMPAIGN_INTEGRATIONS", "false").lower() in {"1", "true", "yes", "on"}
+OUTREACH_CALLBACK_SECRET = os.getenv("OUTREACH_CALLBACK_SECRET", "")
+OUTREACH_CALLBACK_ALLOWED_HOSTS = os.getenv("OUTREACH_CALLBACK_ALLOWED_HOSTS", "")
 
 # Independent kill-switch for the connection sweep (acceptance detection).
 # When true, the daemon visits the Connections page every

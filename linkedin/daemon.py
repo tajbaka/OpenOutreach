@@ -53,8 +53,6 @@ from linkedin.tasks.connect import (
 from linkedin.tasks.follow_up import handle_follow_up
 from linkedin.tasks.discovery import handle_discovery
 from linkedin.tasks.manual_reply import handle_manual_reply
-from linkedin.tasks.rb2b_connect import handle_rb2b_connect
-from linkedin.tasks.rb2b_replies import handle_rb2b_replies
 from linkedin.tasks.feed_comment import handle_feed_comment
 from linkedin.tasks.feed_like import handle_feed_like
 from linkedin.tasks.status_summary import enqueue_status_summary, handle_status_summary
@@ -73,8 +71,6 @@ _HANDLERS = {
     Task.TaskType.SWEEP_CONNECTIONS: handle_sweep_connections,
     Task.TaskType.STATUS_SUMMARY: handle_status_summary,
     Task.TaskType.DISCOVERY: handle_discovery,
-    Task.TaskType.RB2B_CONNECT: handle_rb2b_connect,
-    Task.TaskType.RB2B_REPLIES: handle_rb2b_replies,
 }
 
 _LOW_POOL_ALERTED: set[int] = set()
@@ -240,8 +236,7 @@ def _catch_up_task_types(profile=None, *, now=None) -> set[str]:
 
     task_types: set[str] = set()
     if _is_behind_normal_window_pace(profile, ActionLog.ActionType.CONNECT):
-        # RB2B invitations are connects: same catch-up window, same budget.
-        task_types.update({Task.TaskType.CONNECT, Task.TaskType.RB2B_CONNECT})
+        task_types.add(Task.TaskType.CONNECT)
     if _is_behind_normal_window_pace(profile, ActionLog.ActionType.FOLLOW_UP):
         task_types.add(Task.TaskType.FOLLOW_UP)
     return task_types
@@ -515,14 +510,6 @@ def heal_tasks(session):
 
     if reconcile_discovery_tasks(session.linkedin_profile, our_operator):
         logger.info("Profile discovery task ready for %s", our_operator)
-
-    # RB2B: ready visitors that lost their Task (never reserved, so queueing
-    # again cannot repeat a send), stranded reservations, the reply catch-up.
-    from linkedin.rb2b import reconcile_connect_tasks
-
-    queued_rb2b = reconcile_connect_tasks(session.linkedin_profile)
-    if queued_rb2b:
-        logger.info("Queued %d missing RB2B connect task(s)", queued_rb2b)
 
     # Recover only missing invitation-start Gmail work, independently of the
     # post-accept LinkedIn follow-up switch. Never change existing due Tasks.
@@ -852,10 +839,7 @@ def run_daemon(session):
         session.linkedin_profile,
         our_operator,
     )
-    from linkedin import rb2b
-
-    rb2b_enabled = rb2b.connect_ready() and our_operator == rb2b.SENDER
-    if not campaigns and not discovery_enabled and not rb2b_enabled:
+    if not campaigns and not discovery_enabled:
         logger.error("No active campaigns found — cannot start daemon")
         return
 
@@ -889,6 +873,14 @@ def run_daemon(session):
     from linkedin.enrichment.worker import EnrichmentWorker
     enrichment_worker = EnrichmentWorker(operator=resolve_operator(session.linkedin_profile.linkedin_username))
     enrichment_worker.start()
+
+    # Optional delivery-only service: no campaign Task or sender behavior changes.
+    from linkedin import conf as runtime_conf
+    callback_worker = None
+    if runtime_conf.ENABLE_CAMPAIGN_INTEGRATIONS:
+        from linkedin.campaign_callbacks import CampaignCallbackWorker
+        callback_worker = CampaignCallbackWorker(our_operator)
+        callback_worker.start()
 
     # Node monitoring — a background thread that beats this daemon's
     # DaemonHeartbeat row and watches peers, plus an in-process
@@ -1020,6 +1012,8 @@ def run_daemon(session):
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()
                 enrichment_worker.stop()
+                if callback_worker is not None:
+                    callback_worker.stop()
                 # Clean exit: clear our heartbeat so peers don't false-alarm
                 # on a daemon that stopped on purpose, then stop the monitor.
                 if node_monitor is not None:
@@ -1045,9 +1039,6 @@ def run_daemon(session):
         # empty, so this selection is deterministic and active.
         if task.task_type == Task.TaskType.DRIP_LINKEDIN:
             session.campaign = campaigns[0]
-        # RB2B work belongs to no Campaign; connect-issue logs stay unattributed.
-        elif task.task_type in Task.rb2b_task_types():
-            session.campaign = None
         # Account-wide tasks (e.g. sweep_connections) span all campaigns and
         # don't carry a campaign_id; the handler sets session.campaign as needed.
         elif task.task_type in {
@@ -1105,9 +1096,7 @@ def run_daemon(session):
             if browser_recovery.task_failed(
                 exc,
                 page=session.page,
-                read_only=task.task_type in {
-                    Task.TaskType.SWEEP_CONNECTIONS, Task.TaskType.RB2B_REPLIES,
-                },
+                read_only=task.task_type == Task.TaskType.SWEEP_CONNECTIONS,
                 task_id=task.id,
             ):
                 continue

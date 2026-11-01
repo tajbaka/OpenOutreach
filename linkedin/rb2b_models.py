@@ -1,4 +1,8 @@
-"""Campaign-independent visitor intake, invitation receipts and Slack outbox."""
+"""Passive historical schemas from migration 0038; no active RB2B workflow.
+
+Keep existing receipts and migration state until a reviewed forward handover.
+Do not use these models to create another standalone invitation pipeline.
+"""
 from django.db import models
 
 

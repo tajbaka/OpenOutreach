@@ -41,11 +41,9 @@ def write_heartbeat(sender: str) -> None:
     outage should alert afresh."""
     from linkedin.models import DaemonHeartbeat
 
-    from linkedin.rb2b import heartbeat_state
     DaemonHeartbeat.objects.update_or_create(
         sender=sender,
-        defaults={"last_alive": timezone.now(), "down_alerted_at": None,
-                  "rb2b_coordination": heartbeat_state()},
+        defaults={"last_alive": timezone.now(), "down_alerted_at": None},
     )
 
 

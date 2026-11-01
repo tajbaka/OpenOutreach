@@ -44,13 +44,17 @@ def main():
         '-p', 'pytest_django.plugin', '-p', 'pytest_mock', '-p', 'tests.campaign_qa.reporting',
         '-q', '--tb=short', '-p', 'no:cacheprovider', '--strict-markers',
     ]
-    if os.environ.get('CAMPAIGN_QA_SUITE') == 'rb2b-intake':
-        return pytest.main(common + ['tests/test_rb2b_webhook.py', 'tests/test_rb2b_workflow.py',
-                                    'tests/realtime/test_handler.py', 'tests/realtime/test_lead_lookup.py',
-                                    'tests/tasks/test_tasks.py', 'tests/test_heal.py',
-                                    'tests/test_schedule.py', 'tests/discovery/test_daemon_schedule.py',
-                                    'tests/test_daemon_resilience.py',
-                                    'tests/test_linkedin_reposts.py'])
+    if os.environ.get('CAMPAIGN_QA_SUITE') == 'campaign-priority':
+        return pytest.main(common + [
+            'tests/test_campaign_priority.py', 'tests/test_campaign_integrations.py',
+            'tests/test_retired_connection_tasks.py', 'tests/tasks/test_claim_filter.py',
+            'tests/test_action_log.py', 'tests/test_heal.py', 'tests/test_daemon_resilience.py',
+            'tests/tasks/test_message_program_runtime.py', 'tests/tasks/test_follow_up_schedule.py',
+            'tests/tasks/test_stop_policy.py', 'tests/gmail/test_handoff.py',
+            'tests/gmail/test_current_timing.py', 'tests/gmail/test_invitation_start.py',
+            'tests/realtime/test_handler.py', 'tests/realtime/test_lead_lookup.py',
+            'tests/test_messages.py', 'tests/test_slack_reply_drafts.py', 'tests/test_slack_enrich.py',
+        ])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'daemon-browser':
         return pytest.main(common + [
             'tests/test_browser_recovery.py', 'tests/test_daemon_resilience.py',
@@ -86,7 +90,6 @@ def main():
         ])
     return pytest.main(common + [
         'tests/campaign_qa/test_imported_campaigns.py',
-        'tests/test_rb2b_webhook.py', 'tests/test_rb2b_workflow.py',
         'tests/test_general_icp_json.py', 'tests/test_general_icp_messages.py',
         'tests/test_message_roles.py', 'tests/test_message_delivery.py',
         'tests/test_slack_reply_drafts.py',

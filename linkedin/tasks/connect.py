@@ -276,9 +276,7 @@ def _actions_sent_today(profile, action_type: str) -> int:
         now.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None),
         timezone=tz,
     )
-    from linkedin.rb2b import budget_count
-    reserved = budget_count(profile.pk, today_start) if action_type == "connect" else 0
-    return reserved + ActionLog.objects.filter(
+    return ActionLog.objects.filter(
         linkedin_profile=profile,
         action_type=action_type,
         created_at__gte=today_start,

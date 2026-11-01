@@ -181,9 +181,6 @@ def persist_thread(
         if note and note.strip()
     }
 
-    from linkedin.models import RB2BVisitor
-    known_connect_notes.update(RB2BVisitor.objects.filter(lead=lead).exclude(note="").values_list("note", flat=True))
-
     created = 0
     inbound_message_ids: list[int] = []
     with transaction.atomic():
@@ -253,8 +250,6 @@ def persist_thread(
                     inbound_message_ids.append(stored.pk)
 
         if inbound_message_ids:
-            from linkedin.rb2b import queue_reply_notifications
-            queue_reply_notifications(lead, inbound_message_ids)
             committed_ids = tuple(inbound_message_ids)
 
             def _apply_inbound_stops() -> None:

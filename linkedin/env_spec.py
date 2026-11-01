@@ -15,6 +15,12 @@ class EnvVar:
 
 
 ENV_VARS: tuple[EnvVar, ...] = (
+    EnvVar("ENABLE_CAMPAIGN_INTEGRATIONS", False, False, "false", "feature_flags",
+           "Permit external normal-campaign enrollment and durable completion callbacks."),
+    EnvVar("OUTREACH_CALLBACK_SECRET", False, True, "", "integrations",
+           "At least 32 characters, shared with the completion callback receiver for HMAC authentication."),
+    EnvVar("OUTREACH_CALLBACK_ALLOWED_HOSTS", False, False, "", "integrations",
+           "Comma-separated exact HTTPS callback hostnames; only public destinations are delivered."),
     EnvVar("LINKEDIN_USERNAME", True, False, None, "credentials",
            "Primary LinkedIn account the daemon runs as."),
     EnvVar("LINKEDIN_PASSWORD", True, True, None, "credentials",
@@ -47,14 +53,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Bot token for Slack modals and message updates."),
     EnvVar("MANUAL_REPLY_POLL_SECONDS", False, False, "60", "slack",
            "Off-hours daemon poll interval for queued Slack manual replies."),
-    EnvVar("ENABLE_RB2B_CONNECT", False, False, "false", "rb2b",
-           "Let the Arian daemon send reviewed RB2B connection requests ahead of campaign connects."),
-    EnvVar("RB2B_SLACK_CHANNEL_ID", False, False, "", "rb2b",
-           "Existing RB2B Slack channel for handled/held/failed outcomes; bot must be a member."),
-    EnvVar("RB2B_WEBHOOK_TOKEN", False, True, None, "rb2b",
-           "Long random shared secret for the write-only RB2B webhook; set on Vercel."),
-    EnvVar("RB2B_DATABASE_URL", False, True, None, "rb2b",
-           "Vercel intake connection copied from the current OpenOutreach worker DATABASE_URL; leaves Slack config unchanged."),
     EnvVar("FEDRAMP_MARKETPLACE_CHANGELOG_URL", False, False,
            "https://raw.githubusercontent.com/FedRAMP/marketplace-fedramp-gov-data/main/fedramp-status-changelog.json",
            "marketplace_listener", "Official FedRAMP status changelog JSON URL."),
