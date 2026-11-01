@@ -104,6 +104,39 @@ def mark_delivery_status(
     return delivery
 
 
+@transaction.atomic
+def close_unsent_connection_delivery(deal) -> None:
+    """Close a frozen connection note this campaign lane will never send.
+
+    The Deal moved past connecting without a send receipt: the pre-send
+    profile check found the person connected or already invited (or recovery
+    finds such a check interrupted before this write). A note an earlier
+    attempt took into `sending` (still there, or since marked failed) may have
+    produced that state, so it becomes unclear and is never retried; otherwise
+    it is stopped. Only the terminal receipt that completion reporting reads
+    changes. Nothing is sent or queued.
+    """
+    if deal is None:
+        return
+    delivery = OutboundDelivery.objects.select_for_update(of=("self",)).filter(
+        enrollment__deal=deal,
+        channel=OutboundDelivery.Channel.LINKEDIN_CONNECT,
+        step_index=0,
+    ).first()
+    if delivery is None or delivery.status in {
+        OutboundDelivery.Status.SENT,
+        OutboundDelivery.Status.UNCLEAR,
+        OutboundDelivery.Status.STOPPED,
+    }:
+        return
+    mark_delivery_status(
+        delivery,
+        OutboundDelivery.Status.UNCLEAR
+        if delivery.status in {OutboundDelivery.Status.SENDING, OutboundDelivery.Status.FAILED}
+        else OutboundDelivery.Status.STOPPED,
+    )
+
+
 def delivery_for_task(
     *,
     task: Task,

@@ -102,9 +102,18 @@ copy, acceptance, LinkedIn/Gmail sequence timing and reply stopping.
   "email": "",
   "icp": "exact-published-audience-key",
   "role_tag": "",
-  "callback_url": "https://approved-receiver.example/completed"
+  "callback_url": "https://approved-receiver.example/completed",
+  "message_version_hash": "<optional 64-hex content hash of that version>"
 }
 ```
+
+`message_version_hash` is an optional exact-copy precondition: when present, the
+enrollment is held (`message_version_hash_mismatch`) unless the campaign's active
+published version has exactly that content hash. When absent it is left out of the
+reference digest, so existing references are unaffected. A reference submitted
+before the check, replayed with the hash of the version its enrollment froze and
+otherwise identical input, is the same request: it returns the existing status and
+keeps the original receipt. Preflight reports `message_version_hash_supported`.
 
 One `(source, reference_id)` binds one immutable input and normal message
 enrollment. An identical retry returns its current result; changed input under
@@ -156,8 +165,38 @@ fragments, redirects and nonpublic DNS results are rejected; TLS validates the
 original hostname while the connection uses the validated address.
 
 An opt-in daemon thread observes normal campaign receipts and freezes one
-`campaign.connection_completed` event after a final outcome. Temporary no-button
-failures that the existing campaign retries are not terminal notifications.
+`campaign.connection_completed` event after a final outcome: `sent` (this sender's
+invitation receipt, or the frozen note marked sent, which happens only after LinkedIn
+took the invitation), `uncertain` (`unclear` connection delivery), `failed` (Deal
+failed or closed) or `held` with `already_connected`, `pending_invitation_exists` or
+`delivery_stopped`. A pre-send profile check that finds the person already connected
+or with a pending invitation closes the never-sent frozen note in the same
+transaction as the Deal state: `stopped`, or `unclear` when an earlier attempt took it
+into sending (still `sending`, or since marked `failed`). Outcome recovery closes the
+same way any note left open by a check interrupted before that commit (Deal already
+Pending/Connected, note still planned/queued/sending/failed); it writes only that
+receipt and never sends or creates a Task. The connect lane also never invites a
+version-bound Deal again once its note is `sending`, `sent` or `unclear`, even if the
+profile looks connectable: an earlier attempt reached the send step, so a `sending`
+note becomes `unclear` and the Deal moves to Pending (the normal sweep still notices
+an acceptance). One sender worker handles a campaign's Deals one at a time, so a note
+seen `sending` there is never an attempt still in flight. Every connect pass settles
+such Deals first, before its rate-limit check, so a sender at its limit still records
+the outcome. So every enrolled person gets an outcome, and the campaign's own path
+afterwards is unchanged. Temporary no-button failures that the existing campaign
+retries (`failed` notes) are not terminal notifications and are still retried.
+
+Sender budget: a version-bound attempt records its `connect` ActionLog in the same
+transaction that marks its note `sending`, before the click, so an attempt that stops
+after the click still counts once, at its attempt time, against the daily, weekly and
+total limits. A completed send is not counted again. A definite no-send outcome (no
+Connect button or note control, the weekly-limit popup, a skipped profile) marks the
+note `failed` and removes that reservation in the same transaction, so the existing
+retry does not consume a slot. A pending invitation found mid-attempt keeps its
+reservation, because a direct Connect click earlier in that attempt may be what
+LinkedIn shows. If the reservation cannot be written, nothing is sent. Unbound
+(legacy) campaigns keep logging after the send. Notes already left `sending` or `sent`
+by code before this change were never logged, and are not charged retroactively.
 Callback failures update only the outbox. Retries use a lease and exponential
 backoff, stopping after 48 hours with a retained abandoned receipt. Event bodies
 and IDs remain stable. Callback delivery is at least once; receivers must dedupe.

@@ -1,7 +1,9 @@
 """Durable completion notices for opt-in campaign enrollments.
 
 This service reads ordinary campaign receipts; it never executes, retries or
-changes outreach. Callback state is separate from Task and delivery state.
+changes outreach. Callback state is separate from Task and delivery state. Its
+one receipt write is recovery: closing a connection note whose Deal already
+moved past connecting with no send receipt (never a send or a new Task).
 """
 from datetime import timedelta
 import hashlib
@@ -79,14 +81,26 @@ def reconcile(*, operator, limit=50, source=None, include_local=False):
     # for connection slots must not starve newer completed receipts.
     terminal_delivery = OutboundDelivery.objects.filter(
         enrollment_id=OuterRef("enrollment_id"), channel="linkedin_connect", step_index=0,
-    ).filter(Q(status__in=[OutboundDelivery.Status.UNCLEAR, OutboundDelivery.Status.STOPPED])
-             | Q(status=OutboundDelivery.Status.SENT, enrollment__deal__connected_at__isnull=False))
+        status__in=[OutboundDelivery.Status.SENT, OutboundDelivery.Status.UNCLEAR, OutboundDelivery.Status.STOPPED])
+    from crm.models import Deal
     from linkedin.enums import ProfileState
+    from linkedin.message_delivery_runtime import close_unsent_connection_delivery
     candidates = CampaignSubmission.objects.filter(enrollment__operator=operator, callback_ready_at__isnull=True)
     if source is not None:
         candidates = candidates.filter(source=source)
     if not include_local:
         candidates = candidates.exclude(callback_url="")
+    # Recovery: a pre-send profile check moved the Deal to Pending/Connected but
+    # stopped before closing its open note. The connect lane never selects that
+    # Deal again, so close the receipt the same way the check would have.
+    open_delivery = OutboundDelivery.objects.filter(
+        enrollment_id=OuterRef("enrollment_id"), channel="linkedin_connect", step_index=0,
+    ).exclude(status__in=[OutboundDelivery.Status.SENT, OutboundDelivery.Status.UNCLEAR, OutboundDelivery.Status.STOPPED])
+    stranded = candidates.alias(_open=Exists(open_delivery)).filter(
+        _open=True, enrollment__deal__state__in=[ProfileState.PENDING, ProfileState.CONNECTED])
+    for deal in Deal.objects.filter(pk__in=list(
+            stranded.order_by("pk").values_list("enrollment__deal_id", flat=True)[:limit])):
+        close_unsent_connection_delivery(deal)
     ids = list(candidates.alias(_terminal=Exists(terminal_delivery)).filter(
                    Q(_terminal=True) | Q(enrollment__deal__state=ProfileState.FAILED)
                    | (~Q(enrollment__deal__closing_reason="") & Q(enrollment__deal__closing_reason__isnull=False))

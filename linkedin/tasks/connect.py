@@ -165,6 +165,65 @@ def _versioned_connection_delivery(*, deal, operator: str):
     return delivery
 
 
+def _hold_attempted_connection(deal, delivery) -> None:
+    """Never invite again once an earlier attempt crossed the send step.
+
+    A note still `sending` means a previous attempt stopped during or after
+    the click. One sender worker handles a campaign's Deals one at a time, so
+    no attempt is still in flight here: the note becomes unclear and is never
+    retried. A sent or unclear note is already final. LinkedIn may hold the
+    invitation, so the Deal leaves the ready pool as Pending and the normal
+    sweep still notices an acceptance. The attempt reserved its budget before
+    its click, so nothing is charged here.
+    """
+    from crm.models import Deal
+    from linkedin.message_delivery_runtime import mark_delivery_status
+    from linkedin.models import OutboundDelivery
+
+    with transaction.atomic():
+        if delivery.status == OutboundDelivery.Status.SENDING:
+            mark_delivery_status(delivery, OutboundDelivery.Status.UNCLEAR)
+        held = Deal.objects.filter(
+            pk=deal.pk,
+            state__in=[ProfileState.QUALIFIED, ProfileState.READY_TO_CONNECT],
+        ).update(
+            state=ProfileState.PENDING,
+            reason="Earlier connection attempt reached the send step; never retried",
+            update_date=timezone.now(),
+        )
+    if held:
+        logger.info("Deal %s PENDING (earlier connection attempt; never retried)", deal.pk)
+
+
+def _hold_attempted_connections(campaign) -> None:
+    """Settle this campaign's Deals whose earlier attempt reached the send step.
+
+    Runs at the start of every connect pass, before rate limits, because
+    holding sends nothing and a sender at its limit must still record the
+    outcome.
+    """
+    from linkedin.models import OutboundDelivery
+
+    for delivery in OutboundDelivery.objects.filter(
+        enrollment__deal__campaign=campaign,
+        enrollment__deal__state__in=[ProfileState.QUALIFIED, ProfileState.READY_TO_CONNECT],
+        channel=OutboundDelivery.Channel.LINKEDIN_CONNECT,
+        step_index=0,
+        status__in=[
+            OutboundDelivery.Status.SENDING,
+            OutboundDelivery.Status.SENT,
+            OutboundDelivery.Status.UNCLEAR,
+        ],
+    ).select_related("enrollment__deal").order_by("pk"):
+        _hold_attempted_connection(delivery.enrollment.deal, delivery)
+
+
+def _release_connection_reservation(reservation) -> None:
+    """A definite no-send outcome returns the budget its attempt reserved."""
+    if reservation is not None:
+        ActionLog.objects.filter(pk=reservation.pk).delete()
+
+
 @dataclass
 class ConnectStrategy:
     find_candidate: Callable
@@ -416,6 +475,7 @@ def handle_connect(task, session, qualifiers):
         return
     strategy = strategy_for(campaign, qualifiers)
     operator = resolve_operator(session.linkedin_profile.linkedin_username)
+    _hold_attempted_connections(campaign)
 
     def _reschedule():
         elapsed = (timezone.now() - task.started_at).total_seconds() if task.started_at else 0
@@ -492,15 +552,22 @@ def handle_connect(task, session, qualifiers):
     logger.info("[%s] %s (%s) — %s", campaign, public_id, stats, reason or "")
 
     connection_delivery = None
+    reservation = None
     try:
         status = get_connection_status(session, profile)
 
         if status == ProfileState.CONNECTED:
-            set_profile_state(session, public_id, status.value)
-            deal = Deal.objects.filter(
-                lead__linkedin_url=public_id_to_url(public_id),
-                campaign=session.campaign,
-            ).select_related("lead").first()
+            from linkedin.message_delivery_runtime import close_unsent_connection_delivery
+
+            # State and receipt commit together so no crash can strand the
+            # receipt; outcome recovery still closes any left from before.
+            with transaction.atomic():
+                set_profile_state(session, public_id, status.value)
+                deal = Deal.objects.filter(
+                    lead__linkedin_url=public_id_to_url(public_id),
+                    campaign=session.campaign,
+                ).select_related("lead").first()
+                close_unsent_connection_delivery(deal)
             icp = None
             if deal is not None:
                 from linkedin.icp_outbound import resolve_icp
@@ -526,7 +593,11 @@ def handle_connect(task, session, qualifiers):
             return
 
         if status == ProfileState.PENDING:
-            set_profile_state(session, public_id, status.value)
+            from linkedin.message_delivery_runtime import close_unsent_connection_delivery
+
+            with transaction.atomic():
+                set_profile_state(session, public_id, status.value)
+                close_unsent_connection_delivery(deal)
             enqueue_sweep_connections(
                 operator=operator,
             )
@@ -535,10 +606,26 @@ def handle_connect(task, session, qualifiers):
             return
 
         if deal is not None and _deal_uses_message_program(deal):
+            from linkedin.models import OutboundDelivery
+
             connection_delivery = _versioned_connection_delivery(
                 deal=deal,
                 operator=operator,
             )
+            if connection_delivery.status in {
+                OutboundDelivery.Status.SENDING,
+                OutboundDelivery.Status.SENT,
+                OutboundDelivery.Status.UNCLEAR,
+            }:
+                # A connectable-looking profile is not proof the earlier
+                # attempt sent nothing; its receipt decides. (The pass start
+                # already settles these; this guards any other candidate path.)
+                _hold_attempted_connection(deal, connection_delivery)
+                enqueue_sweep_connections(
+                    operator=operator,
+                )
+                enqueue_connect(campaign_id, delay_seconds=0)
+                return
             remaining = (
                 connection_delivery.scheduled_at - timezone.now()
             ).total_seconds()
@@ -571,18 +658,26 @@ def handle_connect(task, session, qualifiers):
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
-            mark_delivery_status(
-                connection_delivery,
-                OutboundDelivery.Status.SENDING,
-            )
+            # The attempt takes its sender budget with its receipt, before the
+            # click: a stop after the click still counts, at the attempt time.
+            with transaction.atomic():
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.SENDING,
+                )
+                reservation = session.linkedin_profile.record_action(
+                    ActionLog.ActionType.CONNECT, session.campaign,
+                )
         new_state = send_connection_request(session=session, profile=profile, note=note)
 
         if new_state == ProfileState.QUALIFIED:
             if connection_delivery is not None:
-                mark_delivery_status(
-                    connection_delivery,
-                    OutboundDelivery.Status.FAILED,
-                )
+                with transaction.atomic():
+                    mark_delivery_status(
+                        connection_delivery,
+                        OutboundDelivery.Status.FAILED,
+                    )
+                    _release_connection_reservation(reservation)
             # No Connect button found — track attempt, disqualify after MAX_CONNECT_ATTEMPTS
             attempts = increment_connect_attempts(session, public_id)
             if attempts >= MAX_CONNECT_ATTEMPTS:
@@ -602,12 +697,12 @@ def handle_connect(task, session, qualifiers):
                     OutboundDelivery.Status.SENT,
                 )
             set_profile_state(session, public_id, new_state.value)
-            session.linkedin_profile.record_action(
-                ActionLog.ActionType.CONNECT, session.campaign,
-            )
+            if reservation is None:  # A reserved attempt is already counted.
+                session.linkedin_profile.record_action(
+                    ActionLog.ActionType.CONNECT, session.campaign,
+                )
 
             if new_state == ProfileState.PENDING:
-                from django.db import transaction
                 from django.db.models import Value
                 from django.db.models.functions import Coalesce
                 from linkedin.models import Campaign
@@ -670,10 +765,12 @@ def handle_connect(task, session, qualifiers):
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
-            mark_delivery_status(
-                connection_delivery,
-                OutboundDelivery.Status.FAILED,
-            )
+            with transaction.atomic():
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.FAILED,
+                )
+                _release_connection_reservation(reservation)
         logger.warning("Rate limited: %s", e)
         session.linkedin_profile.mark_exhausted(ActionLog.ActionType.CONNECT)
         enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign_id))
@@ -683,6 +780,8 @@ def handle_connect(task, session, qualifiers):
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
+            # The reservation stays: a direct Connect click earlier in this
+            # attempt may be what LinkedIn now shows as pending.
             mark_delivery_status(
                 connection_delivery,
                 OutboundDelivery.Status.STOPPED,
@@ -699,10 +798,12 @@ def handle_connect(task, session, qualifiers):
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
-            mark_delivery_status(
-                connection_delivery,
-                OutboundDelivery.Status.FAILED,
-            )
+            with transaction.atomic():
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.FAILED,
+                )
+                _release_connection_reservation(reservation)
         logger.warning("Skipping %s: %s", public_id, e)
         log_connect_issue(
             linkedin_profile=session.linkedin_profile,

@@ -52,6 +52,7 @@ class Command(BaseCommand):
             else:
                 result = {"enabled": conf.ENABLE_CAMPAIGN_INTEGRATIONS,
                           "local_outcomes_supported": True,
+                          "message_version_hash_supported": True,
                           "connect_outside_hours_campaign_ids": list(conf.CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS),
                           "callbacks_configured": bool(len(conf.OUTREACH_CALLBACK_SECRET) >= 32 and conf.OUTREACH_CALLBACK_ALLOWED_HOSTS),
                           "replies_configured": bool(conf.ENABLE_REALTIME_LISTENER and conf.SLACK_REPLIES_WEBHOOK_URL)}

@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from crm.models import Account, Deal, Lead, Message
 from linkedin import campaign_callbacks as callbacks, campaign_integrations as integrations, conf
+from linkedin import message_delivery_runtime as runtime
 from linkedin.enums import ProfileState
 from linkedin.models import Campaign, CampaignSubmission, LinkedInProfile, OutboundDelivery, Task
 from tests.tasks.test_message_program_runtime import _version, AUDIENCE_KEY
@@ -95,12 +96,24 @@ def test_active_enrollment_creates_only_normal_connect_task(body, monkeypatch):
     ({"note": "unapproved copy"}, "unsupported_fields"),
     ({"campaign_id": True}, "positive_integer_required"),
     ({"linkedin_url": "https://www.linkedin.com/sales/lead/x"}, "exact_linkedin"),
+    ({"message_version_hash": "0" * 64}, "message_version_hash_mismatch"),
+    ({"message_version_hash": "not-a-sha256"}, "message_version_hash_invalid"),
 ])
 def test_invalid_enrollment_is_atomic(body, change, reason):
     before = snapshot()
     with pytest.raises(integrations.EnrollmentHold, match=reason):
         integrations.submit({**body, **change}, apply=True)
     assert snapshot() == before
+
+
+def test_exact_copy_hash_precondition_is_optional_and_keeps_old_digests(body):
+    from linkedin.models import MessageProgramVersion
+    assert "message_version_hash" not in integrations.normalized_input(body)
+    content_hash = MessageProgramVersion.objects.get(pk=body["message_version_id"]).content_hash
+    checked = {**body, "message_version_hash": content_hash}
+    assert integrations.submit(checked)["status"] == "eligible"
+    assert integrations.submit(checked, apply=True)["status"] == "enrolled"
+    assert CampaignSubmission.objects.get().input_hash == integrations._digest(integrations.normalized_input(checked))
 
 
 def test_disabled_feature_blocks_apply_but_not_preview(body, monkeypatch):
@@ -273,6 +286,9 @@ def test_pending_backlog_does_not_starve_completed_callback(body):
     (ProfileState.FAILED, OutboundDelivery.Status.FAILED, "failed"),
     (ProfileState.QUALIFIED, OutboundDelivery.Status.UNCLEAR, "uncertain"),
     (ProfileState.PENDING, OutboundDelivery.Status.STOPPED, "held"),
+    # Crash after LinkedIn took the invitation, before the Deal ledger.
+    (ProfileState.READY_TO_CONNECT, OutboundDelivery.Status.SENT, "sent"),
+    (ProfileState.PENDING, OutboundDelivery.Status.SENT, "sent"),
 ])
 def test_only_final_evidence_completes_notifications(body, state, delivery_state, expected):
     result = integrations.submit(body, apply=True)
@@ -368,3 +384,318 @@ def test_concurrent_submissions_never_duplicate_person_or_enrollment(body, monke
     assert CampaignSubmission.objects.count() == Deal.objects.count() == Lead.objects.count() == 1
     assert OutboundDelivery.objects.count() == 1
     assert sum(result["status"] == "enrolled" for result in results) == (2 if same_reference else 1)
+
+
+def _enrolled_campaign_person(fake_session, monkeypatch):
+    """A local-transport enrollment owned by the fake session's sender."""
+    fake_session.django_user.username = "ariantajbakh"
+    fake_session.django_user.save(update_fields=["username"])
+    fake_session.linkedin_profile.linkedin_username = "ariantajbakh"
+    fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
+    campaign = fake_session.campaign
+    version = _version(campaign)
+    monkeypatch.setattr(conf, "ENABLE_CAMPAIGN_INTEGRATIONS", True)
+    monkeypatch.setattr(conf, "ENABLE_FOLLOW_UP", True)
+    monkeypatch.setattr("linkedin.daemon.ENABLE_CONNECT", True)
+    monkeypatch.setattr("linkedin.tasks.connect.ENABLE_CONNECT", True)
+    monkeypatch.setattr("gmail.handoff.maybe_schedule_gmail_sequence", lambda **kw: None)
+    body = dict(source="synthetic", reference_id="person:observed", campaign_id=campaign.pk,
+                message_version_id=version.pk, owner_username="ariantajbakh",
+                linkedin_url="https://www.linkedin.com/in/observed-person/", first_name="Observed",
+                last_name="Person", company_name="Observed Company", icp=AUDIENCE_KEY, callback_url="")
+    result = integrations.submit(body, apply=True)
+    assert result["status"] == "enrolled"
+    return campaign, body, result
+
+
+def _connect_once(fake_session, monkeypatch, campaign, result, live_status, invitation):
+    """One normal connect pass for the enrolled person; `invitation` stands in for LinkedIn."""
+    from linkedin.tasks.connect import ConnectStrategy, handle_connect
+    deal = Deal.objects.get(pk=result["deal_id"])
+    candidate = {"public_identifier": "observed-person", "url": deal.lead.linkedin_url, "lead_id": deal.lead_id,
+                 "profile": {"first_name": "Observed", "last_name": "Person", "headline": "Founder",
+                             "positions": [{"company_name": "Observed Company"}]}}
+    strategy = ConnectStrategy(find_candidate=lambda session: candidate, pre_connect=None, delay=10,
+                               action_fraction=1.0, qualifier=Mock(explain=lambda *a, **kw: ""))
+    monkeypatch.setattr("linkedin.tasks.connect.strategy_for", lambda *a: strategy)
+    monkeypatch.setattr("linkedin.actions.status.get_connection_status", lambda *a, **kw: live_status)
+    monkeypatch.setattr("linkedin.actions.connect.send_connection_request", invitation)
+    task = Task.objects.create(task_type="connect", scheduled_at=timezone.now(), status="running",
+                               started_at=timezone.now(), payload={"campaign_id": campaign.pk})
+    handle_connect(task, fake_session, {campaign.pk: strategy.qualifier})
+    return deal
+
+
+def _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, live_status):
+    invitation = Mock(return_value=ProfileState.PENDING)
+    deal = _connect_once(fake_session, monkeypatch, campaign, result, live_status, invitation)
+    invitation.assert_not_called()
+    return deal
+
+
+@pytest.mark.parametrize("live_status,reason", [
+    (ProfileState.CONNECTED, "already_connected"),
+    (ProfileState.PENDING, "pending_invitation_exists"),
+])
+def test_profile_check_before_send_produces_one_final_outcome(fake_session, monkeypatch, live_status, reason):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    deal = _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, live_status)
+    delivery = OutboundDelivery.objects.get(pk=result["delivery_id"])
+    assert delivery.status == OutboundDelivery.Status.STOPPED and delivery.sent_at is None
+    current = integrations.submit(body, apply=True)
+    assert (current["status"], current["reason"]) == ("held", reason)
+    events = callbacks.local_outcomes(operator="Arian", source="synthetic")
+    assert [(e["outcome"], e["reason"]) for e in events] == [("held", reason)]
+    deal.refresh_from_db()
+    assert deal.invitation_sent_at is None and deal.invitation_sender == ""
+    # The ordinary campaign path after the check is unchanged.
+    assert Task.objects.filter(task_type="follow_up", payload__public_id="observed-person").exists() == (
+        live_status == ProfileState.CONNECTED)
+
+
+@pytest.mark.parametrize("live_status", [ProfileState.CONNECTED, ProfileState.PENDING])
+def test_interrupted_send_found_by_profile_check_is_uncertain_and_never_retried(
+        fake_session, monkeypatch, live_status):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    # A previous attempt crashed after entering `sending`, before any receipt.
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=OutboundDelivery.Status.SENDING)
+    _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, live_status)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    current = integrations.submit(body, apply=True)
+    assert (current["status"], current["reason"]) == ("uncertain", "delivery_unclear")
+    assert [e["outcome"] for e in callbacks.local_outcomes(operator="Arian", source="synthetic")] == ["uncertain"]
+
+
+def test_receipt_already_closed_is_never_rewritten_by_a_later_profile_check(fake_session, monkeypatch):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=OutboundDelivery.Status.SENT)
+    _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, ProfileState.PENDING)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENT
+    assert integrations.submit(body, apply=True)["status"] == "sent"
+
+
+@pytest.mark.parametrize("live_status", [ProfileState.CONNECTED, ProfileState.PENDING])
+def test_profile_check_state_and_receipt_commit_together(fake_session, monkeypatch, live_status):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    real_close = runtime.close_unsent_connection_delivery
+    monkeypatch.setattr(runtime, "close_unsent_connection_delivery", Mock(side_effect=RuntimeError("crash")))
+    with pytest.raises(RuntimeError):
+        _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, live_status)
+    deal = Deal.objects.get(pk=result["deal_id"])
+    # The crash rolled the state back with the receipt, so the lane retries it.
+    assert deal.state == ProfileState.READY_TO_CONNECT and deal.connected_at is None
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status not in {
+        OutboundDelivery.Status.STOPPED, OutboundDelivery.Status.UNCLEAR}
+    monkeypatch.setattr(runtime, "close_unsent_connection_delivery", real_close)
+    _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, live_status)
+    assert integrations.submit(body, apply=True)["status"] == "held"
+
+
+@pytest.mark.parametrize("state,open_status,closed,outcome,reason", [
+    (ProfileState.PENDING, OutboundDelivery.Status.PLANNED, OutboundDelivery.Status.STOPPED,
+     "held", "pending_invitation_exists"),
+    (ProfileState.PENDING, OutboundDelivery.Status.QUEUED, OutboundDelivery.Status.STOPPED,
+     "held", "pending_invitation_exists"),
+    (ProfileState.CONNECTED, OutboundDelivery.Status.PLANNED, OutboundDelivery.Status.STOPPED,
+     "held", "already_connected"),
+    (ProfileState.PENDING, OutboundDelivery.Status.SENDING, OutboundDelivery.Status.UNCLEAR,
+     "uncertain", "delivery_unclear"),
+    (ProfileState.CONNECTED, OutboundDelivery.Status.FAILED, OutboundDelivery.Status.UNCLEAR,
+     "uncertain", "delivery_unclear"),
+])
+@pytest.mark.parametrize("local", [False, True])
+def test_recovery_closes_a_receipt_stranded_by_an_interrupted_profile_check(
+        body, state, open_status, closed, outcome, reason, local):
+    """Code before the atomic check could commit the Deal state but not the receipt."""
+    if local:
+        body = {**body, "callback_url": ""}
+    result = integrations.submit(body, apply=True)
+    Deal.objects.filter(pk=result["deal_id"]).update(
+        state=state, connected_at=timezone.now() if state == ProfileState.CONNECTED else None)
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=open_status)
+    row = CampaignSubmission.objects.get()
+    assert integrations.status(row)["status"] == "enrolled"
+    before = {k: v for k, v in snapshot().items() if k not in {"CampaignSubmission", "OutboundDelivery"}}
+    if local:
+        events = callbacks.local_outcomes(operator="Arian", source=body["source"])
+        assert [(e["outcome"], e["reason"]) for e in events] == [(outcome, reason)]
+    else:
+        assert callbacks.reconcile(operator="Arian") == 1
+    delivery = OutboundDelivery.objects.get(pk=result["delivery_id"])
+    assert delivery.status == closed and delivery.sent_at is None
+    row.refresh_from_db()
+    assert (row.callback_payload["outcome"], row.callback_payload["reason"]) == (outcome, reason)
+    # Receipt only: no Deal, Lead, Campaign or Task changed, nothing was queued.
+    assert {k: v for k, v in snapshot().items() if k not in {"CampaignSubmission", "OutboundDelivery"}} == before
+    assert callbacks.reconcile(operator="Arian", include_local=True) == 0
+
+
+def test_recovery_leaves_in_flight_and_unrelated_receipts_alone(body):
+    """A note still in flight, or one owned by another sender, is not touched."""
+    result = integrations.submit(body, apply=True)
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=OutboundDelivery.Status.SENDING)
+    before = snapshot()
+    assert callbacks.reconcile(operator="Arian") == 0
+    assert callbacks.reconcile(operator="Chuka") == 0
+    assert snapshot() == before
+
+
+def test_interrupted_click_is_never_repeated_on_a_connectable_looking_profile(fake_session, monkeypatch):
+    from linkedin.db.deals import get_ready_to_connect_profiles
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    crashed = Mock(side_effect=RuntimeError("stopped after the click, before any receipt"))
+    with pytest.raises(RuntimeError):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, crashed)
+    crashed.assert_called_once()  # Mock only.
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENDING
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.READY_TO_CONNECT
+    # A later normal pass still sees a Connect surface; the receipt decides.
+    retry = Mock(return_value=ProfileState.PENDING)
+    deal = _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_not_called()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    deal.refresh_from_db()
+    assert deal.state == ProfileState.PENDING and deal.invitation_sent_at is None
+    assert not get_ready_to_connect_profiles(fake_session)
+    assert [e["outcome"] for e in callbacks.local_outcomes(operator="Arian", source="synthetic")] == ["uncertain"]
+    # Further passes stay quiet.
+    again = Mock(return_value=ProfileState.PENDING)
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, again)
+    again.assert_not_called()
+
+
+@pytest.mark.parametrize("delivery_status,outcome", [
+    (OutboundDelivery.Status.SENT, "sent"),  # stopped after the receipt, before the Deal state
+    (OutboundDelivery.Status.UNCLEAR, "uncertain"),
+])
+def test_a_final_receipt_on_a_ready_deal_is_never_sent_again(fake_session, monkeypatch, delivery_status, outcome):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=delivery_status)
+    invitation = Mock(return_value=ProfileState.PENDING)
+    deal = _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    invitation.assert_not_called()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == delivery_status
+    deal.refresh_from_db()
+    assert deal.state == ProfileState.PENDING
+    assert integrations.submit(body, apply=True)["status"] == outcome
+
+
+def test_a_definite_pre_send_failure_still_retries_once(fake_session, monkeypatch):
+    """No button found is not an attempted send; the campaign's existing retry is unchanged."""
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=OutboundDelivery.Status.FAILED)
+    invitation = Mock(return_value=ProfileState.PENDING)
+    deal = _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    invitation.assert_called_once()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENT
+    deal.refresh_from_db()
+    assert deal.state == ProfileState.PENDING and deal.invitation_sender == "Arian"
+    assert integrations.submit(body, apply=True)["status"] == "sent"
+
+
+def test_a_submission_from_before_the_hash_check_replays_with_the_correct_hash(body):
+    from linkedin.models import MessageProgramVersion
+    original = integrations.submit(body, apply=True)  # submitted without the optional hash
+    before = snapshot()
+    content_hash = MessageProgramVersion.objects.get(pk=body["message_version_id"]).content_hash
+    checked = {**body, "message_version_hash": content_hash}
+    assert integrations.submit(checked) == original
+    assert integrations.submit(checked, apply=True) == original
+    assert snapshot() == before  # the original receipt, digest included, is kept
+    for change in ({"message_version_hash": "0" * 64}, {"first_name": "Other"}):
+        with pytest.raises(integrations.EnrollmentHold, match="reference_payload_conflict"):
+            integrations.submit({**checked, **change}, apply=True)
+    assert snapshot() == before
+
+
+def _limit_of_one(fake_session, monkeypatch):
+    import linkedin.models as models
+    monkeypatch.setattr(models, "_LIMIT_OVERRIDES", {})
+    fake_session.linkedin_profile.connect_daily_limit = 1
+    fake_session.linkedin_profile.save(update_fields=["connect_daily_limit"])
+
+
+def _budget(profile):
+    return {"daily": profile._daily_count("connect"), "weekly": profile._weekly_count("connect"),
+            "total": profile._total_daily_count(), "can_connect": profile.can_execute("connect")}
+
+
+SPENT_ONE = {"daily": 1, "weekly": 1, "total": 1, "can_connect": False}
+
+
+def test_an_interrupted_click_counts_once_at_its_attempt_time(fake_session, monkeypatch):
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    crashed = Mock(side_effect=RuntimeError("stopped after the click"))
+    with pytest.raises(RuntimeError):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, crashed)
+    attempt = ActionLog.objects.get(action_type="connect")
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    # The next pass is over the limit, yet still settles the receipt without sending or charging again.
+    retry = Mock(return_value=ProfileState.PENDING)
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_not_called()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    assert [e["outcome"] for e in callbacks.local_outcomes(operator="Arian", source="synthetic")] == ["uncertain"]
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    assert list(ActionLog.objects.values_list("pk", "created_at")) == [(attempt.pk, attempt.created_at)]
+
+
+def test_a_confirmed_send_counts_once_even_if_the_process_stops_after_its_receipt(fake_session, monkeypatch):
+    from linkedin.tasks import connect
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    real_state = connect.set_profile_state
+    monkeypatch.setattr(connect, "set_profile_state", Mock(side_effect=RuntimeError("stopped after the receipt")))
+    invitation = Mock(return_value=ProfileState.PENDING)
+    with pytest.raises(RuntimeError):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    invitation.assert_called_once()  # Mock only.
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENT
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    assert [e["outcome"] for e in callbacks.local_outcomes(operator="Arian", source="synthetic")] == ["sent"]
+    monkeypatch.setattr(connect, "set_profile_state", real_state)
+    again = Mock(return_value=ProfileState.PENDING)
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, again)
+    again.assert_not_called()
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.PENDING
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+
+
+def test_a_completed_send_is_counted_exactly_once(fake_session, monkeypatch):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    invitation = Mock(return_value=ProfileState.PENDING)
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    invitation.assert_called_once()
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+
+
+@pytest.mark.parametrize("outcome", ["no_button", "limit_popup"])
+def test_a_definite_no_send_returns_the_reserved_budget(fake_session, monkeypatch, outcome):
+    from linkedin.exceptions import ReachedConnectionLimit
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    invitation = (Mock(return_value=ProfileState.QUALIFIED) if outcome == "no_button"
+                  else Mock(side_effect=ReachedConnectionLimit("Weekly connection limit pop up appeared")))
+    monkeypatch.setattr(fake_session.linkedin_profile, "mark_exhausted", Mock())
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    invitation.assert_called_once()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.FAILED
+    assert not ActionLog.objects.exists()
+    assert _budget(fake_session.linkedin_profile) == {"daily": 0, "weekly": 0, "total": 0, "can_connect": True}
+
+
+def test_a_pending_invite_found_mid_attempt_keeps_its_reservation(fake_session, monkeypatch):
+    """A direct Connect click earlier in the attempt may be what LinkedIn now shows as pending."""
+    from linkedin.actions.connect import ExistingPendingInvite
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    invitation = Mock(side_effect=ExistingPendingInvite("observed-person"))
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.STOPPED
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    current = integrations.submit(body, apply=True)
+    assert (current["status"], current["reason"]) == ("held", "pending_invitation_exists")

@@ -629,9 +629,9 @@ class LinkedInProfile(models.Model):
                 return True
         return action_type in self._exhausted
 
-    def record_action(self, action_type: str, campaign: Campaign) -> None:
+    def record_action(self, action_type: str, campaign: Campaign) -> "ActionLog":
         """Persist a rate-limited action."""
-        ActionLog.objects.create(
+        return ActionLog.objects.create(
             linkedin_profile=self, campaign=campaign, action_type=action_type,
         )
 

@@ -37,7 +37,8 @@ def normalized_input(body):
     if not isinstance(body, dict):
         raise EnrollmentHold("object_required")
     allowed = {"source", "reference_id", "campaign_id", "owner_username", "message_version_id",
-               "linkedin_url", "first_name", "last_name", "company_name", "email", "icp", "role_tag", "callback_url"}
+               "linkedin_url", "first_name", "last_name", "company_name", "email", "icp", "role_tag", "callback_url",
+               "message_version_hash"}
     if set(body) - allowed:
         raise EnrollmentHold("unsupported_fields")
     result = {}
@@ -56,6 +57,12 @@ def normalized_input(body):
         result[key] = value
     if len(result["source"]) > 80 or len(result["reference_id"]) > 200:
         raise EnrollmentHold("reference_too_long")
+    # Optional exact-copy precondition. When absent it is omitted, so existing
+    # reference digests are unchanged.
+    if not result["message_version_hash"]:
+        del result["message_version_hash"]
+    elif not re.fullmatch(r"[0-9a-f]{64}", result["message_version_hash"]):
+        raise EnrollmentHold("message_version_hash_invalid")
     parsed = urlsplit(result["linkedin_url"])
     if (parsed.scheme != "https" or parsed.netloc.lower() not in {"linkedin.com", "www.linkedin.com"}
             or parsed.query or parsed.fragment or not re.fullmatch(r"/in/[A-Za-z0-9_-]+/?", parsed.path)):
@@ -85,6 +92,8 @@ def _campaign(body, *, lock=False):
     campaign._integration_operator = resolve_operator(owner.linkedin_profile.linkedin_username)
     if campaign.active_message_version_id != body["message_version_id"]:
         raise EnrollmentHold("message_version_changed")
+    if body.get("message_version_hash") not in {None, campaign.active_message_version.content_hash}:
+        raise EnrollmentHold("message_version_hash_mismatch")
     audience = index_message_version(campaign.active_message_version).resolve_audience(body["icp"])
     if audience != body["icp"]:
         raise EnrollmentHold("exact_audience_key_required")
@@ -156,14 +165,20 @@ def status(row):
     deal = enrollment.deal
     delivery = OutboundDelivery.objects.filter(enrollment=enrollment, channel="linkedin_connect", step_index=0).first()
     outcome, reason = "enrolled", ""
-    if deal.invitation_sent_at and deal.invitation_sender == enrollment.operator:
+    if (deal.invitation_sent_at and deal.invitation_sender == enrollment.operator) or (
+            delivery and delivery.status == OutboundDelivery.Status.SENT):
+        # The frozen note is marked sent only once LinkedIn took the invitation,
+        # so it is a receipt even when a crash came before the Deal ledger.
         outcome = "sent"
     elif delivery and delivery.status == OutboundDelivery.Status.UNCLEAR:
         outcome, reason = "uncertain", "delivery_unclear"
     elif deal.state == ProfileState.FAILED or deal.closing_reason:
         outcome, reason = "failed", "campaign_stopped"
-    elif deal.connected_at and delivery and delivery.status == OutboundDelivery.Status.SENT:
+    elif deal.connected_at and delivery and delivery.status == OutboundDelivery.Status.STOPPED:
         outcome, reason = "held", "already_connected"
+    elif delivery and delivery.status == OutboundDelivery.Status.STOPPED and deal.state == ProfileState.PENDING:
+        # No invitation receipt for this sender: LinkedIn already showed one.
+        outcome, reason = "held", "pending_invitation_exists"
     elif delivery and delivery.status == OutboundDelivery.Status.STOPPED:
         outcome, reason = "held", "delivery_stopped"
     return {"submission_id": row.pk, "enrollment_id": enrollment.pk, "deal_id": deal.pk,
@@ -172,10 +187,25 @@ def status(row):
             "note": delivery.frozen_body if delivery else "", "delivery_id": delivery.pk if delivery else None}
 
 
+def _same_request_before_hash_check(row, body):
+    """A reference submitted before the optional copy check, replayed with it.
+
+    Its stored digest omits the hash, so the replay is the same request only
+    when everything else matches exactly and the hash names the version that
+    enrollment froze. The original receipt is kept as it is.
+    """
+    if "message_version_hash" not in body:
+        return False
+    unchecked = {key: value for key, value in body.items() if key != "message_version_hash"}
+    return (row.input_hash == _digest(unchecked)
+            and row.enrollment.message_version.content_hash == body["message_version_hash"])
+
+
 def _existing(body, digest):
-    row = CampaignSubmission.objects.select_related("enrollment__deal__lead").filter(
+    row = CampaignSubmission.objects.select_related(
+        "enrollment__deal__lead", "enrollment__message_version").filter(
         source=body["source"], reference_id=body["reference_id"]).first()
-    if row and row.input_hash != digest:
+    if row and row.input_hash != digest and not _same_request_before_hash_check(row, body):
         raise EnrollmentHold("reference_payload_conflict")
     return status(row) if row else None
 
