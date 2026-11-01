@@ -71,7 +71,7 @@ def post(url, payload):
         connection.close()
 
 
-def reconcile(*, operator, limit=50):
+def reconcile(*, operator, limit=50, source=None, include_local=False):
     from linkedin.campaign_integrations import status
     if not conf.ENABLE_CAMPAIGN_INTEGRATIONS:
         return 0
@@ -82,8 +82,12 @@ def reconcile(*, operator, limit=50):
     ).filter(Q(status__in=[OutboundDelivery.Status.UNCLEAR, OutboundDelivery.Status.STOPPED])
              | Q(status=OutboundDelivery.Status.SENT, enrollment__deal__connected_at__isnull=False))
     from linkedin.enums import ProfileState
-    ids = list(CampaignSubmission.objects.filter(enrollment__operator=operator, callback_ready_at__isnull=True)
-               .exclude(callback_url="").alias(_terminal=Exists(terminal_delivery)).filter(
+    candidates = CampaignSubmission.objects.filter(enrollment__operator=operator, callback_ready_at__isnull=True)
+    if source is not None:
+        candidates = candidates.filter(source=source)
+    if not include_local:
+        candidates = candidates.exclude(callback_url="")
+    ids = list(candidates.alias(_terminal=Exists(terminal_delivery)).filter(
                    Q(_terminal=True) | Q(enrollment__deal__state=ProfileState.FAILED)
                    | (~Q(enrollment__deal__closing_reason="") & Q(enrollment__deal__closing_reason__isnull=False))
                    | Q(enrollment__deal__invitation_sent_at__isnull=False,
@@ -108,11 +112,60 @@ def reconcile(*, operator, limit=50):
     return count
 
 
+def local_outcomes(*, operator, source, limit=50):
+    """Freeze/export normal completion events for a trusted local integration.
+
+    Empty callback destinations are explicit local transport. The same UUID,
+    payload freeze and durable receipt are used; this never executes outreach.
+    """
+    if not conf.ENABLE_CAMPAIGN_INTEGRATIONS:
+        raise ValueError("campaign_integrations_disabled")
+    if not source or not operator:
+        raise ValueError("source_and_operator_required")
+    reconcile(operator=operator, source=source, include_local=True, limit=limit)
+    return list(CampaignSubmission.objects.filter(
+        source=source, enrollment__operator=operator, callback_url="",
+        callback_ready_at__isnull=False, callback_delivered_at__isnull=True,
+    ).order_by("pk").values_list("callback_payload", flat=True)[:limit])
+
+
+@transaction.atomic
+def acknowledge_local_outcomes(*, operator, source, receipts):
+    """Acknowledge a durable integration handoff, never an invitation send."""
+    if not conf.ENABLE_CAMPAIGN_INTEGRATIONS:
+        raise ValueError("campaign_integrations_disabled")
+    if not source or not operator or not isinstance(receipts, list) or len(receipts) > 50:
+        raise ValueError("invalid_local_outcome_receipts")
+    seen = set()
+    rows = []
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or type(receipt.get("submission_id")) is not int:
+            raise ValueError("invalid_local_outcome_identity")
+        pk = receipt["submission_id"]
+        if pk in seen:
+            raise ValueError("duplicate_local_outcome_identity")
+        seen.add(pk)
+        row = CampaignSubmission.objects.select_for_update().filter(
+            pk=pk, source=source, enrollment__operator=operator, callback_url="",
+            callback_ready_at__isnull=False,
+        ).first()
+        if row is None or str(row.event_id) != receipt.get("event_id"):
+            raise ValueError("local_outcome_identity_mismatch")
+        rows.append(row)
+    acknowledged = 0
+    for row in rows:
+        if row.callback_delivered_at is None:
+            row.callback_delivered_at = timezone.now()
+            row.save(update_fields=["callback_delivered_at"])
+            acknowledged += 1
+    return acknowledged
+
+
 def deliver(*, operator, limit=50):
     if not conf.ENABLE_CAMPAIGN_INTEGRATIONS:
         return 0
     now = timezone.now()
-    ids = list(CampaignSubmission.objects.filter(enrollment__operator=operator,
+    ids = list(CampaignSubmission.objects.filter(enrollment__operator=operator).exclude(callback_url="").filter(
         callback_ready_at__isnull=False, callback_delivered_at__isnull=True,
         callback_abandoned_at__isnull=True).filter(Q(callback_next_at__isnull=True) | Q(callback_next_at__lte=now))
         .order_by("pk").values_list("pk", flat=True)[:limit])

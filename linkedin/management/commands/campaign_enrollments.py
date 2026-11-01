@@ -9,7 +9,7 @@ class Command(BaseCommand):
     help = "Preview/apply an external lead's enrollment into a normal campaign, or read its status."
 
     def add_arguments(self, parser):
-        parser.add_argument("action", choices=["submit", "status", "preflight", "callbacks"])
+        parser.add_argument("action", choices=["submit", "status", "preflight", "callbacks", "outcomes", "ack-outcomes"])
         parser.add_argument("--input", type=Path)
         parser.add_argument("--source")
         parser.add_argument("--reference-id")
@@ -37,8 +37,21 @@ class Command(BaseCommand):
                     raise CommandError("--operator and --apply are required")
                 from linkedin.campaign_callbacks import deliver, reconcile
                 result = {"prepared": reconcile(operator=options["operator"]), "delivered": deliver(operator=options["operator"])}
+            elif options["action"] in {"outcomes", "ack-outcomes"}:
+                if not options["operator"] or not options["source"] or not options["apply"]:
+                    raise CommandError("--operator, --source and --apply are required")
+                from linkedin.campaign_callbacks import local_outcomes, acknowledge_local_outcomes
+                if options["action"] == "outcomes":
+                    result = {"events": local_outcomes(operator=options["operator"], source=options["source"])}
+                else:
+                    if not options["input"]:
+                        raise CommandError("--input is required")
+                    result = {"acknowledged": acknowledge_local_outcomes(
+                        operator=options["operator"], source=options["source"],
+                        receipts=json.loads(options["input"].read_text()))}
             else:
                 result = {"enabled": conf.ENABLE_CAMPAIGN_INTEGRATIONS,
+                          "local_outcomes_supported": True,
                           "connect_outside_hours_campaign_ids": list(conf.CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS),
                           "callbacks_configured": bool(len(conf.OUTREACH_CALLBACK_SECRET) >= 32 and conf.OUTREACH_CALLBACK_ALLOWED_HOSTS),
                           "replies_configured": bool(conf.ENABLE_REALTIME_LISTENER and conf.SLACK_REPLIES_WEBHOOK_URL)}

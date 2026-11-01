@@ -128,6 +128,25 @@ python manage.py campaign_enrollments status --source example-integration --refe
 
 ## Completion callbacks
 
+### Local outcome handoff
+
+A trusted integration sharing the existing database can explicitly use the
+local CLI transport instead of hosting an HTTPS callback. Submit an empty
+`callback_url`, then run `campaign_enrollments outcomes --source SOURCE
+--operator OPERATOR --apply`. This freezes the same normal completion receipt
+and its actual persisted event UUID. No event is returned before final campaign
+evidence exists. After committing that event into its own deduplicated outbox,
+the integration calls `ack-outcomes` with the exact submission/event ID pairs
+in `--input FILE`, plus the same source/operator and `--apply`.
+
+Only local-destination receipts with matching source, operator and event UUID
+can be acknowledged. Export is repeatable until acknowledged; acknowledgement
+is idempotent. The HTTP worker skips empty destinations. Neither operation
+changes a Lead, Deal, delivery, Task, invitation, sender budget or sequence.
+Callback hosting/signing is required only for HTTPS transport. Local notification
+latency follows the integration's review schedule; it does not block enrollment
+while a sender's daemon is offline. Actual replies retain their existing path.
+
 Callbacks are optional. Configure a secret of at least 32 characters and exact
 hostnames in `OUTREACH_CALLBACK_ALLOWED_HOSTS`. The receiver must verify
 `X-OpenOutreach-Signature: t=UNIX_SECONDS,v1=HMAC_SHA256` over `timestamp + '.' +

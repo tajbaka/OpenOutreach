@@ -160,6 +160,79 @@ def completed(body):
     return row
 
 
+def test_local_outcomes_freeze_once_and_ack_without_http_or_outreach(body, monkeypatch):
+    row = completed({**body, "callback_url": ""})
+    frozen = {k: v for k, v in snapshot().items() if k != "CampaignSubmission"}
+    post = Mock()
+    monkeypatch.setattr(callbacks, "post", post)
+    events = callbacks.local_outcomes(operator="Arian", source=body["source"])
+    assert len(events) == 1 and events[0]["outcome"] == "sent"
+    assert events[0]["event_id"] == str(row.event_id)
+    assert events[0]["submission_id"] == row.pk
+    assert callbacks.local_outcomes(operator="Arian", source=body["source"]) == events
+    assert callbacks.deliver(operator="Arian") == 0
+    post.assert_not_called()
+    receipts = [{"submission_id": row.pk, "event_id": str(row.event_id)}]
+    assert callbacks.acknowledge_local_outcomes(operator="Arian", source=body["source"], receipts=receipts) == 1
+    assert callbacks.acknowledge_local_outcomes(operator="Arian", source=body["source"], receipts=receipts) == 0
+    assert callbacks.local_outcomes(operator="Arian", source=body["source"]) == []
+    assert {k: v for k, v in snapshot().items() if k != "CampaignSubmission"} == frozen
+
+
+def test_local_outcomes_wait_for_evidence_and_do_not_starve_later_completion(body):
+    integrations.submit({**body, "callback_url": ""}, apply=True)
+    row = completed({**body, "callback_url": "", "reference_id": "person:2",
+                     "linkedin_url": "https://www.linkedin.com/in/synthetic-two/"})
+    events = callbacks.local_outcomes(operator="Arian", source=body["source"], limit=1)
+    assert len(events) == 1 and events[0]["submission_id"] == row.pk
+
+
+@pytest.mark.parametrize("change", ["source", "operator", "uuid", "http", "not_ready"])
+def test_local_ack_rejects_wrong_scope_or_uncommitted_outcome(body, change):
+    row = completed({**body, "callback_url": body["callback_url"] if change == "http" else ""})
+    if change != "not_ready":
+        callbacks.reconcile(operator="Arian", include_local=True)
+    before = snapshot()
+    with pytest.raises(ValueError, match="identity_mismatch"):
+        callbacks.acknowledge_local_outcomes(
+            operator="Chuka" if change == "operator" else "Arian",
+            source="other" if change == "source" else body["source"],
+            receipts=[{"submission_id": row.pk, "event_id": "wrong" if change == "uuid" else str(row.event_id)}])
+    assert snapshot() == before
+
+
+def test_local_export_and_ack_are_feature_gated_and_source_scoped(body, monkeypatch):
+    row = completed({**body, "callback_url": ""})
+    assert callbacks.local_outcomes(operator="Chuka", source=body["source"]) == []
+    assert callbacks.local_outcomes(operator="Arian", source="other") == []
+    monkeypatch.setattr(conf, "ENABLE_CAMPAIGN_INTEGRATIONS", False)
+    before = snapshot()
+    with pytest.raises(ValueError, match="disabled"):
+        callbacks.local_outcomes(operator="Arian", source=body["source"])
+    with pytest.raises(ValueError, match="disabled"):
+        callbacks.acknowledge_local_outcomes(operator="Arian", source=body["source"], receipts=[])
+    assert snapshot() == before
+
+
+def test_local_handoff_public_cli_exports_and_acknowledges_exact_receipt(body, tmp_path):
+    import json
+    from io import StringIO
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+    row = completed({**body, "callback_url": ""})
+    with pytest.raises(CommandError):
+        call_command("campaign_enrollments", "outcomes", source=body["source"], operator="Arian")
+    output = StringIO()
+    call_command("campaign_enrollments", "outcomes", source=body["source"], operator="Arian", apply=True, stdout=output)
+    event = json.loads(output.getvalue())["result"]["events"][0]
+    path = tmp_path / "ack.json"
+    path.write_text(json.dumps([{"submission_id": row.pk, "event_id": event["event_id"]}]))
+    call_command("campaign_enrollments", "ack-outcomes", source=body["source"], operator="Arian",
+                 apply=True, input=path, stdout=StringIO())
+    row.refresh_from_db()
+    assert row.callback_delivered_at is not None and row.callback_payload == event
+
+
 def test_callback_retry_is_durable_idempotent_and_never_changes_outreach(body, monkeypatch):
     row = completed(body)
     frozen = {k: v for k, v in snapshot().items() if k != "CampaignSubmission"}
