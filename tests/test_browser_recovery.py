@@ -226,6 +226,9 @@ def _daemon_setup(monkeypatch, fake_session, browser):
     monkeypatch.setattr(daemon, "_sync_listener_supervisor", Mock())
     monkeypatch.setattr(daemon, "seconds_until_active", Mock(return_value=0))
     monkeypatch.setattr(daemon, "_claimable_task_types_now", Mock(return_value=None))
+    # These recovery tests deliberately open every schedule gate. Keep their
+    # mocked manager boundary; campaign-hours isolation has its own tests.
+    monkeypatch.setattr(daemon, "_connection_campaign_ids_now", Mock(return_value=None))
     monkeypatch.setattr(daemon, "notify_error", Mock())
     monkeypatch.setattr(daemon, "notify_degraded", browser.notify)
     monkeypatch.setattr(daemon.connections, "close_all", Mock())

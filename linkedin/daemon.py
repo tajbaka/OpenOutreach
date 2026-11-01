@@ -234,7 +234,7 @@ def _connection_campaign_ids_now(profile=None, *, now=None):
 def _task_queue_for_connection_scope(campaign_ids):
     from django.db.models import Q
 
-    queue = Task.objects.all()
+    queue = Task.objects
     if campaign_ids is not None:
         references = [value for pk in campaign_ids for value in (pk, str(pk))]
         queue = queue.filter(
