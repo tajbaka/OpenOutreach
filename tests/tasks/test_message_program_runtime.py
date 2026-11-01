@@ -309,6 +309,8 @@ def test_bound_connect_uses_frozen_note_and_never_reads_sender_json(
     note_limited,
 ):
     monkeypatch.setattr("linkedin.tasks.connect.ENABLE_CONNECT", True)
+    # Frozen-copy checks do not need embedding inference or model downloads.
+    monkeypatch.setattr("linkedin.ml.embeddings.embed_profile", MagicMock())
     _version(fake_session.campaign)
     profile = {
         "first_name": "Ada",

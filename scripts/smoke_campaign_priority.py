@@ -46,8 +46,13 @@ def child(suite, target, report):
     environment = clean_environment()
     os.environ.clear()
     os.environ.update(environment)
+    original_cwd = Path.cwd()
     with tempfile.TemporaryDirectory(prefix="campaign-smoke-") as temp:
         scratch = Path(temp).resolve()
+        # Windows libraries may require APPDATA; never point them at real data.
+        appdata = scratch / "appdata"
+        appdata.mkdir()
+        os.environ["APPDATA"] = str(appdata)
         os.chdir(scratch)
 
         def audit(event, args):
@@ -130,6 +135,7 @@ def child(suite, target, report):
             result["failure_type"] = type(exc).__name__
             print("Smoke setup failed:", type(exc).__name__, file=sys.stderr)
         finally:
+            os.chdir(original_cwd)
             report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         return result["exit_code"]
 
