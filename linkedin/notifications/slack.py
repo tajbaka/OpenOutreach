@@ -620,7 +620,7 @@ def notify_message_received(
     text: str,
     operator: str = "",
     thread_external_id: str = "",
-) -> None:
+) -> bool:
     """Post an 'inbound message received' notification. No-op if disabled.
 
     Fired by the realtime listener when an inbound LinkedIn DM is detected
@@ -634,7 +634,7 @@ def notify_message_received(
     replies and decides whether to run phone enrichment.
     """
     if not SLACK_REPLIES_WEBHOOK_URL:
-        return
+        return False
 
     full_name = (
         f"{lead.first_name or ''} {lead.last_name or ''}".strip()
@@ -735,7 +735,7 @@ def notify_message_received(
     })
 
     payload = {"text": fallback, "blocks": blocks}
-    _post_to_slack(
+    return _post_to_slack(
         SLACK_REPLIES_WEBHOOK_URL, payload, f"message-received ({full_name})"
     )
 

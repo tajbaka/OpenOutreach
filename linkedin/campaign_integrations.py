@@ -119,6 +119,14 @@ def _identity(body, *, validate_database=True):
 
 
 def _exclusions(lead):
+    from linkedin.models import RB2BVisitor
+    history = RB2BVisitor.objects.filter(
+        Q(public_identifier__iexact=lead.public_identifier) | Q(lead_id=lead.pk) if lead.pk
+        else Q(public_identifier__iexact=lead.public_identifier)
+    )
+    if history.filter(Q(attempted_at__isnull=False) | Q(attempt_token__isnull=False)
+                      | Q(confirmed_at__isnull=False) | Q(status__in=["ready", "attempting", "sent", "uncertain", "failed"])).exists():
+        raise EnrollmentHold("historical_attempt_no_resend")
     if lead.disqualified or lead_suppression_match(lead):
         raise EnrollmentHold("suppressed_or_disqualified")
     domain = normalize_domain(lead.email)

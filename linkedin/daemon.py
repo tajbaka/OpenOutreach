@@ -511,6 +511,9 @@ def heal_tasks(session):
     if reconcile_discovery_tasks(session.linkedin_profile, our_operator):
         logger.info("Profile discovery task ready for %s", our_operator)
 
+    from linkedin.legacy_rb2b import flush_notifications
+    flush_notifications()
+
     # Recover only missing invitation-start Gmail work, independently of the
     # post-accept LinkedIn follow-up switch. Never change existing due Tasks.
     from gmail.handoff import recover_invitation_gmail_sequences

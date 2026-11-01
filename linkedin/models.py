@@ -643,19 +643,24 @@ class LinkedInProfile(models.Model):
         logger.warning("Rate limit: %s externally exhausted for today", action_type)
 
     def _daily_count(self, action_type: str) -> int:
-        return ActionLog.objects.filter(
+        from linkedin.legacy_rb2b import budget_count
+        reserved = budget_count(self.pk, active_day_start()) if action_type == "connect" else 0
+        return reserved + ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
             created_at__gte=active_day_start(),
         ).count()
 
     def _total_daily_count(self) -> int:
-        return ActionLog.objects.filter(
+        from linkedin.legacy_rb2b import budget_count
+        return budget_count(self.pk, active_day_start()) + ActionLog.objects.filter(
             linkedin_profile=self,
             created_at__gte=active_day_start(),
         ).count()
 
     def _weekly_count(self, action_type: str) -> int:
-        return ActionLog.objects.filter(
+        from linkedin.legacy_rb2b import budget_count
+        reserved = budget_count(self.pk, active_week_start()) if action_type == "connect" else 0
+        return reserved + ActionLog.objects.filter(
             linkedin_profile=self, action_type=action_type,
             created_at__gte=active_week_start(),
         ).count()

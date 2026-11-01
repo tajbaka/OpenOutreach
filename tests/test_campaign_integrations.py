@@ -55,6 +55,19 @@ def test_preview_is_read_only_and_apply_freezes_normal_campaign_copy(body):
     assert snapshot() == after
 
 
+@pytest.mark.parametrize("status", ["ready", "attempting", "sent", "uncertain", "failed"])
+def test_old_receipt_blocks_a_fresh_reference_even_without_campaign_history(body, status):
+    from linkedin.models import RB2BVisitor
+    profile = LinkedInProfile.objects.get()
+    old = RB2BVisitor.objects.create(public_identifier="synthetic-person", linkedin_url=body["linkedin_url"],
+                                    linkedin_profile=profile, status=status)
+    with pytest.raises(integrations.EnrollmentHold, match="historical_attempt_no_resend"):
+        integrations.submit(body, apply=True)
+    assert not CampaignSubmission.objects.exists() and not Deal.objects.exists()
+    old.refresh_from_db()
+    assert old.status == status
+
+
 def test_active_enrollment_reuses_pending_campaign_task_without_retiming(body, monkeypatch):
     campaign = Campaign.objects.get(pk=body["campaign_id"])
     campaign.status = "active"

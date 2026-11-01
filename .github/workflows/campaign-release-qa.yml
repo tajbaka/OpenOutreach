@@ -1,0 +1,32 @@
+name: Isolated campaign release QA
+on:
+  push:
+    branches: [codex/campaign-priority]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    container: postgres:17-bookworm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare credential-free test environment
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -r requirements/local.txt
+          chown -R postgres:postgres "$GITHUB_WORKSPACE"
+      - name: Isolated PostgreSQL priority and campaign regressions
+        shell: bash
+        run: |
+          runuser -u postgres -- env PATH="$PATH" HOME=/tmp .venv/bin/python -I -B scripts/qa_campaigns.py --suite campaign-priority --output-dir artifacts/qa/release-priority
+          runuser -u postgres -- env PATH="$PATH" HOME=/tmp .venv/bin/python -I -B scripts/qa_campaigns.py --suite campaigns --output-dir artifacts/qa/release-campaigns
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-campaign-release-qa
+          path: artifacts/qa/release-*
