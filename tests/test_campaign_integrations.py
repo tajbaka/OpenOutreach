@@ -426,6 +426,26 @@ def _connect_once(fake_session, monkeypatch, campaign, result, live_status, invi
     return deal
 
 
+def _linkedin(*clicks, result=ProfileState.PENDING, error=None):
+    """Stand-in for send_connection_request: performs `clicks`, then returns or raises.
+
+    "dialog": a Connect click whose invite dialog opened; "no_dialog": one that
+    opened none; "connect": one still waiting for its dialog; "send": a Send click.
+    """
+    def run(*, session, profile, note, attempt):
+        for click in clicks:
+            if click == "send":
+                attempt.send_clicking()
+            else:
+                attempt.connect_clicking()
+                if click != "connect":
+                    attempt.connect_settled(unsent_proven=click == "dialog")
+        if error is not None:
+            raise error
+        return result
+    return Mock(side_effect=run)
+
+
 def _run_connect_after_profile_check(fake_session, monkeypatch, campaign, result, live_status):
     invitation = Mock(return_value=ProfileState.PENDING)
     deal = _connect_once(fake_session, monkeypatch, campaign, result, live_status, invitation)
@@ -543,7 +563,7 @@ def test_recovery_leaves_in_flight_and_unrelated_receipts_alone(body):
 def test_interrupted_click_is_never_repeated_on_a_connectable_looking_profile(fake_session, monkeypatch):
     from linkedin.db.deals import get_ready_to_connect_profiles
     campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
-    crashed = Mock(side_effect=RuntimeError("stopped after the click, before any receipt"))
+    crashed = _linkedin("dialog", "send", error=RuntimeError("stopped after the Send click"))
     with pytest.raises(RuntimeError):
         _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, crashed)
     crashed.assert_called_once()  # Mock only.
@@ -627,7 +647,7 @@ def test_an_interrupted_click_counts_once_at_its_attempt_time(fake_session, monk
     from linkedin.models import ActionLog
     campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
     _limit_of_one(fake_session, monkeypatch)
-    crashed = Mock(side_effect=RuntimeError("stopped after the click"))
+    crashed = _linkedin("dialog", "send", error=RuntimeError("stopped after the Send click"))
     with pytest.raises(RuntimeError):
         _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, crashed)
     attempt = ActionLog.objects.get(action_type="connect")
@@ -648,7 +668,7 @@ def test_a_confirmed_send_counts_once_even_if_the_process_stops_after_its_receip
     _limit_of_one(fake_session, monkeypatch)
     real_state = connect.set_profile_state
     monkeypatch.setattr(connect, "set_profile_state", Mock(side_effect=RuntimeError("stopped after the receipt")))
-    invitation = Mock(return_value=ProfileState.PENDING)
+    invitation = _linkedin("dialog", "send")
     with pytest.raises(RuntimeError):
         _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
     invitation.assert_called_once()  # Mock only.
@@ -663,23 +683,31 @@ def test_a_confirmed_send_counts_once_even_if_the_process_stops_after_its_receip
     assert _budget(fake_session.linkedin_profile) == SPENT_ONE
 
 
-def test_a_completed_send_is_counted_exactly_once(fake_session, monkeypatch):
+@pytest.mark.parametrize("clicks", [("dialog", "send"), ("dialog", "no_dialog", "dialog", "send")])
+def test_a_completed_send_is_counted_exactly_once(fake_session, monkeypatch, clicks):
+    from linkedin.models import ActionLog
     campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
     _limit_of_one(fake_session, monkeypatch)
-    invitation = Mock(return_value=ProfileState.PENDING)
+    invitation = _linkedin(*clicks)
     _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
     invitation.assert_called_once()
+    assert ActionLog.objects.filter(action_type="connect").count() == 1  # reserved once, never re-logged
     assert _budget(fake_session.linkedin_profile) == SPENT_ONE
 
 
-@pytest.mark.parametrize("outcome", ["no_button", "limit_popup"])
+@pytest.mark.parametrize("outcome", ["no_button", "note_ui_missing", "note_limit", "limit_popup"])
 def test_a_definite_no_send_returns_the_reserved_budget(fake_session, monkeypatch, outcome):
     from linkedin.exceptions import ReachedConnectionLimit
     from linkedin.models import ActionLog
     campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
     _limit_of_one(fake_session, monkeypatch)
-    invitation = (Mock(return_value=ProfileState.QUALIFIED) if outcome == "no_button"
-                  else Mock(side_effect=ReachedConnectionLimit("Weekly connection limit pop up appeared")))
+    invitation = {
+        "no_button": _linkedin(result=ProfileState.QUALIFIED),
+        "note_ui_missing": _linkedin("dialog", result=ProfileState.QUALIFIED),
+        "note_limit": _linkedin("dialog", error=ReachedConnectionLimit("out of free custom notes")),
+        # LinkedIn's weekly-limit dialog appears instead of sending.
+        "limit_popup": _linkedin("dialog", "send", error=ReachedConnectionLimit("Weekly connection limit")),
+    }[outcome]
     monkeypatch.setattr(fake_session.linkedin_profile, "mark_exhausted", Mock())
     _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
     invitation.assert_called_once()
@@ -688,14 +716,165 @@ def test_a_definite_no_send_returns_the_reserved_budget(fake_session, monkeypatc
     assert _budget(fake_session.linkedin_profile) == {"daily": 0, "weekly": 0, "total": 0, "can_connect": True}
 
 
-def test_a_pending_invite_found_mid_attempt_keeps_its_reservation(fake_session, monkeypatch):
-    """A direct Connect click earlier in the attempt may be what LinkedIn now shows as pending."""
+@pytest.mark.parametrize("clicks,delivery_status,budget,outcome", [
+    # A Connect click that opened no dialog may itself be the pending invitation.
+    (("no_dialog",), OutboundDelivery.Status.UNCLEAR, SPENT_ONE, ("uncertain", "delivery_unclear")),
+    # Found after any click (even one whose dialog opened): the status check saw no
+    # pending invitation before the attempt, so it may be this attempt's own.
+    (("dialog",), OutboundDelivery.Status.UNCLEAR, SPENT_ONE, ("uncertain", "delivery_unclear")),
+    # Already showing before any click: pre-existing, so the budget is returned.
+    ((), OutboundDelivery.Status.STOPPED, {"daily": 0, "weekly": 0, "total": 0, "can_connect": True},
+     ("held", "pending_invitation_exists")),
+])
+def test_a_pending_invite_keeps_its_reservation_after_any_click(
+        fake_session, monkeypatch, clicks, delivery_status, budget, outcome):
     from linkedin.actions.connect import ExistingPendingInvite
     campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
     _limit_of_one(fake_session, monkeypatch)
-    invitation = Mock(side_effect=ExistingPendingInvite("observed-person"))
+    invitation = _linkedin(*clicks, error=ExistingPendingInvite("observed-person"))
     _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
-    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.STOPPED
-    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == delivery_status
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.PENDING
+    assert _budget(fake_session.linkedin_profile) == budget
     current = integrations.submit(body, apply=True)
-    assert (current["status"], current["reason"]) == ("held", "pending_invitation_exists")
+    assert (current["status"], current["reason"]) == outcome
+
+
+@pytest.mark.parametrize("clicks", [(), ("dialog",)])
+def test_a_failure_before_any_possibly_sending_click_stays_retryable(fake_session, monkeypatch, clicks):
+    """Navigation or dialog-only failures provably sent nothing, so the next pass sends once."""
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    before = OutboundDelivery.objects.get(pk=result["delivery_id"]).status
+    crashed = _linkedin(*clicks, error=TimeoutError("page element did not load"))
+    with pytest.raises(TimeoutError):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, crashed)
+    delivery = OutboundDelivery.objects.get(pk=result["delivery_id"])
+    assert delivery.status == (OutboundDelivery.Status.FAILED if clicks else before)
+    assert not ActionLog.objects.exists()
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.READY_TO_CONNECT
+    retry = _linkedin("dialog", "send")
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_called_once()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENT
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+
+
+@pytest.mark.parametrize("clicks", [("dialog", "send"), ("no_dialog",), ("connect",), ("dialog", "no_dialog", "dialog")])
+def test_a_failure_after_a_possibly_sending_click_is_held_and_counted(fake_session, monkeypatch, clicks):
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    crashed = _linkedin(*clicks, error=TimeoutError("stopped after the click"))
+    with pytest.raises(TimeoutError):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, crashed)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENDING
+    assert ActionLog.objects.filter(action_type="connect").count() == 1
+    retry = _linkedin("dialog", "send")
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_not_called()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.PENDING
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+
+
+def test_a_connect_click_without_a_dialog_then_no_button_is_held_at_once(fake_session, monkeypatch):
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    invitation = _linkedin("no_dialog", result=ProfileState.QUALIFIED)
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.PENDING
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    assert integrations.submit(body, apply=True)["status"] == "uncertain"
+    retry = _linkedin("dialog", "send")
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_not_called()
+
+
+@pytest.mark.parametrize("clicks,delivery_status,logs", [
+    (("no_dialog",), OutboundDelivery.Status.UNCLEAR, 1),  # LinkedIn answered a dialog-less Connect click
+    (("dialog",), OutboundDelivery.Status.FAILED, 0),      # e.g. email required inside the open dialog
+])
+def test_a_skipped_profile_keeps_budget_only_after_a_possible_send(fake_session, monkeypatch, clicks,
+                                                                   delivery_status, logs):
+    from linkedin.exceptions import SkipProfile
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    invitation = _linkedin(*clicks, error=SkipProfile("LinkedIn refused this profile"))
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == delivery_status
+    assert ActionLog.objects.filter(action_type="connect").count() == logs
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.FAILED
+
+
+def test_a_stopped_note_is_refused_before_any_browser_work(fake_session, monkeypatch):
+    from linkedin.message_delivery import MessageDeliveryError
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    OutboundDelivery.objects.filter(pk=result["delivery_id"]).update(status=OutboundDelivery.Status.STOPPED)
+    invitation = _linkedin("dialog", "send")
+    with pytest.raises(MessageDeliveryError, match="cannot be resumed"):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, invitation)
+    invitation.assert_not_called()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.STOPPED
+
+
+def _real_browser_actions(fake_session, monkeypatch, after_click, *, fail_after_click=False):
+    """Drive the real connect actions against a fake profile page (no browser)."""
+    from linkedin.actions import connect as actions
+    from tests.test_connect_action import _patch_direct_connect, _profile_page
+    page, state = _profile_page(after_click)
+    _patch_direct_connect(monkeypatch, state)
+    waits = {"after_click": 0}
+
+    def wait():
+        if state["clicked"]:
+            waits["after_click"] += 1
+            # The first wait follows the Connect click; fail at the next step.
+            if fail_after_click and waits["after_click"] == 2:
+                raise TimeoutError("browser stopped right after the Connect click")
+    fake_session.page = page
+    fake_session.wait = wait
+    return actions.send_connection_request
+
+
+@pytest.mark.parametrize("fail_after_click", [False, True])
+def test_a_pending_shown_after_a_connect_click_keeps_its_reservation_and_is_never_retried(
+        fake_session, monkeypatch, fail_after_click):
+    """Reviewer's case: LinkedIn answers the Connect click with Pending, an instant send."""
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    send = _real_browser_actions(fake_session, monkeypatch, "pending", fail_after_click=fail_after_click)
+    if fail_after_click:
+        with pytest.raises(TimeoutError):
+            _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, send)
+        assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.SENDING
+    else:
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, send)
+        assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    assert ActionLog.objects.filter(action_type="connect").count() == 1
+    retry = _linkedin("dialog", "send")
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_not_called()
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.UNCLEAR
+    assert Deal.objects.get(pk=result["deal_id"]).state == ProfileState.PENDING
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE
+    assert integrations.submit(body, apply=True)["status"] == "uncertain"
+
+
+def test_a_proven_unsent_dialog_then_a_failure_stays_retryable(fake_session, monkeypatch):
+    """Control: the invite dialog opened with its controls and no Pending anywhere."""
+    from linkedin.models import ActionLog
+    campaign, body, result = _enrolled_campaign_person(fake_session, monkeypatch)
+    _limit_of_one(fake_session, monkeypatch)
+    send = _real_browser_actions(fake_session, monkeypatch, "dialog", fail_after_click=True)
+    with pytest.raises(TimeoutError):
+        _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, send)
+    assert OutboundDelivery.objects.get(pk=result["delivery_id"]).status == OutboundDelivery.Status.FAILED
+    assert not ActionLog.objects.exists()
+    retry = _linkedin("dialog", "send")
+    _connect_once(fake_session, monkeypatch, campaign, result, ProfileState.READY_TO_CONNECT, retry)
+    retry.assert_called_once()
+    assert _budget(fake_session.linkedin_profile) == SPENT_ONE

@@ -198,9 +198,11 @@ def _notify_new_inbound_messages(
     if not candidate_ids:
         return 0
 
+    from linkedin.legacy_rb2b import flush_notifications, owns_reply_notice
     from linkedin.notifications.slack import notify_message_received
 
     notified = 0
+    queued = 0
     messages = (
         Message.objects.filter(
             lead=lead,
@@ -211,6 +213,11 @@ def _notify_new_inbound_messages(
         .order_by("sent_at", "id")
     )
     for message in messages:
+        if owns_reply_notice(message):
+            # A legacy-linked lead's notice is in the durable outbox,
+            # attributed to the receiving sender; never post it twice.
+            queued += 1
+            continue
         notify_message_received(
             lead=lead,
             text=message.body,
@@ -218,7 +225,9 @@ def _notify_new_inbound_messages(
             thread_external_id=message.thread_external_id,
         )
         notified += 1
-    return notified
+    if queued:
+        flush_notifications()
+    return notified + queued
 
 
 def _run_prereq_gate_for_accounts(configured: list[tuple[str, str, str]]) -> bool:

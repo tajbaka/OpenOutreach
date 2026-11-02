@@ -15,12 +15,6 @@ class EnvVar:
 
 
 ENV_VARS: tuple[EnvVar, ...] = (
-    EnvVar("ENABLE_CAMPAIGN_INTEGRATIONS", False, False, "false", "feature_flags",
-           "Permit external normal-campaign enrollment and durable completion callbacks."),
-    EnvVar("OUTREACH_CALLBACK_SECRET", False, True, "", "integrations",
-           "At least 32 characters, shared with the completion callback receiver for HMAC authentication."),
-    EnvVar("OUTREACH_CALLBACK_ALLOWED_HOSTS", False, False, "", "integrations",
-           "Comma-separated exact HTTPS callback hostnames; only public destinations are delivered."),
     EnvVar("LINKEDIN_USERNAME", True, False, None, "credentials",
            "Primary LinkedIn account the daemon runs as."),
     EnvVar("LINKEDIN_PASSWORD", True, True, None, "credentials",
@@ -149,6 +143,9 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "IANA timezone for active-hours and rest-day calculations."),
     EnvVar("REST_DAYS", False, False, "5,6", "schedule",
            "Comma-separated weekday indices the daemon rests on (Mon=0)."),
+    EnvVar("CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", False, False, "", "schedule",
+           "Comma-separated campaign IDs whose connection requests alone may run outside active "
+           "hours and on rest days, owner's active campaigns only; follow-ups and limits are unchanged."),
     EnvVar("DISCOVERY_DAILY_LIMIT", False, False, "25", "discovery",
            "Maximum new discovery profiles stored per sender/local day."),
     EnvVar("DISCOVERY_VISIT_SCORE_THRESHOLD", False, False, "70", "discovery",
@@ -231,4 +228,10 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Minutes after active-day start before expected sender activity is required."),
     EnvVar("SENDER_ACTIVITY_STALE_MINUTES", False, False, "90", "monitoring",
            "Due-work age with no recent ActionLog that marks a fresh sender stuck."),
+    EnvVar("ENABLE_CAMPAIGN_INTEGRATIONS", False, False, "false", "feature_flags",
+           "Permit external normal-campaign enrollment and durable completion callbacks."),
+    EnvVar("OUTREACH_CALLBACK_SECRET", False, True, "", "integrations",
+           "At least 32 characters, shared with the completion callback receiver for HMAC authentication."),
+    EnvVar("OUTREACH_CALLBACK_ALLOWED_HOSTS", False, False, "", "integrations",
+           "Comma-separated exact HTTPS callback hostnames; only public destinations are delivered."),
 )

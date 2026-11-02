@@ -10,6 +10,8 @@ from linkedin.actions.connect import (
     _click_with_note,
     _click_without_note,
     send_connection_request,
+    InviteAttempt,
+    _connect_direct,
     _connect_via_more,
     _custom_invite_vanity_name,
     _direct_invite_option,
@@ -487,7 +489,7 @@ def test_custom_note_limit_aborts_before_fill_or_send(monkeypatch, after_add_not
 
 
 def test_custom_note_limit_reports_real_reason_and_propagates(monkeypatch):
-    monkeypatch.setattr("linkedin.actions.connect._connect_direct", lambda *args: True)
+    monkeypatch.setattr("linkedin.actions.connect._connect_direct", lambda *args, **kwargs: True)
     monkeypatch.setattr(
         "linkedin.actions.connect._click_with_note",
         Mock(side_effect=ReachedConnectionLimit("LinkedIn reports you're out of free custom notes.")),
@@ -501,3 +503,143 @@ def test_custom_note_limit_reports_real_reason_and_propagates(monkeypatch):
 
     notify.assert_called_once()
     assert "out of free custom notes" in notify.call_args.kwargs["reason"]
+
+
+def test_invite_attempt_marks_only_possibly_sending_clicks():
+    order = []
+    attempt = InviteAttempt(before_click=lambda: order.append("durable"))
+    assert not attempt.clicked and not attempt.may_have_sent
+    attempt.connect_clicking()
+    assert order == ["durable"] and attempt.may_have_sent  # until its dialog is seen
+    attempt.connect_settled(unsent_proven=True)
+    assert not attempt.may_have_sent  # the dialog proves this click sent nothing
+    attempt.connect_clicking()
+    attempt.connect_settled(unsent_proven=False)
+    assert attempt.may_have_sent  # no dialog: LinkedIn can send instantly
+    attempt.connect_clicking()
+    attempt.connect_settled(unsent_proven=True)
+    assert attempt.may_have_sent  # a later dialog never clears an earlier possible send
+    assert order == ["durable"]  # the durable boundary is written once
+
+    sent = InviteAttempt()
+    sent.send_clicking()
+    assert sent.clicked and sent.may_have_sent
+
+
+@pytest.mark.parametrize("dialog_opens", [True, False])
+def test_direct_connect_writes_the_boundary_before_its_click(monkeypatch, dialog_opens):
+    option = Mock()
+    clicks = []
+    monkeypatch.setattr("linkedin.actions.connect.find_top_card", lambda session: Mock())
+    monkeypatch.setattr("linkedin.actions.connect._direct_invite_options", lambda *a, **k: [option])
+    monkeypatch.setattr("linkedin.actions.connect._click_connect_option", lambda opt: clicks.append(opt))
+    monkeypatch.setattr("linkedin.actions.connect._wait_for_invite_surface", lambda *a, **k: dialog_opens)
+    monkeypatch.setattr("linkedin.actions.connect._unsent_invite_proven", lambda session: dialog_opens)
+    monkeypatch.setattr("linkedin.actions.connect._dump_step_screenshot", lambda *a: None)
+    monkeypatch.setattr("linkedin.actions.connect._dump_page_state", lambda *a: None)
+    monkeypatch.setattr("linkedin.actions.connect._dismiss_failed_connect_attempt", lambda *a: None)
+    session = Mock()
+    session.page.locator.return_value = _Locator(count=0)
+    seen_before_click = []
+    attempt = InviteAttempt(before_click=lambda: seen_before_click.append(list(clicks)))
+
+    assert _connect_direct(session, "example", "Example Person", attempt=attempt) is dialog_opens
+
+    assert seen_before_click == [[]]  # durable boundary first, then the click
+    assert attempt.may_have_sent is (not dialog_opens)
+
+
+def test_no_connect_option_reaches_no_click_boundary(monkeypatch):
+    monkeypatch.setattr("linkedin.actions.connect.find_top_card", lambda session: Mock())
+    monkeypatch.setattr("linkedin.actions.connect._direct_invite_options", lambda *a, **k: [])
+    before = Mock()
+    attempt = InviteAttempt(before_click=before)
+    assert _connect_direct(Mock(), "example", "Example Person", attempt=attempt) is False
+    before.assert_not_called()
+    assert not attempt.clicked and not attempt.may_have_sent
+
+
+@pytest.mark.parametrize("with_note", [True, False])
+def test_send_click_is_marked_before_it_happens(monkeypatch, with_note):
+    page = Mock(url="https://www.linkedin.com/in/example/")
+    send = Mock()
+    send.count.return_value = 1
+    send.first = send
+    textarea = Mock()
+    textarea.count.return_value = 1
+    textarea.first = textarea
+
+    def locator(selector):
+        if selector == SELECTORS["note_textarea"]:
+            return textarea
+        if selector in {SELECTORS["send_invitation"],
+                        f'{SELECTORS["send_without_note"]}, {SELECTORS["send_now"]}'}:
+            return send
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    session = Mock(page=page)
+    monkeypatch.setattr("linkedin.actions.connect._wait_for_invite_surface", lambda *a, **k: True)
+    monkeypatch.setattr("linkedin.actions.connect._dump_step_screenshot", lambda *a: None)
+    state_at_boundary = []
+    attempt = InviteAttempt(before_click=lambda: state_at_boundary.append(send.click.called))
+    if with_note:
+        assert _click_with_note(session, "Approved note", attempt=attempt)
+    else:
+        assert _click_without_note(session, attempt=attempt)
+    assert state_at_boundary == [False] and send.click.called
+    assert attempt.may_have_sent
+
+
+def _profile_page(after_click: str, *, full_name: str = "Observed Person"):
+    """A profile page whose Connect click LinkedIn answers with `after_click`.
+
+    "pending": the button turns into Pending (an instant send); "dialog": the
+    invite dialog opens with its note/send controls; "dialog+pending": both.
+    """
+    page = Mock(url="https://www.linkedin.com/in/observed-person/")
+    state = {"clicked": False}
+    pending = _Locator(count=1, aria_label=f"Pending, click to withdraw invitation sent to {full_name}")
+    dialog = _Locator(count=1)
+    dialog.locator = lambda selector: _Locator(count=int(selector == SELECTORS["add_note"]))
+
+    def locator(selector):
+        if state["clicked"] and selector == SELECTORS["pending_invite_surface"] and "pending" in after_click:
+            return pending
+        if state["clicked"] and selector == SELECTORS["invite_dialog"] and "dialog" in after_click:
+            return dialog
+        return _Locator(count=0)
+
+    page.locator.side_effect = locator
+    return page, state
+
+
+def _patch_direct_connect(monkeypatch, state):
+    monkeypatch.setattr("linkedin.actions.connect.find_top_card", lambda session: Mock())
+    monkeypatch.setattr("linkedin.actions.connect._direct_invite_options", lambda *a, **k: [Mock()])
+    monkeypatch.setattr("linkedin.actions.connect._click_connect_option", lambda option: state.update(clicked=True))
+    for name in ("_dump_step_screenshot", "_dump_page_state", "_dismiss_failed_connect_attempt", "_record_connect_issue"):
+        monkeypatch.setattr(f"linkedin.actions.connect.{name}", lambda *a, **k: None)
+
+
+@pytest.mark.parametrize("after_click,unsent", [("pending", False), ("dialog+pending", False), ("dialog", True)])
+def test_only_an_unsent_dialog_without_pending_proves_a_connect_click_sent_nothing(monkeypatch, after_click, unsent):
+    page, state = _profile_page(after_click)
+    _patch_direct_connect(monkeypatch, state)
+    attempt = InviteAttempt()
+    # A Pending control still counts as an invite surface for the flow itself.
+    assert _connect_direct(Mock(page=page), "observed-person", "Observed Person", attempt=attempt) is True
+    assert attempt.may_have_sent is (not unsent)
+
+
+def test_unsent_proof_accepts_the_email_prompt_but_never_alongside_pending():
+    from linkedin.actions.connect import _unsent_invite_proven
+    page = Mock(url="https://www.linkedin.com/preload/custom-invite/?vanityName=observed-person")
+    counts = {SELECTORS["pending_invite_surface"]: 0}
+    page.locator.side_effect = lambda selector: _Locator(count=counts.get(selector, 0))
+    assert _unsent_invite_proven(Mock(page=page))  # the custom-invite route, unsent
+    counts[SELECTORS["pending_invite_surface"]] = 1
+    assert not _unsent_invite_proven(Mock(page=page))
+    page.url = "https://www.linkedin.com/in/observed-person/"
+    counts.update({SELECTORS["pending_invite_surface"]: 0, SELECTORS["email_required_prompt"]: 1})
+    assert _unsent_invite_proven(Mock(page=page))  # LinkedIn asks for an email instead of sending

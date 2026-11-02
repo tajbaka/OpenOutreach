@@ -20,6 +20,48 @@ class ExistingPendingInvite(Exception):
     """Raised when LinkedIn shows an invite was already pending before send."""
 
 
+class InviteAttempt:
+    """Which clicks one invitation attempt made, for the caller's receipt.
+
+    `before_click` runs once, before the first click that could send (a
+    Connect or Send click), so the caller can make that boundary durable
+    before LinkedIn sees it. `may_have_sent` stays false until such a click
+    happens and is never cleared by a later click: a Send click always sets
+    it, and a Connect click sets it unless the page then proves nothing was
+    sent (a Connect can send instantly, and a Pending control is never proof).
+    """
+
+    def __init__(self, before_click=None):
+        self._before_click = before_click
+        self.clicked = False
+        self._sent_possible = False
+        self._connect_click_open = False
+
+    @property
+    def may_have_sent(self) -> bool:
+        return self._sent_possible or self._connect_click_open
+
+    def _clicking(self) -> None:
+        if not self.clicked and self._before_click is not None:
+            self._before_click()
+        self.clicked = True
+
+    def connect_clicking(self) -> None:
+        self._clicking()
+        self._sent_possible = self.may_have_sent
+        self._connect_click_open = True
+
+    def connect_settled(self, *, unsent_proven: bool) -> None:
+        """Record whether the page proves the Connect click just made sent nothing."""
+        if not unsent_proven:
+            self._sent_possible = True
+        self._connect_click_open = False
+
+    def send_clicking(self) -> None:
+        self._clicking()
+        self._sent_possible = True
+
+
 SELECTORS = {
     "weekly_limit": 'div[class*="ip-fuse-limit-alert__warning"]',
     "invite_to_connect": (
@@ -197,6 +239,22 @@ def _invite_surface_visible(session) -> bool:
     )
 
 
+def _unsent_invite_proven(session) -> bool:
+    """Whether the page proves the last Connect click has not sent an invitation.
+
+    Proof is an invite route or dialog still offering its note/send controls,
+    or LinkedIn's email prompt shown instead of sending, with no Pending
+    surface anywhere: a Pending control may be that click's own invitation.
+    """
+    if session.page.locator(SELECTORS["pending_invite_surface"]).count() > 0:
+        return False
+    return (
+        "/preload/custom-invite/" in session.page.url
+        or _invite_dialog_surface_visible(session)
+        or session.page.locator(SELECTORS["email_required_prompt"]).count() > 0
+    )
+
+
 def _wait_for_invite_surface(session, timeout_seconds: float = 6) -> bool:
     """Wait for the invite modal/route to appear after clicking Connect."""
     deadline = time.monotonic() + timeout_seconds
@@ -304,13 +362,17 @@ def send_connection_request(
         session: "AccountSession",
         profile: Dict[str, Any],
         note: str = "",
+        attempt: InviteAttempt | None = None,
 ) -> ProfileState:
     """
     Sends a LinkedIn connection request, optionally with a note.
 
     Assumes the profile page is already loaded (caller navigates via
-    ``get_connection_status`` or ``search_profile`` beforehand).
+    ``get_connection_status`` or ``search_profile`` beforehand). `attempt`
+    records the clicks made, so a caller can tell a failure before any
+    possibly-sending click from one after it.
     """
+    attempt = attempt or InviteAttempt()
     public_identifier = profile.get('public_identifier')
     profile_url = profile.get("url") or f"https://www.linkedin.com/in/{public_identifier}/"
     full_name = (
@@ -321,9 +383,9 @@ def send_connection_request(
         or "Unknown lead"
     )
 
-    direct_connected = _connect_direct(session, public_identifier, full_name)
+    direct_connected = _connect_direct(session, public_identifier, full_name, attempt=attempt)
     if not direct_connected:
-        more_result = _connect_via_more(session, public_identifier, full_name)
+        more_result = _connect_via_more(session, public_identifier, full_name, attempt=attempt)
         if more_result == ProfileState.PENDING:
             logger.debug("Profile %s already has a pending invite in the More menu", public_identifier)
             raise ExistingPendingInvite(public_identifier or "")
@@ -333,7 +395,7 @@ def send_connection_request(
 
     if note:
         try:
-            note_sent = _click_with_note(session, note, full_name=full_name)
+            note_sent = _click_with_note(session, note, full_name=full_name, attempt=attempt)
         except ReachedConnectionLimit as exc:
             notify_connect_send_failed(
                 full_name=full_name,
@@ -354,7 +416,7 @@ def send_connection_request(
             )
             return ProfileState.QUALIFIED
     else:
-        if not _click_without_note(session, full_name=full_name):
+        if not _click_without_note(session, full_name=full_name, attempt=attempt):
             logger.warning("Could not send no-note invite for %s — aborting connection request", public_identifier)
             notify_connect_send_failed(
                 full_name=full_name,
@@ -419,7 +481,8 @@ def _dismiss_failed_connect_attempt(session) -> None:
         logger.debug("Could not dismiss failed direct Connect attempt")
 
 
-def _connect_direct(session, public_identifier: str, full_name: str):
+def _connect_direct(session, public_identifier: str, full_name: str, *, attempt: InviteAttempt | None = None):
+    attempt = attempt or InviteAttempt()
     session.wait()
     top_card = find_top_card(session)
     direct_options = _direct_invite_options(
@@ -431,6 +494,7 @@ def _connect_direct(session, public_identifier: str, full_name: str):
         return False
 
     for idx, direct in enumerate(direct_options, start=1):
+        attempt.connect_clicking()
         _click_connect_option(direct)
         logger.debug("Clicked direct 'Connect' candidate %s/%s", idx, len(direct_options))
         session.wait()
@@ -441,8 +505,10 @@ def _connect_direct(session, public_identifier: str, full_name: str):
             raise SkipProfile(f"{error.inner_text().strip()}")
 
         if _wait_for_invite_surface(session, timeout_seconds=3):
+            attempt.connect_settled(unsent_proven=_unsent_invite_proven(session))
             return True
 
+        attempt.connect_settled(unsent_proven=False)
         _dump_page_state(session, f"direct-connect-no-invite-surface-{idx}")
         logger.debug("Direct Connect candidate %s did not open invite surface", idx)
         _dismiss_failed_connect_attempt(session)
@@ -626,7 +692,8 @@ def _pending_invite_visible_before_missing_alert(session, *, full_name: str = ""
     return _pending_invite_surface_visible(session, full_name=full_name)
 
 
-def _connect_via_more(session, public_identifier: str, full_name: str):
+def _connect_via_more(session, public_identifier: str, full_name: str, *, attempt: InviteAttempt | None = None):
+    attempt = attempt or InviteAttempt()
     session.wait()
     top_card = find_top_card(session)
 
@@ -719,10 +786,12 @@ def _connect_via_more(session, public_identifier: str, full_name: str):
     # Use JS element.click() — the fixed top nav bar often overlaps the
     # dropdown item, blocking coordinate-based clicks (even with force=True).
     # JS click dispatches directly on the DOM node, no hit-testing.
+    attempt.connect_clicking()
     connect_option.evaluate("el => el.click()")
     logger.debug("Used 'More → Connect' flow")
 
     invite_surface_visible = _wait_for_invite_surface(session)
+    attempt.connect_settled(unsent_proven=invite_surface_visible and _unsent_invite_proven(session))
     _dump_step_screenshot(session, "after-more-connect-click")
     if invite_surface_visible:
         return True
@@ -747,8 +816,10 @@ def _check_custom_note_limit(session) -> None:
         )
 
 
-def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
+def _click_with_note(session, note_text: str, *, full_name: str = "",
+                     attempt: InviteAttempt | None = None) -> bool:
     """Click 'Add a note', type the note, and send. Returns True on success."""
+    attempt = attempt or InviteAttempt()
     session.wait()
     _wait_for_invite_surface(session)
     _dump_step_screenshot(session, "invite-surface-before-note")
@@ -807,6 +878,7 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     _skip_if_email_required(session, current_public_id)
 
     send_btn = session.page.locator(SELECTORS["send_invitation"])
+    attempt.send_clicking()
     send_btn.first.click(force=True)
     session.wait()
     _dump_step_screenshot(session, "after-send-invitation")
@@ -814,8 +886,9 @@ def _click_with_note(session, note_text: str, *, full_name: str = "") -> bool:
     return True
 
 
-def _click_without_note(session, *, full_name: str = "") -> bool:
+def _click_without_note(session, *, full_name: str = "", attempt: InviteAttempt | None = None) -> bool:
     """Click flow: sends connection request instantly without note."""
+    attempt = attempt or InviteAttempt()
     session.wait()
     _wait_for_invite_surface(session)
     current_public_id = session.page.url.rstrip("/").rsplit("/", 1)[-1]
@@ -838,6 +911,7 @@ def _click_without_note(session, *, full_name: str = "") -> bool:
             "Send-now button missing on no-note flow",
         )
         return False
+    attempt.send_clicking()
     send_btn.first.click(force=True)
     session.wait()
     _dump_step_screenshot(session, "after-send-without-note")

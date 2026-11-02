@@ -5,6 +5,7 @@ import logging
 
 from crm.models import Lead
 from linkedin.db.leads import lead_to_profile_dict
+from linkedin.db.messages import linkedin_thread_owners
 from linkedin.notifications.slack import notify_manual_reply_failed, notify_manual_reply_sent
 from linkedin.operators import resolve_operator
 
@@ -61,6 +62,17 @@ def handle_manual_reply(task, session, qualifiers):
             raise ValueError(f"Lead {payload.get('lead_id')} not found")
         if lead.disqualified:
             raise ValueError(f"Lead {lead.pk} is disqualified")
+
+        # The reply goes out from this account. Refuse a thread that the
+        # evidence shows another sender owns: a mislabeled notice must never
+        # make one sender answer a conversation another sender is having.
+        thread_external_id = (payload.get("thread_external_id") or "").strip()
+        owners = linkedin_thread_owners(lead, thread_external_id)
+        if owners and owners != {our_operator}:
+            raise ValueError(
+                f"Thread {thread_external_id} belongs to {', '.join(sorted(owners))}, "
+                f"not {our_operator}"
+            )
 
         profile = lead_to_profile_dict(lead)
         if not profile:

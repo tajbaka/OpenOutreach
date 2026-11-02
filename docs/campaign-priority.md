@@ -4,10 +4,26 @@
 
 The release now retains the deployed `api/rb2b_webhook.py` unchanged so publishing
 campaign capability does not remove the current collection endpoint. Passive
-historical reservation accounting and exact-member reply lookup/notification
-delivery remain in `linkedin/legacy_rb2b.py`. That module cannot enqueue or send
-invitations. Its outbox drain only handles historical `visitor:` and `reply:`
-keys; the external integration owns its separate `event:` and `review:` notices.
+historical reservation accounting and legacy reply notices remain in
+`linkedin/legacy_rb2b.py`. That module cannot enqueue or send invitations. Its
+outbox drain only handles historical `visitor:` and `reply:` keys; the external
+integration owns its separate `event:` and `review:` notices.
+
+Legacy-linked replies (2026-11-01 fix). A Lead linked to a historical visitor
+row is handled like any other contact: realtime lookup tries the conversation
+and the enriched profile first, and the visitor's exact member URN is only a
+last fallback, never scoped to the visitor row's sender. Every reply is saved,
+stops automation and updates the Deal (`last_reply_at`, Pending to Connected),
+whichever sender received it. Its Slack notice is queued in the durable outbox
+attributed to the receiving sender (recorded as `received_by` on the inbound
+message, from the listener or the account that fetched the thread) and posted
+once; backfill never posts it a second time. A reply whose receiving sender
+cannot be proven is not queued, so the caller's ordinary notice (or none, as
+before) applies; an old unattributed notice uses the thread's proven owner, or
+carries no sender. The daemon's `NotificationRetryWorker` retries pending
+notices every minute while legacy receipts exist, replacing the retired hourly
+`rb2b_replies` task without reviving any outreach task. Manual replies refuse a
+thread whose recorded owners are not exactly the sending account.
 Generic enrollment also refuses historical attempted/ready/terminal visitor
 records even under a new source/reference. Retired connection Tasks remain
 unclaimed and unchanged.
@@ -37,6 +53,7 @@ environment. The default is empty. Only normal connection Tasks for active,
 owned, listed campaigns can run outside working hours and on rest days.
 The recurring RB2B review does not change this setting or enable a campaign.
 
+It is declared in `linkedin/env_spec.py` and `.env.example` (schedule group).
 This exception does not enable follow-ups, Gmail, discovery, another sender or
 another campaign outside its existing schedule. Existing catch-up behavior is
 preserved. Daily/weekly/total limits, LinkedIn restrictions, sender stops,
@@ -186,17 +203,30 @@ the outcome. So every enrolled person gets an outcome, and the campaign's own pa
 afterwards is unchanged. Temporary no-button failures that the existing campaign
 retries (`failed` notes) are not terminal notifications and are still retried.
 
-Sender budget: a version-bound attempt records its `connect` ActionLog in the same
-transaction that marks its note `sending`, before the click, so an attempt that stops
-after the click still counts once, at its attempt time, against the daily, weekly and
-total limits. A completed send is not counted again. A definite no-send outcome (no
-Connect button or note control, the weekly-limit popup, a skipped profile) marks the
-note `failed` and removes that reservation in the same transaction, so the existing
-retry does not consume a slot. A pending invitation found mid-attempt keeps its
-reservation, because a direct Connect click earlier in that attempt may be what
-LinkedIn shows. If the reservation cannot be written, nothing is sent. Unbound
-(legacy) campaigns keep logging after the send. Notes already left `sending` or `sent`
-by code before this change were never logged, and are not charged retroactively.
+Send boundary and sender budget: `send_connection_request` reports its clicks
+through an `InviteAttempt`. Immediately before the first click that could send (a
+Connect or Send click), a version-bound attempt marks its note `sending` and records
+its `connect` ActionLog in one transaction, so an attempt that stops after that click
+still counts once, at its attempt time, against the daily, weekly and total limits,
+and the next pass holds it as unclear instead of sending. Failures before any such
+click (navigation, top card, missing buttons) leave the note untouched and retryable
+with no budget used. A Connect click provably sent nothing only when the page then
+shows an invite route or dialog still offering its note/send controls, or LinkedIn's
+email prompt, with no Pending control anywhere (a Pending control may be that click's
+own instant invitation). Any other Connect click, or any Send click, may have sent. When an
+attempt ends without success: if a send may have happened, the note becomes `unclear`
+and its reservation stays (a Connect click without a dialog followed by no usable
+control also moves the Deal to Pending); otherwise the note is `failed` (or `stopped`
+for an already-pending invitation) and the reservation is returned, so the existing
+retry does not consume a slot. LinkedIn's limit responses (out of custom notes, the
+weekly-limit dialog shown instead of sending) are definite no-send results. A pending
+invitation found after any click of the attempt keeps its reservation and is reported
+`uncertain` (the status check before the attempt saw none); one found before any
+click is pre-existing, `stopped`, with the budget returned. A completed send is not counted again. If the reservation cannot
+be written, nothing is clicked. A `stopped` note is still refused before any browser
+work. Unbound (legacy) campaigns keep logging after the
+send. Notes already left `sending` or `sent` by code before this change were never
+logged, and are not charged retroactively.
 Callback failures update only the outbox. Retries use a lease and exponential
 backoff, stopping after 48 hours with a retained abandoned receipt. Event bodies
 and IDs remain stable. Callback delivery is at least once; receivers must dedupe.

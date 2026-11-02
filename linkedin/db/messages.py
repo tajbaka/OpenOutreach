@@ -147,6 +147,31 @@ def lead_outbound_operators(lead) -> set[str]:
     return {resolve_operator(s) for s in senders if s and not _looks_like_lead_sender(s, lead)}
 
 
+def linkedin_thread_owners(lead, thread_external_id: str) -> set[str]:
+    """Return the known sender handles that own one LinkedIn thread with a lead.
+
+    Evidence is the thread's outbound messages (their sales owner, else a
+    known sender handle) and the receiving sender recorded on its inbound
+    messages. Empty means no evidence either way.
+    """
+    from linkedin.operators import resolve_sales_owner_handle
+
+    if not thread_external_id:
+        return set()
+    owners = set()
+    for handle, sender, direction, raw in Message.objects.filter(
+        lead=lead,
+        source=Message.Source.LINKEDIN,
+        thread_external_id=thread_external_id,
+    ).values_list("operator__handle", "sender", "direction", "raw"):
+        if direction == Message.Direction.OUTBOUND:
+            owners.add(handle or resolve_sales_owner_handle(sender))
+        elif isinstance(raw, dict):
+            owners.add(resolve_sales_owner_handle(raw.get("received_by", "")))
+    owners.discard("")
+    return owners
+
+
 def persist_thread(
     *,
     lead,
@@ -154,6 +179,7 @@ def persist_thread(
     thread_external_id: str = "",
     source: str = Message.Source.LINKEDIN,
     outbound_senders: set[str] | None = None,
+    receiver: str = "",
 ) -> int:
     """Upsert each parsed message into crm.Message. Returns count newly created.
 
@@ -162,6 +188,11 @@ def persist_thread(
     1:1 LinkedIn DMs only have two participants, so anything not from the
     lead is from us. This avoids needing to know our own display name (which
     LinkedInProfile doesn't store reliably).
+
+    `receiver` is the sender whose account fetched the thread (defaulting to
+    a single `outbound_senders` handle). It only records thread ownership on
+    new inbound rows (`raw["received_by"]`) and attributes their notices; it
+    never changes direction inference.
     """
     from crm.models import SalesOwner
     from linkedin.operators import resolve_operator, resolve_sales_owner_handle
@@ -175,6 +206,9 @@ def persist_thread(
         owner.handle: owner
         for owner in SalesOwner.objects.filter(handle__in=CANONICAL_OPERATOR_HANDLES)
     }
+    if not receiver and len(outbound_handles) == 1:
+        receiver = next(iter(outbound_handles))
+    receiver = resolve_sales_owner_handle(receiver)
     known_connect_notes = {
         note.strip()
         for note in lead.deal_set.exclude(sent_note="").values_list("sent_note", flat=True)
@@ -238,7 +272,8 @@ def persist_thread(
                     "body": m.get("text") or "",
                     "sent_at": sent_at,
                     "thread_external_id": thread_external_id,
-                    "raw": m,
+                    "raw": {**m, "received_by": receiver}
+                    if receiver and direction == Message.Direction.INBOUND else m,
                 },
             )
             if not was_created and stored.operator_id is None and message_owner is not None:
@@ -254,7 +289,7 @@ def persist_thread(
 
         if inbound_message_ids:
             from linkedin.legacy_rb2b import queue_reply_notifications
-            queue_reply_notifications(lead, inbound_message_ids)
+            queue_reply_notifications(lead, inbound_message_ids, receiver=receiver)
             committed_ids = tuple(inbound_message_ids)
 
             def _apply_inbound_stops() -> None:

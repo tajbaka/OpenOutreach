@@ -132,10 +132,13 @@ def get_conversation(session, public_identifier: str) -> list[dict] | None:
     ).first()
     if lead and parsed:
         try:
+            # The fetching account owns this thread; record it as receiver.
+            profile = getattr(session, "linkedin_profile", None)
             persist_thread(
                 lead=lead,
                 parsed=parsed,
                 thread_external_id=conversation_urn,
+                receiver=getattr(profile, "linkedin_username", "") or getattr(session, "username", ""),
             )
         except Exception as e:
             # Persistence is best-effort; never break the caller's flow.

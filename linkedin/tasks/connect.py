@@ -447,7 +447,7 @@ def _stop_current_connect_if_needed(session, deal, public_id: str) -> bool:
 
 
 def handle_connect(task, session, qualifiers):
-    from linkedin.actions.connect import ExistingPendingInvite, send_connection_request
+    from linkedin.actions.connect import ExistingPendingInvite, InviteAttempt, send_connection_request
     from linkedin.actions.status import get_connection_status
     from linkedin.models import Campaign
 
@@ -553,6 +553,7 @@ def handle_connect(task, session, qualifiers):
 
     connection_delivery = None
     reservation = None
+    attempt = None
     try:
         status = get_connection_status(session, profile)
 
@@ -626,6 +627,14 @@ def handle_connect(task, session, qualifiers):
                 )
                 enqueue_connect(campaign_id, delay_seconds=0)
                 return
+            if connection_delivery.status == OutboundDelivery.Status.STOPPED:
+                from linkedin.message_delivery import MessageDeliveryError
+
+                # A stopped note is never resumed. Refuse before any browser
+                # work, as when `sending` was marked ahead of the send call.
+                raise MessageDeliveryError(
+                    f"stopped delivery {connection_delivery.pk} cannot be resumed"
+                )
             remaining = (
                 connection_delivery.scheduled_at - timezone.now()
             ).total_seconds()
@@ -654,23 +663,38 @@ def handle_connect(task, session, qualifiers):
                 )
             enqueue_connect(campaign_id, delay_seconds=0)
             return
+        before_click = None
         if connection_delivery is not None:
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
-            # The attempt takes its sender budget with its receipt, before the
-            # click: a stop after the click still counts, at the attempt time.
-            with transaction.atomic():
-                mark_delivery_status(
-                    connection_delivery,
-                    OutboundDelivery.Status.SENDING,
-                )
-                reservation = session.linkedin_profile.record_action(
-                    ActionLog.ActionType.CONNECT, session.campaign,
-                )
-        new_state = send_connection_request(session=session, profile=profile, note=note)
+            def before_click():
+                # The first Connect or Send click takes its receipt and sender
+                # budget together, durably, before LinkedIn sees it: a stop
+                # after the click still counts, at the attempt time. Failures
+                # before any such click leave the note untouched and retryable.
+                nonlocal reservation
+                with transaction.atomic():
+                    mark_delivery_status(
+                        connection_delivery,
+                        OutboundDelivery.Status.SENDING,
+                    )
+                    reservation = session.linkedin_profile.record_action(
+                        ActionLog.ActionType.CONNECT, session.campaign,
+                    )
+        attempt = InviteAttempt(before_click=before_click)
+        new_state = send_connection_request(session=session, profile=profile, note=note, attempt=attempt)
 
         if new_state == ProfileState.QUALIFIED:
+            if connection_delivery is not None and attempt.may_have_sent:
+                # A Connect click opened no invite dialog, so LinkedIn may have
+                # sent it: hold the receipt and its budget, never retry.
+                _hold_attempted_connection(deal, connection_delivery)
+                enqueue_sweep_connections(
+                    operator=operator,
+                )
+                enqueue_connect(campaign_id, delay_seconds=0)
+                return
             if connection_delivery is not None:
                 with transaction.atomic():
                     mark_delivery_status(
@@ -761,6 +785,8 @@ def handle_connect(task, session, qualifiers):
                     maybe_schedule_gmail_sequence(deal=deal, operator=operator)
 
     except ReachedConnectionLimit as e:
+        # LinkedIn's limit response (out of custom notes, or the weekly limit
+        # dialog shown instead of sending) is a definite no-send result.
         if connection_delivery is not None:
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
@@ -780,12 +806,21 @@ def handle_connect(task, session, qualifiers):
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
-            # The reservation stays: a direct Connect click earlier in this
-            # attempt may be what LinkedIn now shows as pending.
-            mark_delivery_status(
-                connection_delivery,
-                OutboundDelivery.Status.STOPPED,
-            )
+            if attempt is not None and attempt.clicked:
+                # The status check before this attempt saw no pending
+                # invitation, so a Pending found after any of its clicks may be
+                # that click's own invitation: unclear, its reservation stays.
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.UNCLEAR,
+                )
+            else:
+                with transaction.atomic():
+                    mark_delivery_status(
+                        connection_delivery,
+                        OutboundDelivery.Status.STOPPED,
+                    )
+                    _release_connection_reservation(reservation)
         logger.info("%s PENDING (existing invite)", public_id)
         set_profile_state(session, public_id, ProfileState.PENDING.value)
         enqueue_sweep_connections(
@@ -798,12 +833,20 @@ def handle_connect(task, session, qualifiers):
             from linkedin.message_delivery_runtime import mark_delivery_status
             from linkedin.models import OutboundDelivery
 
-            with transaction.atomic():
+            if attempt is not None and attempt.may_have_sent:
+                # LinkedIn answered a Connect click that opened no invite
+                # dialog; it may still have sent. Unclear, reservation stays.
                 mark_delivery_status(
                     connection_delivery,
-                    OutboundDelivery.Status.FAILED,
+                    OutboundDelivery.Status.UNCLEAR,
                 )
-                _release_connection_reservation(reservation)
+            else:
+                with transaction.atomic():
+                    mark_delivery_status(
+                        connection_delivery,
+                        OutboundDelivery.Status.FAILED,
+                    )
+                    _release_connection_reservation(reservation)
         logger.warning("Skipping %s: %s", public_id, e)
         log_connect_issue(
             linkedin_profile=session.linkedin_profile,
@@ -814,6 +857,24 @@ def handle_connect(task, session, qualifiers):
             reason=str(e),
         )
         set_profile_state(session, public_id, ProfileState.FAILED.value)
+    except Exception:
+        # Unexpected errors still propagate. If the attempt only reached clicks
+        # that provably sent nothing (each Connect opened its dialog, no Send),
+        # return the note and its budget so the next pass retries. After a
+        # possibly-sending click the durable `sending` receipt is kept, and
+        # the next pass holds it as unclear without sending.
+        if (connection_delivery is not None and attempt is not None
+                and attempt.clicked and not attempt.may_have_sent):
+            from linkedin.message_delivery_runtime import mark_delivery_status
+            from linkedin.models import OutboundDelivery
+
+            with transaction.atomic():
+                mark_delivery_status(
+                    connection_delivery,
+                    OutboundDelivery.Status.FAILED,
+                )
+                _release_connection_reservation(reservation)
+        raise
 
     _reschedule()
 

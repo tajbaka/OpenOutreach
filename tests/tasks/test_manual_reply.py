@@ -126,3 +126,59 @@ def test_handle_manual_reply_skips_already_persisted_manual_send(
     send_raw.assert_not_called()
     notify_sent.assert_not_called()
     notify_failed.assert_not_called()
+
+
+THREAD = "urn:li:conv:manual-owner"
+
+
+def _thread_message(lead, key, *, direction, sender="", received_by="", thread=THREAD):
+    return Message.objects.create(
+        lead=lead, source=Message.Source.LINKEDIN, external_id=f"urn:li:msg:{key}", direction=direction,
+        sender=sender, body=key, sent_at=dj_tz.now(), thread_external_id=thread,
+        raw={"received_by": received_by} if received_by else {},
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("evidence,allowed", [
+    ("none", True),                # no evidence either way: unchanged behavior
+    ("own_outbound", True),
+    ("own_received", True),
+    ("other_thread_only", True),   # another sender's thread with this lead is a different thread
+    ("other_outbound", False),
+    ("other_received", False),     # e.g. a reply Chuka received, misattributed to Arian in Slack
+    ("both", False),
+])
+@patch("linkedin.actions.message.send_raw_message", return_value=True)
+@patch("linkedin.tasks.manual_reply.notify_manual_reply_sent")
+@patch("linkedin.tasks.manual_reply.notify_manual_reply_failed")
+def test_manual_reply_requires_the_thread_to_belong_to_this_sender(
+        notify_failed, notify_sent, send_raw, fake_session, evidence, allowed):
+    fake_session.linkedin_profile.linkedin_username = "ariantajbakh"
+    fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
+    lead = Lead.objects.create(first_name="Ruth", last_name="Owner", public_identifier="ruth-owner",
+                               linkedin_url="https://www.linkedin.com/in/ruth-owner/")
+    if evidence in {"own_outbound", "both"}:
+        _thread_message(lead, "own-out", direction=Message.Direction.OUTBOUND, sender="arian tajbakhsh")
+    if evidence == "own_received":
+        _thread_message(lead, "own-in", direction=Message.Direction.INBOUND, received_by="Arian")
+    if evidence == "other_outbound":
+        _thread_message(lead, "other-out", direction=Message.Direction.OUTBOUND, sender="chukwuka agu")
+    if evidence in {"other_received", "both"}:
+        _thread_message(lead, "other-in", direction=Message.Direction.INBOUND, received_by="Chuka")
+    if evidence == "other_thread_only":
+        _thread_message(lead, "elsewhere", direction=Message.Direction.OUTBOUND, sender="chukwuka agu",
+                        thread="urn:li:conv:chuka-elsewhere")
+    task = _task(lead, operator="Arian")
+    task.payload["thread_external_id"] = THREAD
+    task.save(update_fields=["payload"])
+
+    if allowed:
+        handle_manual_reply(task, fake_session, qualifiers={})
+        send_raw.assert_called_once()
+        notify_failed.assert_not_called()
+    else:
+        with pytest.raises(ValueError, match=r"belongs to (Arian, )?Chuka, not Arian"):
+            handle_manual_reply(task, fake_session, qualifiers={})
+        send_raw.assert_not_called()
+        notify_failed.assert_called_once()

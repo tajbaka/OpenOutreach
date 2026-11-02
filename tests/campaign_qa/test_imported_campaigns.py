@@ -212,7 +212,9 @@ def transports(harness, request, sender, audience, deal):
         calls.append((channel, step, subject, body))
         preview(request, sender, audience, deal.lead.role_tag, channel, step, subject, body, 'simulated_provider')
 
-    def connect(session, profile, note=''):
+    def connect(session, profile, note='', attempt=None):
+        if attempt is not None:
+            attempt.send_clicking()
         record('linkedin_connect', 'connect', note)
         return ProfileState.PENDING
 
@@ -468,6 +470,7 @@ def test_invitation_hook_requires_a_committed_confirmed_send(harness, request, s
         def fail(**kwargs):
             if scenario == 'failed':
                 raise SkipProfile('No usable invitation route')
+            kwargs['attempt'].send_clicking()  # unknown result after the Send click
             raise RuntimeError('Simulated unknown provider result')
         harness.monkeypatch.setattr('linkedin.actions.connect.send_connection_request', fail)
     if scenario == 'uncertain':

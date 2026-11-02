@@ -551,9 +551,6 @@ def heal_tasks(session):
     if reconcile_discovery_tasks(session.linkedin_profile, our_operator):
         logger.info("Profile discovery task ready for %s", our_operator)
 
-    from linkedin.legacy_rb2b import flush_notifications
-    flush_notifications()
-
     # Recover only missing invitation-start Gmail work, independently of the
     # post-accept LinkedIn follow-up switch. Never change existing due Tasks.
     from gmail.handoff import recover_invitation_gmail_sequences
@@ -917,6 +914,14 @@ def run_daemon(session):
     enrichment_worker = EnrichmentWorker(operator=resolve_operator(session.linkedin_profile.linkedin_username))
     enrichment_worker.start()
 
+    # Durable legacy RB2B Slack notices (attributed reply notices) retry here,
+    # replacing the retired hourly rb2b_replies task. Delivery only.
+    from linkedin.legacy_rb2b import NotificationRetryWorker, legacy_notices_possible
+    legacy_notice_worker = None
+    if legacy_notices_possible():
+        legacy_notice_worker = NotificationRetryWorker()
+        legacy_notice_worker.start()
+
     # Optional delivery-only service: no campaign Task or sender behavior changes.
     from linkedin import conf as runtime_conf
     callback_worker = None
@@ -1060,6 +1065,8 @@ def run_daemon(session):
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()
                 enrichment_worker.stop()
+                if legacy_notice_worker is not None:
+                    legacy_notice_worker.stop()
                 if callback_worker is not None:
                     callback_worker.stop()
                 # Clean exit: clear our heartbeat so peers don't false-alarm

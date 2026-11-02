@@ -1,28 +1,53 @@
 """Passive compatibility for historical RB2B receipts; never executes outreach."""
 from __future__ import annotations
 import hashlib
+import logging
 import os
+import threading
 from datetime import timedelta
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.db.models import Q
 from django.utils import timezone
 from crm.models import Message
 from linkedin.models import ActionLog, RB2BNotification, RB2BVisitor
 SENDER = "Arian"
+logger = logging.getLogger(__name__)
 OUTCOME_LABELS = {"sent": "connection request sent", "held": "held, not sent",
                   "failed": "failed, not sent", "uncertain": "uncertain; never retry"}
 
 def budget_count(profile_id, since):
     return RB2BVisitor.objects.filter(linkedin_profile_id=profile_id, attempted_at__gte=since).count()
 
-def queue_reply_notifications(lead, message_ids):
+def _reply_sender(message, receiver=""):
+    """The one sender a reply notice belongs to, or "" when not provable."""
+    from linkedin.db.messages import linkedin_thread_owners
+
+    if receiver:
+        return receiver
+    owners = linkedin_thread_owners(message.lead, message.thread_external_id)
+    return next(iter(owners)) if len(owners) == 1 else ""
+
+
+def queue_reply_notifications(lead, message_ids, *, receiver=""):
+    """Queue one durable reply notice per new inbound message of a legacy-linked lead.
+
+    `detail` holds the sender that received the reply. A reply whose sender
+    cannot be proven is not queued, so the caller's normal notice applies.
+    """
     row = RB2BVisitor.objects.filter(lead=lead).first()
     if not row:
         return
     for msg in Message.objects.filter(pk__in=message_ids, lead=lead, direction=Message.Direction.INBOUND):
-        RB2BNotification.objects.get_or_create(key=f"reply:{msg.pk}", defaults={
-            "visitor": row, "message": msg, "kind": "reply",
-        })
+        sender = _reply_sender(msg, receiver)
+        if sender:
+            RB2BNotification.objects.get_or_create(key=f"reply:{msg.pk}", defaults={
+                "visitor": row, "message": msg, "kind": "reply", "detail": sender,
+            })
+
+
+def owns_reply_notice(message) -> bool:
+    """Whether this inbound message's Slack notice is in the durable outbox."""
+    return RB2BNotification.objects.filter(key=f"reply:{message.pk}").exists()
 
 
 def flush_notifications(limit=50):
@@ -43,8 +68,12 @@ def flush_notifications(limit=50):
                 continue
             row = n.visitor
             if n.kind == "reply":
+                # Notices queued before attribution existed fall back to the
+                # thread's proven owner; an unproven one carries no sender, so
+                # its Reply button cannot queue a reply from any account.
                 ok = slack.notify_message_received(lead=row.lead, text=n.message.body,
-                                                  operator=SENDER, thread_external_id=n.message.thread_external_id)
+                                                  operator=n.detail or _reply_sender(n.message),
+                                                  thread_external_id=n.message.thread_external_id)
             else:
                 channel = os.getenv("RB2B_SLACK_CHANNEL_ID", "").strip()
                 lead = row.lead
@@ -70,6 +99,40 @@ def flush_notifications(limit=50):
             n.save(update_fields=["attempts", "sent_at", "next_attempt_at"])
     return delivered
 
+
+
+def legacy_notices_possible() -> bool:
+    """Whether any legacy receipt can still produce a Slack notice.
+
+    Only the retired worker linked visitors to Leads; the integration never
+    does. So this is stable from startup.
+    """
+    return (RB2BVisitor.objects.filter(lead__isnull=False).exists()
+            or RB2BNotification.objects.filter(sent_at__isnull=True).filter(
+                Q(key__startswith="visitor:") | Q(key__startswith="reply:")).exists())
+
+
+class NotificationRetryWorker(threading.Thread):
+    """Retries pending durable RB2B Slack notices. Never executes outreach."""
+
+    def __init__(self, interval_seconds=60):
+        super().__init__(name="legacy-rb2b-notices", daemon=True)
+        self.interval_seconds = interval_seconds
+        self.stopped = threading.Event()
+
+    def run(self):
+        while not self.stopped.is_set():
+            try:
+                close_old_connections()
+                flush_notifications()
+            except Exception as exc:
+                logger.warning("Legacy RB2B notice retry failed: %s", type(exc).__name__)
+            finally:
+                close_old_connections()
+            self.stopped.wait(self.interval_seconds)
+
+    def stop(self):
+        self.stopped.set()
 
 
 class LegacyReceiptHold(ValueError):

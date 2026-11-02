@@ -16,6 +16,11 @@ One exception: if the conversation match points at one of our operator/self
 profiles, prefer a different sender-URN lead. That repairs threads that were
 historically persisted under the logged-in account's own profile.
 
+3. Legacy RB2B visitor → last fallback: a historical visitor row linked to a
+   Lead stores that person's exact member URN, which an RB2B-sourced Lead's
+   description may lack. It never overrides 1-2 and is not scoped to the
+   visitor row's sender: a reply belongs to whichever sender received it.
+
 No match → None; the handler logs + skips.
 """
 from __future__ import annotations
@@ -46,25 +51,20 @@ def _lead_for_sender_member_urn(sender_member_urn: str):
     return Lead.objects.filter(description__contains=sender_member_urn).first()
 
 
-def resolve_lead_for_realtime(*, conversation_urn: str, sender_member_urn: str, operator: str = ""):
+def _legacy_visitor_lead(sender_member_urn: str):
+    """The Lead linked to the one legacy visitor row with this exact member URN."""
+    from linkedin.models import RB2BVisitor
+
+    if not sender_member_urn:
+        return None
+    rows = list(RB2BVisitor.objects.filter(member_urn=sender_member_urn, lead__isnull=False)
+                .select_related("lead")[:2])
+    return rows[0].lead if len(rows) == 1 else None
+
+
+def resolve_lead_for_realtime(*, conversation_urn: str, sender_member_urn: str):
     """Return the matching Lead, or None."""
     from crm.models import Message
-    from django.db.models import Q
-    from linkedin.models import RB2BVisitor
-    from linkedin.operators import resolve_operator
-
-    # Exact identity and sender scope; never name matching for new visitor threads.
-    q = Q(member_urn=sender_member_urn) if sender_member_urn else Q(pk__in=[])
-    if conversation_urn:
-        q |= Q(lead__messages__thread_external_id=conversation_urn, lead__messages__source="linkedin")
-    rows = list(RB2BVisitor.objects.filter(q, lead__isnull=False).select_related("lead", "linkedin_profile").distinct())
-    if rows:
-        if len(rows) != 1 or resolve_operator(operator) != resolve_operator(rows[0].linkedin_profile.linkedin_username):
-            return None
-        row = rows[0]
-        if conversation_urn and Message.objects.filter(source="linkedin", thread_external_id=conversation_urn).exclude(lead=row.lead).exists():
-            return None
-        return row.lead
 
     if conversation_urn:
         msg = (
@@ -96,4 +96,4 @@ def resolve_lead_for_realtime(*, conversation_urn: str, sender_member_urn: str, 
     if lead is not None:
         return lead
 
-    return None
+    return _legacy_visitor_lead(sender_member_urn)
