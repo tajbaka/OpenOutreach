@@ -12,7 +12,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from linkedin.exceptions import LinkedInPostWorkerRefused, PostBrowserUnavailableError, PostInterruptedError
-from linkedin.personal_posts import posts_enabled, run_once
+from linkedin.personal_posts import run_once
 
 
 def _interrupt(signum, _frame):
@@ -28,8 +28,6 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         from linkedin.conf import LISTENER_CDP_PORT
 
-        if not posts_enabled():
-            raise CommandError("ENABLE_LINKEDIN_POSTS is off; no post was attempted.")
         signal.signal(signal.SIGTERM, _interrupt)
         root = Path(__file__).resolve().parents[3]
         try:

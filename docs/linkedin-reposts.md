@@ -16,26 +16,20 @@ Slack for reposts; it only shows the result it reads from this table.
 Empty commentary uses LinkedIn's plain **Repost**. Non-empty commentary uses
 **Repost with your thoughts** with exactly that text.
 
-## Flag and rollout
+## Rollout
 
-`ENABLE_LINKEDIN_REPOSTS` defaults to `false`. With it off, the supervisor, daemon
-and every existing worker behave exactly as before, and `run_linkedin_repost_once`
-refuses to run. The flag only takes effect with `ENABLE_LINKEDIN_DAEMON=true`
-(email-only mode never starts a repost child).
+There is no setting (user decision, 2026-11-02): the repost worker runs whenever
+the LinkedIn daemon does (`ENABLE_LINKEDIN_DAEMON=true`; email-only mode never
+starts a repost child), and it acts only on rows Social Studio's dashboard
+queues. On a worker computer:
 
-To enable reposts on a worker computer:
-
-1. Apply migrations `linkedin.0035_linkedinrepost` (an additive `LinkedInRepost`
-   table) and `linkedin.0036_linkedinrepost_scheduled_for` (an additive nullable
-   time) **before** turning the flag on. Without them, the supervisor logs that a
-   migration is missing and starts no repost child.
-2. Set `ENABLE_LINKEDIN_REPOSTS=true` in that checkout's `.env`.
-3. Restart the **whole supervisor** on that computer. Environment flags are not
-   hot-reloaded, and a database child-restart request cannot load the new
-   scheduler. The daemon also opens its loopback CDP port
-   (`LISTENER_CDP_PORT`, default 9222) only when it starts with this flag (or the
-   realtime listener or feed collector) enabled.
-4. Supervise the first live repost for each operator (see Selectors below).
+1. The supervisor runs `manage.py migrate` when it pulls updates, which applies
+   `linkedin.0035_linkedinrepost` and `linkedin.0036_linkedinrepost_scheduled_for`.
+   Without them it logs once that the table is missing and starts no repost child.
+2. Restart the **whole supervisor** once after the update that brings this code:
+   the supervisor's own scheduler is not reloaded by a pull. The daemon always
+   opens its loopback CDP port (`LISTENER_CDP_PORT`, default 9222) for the worker.
+3. Supervise the first live repost for each operator (see Selectors below).
 
 Code preparation does not prove live rollout.
 

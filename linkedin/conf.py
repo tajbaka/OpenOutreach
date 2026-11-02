@@ -319,22 +319,6 @@ ENABLE_LINKEDIN_FEED_COLLECTOR = os.getenv(
     "ENABLE_LINKEDIN_FEED_COLLECTOR", "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
 
-# Kill-switch for the supervised one-shot repost worker
-# (`run_linkedin_repost_once`). It attaches to this daemon browser over CDP
-# and opens its own tab per queued, externally approved repost. Default OFF;
-# see docs/linkedin-reposts.md.
-ENABLE_LINKEDIN_REPOSTS = os.getenv(
-    "ENABLE_LINKEDIN_REPOSTS", "false",
-).strip().lower() in {"1", "true", "yes", "on"}
-
-# Kill-switch for the supervised one-shot personal post worker
-# (`run_linkedin_post_once`): Arian or Eddy posting an externally approved
-# post from their own profile through this daemon browser over CDP. Default
-# OFF; see docs/linkedin-posts.md.
-ENABLE_LINKEDIN_POSTS = os.getenv(
-    "ENABLE_LINKEDIN_POSTS", "false",
-).strip().lower() in {"1", "true", "yes", "on"}
-
 # Startup catch-up threshold. If the listener heartbeat is older than this
 # many minutes when the daemon boots, the catch-up surfaces the gap (prompt
 # on a TTY, WARNING log when headless). A quick restart stays below it.

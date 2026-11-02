@@ -7,6 +7,23 @@ from linkedin.management.setup_crm import setup_crm
 from tests.factories import UserFactory
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "linkedin_workers: let the supervisor run its repost and personal-post workers")
+
+
+@pytest.fixture(autouse=True)
+def _linkedin_workers_off_unless_marked(request, monkeypatch):
+    # Reposts and personal posts run whenever the daemon does (no setting since
+    # 2026-11-02). Supervisor tests about other things keep them off, so their
+    # loops never reach the database; the worker tests opt in with the marker.
+    if request.node.get_closest_marker("linkedin_workers"):
+        return
+    import daemon_supervisor
+
+    monkeypatch.setattr(daemon_supervisor, "_linkedin_reposts_enabled", lambda: False)
+    monkeypatch.setattr(daemon_supervisor, "_linkedin_posts_enabled", lambda: False)
+
+
 @pytest.fixture(autouse=True)
 def _default_supervisor_mode(monkeypatch):
     # Local email-only deployments must not change legacy supervisor test defaults.

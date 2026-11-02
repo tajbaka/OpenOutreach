@@ -525,7 +525,10 @@ def _repost_work_queued() -> bool:
     except ProgrammingError as exc:
         # 42P01: no table; 42703: no scheduled_for column yet.
         if getattr(exc.__cause__, "sqlstate", None) in ("42P01", "42703"):
-            logger.error("LinkedIn repost table is missing or not migrated; apply migrations 0035-0036 before enabling reposts")
+            # Once per run: the supervisor applies migrations itself when it pulls updates.
+            if "repost" not in _MISSING_TABLES_LOGGED:
+                _MISSING_TABLES_LOGGED.add("repost")
+                logger.warning("LinkedIn repost table is missing or not migrated; run manage.py migrate (migrations 0035-0036)")
             return False
         raise
     finally:
@@ -594,7 +597,9 @@ def _post_work_queued() -> bool:
     except ProgrammingError as exc:
         # 42P01: no table yet.
         if getattr(exc.__cause__, "sqlstate", None) in ("42P01", "42703"):
-            logger.error("LinkedIn post table is missing or not migrated; apply migration 0042 before enabling posts")
+            if "post" not in _MISSING_TABLES_LOGGED:
+                _MISSING_TABLES_LOGGED.add("post")
+                logger.warning("LinkedIn post table is missing or not migrated; run manage.py migrate (migration 0042)")
             return False
         raise
     finally:
@@ -736,12 +741,19 @@ def _feed_collector_enabled() -> bool:
     return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_FEED_COLLECTOR", "false")
 
 
+# Tables found missing this run (logged once, not every check).
+_MISSING_TABLES_LOGGED: set[str] = set()
+
+
+# Reposts and personal posts run whenever the LinkedIn daemon does: a row
+# exists only when Social Studio's dashboard queues one, so no extra setting
+# gates them (user decision, 2026-11-02).
 def _linkedin_reposts_enabled() -> bool:
-    return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_REPOSTS", "false")
+    return _linkedin_daemon_enabled()
 
 
 def _linkedin_posts_enabled() -> bool:
-    return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_POSTS", "false")
+    return _linkedin_daemon_enabled()
 
 
 def _feed_schedule() -> FeedSampleSchedule:
@@ -815,11 +827,11 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     feed_schedule = None
     feed_started_at = None
     feed_schedule_failed = False
-    # Off by default; when off none of the repost steps below run.
+    # On whenever the daemon is; with the daemon off none of the repost steps below run.
     reposts_enabled = _linkedin_reposts_enabled()
     repost_child: subprocess.Popen | None = None
     repost_started_at = None
-    # Personal posts (user decision, 2026-11-02): same shape, off by default.
+    # Personal posts (user decision, 2026-11-02): same shape.
     # A post child and a repost child never drive this sender's browser together.
     posts_enabled = _linkedin_posts_enabled()
     post_child: subprocess.Popen | None = None

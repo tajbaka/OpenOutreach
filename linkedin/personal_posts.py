@@ -63,10 +63,6 @@ SUPERVISOR_TIMEOUT_SECONDS = (
 )
 
 
-def posts_enabled() -> bool:
-    return os.getenv("ENABLE_LINKEDIN_POSTS", "false").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def budget_seconds(commentary: str) -> int:
     """Wall-clock bound for one row, measured from its claim."""
     typing = math.ceil(len(commentary or "") * COMMENTARY_TYPE_MAX_DELAY_MS / 1000)

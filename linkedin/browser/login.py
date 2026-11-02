@@ -26,10 +26,6 @@ from linkedin.browser.nav import goto_page, human_type
 from linkedin.conf import (
     BROWSER_DEFAULT_TIMEOUT_MS,
     BROWSER_SLOW_MO,
-    ENABLE_LINKEDIN_FEED_COLLECTOR,
-    ENABLE_LINKEDIN_POSTS,
-    ENABLE_LINKEDIN_REPOSTS,
-    ENABLE_REALTIME_LISTENER,
     LISTENER_CDP_PORT,
 )
 
@@ -216,10 +212,10 @@ def start_browser_session(session: "AccountSession", handle: str):
 
     linkedin_username = session.linkedin_profile.linkedin_username
     profile_dir = profile_dir_for(linkedin_username)
-    cdp_port = LISTENER_CDP_PORT if (
-        ENABLE_REALTIME_LISTENER or ENABLE_LINKEDIN_FEED_COLLECTOR or ENABLE_LINKEDIN_REPOSTS
-        or ENABLE_LINKEDIN_POSTS
-    ) else None
+    # Always on the loopback CDP port: the repost and personal-post workers
+    # attach to this browser whenever a queued row is due (no setting gates
+    # them; user decision, 2026-11-02), as do the listener and feed collector.
+    cdp_port = LISTENER_CDP_PORT
 
     seed_cookies = None
     if not profile_dir.exists():

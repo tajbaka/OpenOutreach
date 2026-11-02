@@ -17,23 +17,20 @@ It mirrors the repost feature (docs/linkedin-reposts.md) with its own table,
 worker, flag and tab receipts; a post child and a repost child never drive the
 same sender's browser at once.
 
-## Flag and rollout
+## Rollout
 
-`ENABLE_LINKEDIN_POSTS` defaults to `false` and is separate from
-`ENABLE_LINKEDIN_REPOSTS`. With it off, the supervisor, daemon and every existing
-worker behave exactly as before, and `run_linkedin_post_once` refuses to run. The
-flag only takes effect with `ENABLE_LINKEDIN_DAEMON=true`.
+There is no setting (user decision, 2026-11-02): the post worker runs whenever
+the LinkedIn daemon does (`ENABLE_LINKEDIN_DAEMON=true`), like the repost
+worker, and acts only on rows Social Studio's dashboard queues. On a worker
+computer:
 
-To enable personal posts on a worker computer:
-
-1. Apply migration `linkedin.0042_linkedinpost` (an additive `LinkedInPost`
-   table) **before** turning the flag on. Without it, the supervisor logs that the
-   migration is missing and starts no post child.
-2. Set `ENABLE_LINKEDIN_POSTS=true` in that checkout's `.env`.
-3. Restart the **whole supervisor** on that computer. Environment flags are not
-   hot-reloaded. The daemon also opens its loopback CDP port
-   (`LISTENER_CDP_PORT`, default 9222) when it starts with this flag on.
-4. **Watch the first live post for each operator and each kind (text, image,
+1. The supervisor runs `manage.py migrate` when it pulls updates, which applies
+   `linkedin.0042_linkedinpost` (an additive `LinkedInPost` table). Without it
+   the supervisor logs once that the table is missing and starts no post child.
+2. Restart the **whole supervisor** once after the update that brings this code:
+   the supervisor's own scheduler is not reloaded by a pull. The daemon always
+   opens its loopback CDP port (`LISTENER_CDP_PORT`, default 9222) for the worker.
+3. **Watch the first live post for each operator and each kind (text, image,
    document)**; see "Live verification scope" below.
 
 Code preparation does not prove live rollout.

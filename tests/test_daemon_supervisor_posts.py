@@ -8,6 +8,8 @@ from django.db import ProgrammingError
 import daemon_supervisor as supervisor
 from tests.test_daemon_supervisor_reposts import harness, repost_hooks  # noqa: F401  (shared fixtures)
 
+pytestmark = pytest.mark.linkedin_workers
+
 
 def _forbidden(name):
     return Mock(side_effect=AssertionError(f"{name} must not run while posts are off"))
@@ -33,28 +35,19 @@ def post_hooks(monkeypatch):
     return hooks
 
 
-@pytest.mark.parametrize("daemon,posts,expected", [
-    (None, None, False), ("true", None, False), ("true", "false", False),
-    ("true", "true", True), ("false", "true", False), (None, "1", True),
-])
-def test_posts_need_their_own_flag_and_the_linkedin_daemon(monkeypatch, daemon, posts, expected):
-    for name, value in (("ENABLE_LINKEDIN_DAEMON", daemon), ("ENABLE_LINKEDIN_POSTS", posts)):
-        if value is None:
-            monkeypatch.delenv(name, raising=False)
-        else:
-            monkeypatch.setenv(name, value)
+@pytest.mark.parametrize("daemon,expected", [(None, True), ("true", True), ("false", False)])
+def test_posts_run_whenever_the_linkedin_daemon_does(monkeypatch, daemon, expected):
+    # No setting of their own (user decision, 2026-11-02); email-only mode has none.
+    if daemon is None:
+        monkeypatch.delenv("ENABLE_LINKEDIN_DAEMON", raising=False)
+    else:
+        monkeypatch.setenv("ENABLE_LINKEDIN_DAEMON", daemon)
     assert supervisor._linkedin_posts_enabled() is expected
 
 
-def test_the_repost_flag_does_not_turn_on_posts(monkeypatch):
-    monkeypatch.setenv("ENABLE_LINKEDIN_REPOSTS", "true")
-    monkeypatch.delenv("ENABLE_LINKEDIN_POSTS", raising=False)
-    assert supervisor._linkedin_posts_enabled() is False
-
-
-def test_flag_off_supervisor_never_touches_posts(monkeypatch, harness):  # noqa: F811
-    monkeypatch.delenv("ENABLE_LINKEDIN_POSTS", raising=False)
-    monkeypatch.delenv("ENABLE_LINKEDIN_REPOSTS", raising=False)
+def test_without_posts_the_supervisor_never_touches_them(monkeypatch, harness):  # noqa: F811
+    monkeypatch.setattr(supervisor, "_linkedin_posts_enabled", lambda: False)
+    monkeypatch.setattr(supervisor, "_linkedin_reposts_enabled", lambda: False)
     for name in ("_post_work_queued", "_start_post_worker", "_close_owned_post_tabs", "_stop_post_worker"):
         monkeypatch.setattr(supervisor, name, _forbidden(name))
     assert harness.run(700) == 0
@@ -63,8 +56,8 @@ def test_flag_off_supervisor_never_touches_posts(monkeypatch, harness):  # noqa:
 
 @pytest.fixture
 def posts_on(monkeypatch):
-    monkeypatch.setenv("ENABLE_LINKEDIN_POSTS", "true")
-    monkeypatch.delenv("ENABLE_LINKEDIN_REPOSTS", raising=False)
+    # Posts on (the default with the daemon); reposts kept out of these sequences.
+    monkeypatch.setattr(supervisor, "_linkedin_reposts_enabled", lambda: False)
 
 
 def test_posts_on_without_queued_rows_only_checks_every_two_minutes(posts_on, harness, post_hooks):  # noqa: F811
@@ -97,8 +90,6 @@ def test_post_child_is_stopped_at_its_timeout(posts_on, harness, post_hooks, mon
 
 
 def test_a_post_child_and_a_repost_child_never_run_together(monkeypatch, harness, post_hooks, repost_hooks):  # noqa: F811
-    monkeypatch.setenv("ENABLE_LINKEDIN_POSTS", "true")
-    monkeypatch.setenv("ENABLE_LINKEDIN_REPOSTS", "true")
     repost_hooks.queued = True
     post_hooks.queued = True
 
@@ -166,8 +157,12 @@ def test_missing_post_table_is_reported_not_crashing(monkeypatch, database_check
     error = ProgrammingError("schema")
     error.__cause__ = cause
     monkeypatch.setattr("linkedin.personal_posts.has_queued_post", Mock(side_effect=error))
+    monkeypatch.setattr(supervisor, "_MISSING_TABLES_LOGGED", set())
     assert supervisor._post_work_queued() is False
     assert "migration 0042" in caplog.text
+    caplog.clear()
+    assert supervisor._post_work_queued() is False
+    assert "migration 0042" not in caplog.text, "logged once per run, not every two minutes"
 
 
 def test_non_post_sender_never_opens_the_database(monkeypatch):

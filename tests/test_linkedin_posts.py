@@ -504,14 +504,7 @@ def test_post_slack_messages_go_to_the_feed_channel(monkeypatch):
 # --------------------------------------------------------------------------- flag and command
 
 
-def test_run_command_refuses_when_flag_is_off(monkeypatch):
-    monkeypatch.delenv("ENABLE_LINKEDIN_POSTS", raising=False)
-    with pytest.raises(CommandError, match="ENABLE_LINKEDIN_POSTS is off"):
-        call_command("run_linkedin_post_once", stdout=StringIO())
-
-
 def test_run_command_prints_summary(monkeypatch, senders):
-    monkeypatch.setenv("ENABLE_LINKEDIN_POSTS", "true")
     monkeypatch.setenv("LINKEDIN_USERNAME", CHUKA_LOGIN)
     monkeypatch.setattr("linkedin.management.commands.run_linkedin_post_once.signal.signal", lambda *a: None)
     seen = {}
@@ -526,19 +519,10 @@ def test_run_command_prints_summary(monkeypatch, senders):
     assert Path(seen["root"]) == Path(posts.__file__).resolve().parents[1]
 
 
-def test_flag_is_registered_off_by_default_and_documented():
-    var = next(var for var in env_spec.ENV_VARS if var.name == "ENABLE_LINKEDIN_POSTS")
-    assert (var.required, var.secret, var.default, var.group) == (False, False, "false", "feature_flags")
-    assert "ENABLE_LINKEDIN_POSTS=false" in Path(".env.example").read_text().splitlines()
-
-
-def test_flag_parsing(monkeypatch):
-    for value, expected in [(None, False), ("false", False), ("true", True), ("1", True), ("on", True)]:
-        if value is None:
-            monkeypatch.delenv("ENABLE_LINKEDIN_POSTS", raising=False)
-        else:
-            monkeypatch.setenv("ENABLE_LINKEDIN_POSTS", value)
-        assert posts.posts_enabled() is expected
+def test_no_setting_gates_the_worker():
+    # It runs whenever the daemon does and acts only on queued rows (user decision, 2026-11-02).
+    assert "ENABLE_LINKEDIN_POSTS" not in {var.name for var in env_spec.ENV_VARS}
+    assert "ENABLE_LINKEDIN_POSTS" not in Path(".env.example").read_text()
 
 
 def test_budget_bounds_the_slowest_typing_and_the_supervisor_waits_longer():

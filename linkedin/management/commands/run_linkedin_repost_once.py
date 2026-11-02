@@ -12,7 +12,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from linkedin.exceptions import LinkedInRepostWorkerRefused, RepostBrowserUnavailableError, RepostInterruptedError
-from linkedin.reposts import reposts_enabled, run_once
+from linkedin.reposts import run_once
 
 
 def _interrupt(signum, _frame):
@@ -28,8 +28,6 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         from linkedin.conf import LISTENER_CDP_PORT
 
-        if not reposts_enabled():
-            raise CommandError("ENABLE_LINKEDIN_REPOSTS is off; no repost was attempted.")
         signal.signal(signal.SIGTERM, _interrupt)
         root = Path(__file__).resolve().parents[3]
         try:

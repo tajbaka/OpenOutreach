@@ -589,14 +589,7 @@ def test_worker_closes_leftover_repost_targets_only(senders, tmp_path, monkeypat
     assert not receipt.path.exists()
 
 
-def test_run_command_refuses_when_flag_is_off(monkeypatch):
-    monkeypatch.delenv("ENABLE_LINKEDIN_REPOSTS", raising=False)
-    with pytest.raises(CommandError, match="ENABLE_LINKEDIN_REPOSTS is off"):
-        call_command("run_linkedin_repost_once", stdout=StringIO())
-
-
 def test_run_command_prints_summary(monkeypatch, senders):
-    monkeypatch.setenv("ENABLE_LINKEDIN_REPOSTS", "true")
     monkeypatch.setenv("LINKEDIN_USERNAME", CHUKA_LOGIN)
     seen = {}
     monkeypatch.setattr("linkedin.management.commands.run_linkedin_repost_once.signal.signal", lambda *a: None)
@@ -614,20 +607,10 @@ def test_run_command_prints_summary(monkeypatch, senders):
 # --------------------------------------------------------------------------- env
 
 
-def test_flag_is_registered_off_by_default_and_documented_in_example():
-    var = next(var for var in env_spec.ENV_VARS if var.name == "ENABLE_LINKEDIN_REPOSTS")
-    assert (var.required, var.secret, var.default, var.group) == (False, False, "false", "feature_flags")
-    example = Path(".env.example").read_text().splitlines()
-    assert "ENABLE_LINKEDIN_REPOSTS=false" in example
-
-
-def test_flag_parsing(monkeypatch):
-    for value, expected in [(None, False), ("false", False), ("0", False), ("true", True), ("1", True), ("on", True)]:
-        if value is None:
-            monkeypatch.delenv("ENABLE_LINKEDIN_REPOSTS", raising=False)
-        else:
-            monkeypatch.setenv("ENABLE_LINKEDIN_REPOSTS", value)
-        assert reposts.reposts_enabled() is expected
+def test_no_setting_gates_the_worker():
+    # It runs whenever the daemon does and acts only on queued rows (user decision, 2026-11-02).
+    assert "ENABLE_LINKEDIN_REPOSTS" not in {var.name for var in env_spec.ENV_VARS}
+    assert "ENABLE_LINKEDIN_REPOSTS" not in Path(".env.example").read_text()
 
 
 def test_budget_bounds_the_slowest_typing():
