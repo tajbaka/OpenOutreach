@@ -270,3 +270,98 @@ class RepostRejectedError(RepostUncertainError):
 
 class RepostUnverifiedError(RepostUncertainError):
     """The final click was attempted but no new permalink could be verified."""
+
+
+class LinkedInPostError(Exception):
+    """Base class for the queued personal LinkedIn post ledger and its worker."""
+
+
+class LinkedInPostValidationError(LinkedInPostError, ValueError):
+    """A personal post request or row failed strict validation; nothing was posted."""
+
+
+class LinkedInPostConflictError(LinkedInPostValidationError):
+    """An external_ref already exists with a different payload; nothing changed."""
+
+
+class LinkedInPostImmutableError(LinkedInPostError):
+    """A stored personal post payload (text, media, title, operator) cannot change."""
+
+
+class LinkedInPostStateError(LinkedInPostError):
+    """A personal post row is not in a state that allows the requested change."""
+
+
+class LinkedInPostWorkerRefused(LinkedInPostError):
+    """The local personal post worker cannot run safely for this checkout's sender."""
+
+
+class PostSendError(RuntimeError):
+    """A personal post failed before its final click; LinkedIn was not mutated.
+
+    ``error_type`` is a class name only. Messages never carry page text.
+    """
+
+    def __init__(self, message: str = "", *, error_type: str | None = None):
+        super().__init__(message or type(self).__name__)
+        self.error_type = error_type or type(self).__name__
+
+
+class PostUncertainError(PostSendError):
+    """The final Post click was attempted; LinkedIn may have published it."""
+
+
+class PostBrowserUnavailableError(PostSendError):
+    """The daemon browser could not be attached over loopback CDP."""
+
+
+class PostLoginWallError(PostSendError):
+    """LinkedIn showed a login, checkpoint or authwall page."""
+
+
+class PostCheckpointError(PostSendError):
+    """LinkedIn showed a captcha or checkpoint form."""
+
+
+class PostInvalidRowError(PostSendError):
+    """The queued row's payload failed validation at claim time."""
+
+
+class PostMediaUnavailableError(PostSendError):
+    """The approved media file could not be downloaded."""
+
+
+class PostMediaMismatchError(PostSendError):
+    """The downloaded media differs from the approved SHA-256 or size."""
+
+
+class PostControlNotFoundError(PostSendError):
+    """No unique Start a post control was found on the feed."""
+
+
+class PostComposerError(PostSendError):
+    """The post composer, editor or Post button was missing, ambiguous or not empty."""
+
+
+class PostAttachmentError(PostSendError):
+    """The image or document could not be attached, titled or previewed."""
+
+
+class PostCommentaryMismatchError(PostSendError):
+    """The editor text differed from the approved post text before Post."""
+
+
+class PostStateChangedError(PostSendError):
+    """The ledger row changed before the final click, so nothing was clicked."""
+
+
+class PostInterruptedError(PostSendError):
+    """The worker process was asked to stop."""
+
+
+class PostRejectedError(PostUncertainError):
+    """LinkedIn showed an error after the final Post click."""
+
+
+class PostUnverifiedError(PostUncertainError):
+    """The final click was attempted but no new permalink could be verified."""

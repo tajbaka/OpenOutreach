@@ -1775,6 +1775,123 @@ class LinkedInRepost(models.Model):
         return f"{self.operator} repost {self.external_ref} [{self.status}]"
 
 
+LINKEDIN_POST_PAYLOAD_FIELDS = frozenset({
+    "external_ref", "operator", "commentary", "media_kind", "media_url", "media_sha256",
+    "media_bytes", "media_name", "document_title",
+})
+
+
+class LinkedInPostQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if LINKEDIN_POST_PAYLOAD_FIELDS & kwargs.keys():
+            from linkedin.exceptions import LinkedInPostImmutableError
+
+            raise LinkedInPostImmutableError("LinkedIn post payload is immutable once created.")
+        return super().update(**kwargs)
+
+
+class LinkedInPost(models.Model):
+    """One externally approved personal LinkedIn post, attempted once by its operator.
+
+    Arian or Eddy (Chuka) posting from their own profile, not a repost (user
+    decision, 2026-11-02). Never a daemon Task. Boundera Social Studio owns
+    approval and scheduling: its dashboard writes a queued row with
+    ``scheduled_for`` when the user schedules the post, and the supervised
+    ``run_linkedin_post_once`` child posts it once that time has come. Media
+    is fetched from ``media_url`` (a Sanity file) and used only if its SHA-256
+    and size match. See docs/linkedin-posts.md.
+    """
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
+        UNCERTAIN = "uncertain", "Uncertain"
+        SKIPPED = "skipped", "Skipped"
+
+    class MediaKind(models.TextChoices):
+        NONE = "", "None"
+        IMAGE = "image", "Image"
+        DOCUMENT = "document", "Document"
+
+    external_ref = models.CharField(max_length=100, unique=True)
+    operator = models.CharField(max_length=80)
+    # Database defaults too, so Social Studio's inserts may omit any of these.
+    commentary = models.TextField(blank=True, default="", db_default="")
+    media_kind = models.CharField(max_length=20, choices=MediaKind.choices, blank=True, default="", db_default="")
+    media_url = models.CharField(max_length=500, blank=True, default="", db_default="")
+    media_sha256 = models.CharField(max_length=64, blank=True, default="", db_default="")
+    media_bytes = models.IntegerField(null=True, blank=True)
+    media_name = models.CharField(max_length=200, blank=True, default="", db_default="")
+    document_title = models.CharField(max_length=200, blank=True, default="", db_default="")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED, db_default=Status.QUEUED)
+    # Not before this time; Social Studio may move it while the row is queued.
+    scheduled_for = models.DateTimeField(null=True, blank=True)
+    click_attempted_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    result_url = models.CharField(max_length=200, blank=True, default="", db_default="")
+    error_type = models.CharField(max_length=80, blank=True, default="", db_default="")
+    # Manual retries after a fix (retry_linkedin_post), capped at MAX_POST_RETRIES.
+    retry_count = models.PositiveSmallIntegerField(default=0, db_default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    objects = LinkedInPostQuerySet.as_manager()
+
+    class Meta:
+        app_label = "linkedin"
+        indexes = [
+            models.Index(fields=["operator", "status", "created_at"], name="lpost_op_status_idx"),
+            models.Index(fields=["operator", "status", "scheduled_for"], name="lpost_op_due_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["queued", "running", "sent", "failed", "uncertain", "skipped"]),
+                name="lpost_status_valid",
+            ),
+            # A sent post always carries its verified permalink.
+            models.CheckConstraint(
+                condition=~models.Q(status="sent") | ~models.Q(result_url=""),
+                name="lpost_sent_has_result_url",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(media_kind__in=["", "image", "document"]),
+                name="lpost_media_kind_valid",
+            ),
+            # Something to post: text, media or both.
+            models.CheckConstraint(
+                condition=~models.Q(commentary="") | ~models.Q(media_kind=""),
+                name="lpost_has_text_or_media",
+            ),
+            # Media carries its source, fingerprint and file name.
+            models.CheckConstraint(
+                condition=models.Q(media_kind="")
+                | (~models.Q(media_url="") & ~models.Q(media_sha256="") & ~models.Q(media_name="")),
+                name="lpost_media_complete",
+            ),
+            # A LinkedIn document needs its title.
+            models.CheckConstraint(
+                condition=~models.Q(media_kind="document") | ~models.Q(document_title=""),
+                name="lpost_document_has_title",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            fields = sorted(LINKEDIN_POST_PAYLOAD_FIELDS)
+            stored = type(self).objects.filter(pk=self.pk).values(*fields).first()
+            if stored is not None and any(stored[name] != getattr(self, name) for name in fields):
+                from linkedin.exceptions import LinkedInPostImmutableError
+
+                raise LinkedInPostImmutableError("LinkedIn post payload is immutable once created.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.operator} post {self.external_ref} [{self.status}]"
+
+
 class WorkflowRun(models.Model):
     """Audit + freshness signal for high-level workflows the operator runs.
 

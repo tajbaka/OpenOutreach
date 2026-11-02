@@ -30,12 +30,16 @@ from linkedin.feed_sampling import (
 from linkedin.reposts import (
     REPOST_OPERATORS, SUPERVISOR_TIMEOUT_SECONDS as REPOST_TIMEOUT_SECONDS, RepostTargetReceipt,
 )
+from linkedin.personal_posts import (
+    POST_OPERATORS, SUPERVISOR_TIMEOUT_SECONDS as POST_TIMEOUT_SECONDS, PostTargetReceipt,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_POLL_SECONDS = 300
 FEED_COLLECTOR_CHECK_SECONDS = 60
 REPOST_CHECK_SECONDS = 120
+POST_CHECK_SECONDS = 120
 REQUIREMENT_PATHS = (
     "requirements/base.txt",
     "requirements/local.txt",
@@ -545,6 +549,75 @@ def _stop_repost_worker(proc: subprocess.Popen) -> None:
     _close_owned_repost_tabs()
 
 
+def _start_post_worker() -> subprocess.Popen:
+    env = os.environ.copy()
+    env["OPENOUTREACH_SUPERVISED"] = "1"
+    logger.warning("Starting one-shot LinkedIn post worker")
+    return _launch(
+        [sys.executable, "manage.py", "run_linkedin_post_once"],
+        cwd=ROOT_DIR,
+        env=env,
+    )
+
+
+def _post_work_queued() -> bool:
+    """Bounded read: does this exact sender have a queued personal post that is due? Fails closed."""
+    from linkedin.operators import resolve_operator
+
+    operator = resolve_operator(os.getenv("LINKEDIN_USERNAME", "").strip())
+    if operator not in POST_OPERATORS:
+        logger.warning("Post check skipped: LINKEDIN_USERNAME is not an enabled post operator")
+        return False
+
+    import django
+    from django.db import InterfaceError, OperationalError, ProgrammingError, connection
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "linkedin.django_settings")
+    django.setup()
+    from linkedin.personal_posts import has_queued_post
+
+    options = connection.settings_dict.setdefault("OPTIONS", {})
+    options.update(
+        connect_timeout=5, keepalives=1, keepalives_idle=5,
+        keepalives_interval=5, keepalives_count=2, tcp_user_timeout=15000,
+    )
+    limits = "-c statement_timeout=5000 -c lock_timeout=1000"
+    extra = options.get("options", "").strip()
+    if not extra.endswith(limits):
+        options["options"] = f"{extra} {limits}".strip()
+    try:
+        connection.close()
+        return has_queued_post(operator)
+    except (OperationalError, InterfaceError) as exc:
+        logger.warning("Post queue check unavailable (%s); queued rows wait for the next check", type(exc).__name__)
+        return False
+    except ProgrammingError as exc:
+        # 42P01: no table yet.
+        if getattr(exc.__cause__, "sqlstate", None) in ("42P01", "42703"):
+            logger.error("LinkedIn post table is missing or not migrated; apply migration 0042 before enabling posts")
+            return False
+        raise
+    finally:
+        connection.close()
+
+
+def _close_owned_post_tabs() -> None:
+    """Close only targets recorded by this sender's post worker."""
+    try:
+        PostTargetReceipt(
+            ROOT_DIR, os.getenv("LINKEDIN_USERNAME", ""), int(os.getenv("LISTENER_CDP_PORT") or 9222),
+        ).close_all()
+    except Exception as exc:
+        logger.error("Post target cleanup needs review: %s", type(exc).__name__)
+
+
+def _stop_post_worker(proc: subprocess.Popen) -> None:
+    # Terminate first: the child records an attempted click as uncertain and
+    # closes its own tab. Then close anything a killed child left behind.
+    _stop_process(proc, label="LinkedIn post worker")
+    _close_owned_post_tabs()
+
+
 def _gmail_account_for_supervisor() -> str | None:
     """Resolve this checkout's LinkedIn operator to its shared Gmail mailbox."""
     from gmail.auth import GMAIL_OPERATOR_MAPPING
@@ -667,6 +740,10 @@ def _linkedin_reposts_enabled() -> bool:
     return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_REPOSTS", "false")
 
 
+def _linkedin_posts_enabled() -> bool:
+    return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_POSTS", "false")
+
+
 def _feed_schedule() -> FeedSampleSchedule:
     return FeedSampleSchedule(ROOT_DIR, os.getenv("LINKEDIN_USERNAME", ""))
 
@@ -742,6 +819,11 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     reposts_enabled = _linkedin_reposts_enabled()
     repost_child: subprocess.Popen | None = None
     repost_started_at = None
+    # Personal posts (user decision, 2026-11-02): same shape, off by default.
+    # A post child and a repost child never drive this sender's browser together.
+    posts_enabled = _linkedin_posts_enabled()
+    post_child: subprocess.Popen | None = None
+    post_started_at = None
 
     def _handle_signal(signum, _frame):
         nonlocal stop
@@ -768,11 +850,19 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
             repost_child = None
             repost_started_at = None
 
+    def stop_post_child() -> None:
+        nonlocal post_child, post_started_at
+        if post_child is not None:
+            _stop_post_worker(post_child)
+            post_child = None
+            post_started_at = None
+
     def restart_children(reason: str) -> bool:
         nonlocal child, gmail_child, feed_child, feed_started_at
-        # Separate step: the repost child attaches to the daemon browser, so
+        # Separate steps: the repost and post children attach to the daemon browser, so
         # it stops before that browser's worker is replaced.
         stop_repost_child()
+        stop_post_child()
         result = _restart_managed_children(
             child=child, gmail_child=gmail_child, feed_child=feed_child,
             gmail_account=gmail_account, reason=reason,
@@ -804,6 +894,8 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
     if reposts_enabled:
         next_repost_check = time.monotonic() + REPOST_CHECK_SECONDS
+    if posts_enabled:
+        next_post_check = time.monotonic() + POST_CHECK_SECONDS
 
     while not stop and not safety.stopped.is_set():
         safety.raise_if_failed()
@@ -851,6 +943,7 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
                 feed_child = None
                 feed_started_at = None
             stop_repost_child()
+            stop_post_child()
             child = _start_runtime_worker(restart_reason="process_exit")
             continue
 
@@ -911,16 +1004,36 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
                     _close_owned_repost_tabs()
                     repost_child = None
                     repost_started_at = None
-            if repost_child is None and time.monotonic() >= next_repost_check:
+            if repost_child is None and post_child is None and time.monotonic() >= next_repost_check:
                 next_repost_check = time.monotonic() + REPOST_CHECK_SECONDS
                 if _repost_work_queued():
                     repost_started_at = time.monotonic()
                     repost_child = _start_repost_worker()
 
+        if posts_enabled:
+            if post_child is not None:
+                post_code = post_child.poll()
+                if post_code is None and time.monotonic() - post_started_at >= POST_TIMEOUT_SECONDS:
+                    logger.error("LinkedIn post worker exceeded %ss; stopping it", POST_TIMEOUT_SECONDS)
+                    _stop_post_worker(post_child)
+                    post_code = 124
+                if post_code is not None:
+                    if post_code != 0:
+                        logger.warning("LinkedIn post worker exited with status %s", post_code)
+                    _close_owned_post_tabs()
+                    post_child = None
+                    post_started_at = None
+            if post_child is None and repost_child is None and time.monotonic() >= next_post_check:
+                next_post_check = time.monotonic() + POST_CHECK_SECONDS
+                if _post_work_queued():
+                    post_started_at = time.monotonic()
+                    post_child = _start_post_worker()
+
         time.sleep(1)
 
     safety.raise_if_failed()
     stop_repost_child()
+    stop_post_child()
     if child is not None:
         _stop_daemon(child)
     if gmail_child is not None:

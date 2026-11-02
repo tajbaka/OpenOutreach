@@ -1258,6 +1258,41 @@ def notify_repost_outcome(
     _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"repost ({operator}, {status})")
 
 
+def notify_post_outcome(
+    *, operator: str, status: str, result_url: str | None = None, error_type: str | None = None,
+) -> None:
+    """Post one finished personal post's outcome to the feed channel (SLACK_HIGH_SIGNAL_URL).
+
+    Arian or Eddy posting from their own profile (user decision, 2026-11-02).
+    ``sent`` carries the verified post link; ``failed`` means nothing was
+    posted; anything else (``uncertain``) may have posted, so the person checks
+    their LinkedIn activity and it is never sent twice. Social Studio's
+    dashboard records the same outcome but sends nothing. Silent no-op when unset.
+    """
+    if not SLACK_HIGH_SIGNAL_URL:
+        return
+    name = _REPOST_NAMES.get(operator, operator)
+    if status == "sent":
+        emoji, title = ":white_check_mark:", f"{name} posted on LinkedIn"
+        detail = f"<{result_url}|View {name}'s post>"
+    elif status == "failed":
+        emoji, title = ":warning:", f"{name}'s post didn't go out"
+        detail = (f"OpenOutreach stopped before clicking Post (`{error_type or 'PostError'}`), so nothing was posted. "
+                  "Schedule it again in Social Studio to retry.")
+    else:
+        emoji, title = ":warning:", f"{name}'s post may have posted"
+        detail = (f"OpenOutreach couldn't confirm it (`{error_type or 'PostError'}`). Check {name}'s LinkedIn "
+                  "activity before anything else; it is never sent twice.")
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"{emoji} *{title}*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": detail}},
+        {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f"*Sender:* {operator}"},
+        ]},
+    ]
+    payload = {"text": f"{emoji} {title}", "blocks": blocks}
+    _post_to_slack(SLACK_HIGH_SIGNAL_URL, payload, f"post ({operator}, {status})")
+
 def _supervisor_control_payload(
     *, sender: str, title: str, detail: str, context: str,
 ) -> dict:
