@@ -24,7 +24,6 @@ from linkedin.conf import (
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     CONNECT_DAILY_LIMIT,
-    CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS,
     ENABLE_ACTIVE_HOURS,
     ENABLE_CONNECT,
     ENABLE_PACING_CATCH_UP,
@@ -302,8 +301,8 @@ def _outside_active_window() -> bool:
     return now.weekday() in REST_DAYS or not (ACTIVE_START_HOUR <= now.hour < ACTIVE_END_HOUR)
 
 
-def _connection_limit_delay(campaign_id: int) -> float:
-    if campaign_id not in CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS:
+def _connection_limit_delay(campaign) -> float:
+    if not campaign.allow_connections_outside_hours:
         return _seconds_until_next_active_start()
     # Recheck unchanged quotas/restrictions after LOCAL midnight rather than
     # parking an opted-in campaign until the next weekday's opening hour.
@@ -489,7 +488,7 @@ def handle_connect(task, session, qualifiers):
 
     # --- Rate limit check ---
     if not session.linkedin_profile.can_execute(ActionLog.ActionType.CONNECT):
-        enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign_id))
+        enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign))
         return
 
     # --- Get candidate ---
@@ -799,7 +798,7 @@ def handle_connect(task, session, qualifiers):
                 _release_connection_reservation(reservation)
         logger.warning("Rate limited: %s", e)
         session.linkedin_profile.mark_exhausted(ActionLog.ActionType.CONNECT)
-        enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign_id))
+        enqueue_connect(campaign_id, delay_seconds=_connection_limit_delay(campaign))
         return
     except ExistingPendingInvite:
         if connection_delivery is not None:

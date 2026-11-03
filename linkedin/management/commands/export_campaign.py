@@ -44,6 +44,7 @@ class Command(BaseCommand):
             "is_freemium": campaign.is_freemium,
             "action_fraction": campaign.action_fraction,
             "connection_priority": campaign.connection_priority,
+            "allow_connections_outside_hours": campaign.allow_connections_outside_hours,
         }
         if campaign.active_message_version_id:
             payload["message_program_key"] = campaign.active_message_version.program.key

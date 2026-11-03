@@ -20,7 +20,6 @@ from linkedin.conf import (
     ACTIVE_TIMEZONE,
     CAMPAIGN_CONFIG,
     CONNECT_LOW_POOL_THRESHOLD,
-    CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS,
     ENABLE_AUTO_DISCOVERY,
     ENABLE_CONNECT,
     ENABLE_FOLLOW_UP,
@@ -220,13 +219,14 @@ def _connection_campaign_ids_now(profile=None, *, now=None):
         or Task.TaskType.CONNECT in _catch_up_task_types(profile, now=now)
     ):
         return None
-    if not ENABLE_CONNECT or not CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS or profile is None:
+    user_id = getattr(profile, "user_id", None)
+    if not ENABLE_CONNECT or user_id is None:
         return ()
     from linkedin.models import Campaign
 
     return tuple(Campaign.objects.filter(
-        pk__in=CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS,
-        user_id=profile.user_id,
+        allow_connections_outside_hours=True,
+        user_id=user_id,
         status=Campaign.Status.ACTIVE,
     ).values_list("pk", flat=True))
 

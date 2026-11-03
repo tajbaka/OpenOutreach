@@ -20,7 +20,7 @@ class Command(BaseCommand):
         from linkedin import conf
         from linkedin.campaign_integrations import EnrollmentHold, status, submit
         from linkedin.message_delivery import MessageDeliveryError
-        from linkedin.models import CampaignSubmission
+        from linkedin.models import Campaign, CampaignSubmission
         try:
             if options["action"] == "submit":
                 if not options["input"]:
@@ -53,7 +53,9 @@ class Command(BaseCommand):
                 result = {"enabled": conf.ENABLE_CAMPAIGN_INTEGRATIONS,
                           "local_outcomes_supported": True,
                           "message_version_hash_supported": True,
-                          "connect_outside_hours_campaign_ids": list(conf.CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS),
+                          "connect_outside_hours_campaign_ids": list(Campaign.objects.filter(
+                              allow_connections_outside_hours=True,
+                          ).order_by("pk").values_list("pk", flat=True)),
                           "callbacks_configured": bool(len(conf.OUTREACH_CALLBACK_SECRET) >= 32 and conf.OUTREACH_CALLBACK_ALLOWED_HOSTS),
                           "replies_configured": bool(conf.ENABLE_REALTIME_LISTENER and conf.SLACK_REPLIES_WEBHOOK_URL)}
         except EnrollmentHold as exc:

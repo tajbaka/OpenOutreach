@@ -201,6 +201,12 @@ class Campaign(models.Model):
             "0 preserves normal ordering; limits, hours and follow-ups are unchanged."
         ),
     )
+    allow_connections_outside_hours = models.BooleanField(
+        "Allow connections outside working hours",
+        default=False,
+        db_default=False,
+        help_text="Allow LinkedIn invitations outside the sender's working hours and on rest days.",
+    )
     seed_public_ids = models.JSONField(default=list, blank=True)
     model_blob = models.BinaryField(null=True, blank=True)
     active_message_version = models.ForeignKey(

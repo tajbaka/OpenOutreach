@@ -60,6 +60,11 @@ class Command(BaseCommand):
             if type(value) is not int or not 0 <= value <= 32767:
                 raise CommandError("connection_priority must be an integer from 0 to 32767.")
             defaults["connection_priority"] = value
+        if "allow_connections_outside_hours" in payload:
+            value = payload["allow_connections_outside_hours"]
+            if type(value) is not bool:
+                raise CommandError("allow_connections_outside_hours must be a JSON boolean.")
+            defaults["allow_connections_outside_hours"] = value
         if "status" in payload:
             defaults["status"] = payload["status"]
         program_key = str(payload.get("message_program_key") or "").strip()
@@ -95,6 +100,7 @@ class Command(BaseCommand):
                     f"status={campaign.status}; "
                     f"gmail_start_mode={campaign.gmail_start_mode} ({campaign.get_gmail_start_mode_display()}); "
                     f"connection_priority={campaign.connection_priority}; "
+                    f"allow_connections_outside_hours={campaign.allow_connections_outside_hours}; "
                     f"message_program_key={program_key or '(unchanged/legacy)'}"
                 )
                 if options["dry_run"]:

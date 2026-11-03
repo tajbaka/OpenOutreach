@@ -141,9 +141,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "IANA timezone for active-hours and rest-day calculations."),
     EnvVar("REST_DAYS", False, False, "5,6", "schedule",
            "Comma-separated weekday indices the daemon rests on (Mon=0)."),
-    EnvVar("CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", False, False, "", "schedule",
-           "Comma-separated campaign IDs whose connection requests alone may run outside active "
-           "hours and on rest days, owner's active campaigns only; follow-ups and limits are unchanged."),
     EnvVar("DISCOVERY_DAILY_LIMIT", False, False, "25", "discovery",
            "Maximum new discovery profiles stored per sender/local day."),
     EnvVar("DISCOVERY_VISIT_SCORE_THRESHOLD", False, False, "70", "discovery",

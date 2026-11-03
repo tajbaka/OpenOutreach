@@ -47,26 +47,25 @@ deploy that combined reversal without the Windows receipt handover below.
 ### Explicit connection-hours exception
 
 External qualification and enrollment are independent of sender working hours.
-For an explicitly approved campaign, set `CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS`
-to a comma-separated list of its actual numeric IDs in that sender's worker
-environment. The default is empty. Only normal connection Tasks for active,
-owned, listed campaigns can run outside working hours and on rest days.
-The recurring RB2B review does not change this setting or enable a campaign.
+In Campaign Admin, save **Allow connections outside working hours** to let the
+active campaign's owner send LinkedIn invitations outside their schedule and
+on rest days. The checkbox is off by default. The worker reads the setting when
+choosing its next task, and campaign JSON import and export use the Boolean
+`allow_connections_outside_hours`. Older imports preserve the saved value.
 
-It is declared in `linkedin/env_spec.py` and `.env.example` (schedule group).
-This exception does not enable follow-ups, Gmail, discovery, another sender or
-another campaign outside its existing schedule. Existing catch-up behavior is
-preserved. Daily/weekly/total limits, LinkedIn restrictions, sender stops,
-campaign activity, frozen messages, due times, and normal pacing still apply.
-An exhausted opted-in campaign rechecks those same guards at local midnight
-(including DST), rather than waiting for the next workday. A quota is never
-reset or increased by the exception. Preflight reports the configured IDs;
-this is configuration evidence, not proof a remote worker has loaded them.
+The exception applies only to connection requests. Existing catch-up behavior,
+due dates, pacing, quotas, LinkedIn restrictions and sender stops still apply.
+An opted-in campaign that reaches a connection quota rechecks at local midnight,
+including on days when the UTC offset changes. Preflight lists the campaign IDs
+with the checkbox enabled.
 
-The intended RB2B rollout selects only Arian's campaign 58. Keep this setting
-unset in the live environment until the historical handover, callbacks and
-runtime readiness gates are cleared; source publication alone activates none
-of these exceptions and requires no database migration.
+Before upgrading a worker, record the approved campaign IDs from its
+`CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS` setting and verify each campaign's owner.
+Migration 0043 adds the checkbox with a default of off. After applying it, enable
+the checkbox on the approved campaigns before starting the updated worker.
+The worker now uses the database setting, so remove the old variable from its
+configuration. This keeps the rollout decision with the operator who can review
+the settings across worker machines.
 
 `Campaign.connection_priority` is an integer from 0 to 32767. Existing campaigns
 receive 0. Larger values get the next **due connection** turn ahead of smaller

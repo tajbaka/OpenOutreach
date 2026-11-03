@@ -62,9 +62,9 @@ class CampaignAdmin(admin.ModelAdmin):
     form = CampaignAdminForm
     list_display = (
         "name", "user", "status", "gmail_start_mode", "active_message_version", "booking_link",
-        "is_freemium", "action_fraction", "connection_priority",
+        "is_freemium", "action_fraction", "connection_priority", "allow_connections_outside_hours",
     )
-    list_filter = ("status", "is_freemium", "gmail_start_mode")
+    list_filter = ("status", "is_freemium", "gmail_start_mode", "allow_connections_outside_hours")
     raw_id_fields = ("user", "active_message_version")
 
 

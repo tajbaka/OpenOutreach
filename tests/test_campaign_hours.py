@@ -19,7 +19,7 @@ def schedule(monkeypatch):
         "ENABLE_ACTIVE_HOURS": True, "ENABLE_CONNECT": True,
         "ENABLE_PACING_CATCH_UP": False, "ACTIVE_START_HOUR": 9,
         "ACTIVE_END_HOUR": 17, "ACTIVE_TIMEZONE": "America/Toronto",
-        "REST_DAYS": (5, 6), "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS": (),
+        "REST_DAYS": (5, 6),
     }.items():
         monkeypatch.setattr(daemon, name, value)
     monkeypatch.setattr(daemon, "_discovery_available_now", lambda *a, **kw: False)
@@ -40,7 +40,7 @@ def test_only_explicit_owned_active_campaign_connects_outside_hours(
     ordinary = Campaign.objects.create(name="ordinary hours", user=profile.user)
     disabled = Campaign.objects.create(name="disabled", user=profile.user, status="disabled")
     foreign = Campaign.objects.create(name="foreign", user=User.objects.create(username="foreign"))
-    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (approved.pk, disabled.pk, foreign.pk))
+    Campaign.objects.filter(pk__in=[approved.pk, disabled.pk, foreign.pk]).update(allow_connections_outside_hours=True)
     now = schedule.replace(day=day, hour=hour)
     rows = [pending(c) for c in (ordinary, disabled, foreign)]
     expected = pending(approved, age=20)
@@ -63,7 +63,9 @@ def test_only_explicit_owned_active_campaign_connects_outside_hours(
 @pytest.mark.parametrize("reason", ["empty", "foreign", "disabled", "connect_disabled"])
 def test_no_eligible_exception_keeps_original_sleep(fake_session, monkeypatch, schedule, reason):
     c = fake_session.campaign
-    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", () if reason == "empty" else (c.pk,))
+    if reason != "empty":
+        c.allow_connections_outside_hours = True
+        c.save(update_fields=["allow_connections_outside_hours"])
     if reason == "foreign":
         c.user = User.objects.create(username="other")
         c.save(update_fields=["user"])
@@ -79,7 +81,8 @@ def test_no_eligible_exception_keeps_original_sleep(fake_session, monkeypatch, s
 
 def test_exception_does_not_retime_future_task_or_enable_followups(fake_session, monkeypatch, schedule):
     c = fake_session.campaign
-    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (c.pk,))
+    c.allow_connections_outside_hours = True
+    c.save(update_fields=["allow_connections_outside_hours"])
     future = pending(c, age=-600)
     pending(c, age=100, kind="follow_up")
     scope = daemon._connection_campaign_ids_now(fake_session.linkedin_profile, now=schedule)
@@ -91,9 +94,28 @@ def test_exception_does_not_retime_future_task_or_enable_followups(fake_session,
     assert future.status == "pending"
 
 
+def test_saved_toggle_updates_claim_and_wakeup_on_the_next_poll(fake_session, schedule):
+    campaign = fake_session.campaign
+    profile = fake_session.linkedin_profile
+    task = pending(campaign)
+
+    for enabled in (False, True, False):
+        Campaign.objects.filter(pk=campaign.pk).update(allow_connections_outside_hours=enabled)
+        scope = daemon._connection_campaign_ids_now(profile, now=schedule)
+        kinds = daemon._claimable_task_types_now(profile, now=schedule)
+        assert scope == ((campaign.pk,) if enabled else ())
+        assert (Task.TaskType.CONNECT in kinds) is enabled
+        queue = daemon._task_queue_for_connection_scope(scope)
+        assert queue.seconds_to_next(task_types={Task.TaskType.CONNECT}) == (0 if enabled else None)
+
+    task.refresh_from_db()
+    assert task.status == Task.Status.PENDING
+
+
 def test_normal_hours_keep_existing_followup_order(fake_session, monkeypatch, schedule):
     c = fake_session.campaign
-    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (c.pk,))
+    c.allow_connections_outside_hours = True
+    c.save(update_fields=["allow_connections_outside_hours"])
     followup = pending(c, age=100, kind="follow_up")
     pending(c)
     now = schedule.replace(day=28, hour=12)
@@ -113,7 +135,8 @@ def test_existing_catch_up_keeps_its_original_scope(fake_session, monkeypatch, s
 
 def test_exception_coexists_with_discovery_without_widening_connect_scope(fake_session, monkeypatch, schedule):
     c = fake_session.campaign
-    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (c.pk,))
+    c.allow_connections_outside_hours = True
+    c.save(update_fields=["allow_connections_outside_hours"])
     monkeypatch.setattr(daemon, "_discovery_available_now", lambda *a, **kw: True)
     assert daemon._claimable_task_types_now(fake_session.linkedin_profile, now=schedule) == {"connect", "discovery"}
     assert daemon._connection_campaign_ids_now(fake_session.linkedin_profile, now=schedule) == (c.pk,)
@@ -122,7 +145,8 @@ def test_exception_coexists_with_discovery_without_widening_connect_scope(fake_s
 def test_shared_quota_still_blocks_opted_in_handler(fake_session, monkeypatch, schedule):
     c = fake_session.campaign
     monkeypatch.setattr(connect, "ENABLE_CONNECT", True)
-    monkeypatch.setattr(connect, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (c.pk,))
+    c.allow_connections_outside_hours = True
+    c.save(update_fields=["allow_connections_outside_hours"])
     monkeypatch.setattr(connect, "strategy_for", lambda *a: None)
     monkeypatch.setattr(fake_session.linkedin_profile, "can_execute", lambda action: False)
     sent = []
@@ -139,9 +163,8 @@ def test_shared_quota_still_blocks_opted_in_handler(fake_session, monkeypatch, s
     (datetime(2026, 11, 1, 0, tzinfo=ZoneInfo("America/Toronto")), 25 * 3600),
 ])
 def test_quota_retry_uses_local_midnight_including_dst(monkeypatch, now, seconds):
-    monkeypatch.setattr(connect, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (58,))
     monkeypatch.setattr(connect, "ACTIVE_TIMEZONE", "America/Toronto")
     monkeypatch.setattr(connect.timezone, "localtime", lambda **kw: now)
     monkeypatch.setattr(connect, "_seconds_until_next_active_start", lambda: 999999)
-    assert connect._connection_limit_delay(58) == seconds
-    assert connect._connection_limit_delay(55) == 999999
+    assert connect._connection_limit_delay(Campaign(allow_connections_outside_hours=True)) == seconds
+    assert connect._connection_limit_delay(Campaign()) == 999999

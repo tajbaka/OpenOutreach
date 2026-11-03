@@ -27,7 +27,8 @@ def test_fake_visitor_priority_invitation_callback_retry_and_sequence(fake_sessi
     fake_session.linkedin_profile.save(update_fields=["linkedin_username"])
     high = fake_session.campaign
     high.connection_priority = 10
-    high.save(update_fields=["connection_priority"])
+    high.allow_connections_outside_hours = True
+    high.save(update_fields=["connection_priority", "allow_connections_outside_hours"])
     version = _version(high)
     low = Campaign.objects.create(name="Synthetic ordinary campaign", user=fake_session.django_user)
     old = Task.objects.create(task_type="connect", scheduled_at=timezone.now() - timedelta(minutes=5),
@@ -52,7 +53,6 @@ def test_fake_visitor_priority_invitation_callback_retry_and_sequence(fake_sessi
     monkeypatch.setattr(daemon, "ENABLE_ACTIVE_HOURS", True)
     monkeypatch.setattr(daemon, "ENABLE_PACING_CATCH_UP", False)
     monkeypatch.setattr(daemon, "REST_DAYS", (5, 6))
-    monkeypatch.setattr(daemon, "CONNECT_OUTSIDE_HOURS_CAMPAIGN_IDS", (high.pk,))
     monkeypatch.setattr(daemon, "_discovery_available_now", lambda *a, **kw: False)
     after_hours = datetime(2026, 10, 31, 22, tzinfo=ZoneInfo("America/Toronto"))
     scope = daemon._connection_campaign_ids_now(fake_session.linkedin_profile, now=after_hours)

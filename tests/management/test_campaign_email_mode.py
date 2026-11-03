@@ -140,6 +140,7 @@ def test_existing_campaign_rejects_mode_change_and_rolls_back_program_publicatio
 
 
 def test_export_import_roundtrip_preserves_mode_owner_and_program(tmp_path, campaign_payload):
+    campaign_payload["allow_connections_outside_hours"] = True
     _import(tmp_path, campaign_payload)
     campaign = Campaign.objects.get(name=campaign_payload["name"])
     output = StringIO()
@@ -149,6 +150,7 @@ def test_export_import_roundtrip_preserves_mode_owner_and_program(tmp_path, camp
     assert exported["owner_username"] == "Chuka"
     assert exported["status"] == "disabled"
     assert exported["message_program_key"] == campaign_payload["message_program_key"]
+    assert exported["allow_connections_outside_hours"] is True
     exported["name"] = "Imported copy"
     _import(tmp_path, exported)
     copied = Campaign.objects.get(name="Imported copy")
@@ -156,6 +158,21 @@ def test_export_import_roundtrip_preserves_mode_owner_and_program(tmp_path, camp
     assert copied.user_id == campaign.user_id
     assert copied.active_message_version_id == campaign.active_message_version_id
     assert copied.status == campaign.status
+    assert copied.allow_connections_outside_hours is True
+
+    exported.pop("allow_connections_outside_hours")
+    _import(tmp_path, exported)
+    copied.refresh_from_db()
+    assert copied.allow_connections_outside_hours is True
+
+    exported["allow_connections_outside_hours"] = "false"
+    with pytest.raises(CommandError, match="must be a JSON boolean"):
+        _import(tmp_path, exported)
+
+    exported["allow_connections_outside_hours"] = False
+    _import(tmp_path, exported)
+    copied.refresh_from_db()
+    assert copied.allow_connections_outside_hours is False
 
 
 def _kit(**kwargs):
