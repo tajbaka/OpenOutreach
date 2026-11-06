@@ -621,45 +621,273 @@ def test_render_reply_lead_context_blocks_omits_missing_ai_summary():
     assert blocks[0]["block_id"] == "lead_context_header"
 
 
-def _reply_button_handler(monkeypatch, fetch):
-    monkeypatch.setattr(slack_enrich.psycopg, "connect", MagicMock())
+_OPENED_REPLY_VIEW = {
+    "id": "V-open",
+    "hash": "h-open",
+    "private_metadata": json.dumps({"lead_id": 42, "operator": "Arian", "thread_blocks": []}),
+}
+
+
+def _reply_button_handler(monkeypatch, fetch, *, opened=None):
+    monkeypatch.setattr(slack_enrich, "_after_ack", lambda *a: False)  # local, pre-ACK path
+    calls = []
+    connect = MagicMock(side_effect=lambda *a, **k: calls.append("connect") or MagicMock())
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", connect)
     monkeypatch.setattr(slack_enrich, "fetch_lead_context", fetch)
-    opened = MagicMock()
+    opened = opened or MagicMock(side_effect=lambda **k: calls.append("open") or _OPENED_REPLY_VIEW)
+    updated = MagicMock(side_effect=lambda **k: calls.append("update"))
     monkeypatch.setattr(slack_enrich, "open_reply_modal", opened)
+    monkeypatch.setattr(slack_enrich, "update_reply_modal", updated)
     handler = object.__new__(slack_enrich.handler)
     handler._respond_text = MagicMock()
     value = json.dumps({"lead_id": 42, "operator": "Arian", "thread_external_id": "thread-arian"})
     handler._handle_reply_button(_reply_button_body(value=value))
-    handler._respond_text.assert_called_once_with(200, "")
-    return opened.call_args.kwargs
+    return calls, connect, opened, updated, handler._respond_text
 
 
-def test_reply_button_puts_lead_context_above_thread_preview(monkeypatch):
+def test_reply_button_opens_modal_before_reading_lead_context(monkeypatch):
     fetch = MagicMock(return_value=_reply_context())
 
-    kwargs = _reply_button_handler(monkeypatch, fetch)
+    calls, connect, opened, updated, respond = _reply_button_handler(monkeypatch, fetch)
 
+    assert calls == ["open", "connect", "update"]
+    respond.assert_called_once_with(200, "")
+    assert opened.call_args.kwargs["context_notice"] == slack_enrich._REPLY_CONTEXT_LOADING
+    assert opened.call_args.kwargs["lead_id"] == 42
+    assert connect.call_args.kwargs["connect_timeout"] == 2
+    assert "statement_timeout=2000" in connect.call_args.kwargs["options"]
     assert fetch.call_args.args[1] == 42
     assert fetch.call_args.kwargs == {"operator": "Arian", "thread_external_id": "thread-arian"}
+    kwargs = updated.call_args.kwargs
+    assert (kwargs["view_id"], kwargs["view_hash"]) == ("V-open", "h-open")
+    assert kwargs["context_notice"] == ""
     assert kwargs["context_blocks"][0]["block_id"] == "lead_context_header"
-    assert kwargs["thread_blocks"][0]["block_id"] == "linkedin_thread_preview_header"
-    assert "Tell me more." in json.dumps(kwargs["thread_blocks"])
+    thread_blocks = kwargs["metadata"]["thread_blocks"]
+    assert thread_blocks[0]["block_id"] == "linkedin_thread_preview_header"
+    assert "Tell me more." in json.dumps(thread_blocks)
     blocks = slack_enrich.render_reply_modal_blocks(
-        metadata={"lead_id": 42},
+        metadata=kwargs["metadata"],
         context_blocks=kwargs["context_blocks"],
-        thread_blocks=kwargs["thread_blocks"],
+        thread_blocks=thread_blocks,
     )
     ids = [b.get("block_id") for b in blocks]
     assert ids.index("lead_context_header") < ids.index("linkedin_thread_preview_header")
     assert ids.index("linkedin_thread_preview_header") < ids.index("linkedin_reply_message")
 
 
-def test_reply_button_still_opens_modal_when_context_fetch_fails(monkeypatch):
-    kwargs = _reply_button_handler(monkeypatch, MagicMock(side_effect=ValueError("lead 42 not found")))
+def test_reply_button_keeps_modal_usable_when_context_fetch_fails(monkeypatch):
+    calls, _, _, updated, respond = _reply_button_handler(
+        monkeypatch, MagicMock(side_effect=ValueError("lead 42 not found")),
+    )
 
+    assert calls == ["open", "connect", "update"]
+    respond.assert_called_once_with(200, "")
+    kwargs = updated.call_args.kwargs
     assert kwargs["context_blocks"] == []
-    assert kwargs["thread_blocks"] == []
-    assert kwargs["lead_id"] == 42
+    assert kwargs["metadata"]["thread_blocks"] == []
+    assert kwargs["context_notice"] == slack_enrich._REPLY_CONTEXT_UNAVAILABLE
+
+
+def test_reply_button_never_reads_database_when_modal_cannot_open(monkeypatch, capsys):
+    opened = MagicMock(side_effect=RuntimeError("Slack views.open failed: expired_trigger_id"))
+    fetch = MagicMock()
+
+    _, connect, _, updated, respond = _reply_button_handler(monkeypatch, fetch, opened=opened)
+
+    respond.assert_called_once_with(500, "slack modal error")
+    connect.assert_not_called()
+    fetch.assert_not_called()
+    updated.assert_not_called()
+    out = capsys.readouterr().out
+    assert "manual reply modal open failed after" in out and "expired_trigger_id" in out
+
+
+def test_reply_modal_context_notice_renders_first_and_keeps_editor_ids():
+    blocks = slack_enrich.render_reply_modal_blocks(
+        metadata={"lead_id": 42},
+        context_notice=slack_enrich._REPLY_CONTEXT_LOADING,
+    )
+    plain = slack_enrich.render_reply_modal_blocks(metadata={"lead_id": 42})
+
+    assert blocks[0]["block_id"] == "linkedin_reply_context_status"
+    assert blocks[1:] == plain
+
+
+def _capture_after_ack(monkeypatch):
+    registered = []
+    monkeypatch.setattr(
+        slack_enrich, "_after_ack",
+        lambda work, *args: registered.append((work, args)) or True,
+    )
+    return registered
+
+
+def _background_handler():
+    handler = object.__new__(slack_enrich.handler)
+    events = []
+    handler._respond_text = MagicMock(side_effect=lambda *a: events.append(("ack",) + a))
+    handler._respond_json = MagicMock(side_effect=lambda body: events.append(("ack", body)))
+    handler.wfile = MagicMock()
+    return handler, events
+
+
+def test_reply_button_acks_before_filling_context_in_background(monkeypatch):
+    registered = _capture_after_ack(monkeypatch)
+    connect = MagicMock()
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", connect)
+    monkeypatch.setattr(slack_enrich, "fetch_lead_context", MagicMock(return_value=_reply_context()))
+    monkeypatch.setattr(slack_enrich, "open_reply_modal", MagicMock(return_value=_OPENED_REPLY_VIEW))
+    updated = MagicMock()
+    monkeypatch.setattr(slack_enrich, "update_reply_modal", updated)
+    handler, events = _background_handler()
+    value = json.dumps({"lead_id": 42, "operator": "Arian", "thread_external_id": "thread-arian"})
+
+    handler._handle_reply_button(_reply_button_body(value=value))
+
+    assert events == [("ack", 200, "")]
+    handler.wfile.flush.assert_called_once()
+    connect.assert_not_called()
+    updated.assert_not_called()
+    work, args = registered[0]
+    work(*args)
+    assert connect.call_args.kwargs["connect_timeout"] == 8
+    assert updated.call_args.kwargs["context_blocks"][0]["block_id"] == "lead_context_header"
+
+
+def test_reply_submission_closes_modal_then_queues_after_ack(monkeypatch):
+    registered = _capture_after_ack(monkeypatch)
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", MagicMock())
+    enqueue = MagicMock(return_value=777)
+    monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", enqueue)
+    posted = MagicMock()
+    monkeypatch.setattr(slack_enrich, "_post_response_url", posted)
+    handler, events = _background_handler()
+
+    handler._handle_reply_submission(_reply_modal_body())
+
+    assert events == [("ack", {"response_action": "clear"})]
+    handler.wfile.flush.assert_called_once()
+    enqueue.assert_not_called()
+    posted.assert_not_called()
+    work, args = registered[0]
+    work(*args)
+    assert enqueue.call_args.args[1]["message"] == "Sounds good"
+    status = posted.call_args.args[1]["blocks"]
+    queued = next(b for b in status if b.get("block_id") == "reply_status:queued")
+    assert json.loads(queued["accessory"]["value"]) == {"task_id": 777}
+
+
+def test_background_queue_retries_dropped_connections_then_reports_queued(monkeypatch, capsys):
+    attempts = [slack_enrich.psycopg.OperationalError("timeout"), MagicMock()]
+    connect = MagicMock(side_effect=lambda *a, **k: _raise_or_return(attempts.pop(0)))
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", connect)
+    monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", MagicMock(return_value=778))
+    posted = MagicMock()
+    monkeypatch.setattr(slack_enrich, "_post_response_url", posted)
+    payload = slack_enrich.parse_reply_modal_submission(_reply_modal_body())
+
+    slack_enrich._queue_reply_after_ack(payload, 0.0)
+
+    assert connect.call_count == 2
+    assert "reply_status:queued" in json.dumps(posted.call_args.args[1]["blocks"])
+    assert "manual reply queue attempt 1 failed" in capsys.readouterr().out
+
+
+def _raise_or_return(value):
+    if isinstance(value, Exception):
+        raise value
+    return value
+
+
+def test_background_queue_reports_not_queued_with_the_reply_text(monkeypatch, capsys):
+    connect = MagicMock(side_effect=slack_enrich.psycopg.OperationalError("timeout"))
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", connect)
+    enqueue = MagicMock()
+    monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", enqueue)
+    posted = MagicMock()
+    monkeypatch.setattr(slack_enrich, "_post_response_url", posted)
+    payload = slack_enrich.parse_reply_modal_submission(_reply_modal_body("Line one\n\nLine <two>"))
+
+    slack_enrich._queue_reply_after_ack(payload, 0.0)
+
+    assert connect.call_count == slack_enrich._BACKGROUND_QUEUE_ATTEMPTS
+    enqueue.assert_not_called()
+    body = posted.call_args.args[1]
+    assert body["text"] == "LinkedIn reply not queued"
+    failed = next(b for b in body["blocks"] if b.get("block_id") == "reply_status:queue_failed")
+    assert "accessory" not in failed
+    assert failed["text"]["text"].endswith(">Line one\n>\n>Line &lt;two&gt;")
+    assert "Line one" not in capsys.readouterr().out
+
+
+def test_reply_submission_without_source_blocks_queues_before_answering(monkeypatch):
+    after_ack = MagicMock(return_value=True)
+    monkeypatch.setattr(slack_enrich, "_after_ack", after_ack)
+    monkeypatch.setattr(slack_enrich.psycopg, "connect", MagicMock())
+    enqueue = MagicMock(return_value=779)
+    monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", enqueue)
+    handler, events = _background_handler()
+    metadata = {"lead_id": 42, "operator": "Chuka", "channel_id": "C123", "message_ts": "1.2", "blocks": []}
+
+    handler._handle_reply_submission(_reply_modal_body(metadata=metadata))
+
+    after_ack.assert_not_called()
+    enqueue.assert_called_once()
+    assert events == [("ack", {"response_action": "clear"})]
+
+
+def test_after_ack_registers_only_inside_the_vercel_background_runtime(monkeypatch):
+    import types
+
+    waited = []
+    context = types.SimpleNamespace(wait_until=None)
+    modules = {
+        "vercel": types.ModuleType("vercel"),
+        "vercel.cache": types.ModuleType("vercel.cache"),
+        "vercel.cache.context": types.SimpleNamespace(get_context=lambda: context),
+        "vercel.functions": types.SimpleNamespace(wait_until=waited.append),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    work = MagicMock()
+
+    monkeypatch.delenv("VERCEL_IPC_PATH", raising=False)
+    assert slack_enrich._after_ack(work, 1) is False
+    context.wait_until = object()
+    assert slack_enrich._after_ack(work, 1) is False
+    monkeypatch.setenv("VERCEL_IPC_PATH", "/synthetic/runtime")
+    assert slack_enrich._after_ack(work, 1) is True
+
+    assert len(waited) == 1
+    work.assert_not_called()
+    import asyncio
+    asyncio.run(waited[0])
+    work.assert_called_once_with(1)
+
+
+def test_reply_submission_reports_not_queued_when_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setattr(slack_enrich, "_after_ack", lambda *a: False)
+    monkeypatch.setattr(
+        slack_enrich.psycopg, "connect",
+        MagicMock(side_effect=slack_enrich.psycopg.OperationalError("connection timeout expired")),
+    )
+    enqueue = MagicMock()
+    monkeypatch.setattr(slack_enrich, "enqueue_manual_reply_task", enqueue)
+    handler = object.__new__(slack_enrich.handler)
+    handler._respond_json = MagicMock()
+    handler._respond_text = MagicMock()
+
+    handler._handle_reply_submission(_reply_modal_body())
+
+    enqueue.assert_not_called()
+    handler._respond_text.assert_not_called()
+    handler._respond_json.assert_called_once_with({
+        "response_action": "errors",
+        "errors": {"linkedin_reply_message": slack_enrich._REPLY_QUEUE_DB_ERROR},
+    })
+    out = capsys.readouterr().out
+    assert "manual reply queue failed after" in out and "OperationalError" in out
+    assert "Sounds good" not in out
 
 
 def test_update_slack_view_can_persist_lead_context_metadata(monkeypatch):
@@ -785,6 +1013,33 @@ def test_update_reply_modal_prefills_generated_draft(monkeypatch):
     reply_input = next(b for b in blocks if b.get("block_id") == "linkedin_reply_message")
     assert reply_input["element"]["initial_value"] == "Suggested reply"
     assert blocks[-1]["block_id"] == "linkedin_reply_actions"
+
+
+def test_reply_modal_open_returns_view_and_context_update_uses_its_hash(monkeypatch):
+    monkeypatch.setattr(slack_enrich, "SLACK_BOT_TOKEN", "xoxb-test")
+    opened_view = {"id": "V-open", "hash": "h-open", "private_metadata": "{}"}
+    with patch.object(slack_enrich.request, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(
+            {"ok": True, "view": opened_view},
+        ).encode()
+        view = slack_enrich.open_reply_modal(
+            trigger_id="trigger-123", lead_id=42, operator="Arian", channel_id="C123",
+            message_ts="171234.567", original_blocks=[],
+            context_notice=slack_enrich._REPLY_CONTEXT_LOADING,
+        )
+        opened = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+        slack_enrich.update_reply_modal(
+            view_id=view["id"], view_hash=view["hash"],
+            metadata={"lead_id": 42, "thread_blocks": [{"type": "section", "block_id": "linkedin_thread_preview_header"}]},
+            context_blocks=[{"type": "section", "block_id": "lead_context_header"}],
+        )
+    assert view == opened_view
+    assert opened["view"]["blocks"][0]["block_id"] == "linkedin_reply_context_status"
+    sent = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
+    assert sent["hash"] == "h-open"
+    ids = [b.get("block_id") for b in sent["view"]["blocks"]]
+    assert ids[:3] == ["lead_context_header", "linkedin_thread_preview_header", "linkedin_reply_message"]
+    assert "lead_context_header" not in sent["view"]["private_metadata"]
 
 
 @pytest.mark.parametrize("role_tag", ["CFO/Finance", "", "Security & Trust <Lead>"])

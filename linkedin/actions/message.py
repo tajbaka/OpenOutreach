@@ -8,6 +8,7 @@ from typing import Dict, Any
 
 from playwright.sync_api import Error as PlaywrightError
 from linkedin.browser.nav import goto_page, human_type
+from linkedin.browser.session import random_sleep
 
 if TYPE_CHECKING:
     from linkedin.message_media import LinkedInMediaAsset
@@ -521,15 +522,22 @@ def _send_message(
             timeout=30_000,
             error_message="Error opening direct compose",
         )
-        session.wait(0.5, 1.2)
+        # Messaging can keep loading subresources long after the composer is
+        # usable, and goto_page already tolerates that. Wait for the composer,
+        # not the page "load" event: a never-firing load event failed a reply
+        # before typing (2026-11-06) and, after Send, would misreport a
+        # delivered reply as failed.
+        compose = session.page.locator(SELECTORS["compose_input"])
+        compose.first.wait_for(state="visible", timeout=30_000)
+        random_sleep(0.5, 1.2)
 
         # human_type is multi-line safe (\n → Shift+Enter, not Enter) and
         # uses conf.HUMAN_TYPE_MIN/MAX_DELAY_MS for human cadence.
-        human_type(session.page.locator(SELECTORS["compose_input"]), message)
-        session.wait(0.4, 0.9)
+        human_type(compose, message)
+        random_sleep(0.4, 0.9)
 
         session.page.locator(SELECTORS["compose_send"]).click(delay=200)
-        session.wait(0.5, 1)
+        random_sleep(0.5, 1)
         logger.info("Message sent to %s (direct thread, URN-keyed)", public_identifier)
         return True
     except (PlaywrightError, TimeoutError) as e:

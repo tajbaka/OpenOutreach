@@ -212,6 +212,64 @@ def test_send_raw_message_can_raise_direct_failure(fake_session):
             )
 
 
+def test_direct_send_waits_for_composer_not_page_load():
+    """2026-11-06: messaging never fired "load"; the reply failed before typing."""
+    from unittest.mock import MagicMock
+
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from linkedin.actions import message as message_mod
+
+    session = MagicMock()
+    session.page.wait_for_load_state.side_effect = PlaywrightTimeoutError("Timeout 30000ms exceeded.")
+    session.wait.side_effect = AssertionError("direct send must not wait for the page load event")
+    compose, send = MagicMock(), MagicMock()
+    session.page.locator.side_effect = lambda selector: {
+        message_mod.SELECTORS["compose_input"]: compose,
+        message_mod.SELECTORS["compose_send"]: send,
+    }[selector]
+
+    with patch("linkedin.db.leads.resolve_urn", return_value="urn:li:fsd_profile:ABC"), \
+            patch.object(message_mod, "goto_page") as goto, \
+            patch.object(message_mod, "random_sleep"), \
+            patch.object(message_mod, "human_type") as typed:
+        sent = message_mod._send_message(
+            session, {"public_identifier": "yi-li"}, "Hi Yi", raise_on_failure=True,
+        )
+
+    assert sent is True
+    goto.assert_called_once()
+    compose.first.wait_for.assert_called_once_with(state="visible", timeout=30_000)
+    typed.assert_called_once_with(compose, "Hi Yi")
+    send.click.assert_called_once_with(delay=200)
+    session.page.wait_for_load_state.assert_not_called()
+
+
+def test_direct_send_fails_before_typing_when_composer_never_appears():
+    from unittest.mock import MagicMock
+
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from linkedin.actions import message as message_mod
+
+    session = MagicMock()
+    compose = MagicMock()
+    compose.first.wait_for.side_effect = PlaywrightTimeoutError("Timeout 30000ms exceeded.")
+    session.page.locator.return_value = compose
+
+    with patch("linkedin.db.leads.resolve_urn", return_value="urn:li:fsd_profile:ABC"), \
+            patch.object(message_mod, "goto_page"), \
+            patch.object(message_mod, "random_sleep"), \
+            patch.object(message_mod, "human_type") as typed:
+        with pytest.raises(message_mod.MessageSendError, match="Timeout 30000ms"):
+            message_mod._send_message(
+                session, {"public_identifier": "yi-li"}, "Hi Yi", raise_on_failure=True,
+            )
+
+    typed.assert_not_called()
+    compose.click.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # B.3 — persist_thread helper
 # ---------------------------------------------------------------------------

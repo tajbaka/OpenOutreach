@@ -725,8 +725,12 @@ available, while daemon sent/failed status uses `chat.update` with the task's
 saved Slack blocks. Manual reply sends opt into detailed send exceptions, so a
 browser/UI send failure records the underlying send reason plus the diagnostic
 screenshot/HTML folder path in `Task.error` instead of only a generic lead id.
-The reply modal makes one raw-SQL `fetch_lead_context` read and renders, top
-to bottom, the Lead context profile (`render_reply_lead_context_blocks`: the
+The reply modal opens before any database read, because Slack's trigger_id
+expires 3 seconds after the click: `views.open` shows the reply box with a
+"Loading lead context" line, then one raw-SQL `fetch_lead_context` read fills
+the opened view through `views.update` with that view's hash (unchanged input
+IDs keep anything already typed; a hash conflict from a started draft just
+skips the fill). The filled modal renders, top to bottom, the Lead context profile (`render_reply_lead_context_blocks`: the
 same name/ICP/Role/company/title/sender fields and profile summary as the Lead
 context modal, plus any saved sender/thread AI summary, without that modal's
 buttons or saved draft), then a compact transcript of the recent LinkedIn
@@ -752,8 +756,26 @@ replace the source notification. The loading row and newly generated section
 render at the bottom of the active modal so progress and result appear below
 existing context. The queued Slack status includes a cancel button whose
 payload points at the inserted task id; cancelling deletes the task only if it
-is still pending. If the context/preview fetch fails, the reply modal falls
-back to a plain textbox. The `Task` table is the entire contract between
+is still pending. If the context/preview fetch fails, the reply modal stays a
+usable textbox with a "couldn't load" line. Slack closes a modal only when it
+hears back within 3 seconds (on 2026-11-06 slow database connections made
+Queue reply take 4–6 seconds, so the modal stayed open over a generic error
+although the reply had queued). Queue reply therefore answers `clear` at once
+and inserts the Task after the acknowledgement through `_after_ack`, the same
+Vercel `wait_until` lifecycle the private drafts use; the reply modal's context
+fill runs the same way. The after-ACK insert retries a dropped connection three
+times with 8-second connects (identical text reuses a pending Task) and then
+marks the source notification "queued" with its Cancel button, or "not queued"
+with the reply text quoted so it is not lost. Outside that runtime, or when a
+submission has no source blocks to report on, the work runs before answering:
+every database connection in `api/slack_enrich.py` goes through `_db_connect`
+(2-second connect and statement timeouts), so a slow database returns a modal
+error saying the reply was not queued rather than a 500. Failures log only the
+stage, elapsed time and the Slack error code or exception class. On the worker, the direct-thread send waits for
+the visible message composer rather than the page `load` event, which LinkedIn
+messaging can fail to fire; a missing composer fails before typing, and no
+load wait follows the Send click, so a slow page cannot report a delivered
+reply as failed. The `Task` table is the entire contract between
 the function and the daemon — they never talk directly. The function dedups
 against an existing `PENDING`/`RUNNING` `enrich_phone` task for the same
 `(lead, provider)` (best-effort — a duplicate is harmless); two *different*

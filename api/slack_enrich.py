@@ -14,6 +14,7 @@ are pure, importable units — exercised by tests/test_slack_enrich.py.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -44,6 +45,30 @@ SLACK_API_BASE = "https://slack.com/api"
 # Slack rejects interactions older than 5 minutes; we mirror that as a
 # replay guard on our side.
 _MAX_SKEW_SECONDS = 60 * 5
+
+# Slack waits 3 s for each interaction (and a trigger_id expires 3 s after
+# the click). A slow database must fail inside that window with a clear
+# message, not leave an unopened modal or a reply queued after Slack has
+# already shown an error. libpq's minimum connect timeout is 2 s.
+_DB_CONNECT_TIMEOUT_SECONDS = 2
+_DB_STATEMENT_TIMEOUT_MS = 2000
+# Work that runs after Slack's ACK has no 3 s deadline, so it can wait longer
+# and retry a dropped connection before reporting failure.
+_BACKGROUND_DB_CONNECT_TIMEOUT_SECONDS = 8
+_BACKGROUND_QUEUE_ATTEMPTS = 3
+_REPLY_QUEUED_STATUS = (
+    ":hourglass_flowing_sand: *LinkedIn reply queued* — the daemon will send it shortly. "
+    "You can cancel it before it starts sending."
+)
+_REPLY_CONTEXT_LOADING = ":hourglass_flowing_sand: Loading lead context and recent messages..."
+_REPLY_CONTEXT_UNAVAILABLE = (
+    ":warning: Couldn't load lead context or the thread right now. "
+    "You can still type and queue your reply."
+)
+_REPLY_QUEUE_DB_ERROR = (
+    "Couldn't reach the database, so this reply wasn't queued. "
+    "Wait a moment and press Queue reply again."
+)
 
 # The status line we add/update after a pick carries the set of requested
 # providers in its block_id ("enrich_status:bettercontact,leadmagic") — a
@@ -113,6 +138,44 @@ _HANDLER_BY_INTENT = {
 _HANDLER_BY_INTENT.update(slack_feed_comment.HANDLER_BY_INTENT)
 _HANDLER_BY_INTENT.update(slack_feed_context.HANDLER_BY_INTENT)
 _HANDLER_BY_INTENT.update(slack_feed_like.HANDLER_BY_INTENT)
+
+
+def _db_connect(*, connect_timeout: int = _DB_CONNECT_TIMEOUT_SECONDS):
+    """Open a bounded database connection for one Slack interaction."""
+    return psycopg.connect(
+        DATABASE_URL,
+        connect_timeout=connect_timeout,
+        options=f"-c statement_timeout={_DB_STATEMENT_TIMEOUT_MS}",
+    )
+
+
+def _after_ack(work, *args) -> bool:
+    """Register blocking `work` to run after Slack's ACK; False if unsupported.
+
+    This is the Vercel wait_until lifecycle private drafts use: registering
+    does no I/O, so the caller answers Slack at once. Outside the streaming
+    runtime (local runs, tests) callers do the work before answering instead.
+    """
+    try:
+        from vercel.cache.context import get_context
+        from vercel.functions import wait_until
+    except ImportError:
+        return False
+    # Without the invocation collector wait_until deliberately does nothing.
+    if get_context().wait_until is None or not os.environ.get("VERCEL_IPC_PATH"):
+        return False
+    wait_until(asyncio.to_thread(work, *args))
+    return True
+
+
+def _log_interaction_failure(stage: str, started: float, exc: BaseException) -> None:
+    """Log how long a failed step took and its kind, never payloads or copy.
+
+    Slack API errors keep their error code (e.g. expired_trigger_id); other
+    errors log only their class.
+    """
+    detail = str(exc) if str(exc).startswith("Slack ") else type(exc).__name__
+    print(f"{stage} failed after {time.monotonic() - started:.1f}s: {detail}")
 
 
 def verify_signature(
@@ -388,6 +451,7 @@ def render_reply_modal_blocks(
     metadata: dict,
     context_blocks: list | None = None,
     thread_blocks: list | None = None,
+    context_notice: str = "",
     initial_reply: str = "",
     loading: str = "",
     draft_error: str = "",
@@ -395,7 +459,8 @@ def render_reply_modal_blocks(
     """Render the Slack modal body for composing a manual LinkedIn reply.
 
     Lead context sits above the thread preview so the operator sees who they
-    are replying to before reading the conversation.
+    are replying to before reading the conversation. `context_notice` is a
+    one-line status shown while that context loads, or when it could not.
     """
     input_element = {
         "type": "plain_text_input",
@@ -412,7 +477,13 @@ def render_reply_modal_blocks(
             limit=2800,
         )
 
+    notice_blocks = [{
+        "type": "context",
+        "block_id": "linkedin_reply_context_status",
+        "elements": [{"type": "mrkdwn", "text": context_notice}],
+    }] if context_notice else []
     blocks: list[dict] = [
+        *notice_blocks,
         *(context_blocks or []),
         *(thread_blocks or []),
         {
@@ -652,11 +723,14 @@ def open_reply_modal(
     thread_external_id: str = "",
     context_blocks: list | None = None,
     thread_blocks: list | None = None,
-) -> None:
+    context_notice: str = "",
+) -> dict:
     """Open the Slack modal used to collect a manual LinkedIn reply.
 
-    Lead context blocks are rendered but not copied into private_metadata:
-    draft updates reuse the open view's blocks, so metadata stays small.
+    Returns the opened view (its id, hash and private_metadata) so the caller
+    can fill in context afterwards. Lead context blocks are rendered but not
+    copied into private_metadata: draft updates reuse the open view's blocks,
+    so metadata stays small.
     """
     metadata = _compact_metadata({
         "lead_id": lead_id,
@@ -669,7 +743,7 @@ def open_reply_modal(
         "thread_blocks": thread_blocks or [],
     })
     metadata_obj = json.loads(metadata)
-    _slack_api("views.open", {
+    data = _slack_api("views.open", {
         "trigger_id": trigger_id,
         "view": {
             "type": "modal",
@@ -682,9 +756,11 @@ def open_reply_modal(
                 metadata=metadata_obj,
                 context_blocks=context_blocks or [],
                 thread_blocks=thread_blocks or [],
+                context_notice=context_notice,
             ),
         },
     })
+    return data.get("view") or {}
 
 
 def update_reply_modal(
@@ -692,11 +768,16 @@ def update_reply_modal(
     view_id: str,
     view_hash: str = "",
     metadata: dict,
+    context_blocks: list | None = None,
+    context_notice: str = "",
     initial_reply: str = "",
     loading: str = "",
     draft_error: str = "",
 ) -> None:
-    """Update an already-open manual reply modal."""
+    """Update an already-open manual reply modal.
+
+    Unchanged input block/action IDs keep anything the operator already typed.
+    """
     payload = {
         "view_id": view_id,
         "view": {
@@ -708,7 +789,9 @@ def update_reply_modal(
             "close": {"type": "plain_text", "text": "Cancel"},
             "blocks": render_reply_modal_blocks(
                 metadata=metadata,
+                context_blocks=context_blocks or [],
                 thread_blocks=metadata.get("thread_blocks") or [],
+                context_notice=context_notice,
                 initial_reply=initial_reply,
                 loading=loading,
                 draft_error=draft_error,
@@ -1622,6 +1705,122 @@ def reply_draft_prompt(context: dict, *, instructions: str = "") -> str:
     return prompt
 
 
+def _fill_reply_modal(data: dict, view: dict, started: float, connect_timeout: int) -> None:
+    """Load lead context and the thread into an already-open reply modal."""
+    context_blocks: list = []
+    thread_blocks: list = []
+    notice = ""
+    try:
+        # One read serves both sections; its messages are the same
+        # sender-thread-scoped preview the reply modal always showed.
+        with _db_connect(connect_timeout=connect_timeout) as conn:
+            context = fetch_lead_context(
+                conn,
+                data["lead_id"],
+                operator=data["operator"],
+                thread_external_id=data.get("thread_external_id", ""),
+            )
+        context_blocks = render_reply_lead_context_blocks(context)
+        thread_blocks = render_thread_preview_blocks(context["messages"])
+    except Exception as exc:  # noqa: BLE001 — the open modal still queues replies
+        _log_interaction_failure("manual reply context", started, exc)
+        notice = _REPLY_CONTEXT_UNAVAILABLE
+
+    metadata = json.loads(view.get("private_metadata") or "{}")
+    metadata["thread_blocks"] = thread_blocks
+    try:
+        update_reply_modal(
+            view_id=view.get("id") or "",
+            view_hash=view.get("hash") or "",
+            metadata=metadata,
+            context_blocks=context_blocks,
+            context_notice=notice,
+        )
+    except Exception as exc:  # noqa: BLE001 — e.g. a draft already changed the view
+        _log_interaction_failure("manual reply context update", started, exc)
+
+
+def _update_reply_source_message(
+    payload: dict,
+    status_text: str,
+    *,
+    suffix: str,
+    fallback: str,
+    cancel_task_id: int | None = None,
+) -> None:
+    """Best-effort status line on the Slack notification a reply came from."""
+    blocks = payload.get("blocks") or []
+    if not blocks:
+        return
+    status_blocks = render_reply_status_blocks(
+        blocks,
+        status_text,
+        block_id_suffix=suffix,
+        cancel_task_id=cancel_task_id,
+    )
+    response_url = payload.get("slack_response_url") or ""
+    if response_url:
+        try:
+            _post_response_url(response_url, {
+                "replace_original": True,
+                "text": fallback,
+                "blocks": status_blocks,
+            })
+            return
+        except Exception:
+            pass
+    channel_id = payload.get("slack_channel_id") or ""
+    message_ts = payload.get("slack_message_ts") or ""
+    if channel_id and message_ts:
+        try:
+            update_slack_message(
+                channel_id=channel_id,
+                message_ts=message_ts,
+                blocks=status_blocks,
+                text=fallback,
+            )
+        except Exception:
+            pass
+
+
+def _reply_not_queued_status(message: str) -> str:
+    """Failure line that keeps the operator's text, since the modal has closed."""
+    text = _slack_escape(_compact_metadata_text(message, limit=1800))
+    quoted = "\n".join(f">{line}" for line in text.splitlines())
+    return (
+        ":warning: *LinkedIn reply not queued* — the database didn't respond. "
+        "Click Reply on LinkedIn to try again. Your reply:\n" + quoted
+    )
+
+
+def _queue_reply_after_ack(payload: dict, started: float) -> None:
+    """Queue a reply whose modal already closed, then report on its notification."""
+    for attempt in range(1, _BACKGROUND_QUEUE_ATTEMPTS + 1):
+        try:
+            with _db_connect(connect_timeout=_BACKGROUND_DB_CONNECT_TIMEOUT_SECONDS) as conn:
+                task_id = enqueue_manual_reply_task(conn, payload)
+            break
+        except psycopg.OperationalError as exc:
+            # Retrying is safe: the enqueue reuses an identical pending reply,
+            # even if a lost commit acknowledgement hid an earlier success.
+            _log_interaction_failure(f"manual reply queue attempt {attempt}", started, exc)
+    else:
+        _update_reply_source_message(
+            payload,
+            _reply_not_queued_status(payload["message"]),
+            suffix="queue_failed",
+            fallback="LinkedIn reply not queued",
+        )
+        return
+    _update_reply_source_message(
+        payload,
+        _REPLY_QUEUED_STATUS,
+        suffix="queued",
+        fallback="LinkedIn reply queued",
+        cancel_task_id=task_id,
+    )
+
+
 class handler(BaseHTTPRequestHandler):
     """Vercel Python entrypoint — Vercel routes POST /api/slack_enrich here."""
 
@@ -1655,7 +1854,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            with psycopg.connect(DATABASE_URL) as conn:
+            with _db_connect() as conn:
                 enqueue_task(conn, lead_id, provider)
         except Exception:  # noqa: BLE001 — surface any DB failure as a 500
             self._respond_text(500, "database error")
@@ -1668,23 +1867,15 @@ class handler(BaseHTTPRequestHandler):
     def _handle_reply_button(self, body: str) -> None:
         try:
             data = parse_reply_button(body)
-            context_blocks: list = []
-            thread_blocks: list = []
-            try:
-                # One read serves both sections; its messages are the same
-                # sender-thread-scoped preview the reply modal always showed.
-                with psycopg.connect(DATABASE_URL) as conn:
-                    context = fetch_lead_context(
-                        conn,
-                        data["lead_id"],
-                        operator=data["operator"],
-                        thread_external_id=data.get("thread_external_id", ""),
-                    )
-                context_blocks = render_reply_lead_context_blocks(context)
-                thread_blocks = render_thread_preview_blocks(context["messages"])
-            except Exception as exc:  # noqa: BLE001 — modal should still open
-                print(f"manual reply context failed: {exc}")
-            open_reply_modal(
+        except (ValueError, KeyError, json.JSONDecodeError):
+            self._respond_text(400, "malformed reply action")
+            return
+
+        # The trigger_id expires 3 s after the click, so open the modal before
+        # any database read; a slow database then only delays the context.
+        started = time.monotonic()
+        try:
+            view = open_reply_modal(
                 trigger_id=data["trigger_id"],
                 lead_id=data["lead_id"],
                 operator=data["operator"],
@@ -1693,15 +1884,20 @@ class handler(BaseHTTPRequestHandler):
                 response_url=data["response_url"],
                 original_blocks=data["blocks"],
                 thread_external_id=data.get("thread_external_id", ""),
-                context_blocks=context_blocks,
-                thread_blocks=thread_blocks,
+                context_notice=_REPLY_CONTEXT_LOADING,
             )
-        except (ValueError, json.JSONDecodeError):
-            self._respond_text(400, "malformed reply action")
-            return
-        except Exception:  # noqa: BLE001 — Slack API failure
+        except Exception as exc:  # noqa: BLE001 — Slack API failure
+            _log_interaction_failure("manual reply modal open", started, exc)
             self._respond_text(500, "slack modal error")
             return
+
+        # Fill the context after the ACK so a slow read cannot make Slack
+        # flag the click as failed; locally, fill it before answering.
+        if _after_ack(_fill_reply_modal, data, view, started, _BACKGROUND_DB_CONNECT_TIMEOUT_SECONDS):
+            self._respond_text(200, "")
+            self.wfile.flush()
+            return
+        _fill_reply_modal(data, view, started, _DB_CONNECT_TIMEOUT_SECONDS)
         self._respond_text(200, "")
 
     def _handle_reply_draft(self, body: str) -> None:
@@ -1725,9 +1921,10 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _handle_lead_context_button(self, body: str) -> None:
+        started = time.monotonic()
         try:
             data = parse_lead_context_button(body)
-            with psycopg.connect(DATABASE_URL) as conn:
+            with _db_connect() as conn:
                 context = fetch_lead_context(
                     conn,
                     data["lead_id"],
@@ -1738,7 +1935,8 @@ class handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._respond_text(400, "malformed lead context action")
             return
-        except Exception:  # noqa: BLE001 — Slack API/DB failure
+        except Exception as exc:  # noqa: BLE001 — Slack API/DB failure
+            _log_interaction_failure("lead context modal", started, exc)
             self._respond_text(500, "lead context error")
             return
         self._respond_text(200, "")
@@ -1746,7 +1944,7 @@ class handler(BaseHTTPRequestHandler):
     def _handle_lead_context_ai(self, body: str) -> None:
         try:
             data = parse_lead_context_button(body)
-            with psycopg.connect(DATABASE_URL) as conn:
+            with _db_connect() as conn:
                 context = fetch_lead_context(
                     conn,
                     data["lead_id"],
@@ -1785,7 +1983,7 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             ai_summary = generate_ai_lead_summary(context)
-            with psycopg.connect(DATABASE_URL) as conn:
+            with _db_connect() as conn:
                 upsert_lead_context_artifact(
                     conn,
                     lead_id=data["lead_id"],
@@ -1835,15 +2033,15 @@ class handler(BaseHTTPRequestHandler):
 
     def _handle_reply_submission(self, body: str) -> None:
         try:
+            view = decode_slack_payload(body).get("view") or {}
+        except ValueError:
+            view = {}
+        block_id = next((b.get("block_id") for b in view.get("blocks", [])
+                         if b.get("element", {}).get("action_id") == _REPLY_BODY_ACTION_ID),
+                        "linkedin_reply_message")
+        try:
             payload = parse_reply_modal_submission(body)
         except (ValueError, KeyError, json.JSONDecodeError):
-            try:
-                view = decode_slack_payload(body).get("view") or {}
-            except ValueError:
-                view = {}
-            block_id = next((b.get("block_id") for b in view.get("blocks", [])
-                             if b.get("element", {}).get("action_id") == _REPLY_BODY_ACTION_ID),
-                            "linkedin_reply_message")
             self._respond_json({
                 "response_action": "errors",
                 "errors": {
@@ -1852,47 +2050,36 @@ class handler(BaseHTTPRequestHandler):
             })
             return
 
+        started = time.monotonic()
+        # Slack closes the modal only if it hears back within 3 s, so answer
+        # at once and queue after the ACK; the notification then shows
+        # "queued" (with Cancel) or "not queued" with the reply text. Without
+        # a notification to report on, or outside the background runtime,
+        # queue first so a failure can still be shown in the modal.
+        if payload.get("blocks") and _after_ack(_queue_reply_after_ack, payload, started):
+            self._respond_json({"response_action": "clear"})
+            self.wfile.flush()
+            return
         try:
-            with psycopg.connect(DATABASE_URL) as conn:
+            with _db_connect() as conn:
                 task_id = enqueue_manual_reply_task(conn, payload)
-        except Exception:  # noqa: BLE001 — surface any DB failure as a 500
-            self._respond_text(500, "database error")
+        except Exception as exc:  # noqa: BLE001 — show it in the open modal
+            # Answer inside Slack's 3 s window with the truth: nothing was
+            # queued. A generic Slack error after a late insert hid a queued reply.
+            _log_interaction_failure("manual reply queue", started, exc)
+            self._respond_json({
+                "response_action": "errors",
+                "errors": {block_id: _REPLY_QUEUE_DB_ERROR},
+            })
             return
 
-        blocks = payload.get("blocks") or []
-        if blocks:
-            queued_blocks = render_reply_status_blocks(
-                blocks,
-                ":hourglass_flowing_sand: *LinkedIn reply queued* — the daemon will send it shortly. You can cancel it before it starts sending.",
-                block_id_suffix="queued",
-                cancel_task_id=task_id,
-            )
-            updated = False
-            response_url = payload.get("slack_response_url") or ""
-            if response_url:
-                try:
-                    _post_response_url(response_url, {
-                        "replace_original": True,
-                        "text": "LinkedIn reply queued",
-                        "blocks": queued_blocks,
-                    })
-                    updated = True
-                except Exception:
-                    updated = False
-            if not updated:
-                channel_id = payload.get("slack_channel_id") or ""
-                message_ts = payload.get("slack_message_ts") or ""
-                if channel_id and message_ts:
-                    try:
-                        update_slack_message(
-                            channel_id=channel_id,
-                            message_ts=message_ts,
-                            blocks=queued_blocks,
-                            text="LinkedIn reply queued",
-                        )
-                    except Exception:
-                        pass
-
+        _update_reply_source_message(
+            payload,
+            _REPLY_QUEUED_STATUS,
+            suffix="queued",
+            fallback="LinkedIn reply queued",
+            cancel_task_id=task_id,
+        )
         self._respond_json({"response_action": "clear"})
 
     def _handle_reply_cancel(self, body: str) -> None:
@@ -1903,7 +2090,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
-            with psycopg.connect(DATABASE_URL) as conn:
+            with _db_connect() as conn:
                 cancelled = cancel_manual_reply_task(conn, data["task_id"])
         except Exception:  # noqa: BLE001 — surface any DB failure as a 500
             self._respond_text(500, "database error")
@@ -1959,7 +2146,7 @@ class handler(BaseHTTPRequestHandler):
         action_handler(
             self,
             body,
-            connect_factory=lambda: psycopg.connect(DATABASE_URL),
+            connect_factory=_db_connect,
             slack_api=_slack_api,
             post_response_url=_post_response_url,
         )
