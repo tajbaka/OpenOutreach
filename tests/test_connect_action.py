@@ -23,6 +23,7 @@ from linkedin.actions.connect import (
     _profile_public_identifier,
     _resolve_dropdown_clickable,
     _targets_current_profile,
+    _verified_redirect_public_identifier,
 )
 from linkedin.enums import ProfileState
 from linkedin.exceptions import ReachedConnectionLimit, SkipProfile
@@ -314,6 +315,24 @@ def test_direct_invite_option_ignores_recommendation_connects():
     )
 
     assert option is target
+
+
+@pytest.mark.parametrize('stored_urn,card_key,expected', [
+    ('urn:li:fsd_profile:member123', 'com.linkedin.sdui.profile.card.refmember123Topcard', 'new-name'),
+    ('urn:li:fsd_profile:member123', 'com.linkedin.sdui.profile.card.refotherTopcard', 'old-name'),
+    ('', 'com.linkedin.sdui.profile.card.refmember123Topcard', 'old-name'),
+])
+def test_renamed_profile_requires_matching_stored_urn(stored_urn, card_key, expected):
+    import json
+    session = Mock()
+    session.page.url = 'https://www.linkedin.com/in/new-name/'
+    card = Mock()
+    card.get_attribute.return_value = card_key
+    with patch('crm.models.Lead.objects.filter') as find:
+        find.return_value.only.return_value.first.return_value = Mock(
+            description=json.dumps({'urn': stored_urn}),
+        )
+        assert _verified_redirect_public_identifier(session, card, 'old-name') == expected
 
 
 def test_direct_invite_options_keep_weak_connect_candidates_last():

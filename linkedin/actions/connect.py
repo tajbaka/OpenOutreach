@@ -1,5 +1,6 @@
 # linkedin/actions/connect.py
 import logging
+import json
 import time
 from typing import Dict, Any
 from urllib.parse import parse_qs, urlparse
@@ -283,6 +284,31 @@ def _profile_public_identifier(href: str) -> str:
     if len(path_parts) >= 2 and path_parts[-2] == "in":
         return path_parts[-1].strip().lower()
     return ""
+
+
+def _verified_redirect_public_identifier(session, top_card, public_identifier: str) -> str:
+    """Accept a renamed vanity only when the stored profile URN matches the card."""
+    original = (public_identifier or "").strip().lower()
+    current_url = urlparse(session.page.url)
+    current = _profile_public_identifier(session.page.url)
+    if not original or not current or current == original:
+        return original
+    if current_url.scheme != "https" or current_url.hostname not in {"linkedin.com", "www.linkedin.com"}:
+        return original
+
+    from crm.models import Lead
+    from linkedin.db.urls import public_id_to_url
+
+    lead = Lead.objects.filter(linkedin_url=public_id_to_url(original)).only("description").first()
+    try:
+        urn = (json.loads(lead.description or "{}") if lead else {}).get("urn", "")
+        prefix = "urn:li:fsd_profile:"
+        key = top_card.get_attribute("componentkey") or ""
+        if urn.startswith(prefix) and key == f"com.linkedin.sdui.profile.card.ref{urn[len(prefix):]}Topcard":
+            return current
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return original
 
 
 def _targets_current_profile(clickable, *, public_identifier: str, full_name: str) -> bool:
@@ -696,6 +722,7 @@ def _connect_via_more(session, public_identifier: str, full_name: str, *, attemp
     attempt = attempt or InviteAttempt()
     session.wait()
     top_card = find_top_card(session)
+    target_public_identifier = _verified_redirect_public_identifier(session, top_card, public_identifier)
 
     # Fallback: More → Connect
     more = _first_visible(top_card.locator(SELECTORS["more_button"]))
@@ -749,7 +776,7 @@ def _connect_via_more(session, public_identifier: str, full_name: str, *, attemp
                 clickable = _resolve_dropdown_clickable(
                     session,
                     candidate,
-                    public_identifier=public_identifier,
+                    public_identifier=target_public_identifier,
                     full_name=full_name,
                 )
                 if clickable is not None:
