@@ -331,6 +331,29 @@ def test_direct_invite_options_keep_weak_connect_candidates_last():
     assert options == [exact, weak]
 
 
+def test_profile_selectors_exclude_unrelated_sdui_content():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('''
+                <div role="button">Company and 1 more</div>
+                <p role="button"><a href="https://example.com">Connect with me here</a></p>
+                <button aria-label="More">...</button>
+            ''')
+            assert page.locator(SELECTORS["invite_to_connect"]).count() == 0
+            more = page.locator(SELECTORS["more_button"])
+            assert more.count() == 1
+            assert more.first.get_attribute("aria-label") == "More"
+            page.set_content('<button>Connect</button><button>More</button>')
+            assert page.locator(SELECTORS["invite_to_connect"]).count() == 1
+            assert page.locator(SELECTORS["more_button"]).count() == 1
+        finally:
+            browser.close()
+
+
 def test_invite_surface_requires_route_modal_or_pending_not_page_level_send():
     session = _session_with_page_level_send_button_only()
 

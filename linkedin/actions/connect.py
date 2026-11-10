@@ -70,7 +70,7 @@ SELECTORS = {
         'a[href*="/preload/custom-invite/"]:visible, '
         'button[aria-label*="Connect with"]:visible, '
         'button:has-text("Connect"):visible, '
-        '[role="button"]:has-text("Connect"):visible'
+        '[role="button"]:text-is("Connect"):visible'
     ),
     "pending_menuitem": (
         '[role="menuitem"][aria-label*="Pending"]:visible, '
@@ -88,7 +88,7 @@ SELECTORS = {
         'button[aria-label*="More actions"]:visible, '
         'button[aria-label="More"]:visible, '
         'button:has-text("More"):visible, '
-        '[role="button"]:has-text("More"):visible'
+        '[role="button"]:text-is("More"):visible'
     ),
     "open_menu": (
         '[role="menu"]:visible, '
