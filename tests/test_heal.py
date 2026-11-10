@@ -524,6 +524,22 @@ class TestHealTasks:
             payload__campaign_id=fake_session.campaign.pk,
         ).exists()
 
+    def test_connect_recovery_ignores_campaign_disabled_after_startup(self, fake_session):
+        _make_ready(fake_session, "alice")
+        Campaign.objects.filter(pk=fake_session.campaign.pk).update(status=Campaign.Status.DISABLED)
+
+        assert _ensure_connect_task_for_campaign(fake_session.campaign, delay_seconds=0) is False
+        assert not Task.objects.filter(
+            task_type=Task.TaskType.CONNECT,
+            payload__campaign_id=fake_session.campaign.pk,
+        ).exists()
+
+    def test_connect_recovery_reports_skipped_enqueue(self, fake_session, monkeypatch):
+        _make_ready(fake_session, "alice")
+        monkeypatch.setattr("linkedin.daemon.enqueue_connect", lambda *args, **kwargs: None)
+
+        assert _ensure_connect_task_for_campaign(fake_session.campaign, delay_seconds=0) is False
+
     def test_connect_recovery_does_not_duplicate_running_task(self, fake_session):
         _make_ready(fake_session, "alice")
         Task.objects.create(

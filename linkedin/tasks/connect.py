@@ -925,7 +925,7 @@ def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
             campaign_id,
         )
         return
-    _enqueue_task(
+    return _enqueue_task(
         task_type=Task.TaskType.CONNECT,
         payload={"campaign_id": campaign_id},
         delay_seconds=delay_seconds,

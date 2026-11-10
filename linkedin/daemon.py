@@ -775,7 +775,11 @@ def _ensure_connect_task_for_campaign(campaign, delay_seconds: float = 0) -> boo
     still alive; otherwise the worker can sleep until an unrelated sweep even
     though the campaign still has ready leads.
     """
-    if not ENABLE_CONNECT or not _campaign_has_connect_work(campaign):
+    from linkedin.models import Campaign
+
+    if not ENABLE_CONNECT or not Campaign.objects.filter(
+        pk=campaign.pk, status=Campaign.Status.ACTIVE,
+    ).exists() or not _campaign_has_connect_work(campaign):
         return False
 
     if Task.objects.filter(
@@ -785,8 +789,7 @@ def _ensure_connect_task_for_campaign(campaign, delay_seconds: float = 0) -> boo
     ).exists():
         return False
 
-    enqueue_connect(campaign.pk, delay_seconds=delay_seconds)
-    return True
+    return enqueue_connect(campaign.pk, delay_seconds=delay_seconds) is not None
 
 
 def _notify_connect_queue_recovered(sender: str, campaign) -> None:
