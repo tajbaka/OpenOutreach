@@ -1,12 +1,40 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from playwright.sync_api import Error, TimeoutError
 
 from linkedin.browser.login import (
     _is_linkedin_feed_url,
+    _login_email_field,
     _submit_login_and_wait_for_feed,
 )
+
+
+def test_remembered_account_opens_standard_login_form():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('''
+                <p>Welcome back</p><input type="password">
+                <button style="display:none">Sign in using another account</button>
+                <button onclick="document.body.innerHTML='<input id=username>'">
+                  Sign in using another account
+                </button>
+            ''')
+            assert _login_email_field(page).get_attribute('id') == 'username'
+        finally:
+            browser.close()
+
+
+def test_standard_login_does_not_switch_accounts():
+    page = Mock()
+    email = Mock()
+    with patch('linkedin.browser.login._first_visible', return_value=email):
+        assert _login_email_field(page) is email
+    page.get_by_text.assert_not_called()
 
 
 @pytest.mark.parametrize("url,expected", [
