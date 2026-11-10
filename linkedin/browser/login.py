@@ -85,6 +85,24 @@ def _require_visible(page, selectors: list[str], label: str):
     return locator
 
 
+def _login_email_field(page):
+    """Open the standard form when LinkedIn displays its remembered account."""
+    email = _first_visible(page, LOGIN_EMAIL_SELECTORS)
+    if email is not None:
+        return email
+
+    other_account = page.get_by_text("Sign in using another account", exact=True)
+    for index in range(other_account.count()):
+        option = other_account.nth(index)
+        if option.is_visible():
+            option.click()
+            page.locator(", ".join(f"{selector}:visible" for selector in LOGIN_EMAIL_SELECTORS)).first.wait_for(
+                state="visible", timeout=BROWSER_DEFAULT_TIMEOUT_MS,
+            )
+            break
+    return _require_visible(page, LOGIN_EMAIL_SELECTORS, "email")
+
+
 def _is_linkedin_feed_url(url: str) -> bool:
     parsed = urlparse(url)
     return (
@@ -122,7 +140,7 @@ def playwright_login(session: "AccountSession"):
         error_message="Failed to load login page",
     )
 
-    email = _require_visible(page, LOGIN_EMAIL_SELECTORS, "email")
+    email = _login_email_field(page)
     password = _require_visible(page, LOGIN_PASSWORD_SELECTORS, "password")
     submit = _require_visible(page, LOGIN_SUBMIT_SELECTORS, "submit")
 
