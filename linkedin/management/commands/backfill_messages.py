@@ -200,6 +200,7 @@ def _notify_new_inbound_messages(
 
     from linkedin.legacy_rb2b import flush_notifications, owns_reply_notice
     from linkedin.notifications.slack import notify_message_received
+    from linkedin.realtime.reply_notice import POSTED, deliver_reply_notice
 
     notified = 0
     queued = 0
@@ -218,13 +219,12 @@ def _notify_new_inbound_messages(
             # attributed to the receiving sender; never post it twice.
             queued += 1
             continue
-        notify_message_received(
-            lead=lead,
-            text=message.body,
-            operator=operator,
-            thread_external_id=message.thread_external_id,
+        # Claimed per message, shared with the listener and its catch-up.
+        outcome = deliver_reply_notice(
+            message, lead=lead, operator=operator, notify=notify_message_received,
         )
-        notified += 1
+        if outcome == POSTED:
+            notified += 1
     if queued:
         flush_notifications()
     return notified + queued

@@ -856,17 +856,6 @@ def run_daemon(session):
         session.campaigns, cfg, kit_model=kit["model"] if kit else None,
     )
 
-    # Realtime listener startup catch-up — surface (and optionally backfill)
-    # the window the listener was off (off-hours + any downtime). Runs
-    # before the task loop; reads the heartbeat file written by the
-    # listener's pump. No-op when the listener is disabled.
-    if ENABLE_REALTIME_LISTENER:
-        from linkedin.realtime.catchup import run_startup_catchup
-        run_startup_catchup(
-            username=session.linkedin_profile.linkedin_username,
-            account_label="primary",
-        )
-
     # Startup healing
     heal_tasks(session)
 
@@ -900,9 +889,17 @@ def run_daemon(session):
 
     freemium = _FreemiumRotator(every=2)
 
-    # Realtime listener supervisor — owns the listener child process.
+    # Realtime listener supervisor — owns the listener child process. Every
+    # new listener process (each morning, after a crash, at startup) first
+    # gets a catch-up of the replies the old one missed, read through this
+    # daemon's own session. Nothing runs when the listener is disabled.
+    from linkedin.realtime.catchup import ListenerCatchup
     from linkedin.realtime.supervisor import ListenerSupervisor
-    listener_supervisor = ListenerSupervisor()
+    listener_supervisor = ListenerSupervisor(catchup=ListenerCatchup(
+        session=session,
+        username=session.linkedin_profile.linkedin_username,
+        operator=our_operator,
+    ))
 
     # Phone-enrichment worker — a background thread claiming enrich_phone
     # tasks. HTTP-only, so (unlike the listener) it is NOT gated on active

@@ -55,6 +55,17 @@ def test_inbound_message_persists_and_notifies(db):
     assert mock_notify.call_args.kwargs["thread_external_id"] == CONV
 
 
+def test_listener_notice_is_claimed_so_catchup_cannot_repeat_it(db):
+    from linkedin.realtime.reply_notice import reply_notice_sent
+
+    lead = _seed_lead(db)
+    with patch("linkedin.realtime.handler.parse_realtime_event", return_value=_inbound(lead)), \
+         patch("linkedin.realtime.handler.notify_message_received", return_value=True):
+        handle_realtime_event({"data": "ignored"}, operator="Arian")
+
+    assert reply_notice_sent(Message.objects.get(external_id="urn:li:msg:rt1"))
+
+
 def test_inbound_message_promotes_pending_deal_and_stamps_reply(db):
     user = User.objects.create_user(username="arian")
     campaign = Campaign.objects.create(name="Realtime pending reply", user=user)

@@ -44,10 +44,8 @@ class TestRealtimeListenerConfig:
     def test_tuning_constants_have_defaults(self, monkeypatch):
         import importlib
         import linkedin.conf as conf
-        monkeypatch.delenv("LISTENER_CATCHUP_GAP_MINUTES", raising=False)
         monkeypatch.delenv("LISTENER_PUMP_SLICE_SECONDS", raising=False)
         importlib.reload(conf)
-        assert conf.LISTENER_CATCHUP_GAP_MINUTES == 30
         assert conf.LISTENER_PUMP_SLICE_SECONDS == 30
         importlib.reload(conf)
 

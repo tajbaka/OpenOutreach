@@ -167,8 +167,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "Maximum randomized delay between bounded discovery tasks."),
     EnvVar("LISTENER_CDP_PORT", False, False, "9222", "realtime",
            "Chrome remote-debugging port the listener connects over."),
-    EnvVar("LISTENER_CATCHUP_GAP_MINUTES", False, False, "30", "realtime",
-           "Off-hours gap the startup catch-up surfaces."),
     EnvVar("LISTENER_PUMP_SLICE_SECONDS", False, False, "30", "realtime",
            "SSE pump slice length in seconds."),
     EnvVar("LISTENER_ACTIVE_START_HOUR", False, False, "0", "realtime",

@@ -323,12 +323,17 @@ def iter_inbox_conversations(
     *,
     self_urn: str,
     self_name: str,
-    since_days: int,
     max_pages: int,
     page_size: int,
     page_delay_seconds: float,
+    since_days: int | None = None,
+    cutoff: datetime | None = None,
 ) -> Iterable[InboxConversation]:
-    cutoff = timezone.now() - timedelta(days=since_days)
+    """Yield 1:1 conversations active since `cutoff` (or `since_days` ago), newest first."""
+    if cutoff is None:
+        if since_days is None:
+            raise ValueError("Need since_days or cutoff.")
+        cutoff = timezone.now() - timedelta(days=since_days)
     sync_token = ""
     next_cursor = ""
     last_updated_before: int | None = None

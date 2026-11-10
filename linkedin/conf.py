@@ -308,11 +308,6 @@ ENABLE_LINKEDIN_FEED_COLLECTOR = os.getenv(
     "ENABLE_LINKEDIN_FEED_COLLECTOR", "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
 
-# Startup catch-up threshold. If the listener heartbeat is older than this
-# many minutes when the daemon boots, the catch-up surfaces the gap (prompt
-# on a TTY, WARNING log when headless). A quick restart stays below it.
-LISTENER_CATCHUP_GAP_MINUTES = int(os.getenv("LISTENER_CATCHUP_GAP_MINUTES") or 30)
-
 # Granularity of the daemon's chunked Playwright-pumping idle wait. The wait
 # loops in slices of this many seconds so CDP callbacks fire promptly and
 # the heartbeat file is refreshed each slice.

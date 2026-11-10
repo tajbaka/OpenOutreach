@@ -67,7 +67,9 @@ def main():
             'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',
             'tests/test_feed_sampling.py', 'tests/test_feed_collection.py',
             'tests/test_daemon_supervisor_stop.py', 'tests/test_supervisor_safety.py',
-            'tests/realtime/test_supervisor.py',
+            'tests/realtime/test_supervisor.py', 'tests/realtime/test_catchup.py',
+            'tests/realtime/test_reply_notice.py', 'tests/realtime/test_handler.py',
+            'tests/test_catch_up_replies_command.py', 'tests/test_backfill_messages.py',
             'tests/tasks/test_follow_up_media.py', 'tests/tasks/test_drip_message_action.py',
         ])
     if os.environ.get('CAMPAIGN_QA_SUITE') == 'slack-drafts':

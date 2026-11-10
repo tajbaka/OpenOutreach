@@ -20,6 +20,7 @@ from linkedin.conf import ENABLE_AUTO_PHONE_ENRICHMENT
 from linkedin.notifications.slack import notify_error, notify_message_received
 from linkedin.realtime.lead_lookup import resolve_lead_for_realtime
 from linkedin.realtime.parser import parse_realtime_event
+from linkedin.realtime.reply_notice import deliver_reply_notice
 
 logger = logging.getLogger(__name__)
 
@@ -126,19 +127,9 @@ def _handle(event: dict, *, operator: str) -> None:
             sent_at=msg.sent_at,
         )
         logger.info("Realtime inbound message persisted for %s", lead)
-        from linkedin.legacy_rb2b import flush_notifications, owns_reply_notice
-        if owns_reply_notice(msg):
-            # A legacy-linked lead's notice is already in the durable outbox,
-            # attributed to this sender; post it now (retries continue in the
-            # background worker). Same Slack function, so one notice.
-            flush_notifications()
-        else:
-            notify_message_received(
-                lead=lead,
-                text=parsed.text,
-                operator=operator,
-                thread_external_id=msg.thread_external_id or parsed.conversation_urn,
-            )
+        # Claimed per message, so the wake-up catch-up never repeats it. A
+        # legacy-linked lead's notice goes through its durable outbox instead.
+        deliver_reply_notice(msg, lead=lead, operator=operator, notify=notify_message_received)
         _maybe_enqueue_enrichment(lead)
     else:
         logger.debug("Realtime outbound echo persisted for %s — no notify", lead)

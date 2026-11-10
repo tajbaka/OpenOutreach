@@ -96,6 +96,43 @@ def test_stop_keeps_process_reference_if_it_cannot_confirm_exit():
     assert sup._proc is proc
 
 
+def test_new_listener_requests_catchup_from_the_old_heartbeat():
+    """The window is read before the new child can stamp a fresh heartbeat."""
+    events = []
+    catchup = MagicMock()
+    catchup.window.side_effect = lambda: events.append("window") or "W"
+    catchup.run_pending.side_effect = lambda: events.append("run")
+    sup = ListenerSupervisor(catchup=catchup)
+
+    def popen(*_a, **_k):
+        events.append("spawn")
+        return _fake_proc()
+
+    with patch("linkedin.realtime.supervisor.subprocess.Popen", side_effect=popen):
+        sup.ensure_running()
+
+    assert events == ["window", "spawn", "run"]
+    catchup.request.assert_called_once_with("W")
+
+
+def test_alive_listener_only_runs_pending_catchup():
+    catchup = MagicMock()
+    sup = ListenerSupervisor(catchup=catchup)
+    with patch("linkedin.realtime.supervisor.subprocess.Popen", return_value=_fake_proc()):
+        sup.ensure_running()
+        sup.ensure_running()
+    catchup.request.assert_called_once()
+    assert catchup.run_pending.call_count == 2
+
+
+def test_failed_spawn_requests_no_catchup():
+    catchup = MagicMock()
+    sup = ListenerSupervisor(catchup=catchup)
+    with patch("linkedin.realtime.supervisor.subprocess.Popen", side_effect=OSError("boom")):
+        sup.ensure_running()
+    catchup.request.assert_not_called()
+
+
 def test_stop_reaps_process_that_exits_before_terminate():
     sup = ListenerSupervisor()
     proc = _fake_proc()
