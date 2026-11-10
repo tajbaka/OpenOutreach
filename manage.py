@@ -32,7 +32,8 @@ logging.basicConfig(
 
 # Suppress noisy third-party loggers
 for _name in ("urllib3", "httpx", "langchain", "openai", "playwright",
-              "httpcore", "fastembed", "huggingface_hub", "filelock"):
+              "httpcore", "fastembed", "huggingface_hub", "filelock",
+              "oauthlib", "requests_oauthlib", "google_auth_oauthlib"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)

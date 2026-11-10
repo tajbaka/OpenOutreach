@@ -16,6 +16,8 @@ SCOPES = (
     "https://www.googleapis.com/auth/gmail.readonly",
 )
 
+CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events.owned"
+
 
 @dataclass(frozen=True)
 class GmailAccount:
@@ -86,6 +88,10 @@ GMAIL_OPERATOR_MAPPING: dict[str, dict[str, str]] = {
 
 def token_path(account_key: str) -> Path:
     return GMAIL_DATA_DIR / f"{account_key}-token.json"
+
+
+def calendar_token_path(account_key: str) -> Path:
+    return GMAIL_DATA_DIR / f"{account_key}-calendar-token.json"
 
 
 def account_for_key(account_key: str) -> GmailAccount:
