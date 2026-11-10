@@ -19,6 +19,11 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from email_assets.requirements import (
+    AttachmentRequirement,
+    AttachmentRequirementError,
+    parse_attachment_requirements,
+)
 from linkedin import conf
 from linkedin.message_roles import role_wording
 from linkedin.models import (
@@ -65,6 +70,9 @@ _MESSAGE_FIELDS = frozenset({
     "sender_override",
     "notes",
 })
+# Gmail rows may declare attachment requirements. Older payloads omit the
+# field, which means "no attachments", so their content hashes are unchanged.
+_OPTIONAL_MESSAGE_FIELDS = frozenset({"attachments"})
 
 
 class MessageDeliveryError(Exception):
@@ -86,6 +94,7 @@ class PublishedMessage:
     media: tuple[str, ...]
     sender_override: str
     notes: str
+    attachments: tuple[AttachmentRequirement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -100,6 +109,7 @@ class SelectedMessage:
     body: str
     media: tuple[str, ...]
     sender_override: str
+    attachments: tuple[AttachmentRequirement, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -237,7 +247,12 @@ def index_message_version(version: MessageProgramVersion) -> MessageProgramIndex
 
     for position, raw in enumerate(raw_messages, start=1):
         context = f"message payload row {position}"
-        _exact_object_fields(raw, _MESSAGE_FIELDS, context)
+        _exact_object_fields(
+            raw,
+            _MESSAGE_FIELDS,
+            context,
+            optional=_OPTIONAL_MESSAGE_FIELDS,
+        )
         audience_key = _key(raw["audience_key"], f"{context} audience_key")
         role_persona = _text(raw["role_persona"], f"{context} role_persona")
         fedramp_segment = _text(raw["fedramp_segment"], f"{context} fedramp_segment")
@@ -261,12 +276,17 @@ def index_message_version(version: MessageProgramVersion) -> MessageProgramIndex
                 f"got {sender_override!r}"
             )
         notes = _text(raw["notes"], f"{context} notes")
+        attachments = _attachments(raw, f"{context} attachments")
 
         if channel == OutboundDelivery.Channel.GMAIL:
             if not subject:
                 raise MessageDeliveryError(f"{context} Gmail subject is required")
         elif subject:
             raise MessageDeliveryError(f"{context} LinkedIn subject must be blank")
+        if attachments and channel != OutboundDelivery.Channel.GMAIL:
+            raise MessageDeliveryError(
+                f"{context} attachments are only supported on Gmail steps"
+            )
         _validate_placeholders(subject, f"{context} subject")
         _validate_placeholders(body, f"{context} body")
 
@@ -324,6 +344,7 @@ def index_message_version(version: MessageProgramVersion) -> MessageProgramIndex
             media=media,
             sender_override=sender_override,
             notes=notes,
+            attachments=attachments,
         ))
 
     messages.sort(key=lambda message: (
@@ -515,7 +536,32 @@ def select_message(
         body=selected.body,
         media=selected.media,
         sender_override=selected.sender_override,
+        attachments=selected.attachments,
     )
+
+
+def delivery_attachment_requirements(
+    delivery: OutboundDelivery,
+) -> tuple[AttachmentRequirement, ...]:
+    """Return the attachment requirements frozen in a delivery's version.
+
+    Requirements live in the immutable published payload, so re-selecting the
+    delivery's exact route always returns the same list. Which file satisfies
+    a slot is resolved per recipient at send time (``email_assets``).
+    """
+    if delivery.channel != OutboundDelivery.Channel.GMAIL:
+        return ()
+    selected = select_message(
+        enrollment=delivery.enrollment,
+        channel=delivery.channel,
+        step_key=delivery.step_key,
+        step_index=delivery.step_index,
+    )
+    if selected.variant_key != delivery.variant_key:
+        raise MessageDeliveryError(
+            f"delivery {delivery.pk} variant no longer matches its message route"
+        )
+    return selected.attachments
 
 
 def render_message(
@@ -731,13 +777,19 @@ def _require_saved_enrollment(
     return persisted
 
 
-def _exact_object_fields(value, expected: frozenset[str], context: str) -> None:
+def _exact_object_fields(
+    value,
+    expected: frozenset[str],
+    context: str,
+    *,
+    optional: frozenset[str] = frozenset(),
+) -> None:
     if not isinstance(value, dict):
         raise MessageDeliveryError(f"{context} must be an object")
     actual = set(value)
-    if actual != expected:
+    if not expected <= actual <= expected | optional:
         missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
+        extra = sorted(actual - expected - optional)
         raise MessageDeliveryError(
             f"{context} has invalid fields; missing={missing!r}, extra={extra!r}"
         )
@@ -804,6 +856,23 @@ def _media(value, context: str) -> tuple[str, ...]:
             raise MessageDeliveryError(f"{context} entries cannot contain placeholders")
         normalized.append(filename)
     return tuple(normalized)
+
+
+def _attachments(raw: dict, context: str) -> tuple[AttachmentRequirement, ...]:
+    if "attachments" not in raw:
+        return ()
+    try:
+        requirements = parse_attachment_requirements(raw["attachments"], context)
+    except AttachmentRequirementError as exc:
+        raise MessageDeliveryError(str(exc)) from None
+    if not requirements:
+        # Canonical payloads omit the field instead of storing an empty list.
+        raise MessageDeliveryError(f"{context} must be omitted when empty")
+    if [item.payload() for item in requirements] != raw["attachments"]:
+        raise MessageDeliveryError(
+            f"{context} must use the canonical {{kind: key, \"required\": bool}} form"
+        )
+    return requirements
 
 
 def _validate_placeholders(template: str, context: str) -> None:

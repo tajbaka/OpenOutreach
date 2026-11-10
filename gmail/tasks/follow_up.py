@@ -22,6 +22,7 @@ from gmail.handoff import DEFAULT_GMAIL_SEQUENCE_NAME, enqueue_gmail_follow_up
 from gmail.submission import (
     current_gmail_automation_key,
     defer_early_current_gmail_task,
+    hold_current_gmail_task_for_attachments,
     stamp_submission_attempt,
     submission_attempted,
 )
@@ -376,6 +377,7 @@ def _persist_outbound(
     step_index: int,
     references: tuple[str, ...],
     delivery=None,
+    attachments=(),
 ):
     from crm.models import Message, SalesOwner
     from linkedin.operators import resolve_sales_owner_handle
@@ -424,6 +426,8 @@ def _persist_outbound(
             "step_key": delivery.step_key,
             "variant_key": delivery.variant_key,
         })
+    if attachments:
+        raw["attachments"] = [attachment.evidence() for attachment in attachments]
     defaults = {
         "lead": lead,
         "operator": message_owner,
@@ -471,6 +475,60 @@ def _persist_outbound(
             "raw",
         })
         return message
+
+
+def _resolve_delivery_attachments(task, *, lead, delivery):
+    """Return (requirements, exact approved files), or hold the Task and return None.
+
+    Requirements come from the delivery's immutable message version; the file
+    for a slot comes from the recipient's own assignment. Missing, unapproved,
+    unreadable, changed or incompatible files hold the email with a visible
+    reason. The returned requirements feed the final recheck at submission.
+    """
+    from email_assets.resolution import AttachmentHold, resolve_attachments
+    from linkedin.message_delivery import (
+        MessageDeliveryError,
+        delivery_attachment_requirements,
+    )
+
+    try:
+        requirements = delivery_attachment_requirements(delivery)
+    except MessageDeliveryError as exc:
+        raise ValueError(f"versioned Gmail delivery attachments are invalid: {exc}") from exc
+    if not requirements:
+        return (), ()
+    try:
+        return requirements, resolve_attachments(lead_id=lead.id, requirements=requirements)
+    except AttachmentHold as hold:
+        _hold_for_attachments(task, lead=lead, delivery=delivery, reason=str(hold))
+        return None
+
+
+def _hold_for_attachments(task, *, lead, delivery, reason: str) -> None:
+    """Hold an unsubmitted Task for attachments and alert once per new reason."""
+    is_new_reason = hold_current_gmail_task_for_attachments(task, reason=reason)
+    logger.info(
+        "gmail_follow_up: delivery %s held for attachments until %s - %s",
+        delivery.pk,
+        task.scheduled_at,
+        reason,
+    )
+    if is_new_reason:
+        from linkedin.notifications.slack import notify_degraded
+
+        lead_name = " ".join(f"{lead.first_name or ''} {lead.last_name or ''}".split())
+        notify_degraded(
+            sender=delivery.operator,
+            title=f"Email held: {delivery.step_key} to {lead_name or f'Lead {lead.id}'}",
+            detail=(
+                f"{reason}\n"
+                f"Campaign {delivery.enrollment.deal.campaign_id}, Deal "
+                f"{delivery.enrollment.deal_id}, delivery {delivery.pk}, Task {task.pk}. "
+                "It re-checks hourly and sends once the file resolves. Review with "
+                f"`manage.py review_email_attachments --campaign "
+                f"{delivery.enrollment.deal.campaign_id}`."
+            ),
+        )
 
 
 def _is_missing_template_error(exc: SheetsError) -> bool:
@@ -722,6 +780,27 @@ def handle_gmail_follow_up(task) -> None:
             _set_delivery_status(delivery, delivery.Status.STOPPED)
         return
 
+    from email_assets.resolution import AttachmentHold
+
+    attachment_requirements, attachments = (), ()
+    if delivery is not None:
+        prepared = _resolve_delivery_attachments(task, lead=lead, delivery=delivery)
+        if prepared is None:
+            return
+        attachment_requirements, attachments = prepared
+    attachment_files = tuple(attachment.file for attachment in attachments)
+
+    def _final_attachment_check() -> None:
+        # Runs under the submission transaction's locks: the files downloaded
+        # above must still be approved, assigned and unchanged right now.
+        from email_assets.resolution import recheck_resolved_attachments
+
+        recheck_resolved_attachments(
+            lead_id=lead.id,
+            requirements=attachment_requirements,
+            resolved=attachments,
+        )
+
     def _recheck_before_submission() -> None:
         if not _current_deal_campaign_is_active(payload.get("deal_id")):
             if delivery is not None:
@@ -741,7 +820,10 @@ def handle_gmail_follow_up(task) -> None:
                 f"gmail_follow_up: lead {lead_id} stopped before submission - "
                 f"{callback_stop_reason}"
             )
-        if not stamp_submission_attempt(task):
+        if not stamp_submission_attempt(
+            task,
+            before_stamp=_final_attachment_check if attachment_requirements else None,
+        ):
             raise GmailSubmissionDeferred(
                 f"gmail_follow_up: Task {task.pk} deferred until {task.scheduled_at}"
             )
@@ -761,6 +843,7 @@ def handle_gmail_follow_up(task) -> None:
         in_reply_to=context.in_reply_to,
         references=context.references,
         rfc_message_id=rfc_message_id,
+        attachments=attachment_files,
     )
     client = GmailClient(operator=operator)
     if (
@@ -780,6 +863,7 @@ def handle_gmail_follow_up(task) -> None:
             references=context.references,
             rfc_message_id=rfc_message_id,
             on_submit_attempt=_recheck_before_submission,
+            **({"attachments": attachment_files} if attachment_files else {}),
         )
         sent_message = _persist_outbound(
             lead=lead,
@@ -794,9 +878,15 @@ def handle_gmail_follow_up(task) -> None:
             step_index=step_index,
             references=context.references,
             delivery=delivery,
+            attachments=attachments,
         )
     except GmailSubmissionDeferred:
         logger.info("gmail_follow_up: Task %s deferred before submission", task.pk)
+        return
+    except AttachmentHold as hold:
+        # Raised by the final recheck before the submission stamp was written;
+        # nothing was submitted and the Task is still claimed.
+        _hold_for_attachments(task, lead=lead, delivery=delivery, reason=str(hold))
         return
     except Exception:
         if delivery is not None:

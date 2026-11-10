@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "chat.apps.ChatConfig",
     "linkedin",
     "drip.apps.DripConfig",
+    "email_assets.apps.EmailAssetsConfig",
 ]
 
 MIDDLEWARE = [

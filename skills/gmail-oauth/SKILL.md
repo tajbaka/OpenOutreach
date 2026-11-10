@@ -88,6 +88,23 @@ select browser automation.
    recipients, body, and timestamp to reconcile. An inconclusive result remains
    "send unconfirmed", not success or an invitation to retry.
 
+## Approved attachments
+
+Attach reusable files (for example a company's Marketplace PDF) only as
+registered, approved email assets, never as an arbitrary local or Drive file.
+Use `email_assets.one_off`: `resolve_one_off_attachments(asset_keys=[...])`
+(or `lead_id=..., slots=["marketplace_pdf"]` for the recipient's assigned
+file) fetches the private Drive file and proves it matches its approved hash;
+`attach_to_message(msg, attachments)` adds it after `msg.set_content(body)`;
+after `drafts.create`/`drafts.update`, `verify_gmail_attachments(service,
+draft_id=..., expected=attachments)` must pass;
+`recheck_one_off_attachments(attachments, lead_id=...)` must pass immediately
+before `drafts.send`; and `verify_gmail_attachments(..., message_id=...)` must
+pass after an approved send. An `AttachmentHold` (missing, unapproved, unreadable or
+changed file) is a blocker to report, not a reason to attach something else.
+`manage.py show_email_asset` lists assets; `docs/email-attachments.md` covers
+registration and approval.
+
 `GmailClient.send_message()` is the campaign-worker entrypoint and requires a
 claimed automation Task. It is not the interface for these user-approved
 one-off replies. Use the Gmail drafts API for this separate manual workflow;

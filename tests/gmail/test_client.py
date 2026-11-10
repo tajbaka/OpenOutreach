@@ -387,3 +387,80 @@ def test_validate_send_as_requires_verified_from_and_reply_to_aliases():
 def test_scoped_gmail_id_namespaces_mailbox_local_ids():
     assert scoped_gmail_id("arian_boundera", "same") == "arian_boundera:same"
     assert scoped_gmail_id("eddy_boundera", "same") == "eddy_boundera:same"
+
+
+class _RecordingHttp:
+    """httplib2-compatible transport that records requests and replays responses."""
+
+    def __init__(self, responses):
+        from googleapiclient.http import HttpMockSequence
+
+        self._sequence = HttpMockSequence(responses)
+        self.requests = []
+
+    def request(self, uri, method="GET", body=None, headers=None, **kwargs):
+        if hasattr(body, "read"):
+            body = body.read()  # resumable uploads stream their chunk
+        self.requests.append({"uri": uri, "method": method, "body": body, "headers": headers or {}})
+        return self._sequence.request(uri, method=method, body=body, headers=headers, **kwargs)
+
+
+def test_attachment_send_uses_gmail_resumable_upload_with_exact_mime():
+    """Drive the real googleapiclient request builder offline (static discovery)."""
+    import hashlib
+    import json
+
+    from googleapiclient.discovery import build
+
+    from email_assets.files import AttachmentFile
+
+    pdf = b"%PDF-1.7\n% acme marketplace\n%%EOF\n"
+    attachment = AttachmentFile(
+        filename="Acme Marketplace.pdf",
+        mime_type="application/pdf",
+        content=pdf,
+        sha256=hashlib.sha256(pdf).hexdigest(),
+    )
+    http = _RecordingHttp([
+        ({"status": "200", "location": "https://www.googleapis.com/upload/session-1"}, b""),
+        ({"status": "200"}, json.dumps({"id": "sent-1", "threadId": "thread-1"}).encode()),
+        ({"status": "200"}, json.dumps({
+            "id": "sent-1",
+            "threadId": "thread-1",
+            "payload": {"headers": [{"name": "Message-ID", "value": "<provider-1@mail.gmail.com>"}]},
+        }).encode()),
+    ])
+    client = object.__new__(GmailClient)
+    client.operator = "Arian"
+    client.account_key = "arian_boundera"
+    client.send_as = "ariant@getboundera.com"
+    client.reply_to = "ariant@boundera.io"
+    client._service = build("gmail", "v1", http=http, static_discovery=True)
+    client.validate_send_as = lambda: None
+
+    result = client.send_message(
+        to="ada@acme.example.com",
+        subject="Your Marketplace one-pager",
+        body="Hi Ada,\nThe PDF is attached.",
+        thread_id="thread-1",
+        in_reply_to="<provider-0@mail.gmail.com>",
+        references=["<provider-0@mail.gmail.com>"],
+        rfc_message_id="<automation-2@getboundera.com>",
+        attachments=[attachment],
+    )
+
+    assert result.message_id == "sent-1"
+    start, upload, metadata = http.requests
+    assert "/upload/gmail/v1/users/me/messages/send" in start["uri"]
+    assert "uploadType=resumable" in start["uri"]
+    assert start["headers"]["X-Upload-Content-Type"] == "message/rfc822"
+    assert json.loads(start["body"]) == {"threadId": "thread-1"}
+    assert upload["uri"] == "https://www.googleapis.com/upload/session-1"
+    sent = BytesParser(policy=policy.default).parsebytes(upload["body"])
+    assert sent["To"] == "ada@acme.example.com"
+    assert sent["In-Reply-To"] == "<provider-0@mail.gmail.com>"
+    assert sent.get_body(preferencelist=("plain",)).get_content() == "Hi Ada,\nThe PDF is attached.\n"
+    [part] = list(sent.iter_attachments())
+    assert part.get_filename() == "Acme Marketplace.pdf"
+    assert part.get_payload(decode=True) == pdf
+    assert "/gmail/v1/users/me/messages/sent-1" in metadata["uri"]

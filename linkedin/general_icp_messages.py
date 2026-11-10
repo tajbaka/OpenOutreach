@@ -17,6 +17,12 @@ from math import isfinite
 from string import Formatter
 from typing import Iterable, Sequence
 
+from email_assets.requirements import (
+    AttachmentRequirement,
+    AttachmentRequirementError,
+    parse_attachment_requirements,
+    requirements_payload,
+)
 from linkedin.exceptions import GeneralICPMessageError
 from linkedin.operators import CANONICAL_OPERATOR_HANDLES, resolve_operator
 
@@ -60,6 +66,8 @@ GENERAL_ICP_LONG_FORM_HEADERS = (
     "Media",
     "Sender Override",
     "Notes",
+    # JSON list of step attachment requirements (Gmail only). Blank means none.
+    "Attachments",
 )
 
 SCHEMA_VERSION = 1
@@ -104,10 +112,15 @@ class GeneralMessage:
     sender_override: str
     notes: str
     source_row: int
+    attachments: tuple[AttachmentRequirement, ...] = ()
 
     def payload(self) -> dict[str, object]:
-        """Return only durable, source-independent message fields."""
-        return {
+        """Return only durable, source-independent message fields.
+
+        ``attachments`` is emitted only when a step declares one, so every
+        attachment-free program keeps its existing content hash.
+        """
+        payload = {
             "audience_key": self.audience_key,
             "role_persona": self.role_persona,
             "fedramp_segment": self.fedramp_segment,
@@ -122,6 +135,9 @@ class GeneralMessage:
             "sender_override": self.sender_override,
             "notes": self.notes,
         }
+        if self.attachments:
+            payload["attachments"] = requirements_payload(self.attachments)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -195,6 +211,7 @@ def general_drafts_to_wide_rows(
         if any(
             message.variant_key != "primary"
             or message.media
+            or message.attachments
             or message.sender_override
             or message.notes
             for message in messages
@@ -297,6 +314,7 @@ def _wide_rows_to_long_rows(
                 "[]",
                 "",
                 "",
+                "",
             ])
     return long_rows
 
@@ -378,6 +396,10 @@ def _parse_general_icp_long_rows(
         subject = by_header["Subject"]
         body = _required(by_header["Body"], "Body", row_number)
         media = parse_media_cell(by_header["Media"], row_number=row_number)
+        attachments = parse_attachments_cell(
+            by_header["Attachments"],
+            row_number=row_number,
+        )
         sender_override = resolve_operator(by_header["Sender Override"])
         if len(sender_override) > 64:
             raise GeneralICPMessageError(
@@ -397,6 +419,10 @@ def _parse_general_icp_long_rows(
         elif subject:
             raise GeneralICPMessageError(
                 f"row {row_number} {channel} Subject must be blank"
+            )
+        if attachments and channel != CHANNEL_GMAIL:
+            raise GeneralICPMessageError(
+                f"row {row_number} Attachments are only supported on Gmail steps"
             )
         if len(subject) > 998:
             raise GeneralICPMessageError(f"row {row_number} Subject exceeds 998 characters")
@@ -476,6 +502,7 @@ def _parse_general_icp_long_rows(
             sender_override=sender_override,
             notes=by_header["Notes"],
             source_row=row_number,
+            attachments=attachments,
         )
         messages_by_program.setdefault(program_key, []).append(message)
 
@@ -639,6 +666,25 @@ def parse_media_cell(value: str, *, row_number: int) -> tuple[str, ...]:
             )
         normalized.append(filename)
     return tuple(normalized)
+
+
+def parse_attachments_cell(
+    value: str,
+    *,
+    row_number: int,
+) -> tuple[AttachmentRequirement, ...]:
+    if not value:
+        return ()
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise GeneralICPMessageError(
+            f"row {row_number} Attachments must be a JSON list of objects"
+        ) from exc
+    try:
+        return parse_attachment_requirements(parsed, f"row {row_number} Attachments")
+    except AttachmentRequirementError as exc:
+        raise GeneralICPMessageError(str(exc)) from None
 
 
 def _text(value: object) -> str:

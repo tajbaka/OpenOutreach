@@ -9,6 +9,10 @@ from django.utils import timezone
 
 SUBMISSION_ATTEMPTED_AT_KEY = "gmail_submission_attempted_at"
 POST_SEND_RECOVERY_DELAY = timedelta(minutes=5)
+# A held email re-checks its attachments on this cadence until they resolve.
+ATTACHMENT_HOLD_RETRY = timedelta(minutes=60)
+ATTACHMENT_HOLD_REASON_KEY = "attachment_hold_reason"
+ATTACHMENT_HOLD_PREFIX = "Attachment hold: "
 
 
 def submission_attempted(payload) -> bool:
@@ -211,8 +215,55 @@ def defer_early_current_gmail_task(task) -> bool:
 
 
 @transaction.atomic
-def stamp_submission_attempt(task) -> bool:
-    """Stamp an on-time submission, or commit a safe same-Task deferral."""
+def hold_current_gmail_task_for_attachments(task, *, reason: str) -> bool:
+    """Hold an unsubmitted email whose attachment cannot be sent yet.
+
+    The same Task stays pending with its frozen delivery queued and a visible
+    reason, and re-checks after ``ATTACHMENT_HOLD_RETRY``. Nothing was
+    submitted, so this never touches the duplicate-send boundary. Returns
+    whether the reason is new for this Task (callers alert once per reason).
+    """
+    from linkedin.models import Task
+
+    locked = _lock_current_task(task.pk, expected_payload=task.payload)
+    if locked is None:
+        raise ValueError("Gmail attachment hold Task no longer exists")
+    if locked.task_type != Task.TaskType.GMAIL_FOLLOW_UP:
+        raise ValueError("Gmail attachment hold received another Task type")
+    if locked.status != Task.Status.RUNNING:
+        raise ValueError("Gmail attachment hold requires a claimed running Task")
+    if submission_attempted(locked.payload):
+        raise ValueError("Gmail attachment hold cannot follow a submission attempt")
+    delivery = _lock_current_delivery(locked)
+    if delivery is not None and delivery.status != delivery.Status.QUEUED:
+        raise ValueError(
+            f"versioned Gmail delivery {delivery.pk} status "
+            f"{delivery.status!r} cannot be held for attachments"
+        )
+    clean_reason = " ".join(str(reason or "").split())[:900] or "attachment unavailable"
+    payload = dict(locked.payload or {})
+    is_new_reason = payload.get(ATTACHMENT_HOLD_REASON_KEY) != clean_reason
+    payload[ATTACHMENT_HOLD_REASON_KEY] = clean_reason
+    _requeue(locked, scheduled_at=timezone.now() + ATTACHMENT_HOLD_RETRY)
+    locked.payload = payload
+    locked.error = ATTACHMENT_HOLD_PREFIX + clean_reason
+    locked.save(update_fields={"payload", "error"})
+    task.payload = payload
+    task.status = locked.status
+    task.started_at = locked.started_at
+    task.scheduled_at = locked.scheduled_at
+    task.error = locked.error
+    return is_new_reason
+
+
+@transaction.atomic
+def stamp_submission_attempt(task, *, before_stamp=None) -> bool:
+    """Stamp an on-time submission, or commit a safe same-Task deferral.
+
+    ``before_stamp`` runs inside this locked transaction immediately before
+    the boundary is written (the attachment recheck). If it raises, nothing
+    is written and the Task stays claimed and unsubmitted.
+    """
     from linkedin.models import Task
 
     locked = _lock_current_task(task.pk, expected_payload=task.payload)
@@ -232,13 +283,22 @@ def stamp_submission_attempt(task) -> bool:
         )
     if _defer_locked_task_if_early(locked, delivery=delivery, task=task):
         return False
+    if before_stamp is not None:
+        before_stamp()
     payload = dict(locked.payload or {})
     payload[SUBMISSION_ATTEMPTED_AT_KEY] = timezone.now().isoformat()
+    update_fields = {"payload"}
+    if payload.pop(ATTACHMENT_HOLD_REASON_KEY, None) is not None:
+        # The earlier attachment hold has resolved; keep the Task error clean.
+        if (locked.error or "").startswith(ATTACHMENT_HOLD_PREFIX):
+            locked.error = ""
+            update_fields.add("error")
     locked.payload = payload
-    locked.save(update_fields={"payload"})
+    locked.save(update_fields=update_fields)
     if delivery is not None:
         _set_delivery_status(delivery, delivery.Status.SENDING)
     task.payload = payload
+    task.error = locked.error
     return True
 
 

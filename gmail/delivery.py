@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from gmail.auth import GMAIL_OPERATOR_MAPPING
 from gmail.exceptions import GmailDeliveryAuthorizationError
@@ -24,6 +24,7 @@ def _message_fingerprint(
     in_reply_to: str,
     references: Iterable[str],
     rfc_message_id: str,
+    attachments: Sequence = (),
 ) -> str:
     payload = {
         "operator": (operator or "").strip(),
@@ -40,6 +41,12 @@ def _message_fingerprint(
         ],
         "rfc_message_id": (rfc_message_id or "").strip(),
     }
+    if attachments:
+        # Present only when attaching, so attachment-free permits keep their
+        # existing fingerprint. Identities carry each file's exact SHA-256.
+        from email_assets.files import attachment_identities, validate_attachment_set
+
+        payload["attachments"] = attachment_identities(validate_attachment_set(attachments))
     encoded = json.dumps(
         payload,
         ensure_ascii=False,
@@ -72,6 +79,7 @@ def issue_gmail_delivery_permit(
     in_reply_to: str = "",
     references: Iterable[str] = (),
     rfc_message_id: str = "",
+    attachments: Sequence = (),
 ) -> GmailDeliveryPermit:
     """Issue one permit for an already-claimed campaign or drip Gmail Task."""
     from linkedin.models import Task
@@ -127,6 +135,7 @@ def issue_gmail_delivery_permit(
             in_reply_to=in_reply_to,
             references=references,
             rfc_message_id=rfc_message_id,
+            attachments=attachments,
         ),
         _seal=_PERMIT_SEAL,
     )
@@ -144,6 +153,7 @@ def consume_gmail_delivery_permit(
     in_reply_to: str = "",
     references: Iterable[str] = (),
     rfc_message_id: str = "",
+    attachments: Sequence = (),
 ) -> None:
     """Validate and consume a permit before any Gmail provider interaction."""
     if not isinstance(permit, GmailDeliveryPermit) or permit._seal is not _PERMIT_SEAL:
@@ -162,6 +172,7 @@ def consume_gmail_delivery_permit(
         in_reply_to=in_reply_to,
         references=references,
         rfc_message_id=rfc_message_id,
+        attachments=attachments,
     )
     if fingerprint != permit._fingerprint:
         raise GmailDeliveryAuthorizationError(

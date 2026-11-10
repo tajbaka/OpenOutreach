@@ -164,9 +164,17 @@ def _payload_message_row(
         "channel", "step_key", "step_index", "delay_hours", "variant_key",
         "subject", "body", "media", "sender_override", "notes",
     }
-    if set(value) != required:
+    # Gmail steps may also declare attachment requirements; see email_assets.
+    optional = {"attachments"}
+    if not required <= set(value) <= required | optional:
         raise GeneralICPMessageError(
-            f"program {program_key!r} message fields must exactly equal {sorted(required)!r}"
+            f"program {program_key!r} message fields must exactly equal {sorted(required)!r} "
+            f"plus optional {sorted(optional)!r}"
+        )
+    attachments = value.get("attachments", [])
+    if not isinstance(attachments, list):
+        raise GeneralICPMessageError(
+            f"program {program_key!r} message attachments must be a list"
         )
     return [
         icp_label,
@@ -185,6 +193,7 @@ def _payload_message_row(
         json.dumps(value["media"], ensure_ascii=False),
         str(value["sender_override"]),
         str(value["notes"]),
+        json.dumps(attachments, ensure_ascii=False) if attachments else "",
     ]
 
 

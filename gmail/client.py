@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 import base64
+import io
 import re
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Sequence
 
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseUpload
 
 from gmail.auth import (
     GMAIL_OPERATOR_MAPPING,
@@ -167,8 +169,14 @@ class GmailClient:
         references: Iterable[str] = (),
         rfc_message_id: str = "",
         on_submit_attempt: Callable[[], None] | None = None,
+        attachments: Sequence = (),
     ) -> GmailSendResult:
-        """Submit one exact, Task-authorized Gmail automation message."""
+        """Submit one exact, Task-authorized Gmail automation message.
+
+        ``attachments`` are validated ``email_assets.files.AttachmentFile``
+        values whose identities the permit already covers. Messages without
+        attachments use the same request shape as before.
+        """
         reply_thread_id = (thread_id or "").strip()
         reply_to_id = (in_reply_to or "").strip()
         reference_ids = tuple(
@@ -185,6 +193,7 @@ class GmailClient:
             in_reply_to=reply_to_id,
             references=reference_ids,
             rfc_message_id=rfc_message_id,
+            attachments=attachments,
         )
         self.validate_send_as()
         if bool(reply_thread_id) != bool(reply_to_id):
@@ -207,15 +216,32 @@ class GmailClient:
             msg["In-Reply-To"] = reply_to_id
             msg["References"] = " ".join(reference_ids or (reply_to_id,))
         msg.set_content(body)
-        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
-        request_body = {"raw": raw}
-        if reply_thread_id:
-            request_body["threadId"] = reply_thread_id
+        if attachments:
+            from email_assets.files import add_attachments_to_message
+
+            add_attachments_to_message(msg, attachments)
+            # Large MIME bodies go through Gmail's upload endpoint (35 MB
+            # limit) instead of an inline base64 JSON field.
+            request_body = {}
+            if reply_thread_id:
+                request_body["threadId"] = reply_thread_id
+            send_kwargs = {
+                "userId": "me",
+                "body": request_body,
+                "media_body": MediaIoBaseUpload(
+                    io.BytesIO(msg.as_bytes()),
+                    mimetype="message/rfc822",
+                    resumable=True,
+                ),
+            }
+        else:
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+            request_body = {"raw": raw}
+            if reply_thread_id:
+                request_body["threadId"] = reply_thread_id
+            send_kwargs = {"userId": "me", "body": request_body}
         try:
-            request = self._service.users().messages().send(
-                userId="me",
-                body=request_body,
-            )
+            request = self._service.users().messages().send(**send_kwargs)
             if on_submit_attempt is not None:
                 on_submit_attempt()
             sent = request.execute()
