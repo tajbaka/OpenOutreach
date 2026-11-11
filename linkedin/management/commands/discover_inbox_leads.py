@@ -15,7 +15,7 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Callable, Iterable
 
 import jinja2
 from django.core.management.base import BaseCommand, CommandError
@@ -166,11 +166,11 @@ def _normalize_name(value: str) -> str:
 
 
 def _participant_info(participant: dict) -> ParticipantInfo:
-    member = (
-        participant.get("participantType", {}).get("member", {})
-        if isinstance(participant, dict)
-        else {}
-    )
+    participant = participant if isinstance(participant, dict) else {}
+    participant_type = participant.get("participantType")
+    participant_type = participant_type if isinstance(participant_type, dict) else {}
+    member = participant_type.get("member")
+    member = member if isinstance(member, dict) else {}
     first = _localized_text(member.get("firstName"))
     last = _localized_text(member.get("lastName"))
     full = (_localized_text(member.get("fullName")) or f"{first} {last}").strip()
@@ -207,15 +207,24 @@ def _other_participant(
     participants = conversation.get("conversationParticipants") or []
     infos = [_participant_info(p) for p in participants]
 
+    # An unidentifiable participant could be another member of a group.
+    # Skipping the conversation avoids attributing its messages to the wrong lead.
+    if any(not _participant_has_identity(i) for i in infos):
+        return None
+
     self_name_norm = _normalize_name(self_name)
     others = [
         info for info in infos
         if info.member_urn != self_urn
-        and _normalize_name(info.full_name) != self_name_norm
+        and (not self_name_norm or _normalize_name(info.full_name) != self_name_norm)
     ]
     if len(others) != 1:
         return None
     return others[0]
+
+
+def _participant_has_identity(info: ParticipantInfo) -> bool:
+    return bool(info.member_urn or info.public_id or info.profile_url or info.full_name)
 
 
 def _conversation_box(raw: dict) -> dict:
@@ -328,6 +337,7 @@ def iter_inbox_conversations(
     page_delay_seconds: float,
     since_days: int | None = None,
     cutoff: datetime | None = None,
+    on_unidentifiable: Callable[[str], None] | None = None,
 ) -> Iterable[InboxConversation]:
     """Yield 1:1 conversations active since `cutoff` (or `since_days` ago), newest first."""
     if cutoff is None:
@@ -387,6 +397,11 @@ def iter_inbox_conversations(
                 self_name=self_name,
             )
             if participant is None:
+                if on_unidentifiable and any(
+                    not _participant_has_identity(_participant_info(p))
+                    for p in (conv.get("conversationParticipants") or [])
+                ):
+                    on_unidentifiable(conversation_urn)
                 logger.info("Skipping non-1:1 or self-only conversation %s", conversation_urn)
                 continue
 

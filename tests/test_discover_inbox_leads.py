@@ -86,6 +86,35 @@ def test_other_participant_skips_group_conversation():
     ) is None
 
 
+def test_other_participant_preserves_urn_when_member_is_null():
+    conv = _conversation("urn:li:msg_conv:1", "jane-buyer")
+    conv["conversationParticipants"][1] = {
+        "hostIdentityUrn": "urn:li:fsd_profile:other",
+        "participantType": {"member": None},
+    }
+    info = _other_participant(conv, self_urn="urn:li:fsd_profile:self", self_name="")
+    assert info is not None
+    assert info.member_urn == "urn:li:fsd_profile:other"
+
+
+def test_other_participant_does_not_guess_when_identity_missing():
+    conv = _conversation("urn:li:msg_conv:1", "jane-buyer")
+    conv["conversationParticipants"].append({"participantType": None})
+    assert _other_participant(conv, self_urn="urn:li:fsd_profile:self", self_name="Arian Taj") is None
+
+
+def test_null_member_does_not_abort_later_inbox_conversations():
+    now_ms = int(timezone.now().timestamp() * 1000)
+    broken = _conversation("urn:li:msg_conv:broken", "", delivered_at=now_ms)
+    broken["conversationParticipants"][1] = {"participantType": {"member": None}}
+    valid = _conversation("urn:li:msg_conv:valid", "jane-buyer", delivered_at=now_ms)
+    unidentifiable = []
+    with patch("linkedin.management.commands.discover_inbox_leads.fetch_conversations", return_value=_raw_page([broken, valid])):
+        conversations = list(iter_inbox_conversations("api", self_urn="urn:li:fsd_profile:self", self_name="Arian Taj", since_days=1, max_pages=1, page_size=20, page_delay_seconds=0, on_unidentifiable=unidentifiable.append))
+    assert [c.conversation_urn for c in conversations] == ["urn:li:msg_conv:valid"]
+    assert unidentifiable == ["urn:li:msg_conv:broken"]
+
+
 def test_next_sync_token_reads_nested_page_token():
     raw = {"data": {"messengerConversationsBySyncToken": {"paging": {"nextSyncToken": "next-1"}}}}
     assert _next_sync_token(raw) == "next-1"

@@ -234,6 +234,9 @@ def catch_up_missed_replies(
                 max_pages=CATCHUP_MAX_PAGES,
                 page_size=CATCHUP_PAGE_SIZE,
                 page_delay_seconds=pause_seconds[0],
+                on_unidentifiable=lambda urn: result.errors.append(
+                    f"{urn}: participant identity unavailable"
+                ),
             )
         )
 
@@ -352,7 +355,7 @@ class ListenerCatchup:
         if result.truncated:
             reasons.append(f"it stopped after {CATCHUP_MAX_CONVERSATIONS} conversations")
         if result.errors:
-            reasons.append(f"{len(result.errors)} threads failed to load")
+            reasons.append(f"{len(result.errors)} threads could not be fully checked")
         notify_degraded(
             sender=self.operator,
             title="Missed-reply catch-up was incomplete",
