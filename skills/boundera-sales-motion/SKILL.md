@@ -9,6 +9,16 @@ Maintain one consistent account tracker without flattening, rebuilding, or casua
 
 ## Scope and authority
 
+- For a verified account whose current manual Stage is `Partnership`, use
+  `../../docs/partnership-workflow.md` and its CRM tracker/referral log. Do not
+  create or advance a buyer 15-step tab for referral or enablement work. Existing
+  historical partner tabs retain their IDs/content and existing tracker pointers.
+  Keep them visible at the far left after Template under the user's 2026-11-16
+  preference; use `../boundera-sales-motion-cleanup/SKILL.md` for the stable sort
+  and any necessary visibility restoration. Do not hide them merely because the
+  current work moved to the partnership tracker. A distinct internal-use purchase
+  requires an explicitly scoped buyer opportunity.
+
 - If the user asks to discuss, review, or plan a motion, stay read-only.
 - A direct request to create or update an account tab authorizes that specific Sheet mutation; it does not authorize changes to other tabs or source systems.
 - Never modify `Template`. Never modify `Ramp` unless the user explicitly names it.

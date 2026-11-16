@@ -66,12 +66,23 @@ tab identifies context; it does not select browser automation.
 
 ## CRM boundaries
 
+- `Partnership` is an operator-owned Active Accounts classification, sorted
+  after buyer stages. Keep these rows in the People inclusion boundary.
+  `docs/partnership-workflow.md` governs the separately authorized Partnerships
+  tracker and Partner Referrals log; partner status/volume is not a buying stage
+  or booked revenue. Preserve existing hidden IDs; do not write a new database
+  Opportunity stage or silently map Partnership onto a buyer stage.
+
 - `Active Accounts` is an operator-owned manual ledger. A direct user request
   authorizes its specified edit. The daily Codex review in
   `docs/active-account-next-steps-workflow.md` may update only Next step cell
   values and, as authorized on 2026-10-29, stably sort complete native rows by
-  their existing Stage after every review. Stage values remain manual. Preserve
-  all protected data and native properties by account identity. Never invoke a
+  their existing Stage after every review. As authorized on 2026-11-16, it then
+  enforces an 84-pixel minimum account-row height, including unchanged reviews:
+  raise only shorter entries, preserve taller rows, and exclude headers/empty
+  rows. Use this floor for newly added Active Accounts entries too. Stage values
+  remain manual. Preserve all other protected data and native properties by
+  account identity; verify each height equals max(before height, 84). Never invoke a
   refresh, conversion, rebuild or publisher to implement this review.
 - When adding an account, bind hidden Opportunity/Account IDs only to one
   verified existing CRM identity. An unbound manual row is valid and is included

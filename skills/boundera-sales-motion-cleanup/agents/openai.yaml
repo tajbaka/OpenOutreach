@@ -1,0 +1,4 @@
+interface:
+  display_name: "Boundera Sales Motion Cleanup"
+  short_description: "Hide closed tabs and group Partnership tabs first"
+  default_prompt: "Use $boundera-sales-motion-cleanup to hide verified closed-account tabs and move Partnership tabs to the far left after Template in Sales Motions."

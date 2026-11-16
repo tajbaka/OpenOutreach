@@ -2,7 +2,8 @@
 
 Runs the daily contextual review with Claude Code instead of the Codex
 automation: first [Actions](actions-workflow.md), then the
-[Active Accounts Next step](active-account-next-steps-workflow.md) review, using
+[Active Accounts Next step](active-account-next-steps-workflow.md) review, then
+[Partnerships and referrals](partnership-workflow.md), using
 the requests in [contextual-crm-review-prompts.md](contextual-crm-review-prompts.md).
 The workflow rules are unchanged; only the agent and scheduler differ.
 
@@ -44,7 +45,7 @@ The workflow rules are unchanged; only the agent and scheduler differ.
    Get-Content artifacts\claude-review\latest.md
    ```
 
-   Expect `STATUS: PREVIEW`, the proposed Actions/Next step changes and a
+   Expect `STATUS: PREVIEW`, the proposed Actions/Next step/partnership changes and a
    receipts path. Check `artifacts\claude-review\runs.log` for errors.
 4. Pause the Codex automation "Review contextual Actions and account next steps"
    in Codex.

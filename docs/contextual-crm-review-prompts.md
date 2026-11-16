@@ -5,7 +5,7 @@ Arian Gmail and Granola credentials. Use the checkout-relative virtualenv
 (`.venv/Scripts/python.exe` on Windows; `.venv/bin/python` elsewhere).
 Credentials, transcripts and private receipts never belong in Git.
 
-Read the canonical skills directly from this checkout before either review:
+Read the canonical skills directly from this checkout before these reviews:
 `skills/openoutreach-google-sheets/SKILL.md`, `skills/gmail-read/SKILL.md`,
 `skills/gmail-oauth/SKILL.md` and `skills/granola-read/SKILL.md`.
 These files travel with Git; a separate personal skill installation is not
@@ -45,6 +45,9 @@ If a required file is missing, safely update the checkout before recreating it.
 > current evidence-backed stage, urgency/blockers, buyer engagement, partner
 > potential and actionability. Treat missing value as unknown and distinguish
 > quotes/options from committed revenue; never infer value from company size.
+> For Partnership accounts, follow docs/partnership-workflow.md: judge actual
+> referrals, enablement and joint-work commitments independently of buyer stages.
+> Keep referred buyers separate and never count expected referrals as revenue.
 > Keep future dates/statuses intact. Save the rank and rationale in hidden
 > Evidence and a managed Context cell note, preserving operator notes and stable
 > order for ties. Highest priority does not automatically mean contact today.
@@ -68,19 +71,36 @@ If a required file is missing, safely update the checkout before recreating it.
 
 > Read `docs/active-account-next-steps-workflow.md` and run one complete review of
 > every existing manual Active Accounts row, including unbound rows. Use the
-> latest dated LinkedIn, Gmail and full meeting context to identify the current
+> partnership rules in docs/partnership-workflow.md for Stage Partnership;
+> keep partner next steps focused on introductions, enablement and joint work.
+> Use the latest dated LinkedIn, Gmail and full meeting context to identify the current
 > account-level next move or who we are waiting for. Update only changed cells in
 > the unique Next step column, then stably sort complete native account rows by
 > their existing Stage using the runbook's dropdown-order rule on every run,
-> including when no Next step changes. Stage values remain manual. Preserve rows,
+> including when no Next step changes. Then enforce an 84-pixel minimum height
+> on every account entry: raise only shorter rows, preserve taller rows, and
+> exclude the header and empty rows. Stage values remain manual. Preserve rows,
 > IDs, all other cell values (including due dates), Notes, formulas, formatting
-> and row heights by identity; only row order may change for this sort.
-> Verify the sorted order, stable ties and protected cells by API readback.
+> and existing taller row heights by identity; only row order and the authorized
+> minimum-height increases may change. Verify the sorted order, stable ties,
+> protected cells and each height = max(before height, 84) by API readback.
 > Preserve uncertain cells and report holds. Save source-backed decisions and
 > verify all changes by API readback.
 > No sends, drafts, CRM mutations, other publishers, workers or schedule changes.
 
-Add **Preview only; no Sheet writes** to either request for a preview.
+## Partnership tracker and referrals
+
+> Read docs/partnership-workflow.md and reconcile Partnerships and Partner
+> Referrals from verified dated conversation evidence. Keep operator partner
+> statuses and planned dates, existing IDs, manual notes and metric formulas.
+> Record delivered introductions once, distinguish buyer referrals from partner
+> introductions, and verify qualification and wins against buyer evidence.
+> Leave unknown values blank and keep currency totals separate. Update only the
+> authorized fields in these two tabs; keep service work separate, preserve all
+> other tabs, and verify changes and duplicate checks by API readback. No sends,
+> drafts, CRM/campaign writes, new logins, workers or schedule changes.
+
+Add **Preview only; no Sheet writes** to any request for a preview.
 
 ## Daily receiving-computer setup
 
@@ -92,11 +112,17 @@ not the independent Codex reviews. `refresh_crm_v2`, including replacement mode,
 refuses the contextual Actions schema; never bypass that refusal.
 
 On the receiving computer, update its existing contextual-review automation
-rather than create a duplicate. Use both prompts above sequentially (Actions,
-then Next step) in one daily Codex run, with quiet unchanged results. Verify the
+rather than create a duplicate. Use the prompts above sequentially (Actions,
+then Next step, then Partnership tracker/referrals) in one daily Codex run,
+with quiet unchanged results. Verify the
 saved schedule, timezone, project/checkout and connections. If no runner exists,
 create it there only when asked to enable it. Pulling Git or running these prompts
 once does not install a local schedule. Never enable this Mac as a second runner.
 
+The 2026-11-16 row-height rule must also reach the receiving computer's checkout
+and saved automation prompt: after every Stage sort, enforce an 84-pixel floor
+on account rows without shrinking taller rows. Updating this Mac's files or
+paused automation does not verify that the Windows runner has adopted the rule.
+
 The older `generate_followups` draft queue and `docs/codex-followup-automation.md`
-are retired for this workbook. They do not perform either contextual review.
+are retired for this workbook. They do not perform these contextual reviews.

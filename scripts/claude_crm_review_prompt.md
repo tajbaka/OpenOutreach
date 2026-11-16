@@ -44,7 +44,16 @@ MODE: {{MODE}}
    plus engaged contacts outside Active Accounts.
 3. Then run its **Active Accounts Next step** review by following
    `docs/active-account-next-steps-workflow.md`, updating only changed Next
-   step cells for existing manual rows, including unbound rows.
+   step cells for existing manual rows, including unbound rows. Stably sort
+   complete native account rows by the existing Stage dropdown order, then
+   enforce an 84-pixel minimum account-row height without shrinking taller rows.
+   Apply the sort and height floor even when no Next step values change.
+4. Run `docs/partnership-workflow.md` for Partnerships and Partner Referrals.
+   Keep partner commitments distinct from buyer opportunities and service work;
+   count delivered introductions once, require buyer evidence for qualification
+   and wins, preserve unknown values and separate currency totals. Partner Status
+   and Active Accounts Stage remain operator-owned. Do not use buyer-stage
+   progression to rank partner work in the preceding reviews.
 
 Verify the configured CRM workbook and Arian mailbox through existing
 authentication before reading conversation data. If a source or credential is
@@ -59,9 +68,14 @@ publisher lock for writes and do not advance any watermark.
 
 ### MODE: APPLY
 
-Make only the precise writes the two docs authorize: the existing Actions tab
+Make only the precise writes the workflow docs authorize: the existing Actions tab
 (sheet ID 1777950751, preserving hidden Followup IDs and operator Notes) and
-changed Next step cells in Active Accounts. Use dated cross-channel
+changed Next step cells in Active Accounts, its authorized complete-row Stage
+sort, and its 84-pixel minimum account-row height. Exclude headers and empty
+rows from height changes; verify each account height is max(before height, 84)
+and preserve all other native properties. The third phase may update only the
+Partnerships / Partner Referrals fields authorized by their runbook, preserving
+manual statuses, notes, stable IDs, dates and count formulas. Use dated cross-channel
 fulfillment, private decision receipts, final source/row preflight,
 `crm_refresh_lock()` for the final read/check/write/readback, and precise API
 readback. Stop on any conflict with a live human edit. Leave anything you rate
@@ -85,7 +99,7 @@ Its first line must be exactly one of:
 - `STATUS: QUIET` - nothing meaningful changed.
 - `STATUS: CHANGES` - followed by concise bullets: new or resolved Actions,
   follow-ups that became actionable, and each changed Next step as
-  `Account: old -> new (why)`.
+  `Account: old -> new (why)`, plus verified partnership/referral changes.
 - `STATUS: PREVIEW` - preview mode; followed by the proposed changes.
 - `STATUS: BLOCKED` - a source, credential or conflict stopped part of the
   review; list the affected coverage and what was preserved.

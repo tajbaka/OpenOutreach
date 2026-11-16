@@ -288,6 +288,17 @@ pass should propose no changes. Report unresolved identity collisions separately
 
 ## Rank by contextual priority
 
+For accounts manually classified as `Partnership`, use
+`docs/partnership-workflow.md`. Keep real referral, introduction, seller-access,
+training and joint-work commitments eligible. Rank their concrete effect and
+urgency without treating a partner sandbox as a buyer evaluation or applying
+sales-stage advancement/close probabilities. The actual referred buyer has its
+own identity, opportunity and follow-ups. Keep service obligations, such as
+Schellman's assessment work for Boundera, distinct from referral outcomes.
+Expected referral batches are not delivered introductions or booked revenue.
+Partnership is neither Closed Won nor Closed Lost. Preserve existing Actions
+item IDs, timing, source evidence and operator notes when reinterpreting context.
+
 After checking eligibility and fulfillment, sort the entire Actions list by
 Codex's judgment of the highest-value next work. Consider these factors together,
 not as a rigid status-first sort or a fixed numeric lead score:
