@@ -42,7 +42,6 @@ def _task(lead, **payload):
 
 @pytest.mark.django_db
 def test_enrich_email_found_saves_email_and_queues_gmail(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     lead = _lead()
 
     monkeypatch.setattr(
@@ -92,7 +91,6 @@ def test_enrich_email_from_finished_campaign_never_calls_provider(monkeypatch):
 
 @pytest.mark.django_db
 def test_enrich_email_not_found_records_tried_without_gmail(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     lead = _lead()
     monkeypatch.setattr(
         "gmail.tasks.enrich_email.BetterContactEmailProvider.enrich",
@@ -131,7 +129,6 @@ def test_enrich_email_api_failure_stays_retryable(monkeypatch):
 
 @pytest.mark.django_db
 def test_enrich_email_existing_email_skips_provider_and_queues_gmail(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     lead = _lead(email="existing@example.com")
 
     called = False
@@ -155,7 +152,6 @@ def test_enrich_email_existing_email_skips_provider_and_queues_gmail(monkeypatch
 
 @pytest.mark.django_db
 def test_enrich_email_persisted_reply_blocks_provider_without_deal(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     lead = _lead()
     Message.objects.create(
         lead=lead,
@@ -181,7 +177,6 @@ def test_enrich_email_persisted_reply_blocks_provider_without_deal(monkeypatch):
 
 @pytest.mark.django_db
 def test_enrich_email_reply_during_lookup_blocks_gmail_enqueue(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     lead = _lead()
 
     def _reply_then_find(self, lead, task):

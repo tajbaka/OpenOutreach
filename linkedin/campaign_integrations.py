@@ -86,7 +86,7 @@ def _campaign(body, *, lock=False):
     campaign = query.filter(pk=body["campaign_id"], user__username=body["owner_username"]).first()
     if campaign is None:
         raise EnrollmentHold("campaign_owner_mismatch")
-    if campaign.status == Campaign.Status.FINISHED or campaign.is_freemium:
+    if campaign.status == Campaign.Status.FINISHED or campaign.is_freemium or not campaign.enable_linkedin:
         raise EnrollmentHold("campaign_unavailable")
     owner = exact_campaign_owner(body["owner_username"])
     campaign._integration_operator = resolve_operator(owner.linkedin_profile.linkedin_username)

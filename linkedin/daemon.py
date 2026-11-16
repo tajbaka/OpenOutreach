@@ -80,7 +80,7 @@ def _active_campaigns(session):
     """Campaigns this daemon should actively work."""
     from linkedin.models import Campaign
 
-    return session.campaigns.filter(status=Campaign.Status.ACTIVE)
+    return session.campaigns.filter(status=Campaign.Status.ACTIVE, enable_linkedin=True)
 
 
 class _FreemiumRotator:
@@ -228,6 +228,7 @@ def _connection_campaign_ids_now(profile=None, *, now=None):
         allow_connections_outside_hours=True,
         user_id=user_id,
         status=Campaign.Status.ACTIVE,
+        enable_linkedin=True,
     ).values_list("pk", flat=True))
 
 
@@ -553,11 +554,13 @@ def heal_tasks(session):
 
     # Recover only missing invitation-start Gmail work, independently of the
     # post-accept LinkedIn follow-up switch. Never change existing due Tasks.
+    from gmail.auth import GMAIL_OPERATOR_MAPPING
     from gmail.handoff import recover_invitation_gmail_sequences
 
-    recover_invitation_gmail_sequences(
-        operator=our_operator, campaign_ids=owned_campaign_ids,
-    )
+    if our_operator in GMAIL_OPERATOR_MAPPING:
+        recover_invitation_gmail_sequences(
+            operator=our_operator, campaign_ids=owned_campaign_ids,
+        )
 
     # 7. Follow-up tasks (post-accept DMs — gated separately).
     if not ENABLE_FOLLOW_UP:
@@ -743,6 +746,8 @@ def _format_task_error(exc: BaseException) -> str:
 
 def _campaign_has_connect_work(campaign) -> bool:
     """Whether a campaign still has leads the connect lane can process."""
+    if not campaign.enable_linkedin:
+        return False
     if ENABLE_AUTO_DISCOVERY:
         # The connect lane can search → qualify → promote, so an empty local
         # ready pool is not proof that the campaign is exhausted.
@@ -868,7 +873,7 @@ def run_daemon(session):
         session.linkedin_profile,
         our_operator,
     )
-    if not campaigns and not discovery_enabled:
+    if not campaigns and not discovery_enabled and not ENABLE_REALTIME_LISTENER:
         logger.error("No active campaigns found — cannot start daemon")
         return
 
@@ -1058,6 +1063,11 @@ def run_daemon(session):
                     logger.info("Outbound queue empty — waiting on enrichment worker")
                     connections.close_all()
                     time.sleep(ENRICHMENT_WAIT_POLL_SECONDS)
+                    continue
+                if ENABLE_REALTIME_LISTENER:
+                    _sync_listener_supervisor(listener_supervisor)
+                    connections.close_all()
+                    time.sleep(MANUAL_REPLY_POLL_SECONDS)
                     continue
                 logger.info("Queue empty — nothing to do")
                 listener_supervisor.stop()

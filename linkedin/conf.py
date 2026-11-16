@@ -161,23 +161,11 @@ TASK_RUNNING_STALE_MINUTES = float(
 # ----------------------------------------------------------------------
 # Campaign config (timing + ML defaults — hardcoded, no YAML)
 # ----------------------------------------------------------------------
-# Supervisor email-only mode also suppresses direct daemon browser startup.
-ENABLE_LINKEDIN_DAEMON = os.getenv("ENABLE_LINKEDIN_DAEMON", "true").strip().lower() in {
-    "1", "true", "yes", "on",
-}
-
 # Master kill-switch for all follow-up messaging. When false, the daemon
 # stops at the connect step: connection invites still go out, but no
 # post-accept message and no follow-up agent ever runs. Existing pending
 # follow_up tasks become no-ops.
 ENABLE_FOLLOW_UP = os.getenv("ENABLE_FOLLOW_UP", "true").strip().lower() in {
-    "1", "true", "yes", "on",
-}
-
-# Post-accept browserless Gmail lane. Default OFF; when on, accepted LinkedIn
-# connections can enqueue email enrichment or a pending gmail_follow_up task on
-# their own delay_hours timeline, independent from LinkedIn follow-up completion.
-ENABLE_GMAIL_SEQUENCE = os.getenv("ENABLE_GMAIL_SEQUENCE", "false").strip().lower() in {
     "1", "true", "yes", "on",
 }
 

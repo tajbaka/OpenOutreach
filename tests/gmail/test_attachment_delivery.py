@@ -149,8 +149,6 @@ def alerts(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def gmail_enabled(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
 
 

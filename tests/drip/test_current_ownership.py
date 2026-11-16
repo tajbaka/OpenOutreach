@@ -68,7 +68,6 @@ def test_current_gmail_enqueue_and_enrichment_noop_after_handoff(
 ):
     lead = _lead()
     _handed_off_lane(valid_drip_payload, lead, channel=DripLane.Channel.GMAIL)
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
 
     assert enqueue_gmail_follow_up(lead_id=lead.pk, operator="Arian") is None
     assert enqueue_email_enrichment(lead_id=lead.pk, operator="Arian") is None
@@ -84,7 +83,6 @@ def test_claimed_current_gmail_handlers_noop_after_handoff(
 ):
     lead = _lead()
     _handed_off_lane(valid_drip_payload, lead, channel=DripLane.Channel.GMAIL)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
 
     class NoGmailClient:
         def __init__(self, *, operator):

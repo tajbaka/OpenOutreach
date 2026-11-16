@@ -1,9 +1,12 @@
 import hashlib
 import json
 from datetime import timedelta
+from io import StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.core.management import call_command
 from django.utils import timezone
 
 from crm.models import Deal, Lead, Message
@@ -21,6 +24,7 @@ from linkedin.enums import ProfileState
 from linkedin.models import (
     Campaign,
     CampaignMessageEnrollment,
+    LinkedInProfile,
     MessageProgram,
     MessageProgramVersion,
     OutboundDelivery,
@@ -34,8 +38,6 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture(autouse=True)
 def versioned_gmail_enabled(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     FrozenGmailClient.calls = []
     FrozenGmailClient.fail_after_callback = None
@@ -192,6 +194,70 @@ def _run_task(task):
         task.started_at = timezone.now()
         task.save(update_fields={"status", "started_at"})
         handle_gmail_follow_up(task)
+
+
+def test_email_only_campaign_starts_directly_and_keeps_the_frozen_cadence(monkeypatch, tmp_path):
+    from linkedin.daemon import _active_campaigns
+    from linkedin.tasks.connect import enqueue_connect, enqueue_follow_up
+
+    deal, version = _deal()
+    assert deal.campaign.enable_linkedin and deal.campaign.enable_gmail
+    LinkedInProfile.objects.create(
+        user=deal.campaign.user, linkedin_username="ariantajbakh",
+        linkedin_password="synthetic", active=True,
+    )
+    deal.campaign.enable_linkedin = False
+    deal.campaign.save(update_fields=["enable_linkedin"])
+    deal.state = ProfileState.READY_TO_CONNECT
+    deal.connected_at = None
+    deal.save(update_fields=["state", "connected_at"])
+    deal.lead.icp = "old-marketplace-audience"
+    deal.lead.save(update_fields=["icp"])
+    monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", False)
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FrozenGmailClient)
+    scoped_session = SimpleNamespace(campaigns=Campaign.objects.filter(user=deal.campaign.user))
+    assert not _active_campaigns(scoped_session).exists()
+    enqueue_connect(deal.campaign_id)
+    enqueue_follow_up(deal.campaign_id, deal.lead.public_identifier, operator="Arian")
+    assert maybe_schedule_gmail_sequence(deal=deal, operator="Arian") is None
+    assert not Task.objects.exists()
+
+    audience_map = tmp_path / "audiences.json"
+    audience_map.write_text(json.dumps({str(deal.pk): "s-founder-ceo-rev5-maint"}))
+    first_due = timezone.now() + timedelta(hours=1)
+    options = dict(
+        campaign=deal.campaign_id, start_at=first_due.isoformat(), interval_minutes=5,
+        audience_map=audience_map, stdout=StringIO(),
+    )
+    call_command("start_email_campaign", **options)
+    assert not Task.objects.exists()
+    call_command("start_email_campaign", apply=True, **options)
+    call_command("start_email_campaign", apply=True, **options)
+    first_task = Task.objects.get()
+    assert first_task.task_type == Task.TaskType.GMAIL_FOLLOW_UP
+    assert first_task.scheduled_at == first_due
+    enrollment = CampaignMessageEnrollment.objects.get(deal=deal)
+    assert (enrollment.message_version_id, enrollment.operator) == (version.pk, "Arian")
+    _run_task(first_task)
+    assert len(FrozenGmailClient.calls) == 1
+    first_delivery = OutboundDelivery.objects.get(enrollment=enrollment, step_index=0)
+    next_delivery = OutboundDelivery.objects.get(enrollment=enrollment, step_index=1)
+    assert next_delivery.scheduled_at == first_delivery.sent_at + timedelta(hours=192)
+    assert next_delivery.task.status == Task.Status.PENDING
+    deal.refresh_from_db()
+    assert not deal.connected_at and not deal.invitation_sent_at
+
+
+def test_disabled_campaign_gmail_does_not_schedule_or_send(monkeypatch):
+    deal, _ = _deal()
+    monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FrozenGmailClient)
+    task = maybe_schedule_gmail_sequence(deal=deal, operator="Arian")
+    deal.campaign.enable_gmail = False
+    deal.campaign.save(update_fields=["enable_gmail"])
+    assert maybe_schedule_gmail_sequence(deal=deal, operator="Arian") is None
+    _run_task(task)
+    assert FrozenGmailClient.calls == []
+    assert OutboundDelivery.objects.get(task=task).status == OutboundDelivery.Status.STOPPED
 
 
 def test_bound_gmail_freezes_copy_ignores_live_json_drift_and_keeps_version(monkeypatch):

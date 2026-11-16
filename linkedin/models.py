@@ -193,6 +193,16 @@ class Campaign(models.Model):
     booking_link = models.URLField(max_length=500, blank=True)
     is_freemium = models.BooleanField(default=False)
     action_fraction = models.FloatField(default=0.2)
+    enable_linkedin = models.BooleanField(
+        default=True,
+        db_default=True,
+        help_text="Enable automated LinkedIn outreach for this campaign.",
+    )
+    enable_gmail = models.BooleanField(
+        default=True,
+        db_default=True,
+        help_text="Enable Gmail sequencing and email enrichment for this campaign.",
+    )
     connection_priority = models.PositiveSmallIntegerField(
         default=0,
         db_default=0,

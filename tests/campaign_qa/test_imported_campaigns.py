@@ -76,8 +76,7 @@ def harness(monkeypatch, tmp_path, django_capture_on_commit_callbacks):
     clock = SimpleNamespace(now=datetime(2026, 9, 8, 14, tzinfo=dt_timezone.utc))
     monkeypatch.setattr(timezone, 'now', lambda: clock.now)
     for name in ('linkedin.conf.ENABLE_FOLLOW_UP', 'linkedin.tasks.follow_up.ENABLE_FOLLOW_UP',
-                 'linkedin.tasks.connect.ENABLE_CONNECT', 'gmail.handoff.ENABLE_GMAIL_SEQUENCE',
-                 'gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE'):
+                 'linkedin.tasks.connect.ENABLE_CONNECT'):
         monkeypatch.setattr(name, True)
     monkeypatch.setattr('linkedin.conf.OUR_COMPANY_NAME', 'Boundera')
     monkeypatch.setattr('linkedin.conf.OUR_WEBSITE_URL', 'https://boundera.io')

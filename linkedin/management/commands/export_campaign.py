@@ -45,6 +45,8 @@ class Command(BaseCommand):
             "action_fraction": campaign.action_fraction,
             "connection_priority": campaign.connection_priority,
             "allow_connections_outside_hours": campaign.allow_connections_outside_hours,
+            "enable_linkedin": campaign.enable_linkedin,
+            "enable_gmail": campaign.enable_gmail,
         }
         if campaign.active_message_version_id:
             payload["message_program_key"] = campaign.active_message_version.program.key

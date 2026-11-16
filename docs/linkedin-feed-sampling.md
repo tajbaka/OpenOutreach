@@ -1,6 +1,6 @@
 # Bounded LinkedIn feed sampling
 
-When `ENABLE_LINKEDIN_FEED_COLLECTOR=true` and `ENABLE_LINKEDIN_DAEMON=true`, the
+When `ENABLE_LINKEDIN_FEED_COLLECTOR=true`, the
 supervisor runs a fresh sample during the existing `ACTIVE_START_HOUR`,
 `ACTIVE_END_HOUR`, `ACTIVE_TIMEZONE`, and `REST_DAYS` schedule. This checkout uses
 09:00–17:00 Toronto, Monday–Friday. Sampling respects these hours even if outbound

@@ -647,7 +647,6 @@ class TestHandleSweepConnections:
     ):
         from linkedin.actions.connections import ConnectionEntry
 
-        monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
         _make_pending(fake_session, "alice")
         fake_session.campaign.status = Campaign.Status.FINISHED
         fake_session.campaign.save(update_fields=["status"])

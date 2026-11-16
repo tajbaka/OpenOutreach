@@ -30,7 +30,6 @@ def _deal(*, email="", icp=""):
 
 @pytest.mark.django_db
 def test_handoff_existing_email_enqueues_gmail_follow_up(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com")
 
@@ -44,7 +43,6 @@ def test_handoff_existing_email_enqueues_gmail_follow_up(monkeypatch):
 
 @pytest.mark.django_db
 def test_handoff_does_not_recreate_failed_post_submission_step(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com")
     existing = Task.objects.create(
@@ -68,7 +66,6 @@ def test_handoff_does_not_recreate_failed_post_submission_step(monkeypatch):
 
 @pytest.mark.django_db
 def test_handoff_requeues_failed_post_submission_step_with_exact_message(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com")
     existing = Task.objects.create(
@@ -107,7 +104,6 @@ def test_handoff_requeues_failed_post_submission_step_with_exact_message(monkeyp
 
 @pytest.mark.django_db
 def test_handoff_missing_email_enqueues_email_enrichment(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="")
 
@@ -121,7 +117,6 @@ def test_handoff_missing_email_enqueues_email_enrichment(monkeypatch):
 
 @pytest.mark.django_db
 def test_handoff_uses_persisted_icp_for_gmail_templates(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com", icp="Channel")
 
@@ -133,7 +128,6 @@ def test_handoff_uses_persisted_icp_for_gmail_templates(monkeypatch):
 
 @pytest.mark.django_db
 def test_handoff_stops_when_lead_replied_anywhere(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     deal = _deal(email="ada@example.com")
     Message.objects.create(
         lead=deal.lead,
@@ -149,9 +143,10 @@ def test_handoff_stops_when_lead_replied_anywhere(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_handoff_disabled_noops(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", False)
+def test_handoff_campaign_gmail_disabled_noops():
     deal = _deal(email="ada@example.com")
+    deal.campaign.enable_gmail = False
+    deal.campaign.save(update_fields=["enable_gmail"])
 
     assert maybe_schedule_gmail_sequence(deal=deal, operator="Arian") is None
     assert not Task.objects.exists()
@@ -159,7 +154,6 @@ def test_handoff_disabled_noops(monkeypatch):
 
 @pytest.mark.django_db
 def test_handoff_supports_chuka_gmail_operator(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com")
 
@@ -172,7 +166,6 @@ def test_handoff_supports_chuka_gmail_operator(monkeypatch):
 
 @pytest.mark.django_db
 def test_handoff_queue_error_does_not_escape_to_linkedin(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     deal = _deal(email="ada@example.com")
 
@@ -187,7 +180,6 @@ def test_handoff_queue_error_does_not_escape_to_linkedin(monkeypatch):
 
 @pytest.mark.django_db
 def test_finished_campaign_does_not_start_or_continue_current_gmail(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     deal = _deal(email="ada@example.com")
     deal.campaign.status = Campaign.Status.FINISHED
     deal.campaign.save(update_fields=["status"])

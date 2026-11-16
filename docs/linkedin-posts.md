@@ -20,7 +20,7 @@ same sender's browser at once.
 ## Rollout
 
 There is no setting (user decision, 2026-11-02): the post worker runs whenever
-the LinkedIn daemon does (`ENABLE_LINKEDIN_DAEMON=true`), like the repost
+the LinkedIn daemon does, like the repost
 worker, and acts only on rows Social Studio's dashboard queues. On a worker
 computer:
 

@@ -27,7 +27,6 @@ from gmail.submission import (
     submission_attempted,
 )
 from gmail.templates import render_for_icp, steps_for_icp
-from linkedin.conf import ENABLE_GMAIL_SEQUENCE
 from linkedin.exceptions import SheetsError
 from linkedin.icp_outbound import resolve_icp
 from linkedin.tasks.follow_up import _delay_seconds_to_active_due
@@ -547,10 +546,6 @@ def _is_missing_template_error(exc: SheetsError) -> bool:
 
 def handle_gmail_follow_up(task) -> None:
     from crm.models import Lead
-
-    if not ENABLE_GMAIL_SEQUENCE:
-        logger.info("gmail_follow_up: ENABLE_GMAIL_SEQUENCE=false - skipping")
-        return
 
     payload = task.payload or {}
     lead_id = payload["lead_id"]

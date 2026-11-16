@@ -35,14 +35,13 @@ def post_hooks(monkeypatch):
     return hooks
 
 
-@pytest.mark.parametrize("daemon,expected", [(None, True), ("true", True), ("false", False)])
-def test_posts_run_whenever_the_linkedin_daemon_does(monkeypatch, daemon, expected):
-    # No setting of their own (user decision, 2026-11-02); email-only mode has none.
+@pytest.mark.parametrize("daemon", [None, "true", "false"])
+def test_posts_ignore_retired_daemon_flag(monkeypatch, daemon):
     if daemon is None:
         monkeypatch.delenv("ENABLE_LINKEDIN_DAEMON", raising=False)
     else:
         monkeypatch.setenv("ENABLE_LINKEDIN_DAEMON", daemon)
-    assert supervisor._linkedin_posts_enabled() is expected
+    assert supervisor._linkedin_posts_enabled() is True
 
 
 def test_without_posts_the_supervisor_never_touches_them(monkeypatch, harness):  # noqa: F811

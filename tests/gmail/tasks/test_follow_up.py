@@ -19,7 +19,6 @@ from tests.factories import UserFactory
 @pytest.fixture(autouse=True)
 def no_suppression(monkeypatch):
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     FakeGmailClient.calls = []
     FakeGmailClient.send_count = 0
     FakeGmailClient.provider_rfc_ids = []
@@ -102,7 +101,6 @@ def _task(lead, deal=None, *, status=Task.Status.RUNNING, **payload):
 def test_gmail_follow_up_sends_and_persists(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
 
     handle_gmail_follow_up(_task(lead, deal))
@@ -129,7 +127,6 @@ def test_gmail_follow_up_from_finished_campaign_never_builds_client(monkeypatch)
     deal = _deal(lead)
     deal.campaign.status = Campaign.Status.FINISHED
     deal.campaign.save(update_fields=["status"])
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
 
     class NoClient:
         def __init__(self, *, operator):
@@ -147,7 +144,6 @@ def test_gmail_follow_up_stamps_durable_submission_boundary(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
     task = _task(lead, deal)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
 
     handle_gmail_follow_up(task)
@@ -165,7 +161,6 @@ def test_gmail_follow_up_refuses_retry_after_submission_boundary(monkeypatch):
     payload[SUBMISSION_ATTEMPTED_AT_KEY] = timezone.now().isoformat()
     task.payload = payload
     task.save(update_fields={"payload"})
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
 
     class NoRetryClient:
         def __init__(self, *, operator):
@@ -183,7 +178,6 @@ def test_gmail_follow_up_failure_after_boundary_stays_nonretryable(monkeypatch):
     deal = _deal(lead)
     task = _task(lead, deal)
     FakeGmailClient.fail_after_callback = RuntimeError("metadata lookup failed")
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
 
     with pytest.raises(RuntimeError, match="metadata lookup failed"):
@@ -200,7 +194,6 @@ def test_gmail_follow_up_next_step_delay_starts_after_send(monkeypatch):
     deal = _deal(lead)
     deal.connected_at = timezone.now() - timedelta(days=30)
     deal.save(update_fields=["connected_at"])
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
 
     seen = {}
@@ -228,7 +221,6 @@ def test_gmail_follow_up_next_step_delay_starts_after_send(monkeypatch):
 def test_gmail_follow_up_uses_persisted_icp(monkeypatch):
     lead = _lead(icp="Channel")
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
 
     handle_gmail_follow_up(_task(lead, deal))
@@ -240,7 +232,6 @@ def test_gmail_follow_up_uses_persisted_icp(monkeypatch):
 @pytest.mark.django_db
 def test_gmail_follow_up_stops_on_persisted_gmail_reply_without_deal(monkeypatch):
     lead = _lead()
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     Message.objects.create(
         lead=lead,
         source=Message.Source.GMAIL,
@@ -267,7 +258,6 @@ def test_gmail_follow_up_stops_on_persisted_gmail_reply_without_deal(monkeypatch
 def test_gmail_follow_up_dedup_skips_existing_step(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     Message.objects.create(
         lead=lead,
         source=Message.Source.GMAIL,
@@ -295,7 +285,6 @@ def test_gmail_follow_up_continues_real_thread_and_retains_subject(monkeypatch):
     ]
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
 
     handle_gmail_follow_up(_task(lead, deal))
@@ -340,7 +329,6 @@ def test_gmail_follow_up_continues_real_thread_and_retains_subject(monkeypatch):
 def test_gmail_follow_up_continuation_fails_closed_without_exact_binding(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
     Message.objects.create(
         lead=lead,
@@ -362,7 +350,6 @@ def test_gmail_follow_up_continuation_fails_closed_without_exact_binding(monkeyp
 def test_gmail_follow_up_rechecks_persisted_stop_immediately_before_send(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
     reasons = iter(("", "Lead replied; automation stopped"))
     monkeypatch.setattr(
@@ -380,7 +367,6 @@ def test_gmail_follow_up_rechecks_persisted_stop_immediately_before_send(monkeyp
 def test_gmail_follow_up_dedup_heals_missing_next_task(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
     original_task = _task(lead, deal)
 
@@ -401,7 +387,6 @@ def test_stale_post_send_task_requeues_and_heals_successor_without_resend(
 ):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
     task = _task(lead, deal)
 
@@ -441,7 +426,6 @@ def test_stale_post_send_task_requeues_and_heals_successor_without_resend(
 def test_gmail_follow_up_rejects_malformed_stored_references(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FakeGmailClient)
     Message.objects.create(
         lead=lead,
@@ -472,10 +456,11 @@ def test_gmail_follow_up_rejects_malformed_stored_references(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_gmail_follow_up_disabled_noops(monkeypatch):
+def test_gmail_follow_up_campaign_gmail_disabled_noops(monkeypatch):
     lead = _lead()
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", False)
+    deal.campaign.enable_gmail = False
+    deal.campaign.save(update_fields=["enable_gmail"])
 
     class NoSendClient(FakeGmailClient):
         def __init__(self, *, operator):
@@ -492,7 +477,6 @@ def test_gmail_follow_up_disabled_noops(monkeypatch):
 def test_gmail_follow_up_missing_sender_icp_skips_without_client(monkeypatch):
     lead = _lead(icp="CSPs")
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
 
     class NoClient:
         def __init__(self, *, operator):
@@ -509,7 +493,6 @@ def test_gmail_follow_up_missing_sender_icp_skips_without_client(monkeypatch):
 def test_gmail_follow_up_blank_template_skips_without_client(monkeypatch):
     lead = _lead(icp="CSPs")
     deal = _deal(lead)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr(
         "gmail.tasks.follow_up.render_for_icp",
         lambda **kwargs: (_ for _ in ()).throw(SheetsError("gmail templates: step 0 needs body_variants")),

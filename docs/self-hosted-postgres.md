@@ -50,7 +50,7 @@ The restore script uses local `pg_dump`/`pg_restore` when they are installed.
 On a Docker-only host, it falls back to the running
 `openoutreach-postgres-test` container's Postgres clients.
 
-Smoke-test the copied data with outbound automation disabled:
+Smoke-test the copied data with the non-sending system check command:
 
 ```bash
 set -a
@@ -59,7 +59,6 @@ set +a
 DATABASE_URL="$SELFHOST_DATABASE_URL" \
 ENABLE_CONNECT=false \
 ENABLE_FOLLOW_UP=false \
-ENABLE_GMAIL_SEQUENCE=false \
 ENABLE_REALTIME_LISTENER=false \
 ENABLE_NODE_MONITOR=false \
 .venv/bin/python manage.py check
@@ -71,7 +70,6 @@ For a deeper dry run, use commands that do not send LinkedIn or Gmail messages:
 DATABASE_URL="$SELFHOST_DATABASE_URL" \
 ENABLE_CONNECT=false \
 ENABLE_FOLLOW_UP=false \
-ENABLE_GMAIL_SEQUENCE=false \
 ENABLE_REALTIME_LISTENER=false \
 ENABLE_NODE_MONITOR=false \
 .venv/bin/python manage.py refresh_crm_v2 --skip-sales-motion

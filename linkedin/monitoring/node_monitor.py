@@ -175,6 +175,7 @@ def _connectable_count(campaign_ids: list[int]) -> int:
 
     return Deal.objects.filter(
         campaign_id__in=campaign_ids,
+        campaign__enable_linkedin=True,
         lead__disqualified=False,
         state__in=[ProfileState.QUALIFIED, ProfileState.READY_TO_CONNECT],
     ).count()
@@ -249,7 +250,7 @@ def _expected_sender_profiles() -> dict[str, object | None]:
         }
 
     active_user_ids = set(
-        Campaign.objects.filter(status=Campaign.Status.ACTIVE)
+        Campaign.objects.filter(status=Campaign.Status.ACTIVE, enable_linkedin=True)
         .values_list("user_id", flat=True)
     )
     return {
@@ -306,7 +307,9 @@ def check_expected_sender_activity(self_sender: str) -> None:
             continue
 
         campaign_ids = list(
-            Campaign.objects.filter(user=profile.user, status=Campaign.Status.ACTIVE)
+            Campaign.objects.filter(
+                user=profile.user, status=Campaign.Status.ACTIVE, enable_linkedin=True,
+            )
             .values_list("id", flat=True)
         )
         task_summary = _outbound_task_summary(sender, campaign_ids, now)

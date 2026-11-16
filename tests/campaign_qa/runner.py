@@ -25,6 +25,10 @@ def main():
         raise QASafetyError('Use scripts/qa_campaigns.py, not this child directly')
     import dotenv
     dotenv.load_dotenv = lambda *args, **kwargs: False
+    # Set retired flags before any application imports. Old deployment values
+    # must not disable workers, scheduling, enrichment, or Gmail delivery.
+    os.environ['ENABLE_LINKEDIN_DAEMON'] = 'false'
+    os.environ['ENABLE_GMAIL_SEQUENCE'] = 'false'
     # Install before Django or pytest loads application code. libpq is a native
     # client, so separately constrain its connection parameters to our socket.
     sys.addaudithook(audit)
@@ -63,7 +67,7 @@ def main():
             'tests/test_repost_action.py', 'tests/test_linkedin_reposts.py',
             'tests/test_daemon_supervisor_reposts.py',
             'tests/test_browser_nav.py', 'tests/test_browser_login.py',
-            'tests/test_daemon_supervisor_gmail.py', 'tests/test_daemon_supervisor_email_only.py',
+            'tests/test_daemon_supervisor_gmail.py', 'tests/test_daemon_supervisor_channels.py',
             'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',
             'tests/test_feed_sampling.py', 'tests/test_feed_collection.py',
             'tests/test_daemon_supervisor_stop.py', 'tests/test_supervisor_safety.py',
@@ -123,6 +127,9 @@ def main():
         'tests/tasks/test_tasks.py', 'tests/test_message_media.py',
         'tests/drip', 'tests/discovery',
         'tests/test_single_instance.py', 'tests/test_daemon_supervisor_gmail.py',
+        'tests/test_daemon_supervisor_channels.py',
+        'tests/test_daemon_supervisor_reposts.py', 'tests/test_daemon_supervisor_posts.py',
+        'tests/test_startup_checks.py', 'tests/test_canonical_runtime_startup.py',
         'tests/test_daemon_supervisor_feed.py', 'tests/test_daemon_supervisor_restart.py',
         'tests/test_daemon_supervisor_stop.py', 'tests/test_supervisor_safety.py',
         'tests/test_slack_supervisor_controls.py',

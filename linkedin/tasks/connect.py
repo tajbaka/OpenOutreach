@@ -465,6 +465,7 @@ def handle_connect(task, session, qualifiers):
     if not Campaign.objects.filter(
         pk=campaign_id,
         status=Campaign.Status.ACTIVE,
+        enable_linkedin=True,
     ).exists():
         logger.info(
             "connect: campaign %s is not active - skipping task %s",
@@ -662,6 +663,10 @@ def handle_connect(task, session, qualifiers):
                 )
             enqueue_connect(campaign_id, delay_seconds=0)
             return
+        if not Campaign.objects.filter(
+            pk=campaign_id, status=Campaign.Status.ACTIVE, enable_linkedin=True,
+        ).exists():
+            return
         before_click = None
         if connection_delivery is not None:
             from linkedin.message_delivery_runtime import mark_delivery_status
@@ -674,6 +679,10 @@ def handle_connect(task, session, qualifiers):
                 # before any such click leave the note untouched and retryable.
                 nonlocal reservation
                 with transaction.atomic():
+                    if not Campaign.objects.filter(
+                        pk=campaign_id, status=Campaign.Status.ACTIVE, enable_linkedin=True,
+                    ).exists():
+                        raise ValueError("LinkedIn campaign stopped before the connection attempt")
                     mark_delivery_status(
                         connection_delivery,
                         OutboundDelivery.Status.SENDING,
@@ -919,6 +928,7 @@ def enqueue_connect(campaign_id: int, delay_seconds: float = 10):
     if not Campaign.objects.filter(
         pk=campaign_id,
         status=Campaign.Status.ACTIVE,
+        enable_linkedin=True,
     ).exists():
         logger.info(
             "connect enqueue skipped for campaign %s: campaign is not active",
@@ -968,6 +978,7 @@ def enqueue_follow_up(
     campaign = Campaign.objects.filter(
         pk=campaign_id,
         status=Campaign.Status.ACTIVE,
+        enable_linkedin=True,
     ).first()
     if campaign is None:
         logger.info(

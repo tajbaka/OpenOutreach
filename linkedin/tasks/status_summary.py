@@ -237,6 +237,7 @@ def build_status_summary_rows(*, since) -> list[dict]:
             "qualified_remaining": (
                 Deal.objects.filter(
                     campaign_id__in=campaign_ids,
+                    campaign__enable_linkedin=True,
                     state=ProfileState.QUALIFIED,
                     lead__disqualified=False,
                 ).count()

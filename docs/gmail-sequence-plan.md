@@ -2,6 +2,36 @@
 
 This is the current operating spec for Gmail sequencing in OpenOutreach.
 
+## Campaign channels
+
+`enable_linkedin` and `enable_gmail` are optional campaign settings in Admin
+and campaign JSON. Both default to `true`. The former controls automated
+connection requests and LinkedIn follow-ups for that campaign. Account-level
+listening and manual replies continue when the LinkedIn daemon is running.
+The latter controls campaign email scheduling, address enrichment, and sends.
+The retired `ENABLE_LINKEDIN_DAEMON` and `ENABLE_GMAIL_SEQUENCE` environment
+variables are ignored, even when set to `false`. The supervisor starts the
+LinkedIn daemon and mapped Gmail worker independently. Sender emergency stops,
+campaign status, hours, reply stops, and attachment checks still apply.
+
+For a Gmail-only campaign, set `enable_linkedin=false`, keep
+`enable_gmail=true`, and bind a published message version. The campaign's
+pre/post LinkedIn acceptance setting applies only when LinkedIn is enabled.
+Use `start_email_campaign` to preview the start and then schedule Email 1
+once per eligible Deal. Its timestamp includes a UTC offset, and its interval
+sets the starting cadence across recipients. Pass `--audience-map` with a
+JSON object mapping Deal IDs to reviewed audience keys when the campaign's
+mapping differs from the Lead ICP. Apply requires an active campaign.
+
+```sh
+.venv/bin/python manage.py start_email_campaign --campaign 66 \
+  --start-at 2026-11-17T09:00:00-05:00 --interval-minutes 5
+```
+
+Repeat the reviewed command with `--apply` to queue work. The standard Gmail
+worker sends and schedules later steps from actual confirmed send times.
+Gmail-only campaigns use the sender's active hours and configured rest days.
+
 ## Trigger
 
 Campaign creation explicitly asks whether email should start before or after
@@ -26,7 +56,7 @@ The scheduling hook is `gmail.handoff.maybe_schedule_gmail_sequence`, called fro
 - A bounded startup recovery pass for exact opted-in confirmed invitations whose
   initial Gmail work is missing, even when LinkedIn follow-ups are disabled.
 
-If `ENABLE_GMAIL_SEQUENCE=false`, the hook no-ops.
+If the campaign has `enable_gmail=false`, the hook no-ops.
 Gmail failures are logged at the existing best-effort LinkedIn boundary. This
 does not claim success; the skip/failure reason must be reviewed.
 

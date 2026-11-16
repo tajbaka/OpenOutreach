@@ -23,8 +23,6 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture(autouse=True)
 def configured_gmail(monkeypatch):
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
-    monkeypatch.setattr("gmail.tasks.follow_up.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", False)
     monkeypatch.setattr("gmail.tasks.follow_up.GmailClient", FrozenGmailClient)

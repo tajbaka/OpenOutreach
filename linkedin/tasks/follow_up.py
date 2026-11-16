@@ -221,6 +221,7 @@ def _send_media_follow_up(
         if not Campaign.objects.filter(
             pk=campaign_id,
             status=Campaign.Status.ACTIVE,
+            enable_linkedin=True,
         ).exists():
             _abort("campaign", "current LinkedIn campaign became inactive")
 
@@ -473,6 +474,7 @@ def handle_follow_up(task, session, qualifiers):
     if not Campaign.objects.filter(
         pk=campaign_id,
         status=Campaign.Status.ACTIVE,
+        enable_linkedin=True,
     ).exists():
         logger.info(
             "follow_up: campaign %s is not active - skipping task %s",
@@ -829,6 +831,10 @@ def handle_follow_up(task, session, qualifiers):
     # Profile/template work can outlive an earlier listener or backfill write.
     # Recheck persisted state at the external mutation boundary without adding
     # a live conversation dependency.
+    if not Campaign.objects.filter(
+        pk=campaign_id, status=Campaign.Status.ACTIVE, enable_linkedin=True,
+    ).exists():
+        return
     if _drip_owns_linkedin(deal.lead_id):
         if bound_delivery is not None:
             from linkedin.message_delivery_runtime import mark_delivery_status

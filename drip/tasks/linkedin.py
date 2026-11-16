@@ -105,6 +105,7 @@ def _active_action_campaign(session, operator: str) -> Campaign | None:
     return Campaign.objects.filter(
         pk=campaign.pk,
         status=Campaign.Status.ACTIVE,
+        enable_linkedin=True,
         user_id=profile.user_id,
     ).first()
 

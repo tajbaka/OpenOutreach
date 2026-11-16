@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -174,13 +175,14 @@ def _defer_locked_task_if_early(locked, *, delivery, task) -> bool:
     due_at = locked.scheduled_at
     if delivery is not None:
         due_at = max(due_at, delivery.scheduled_at)
-    # Existing campaigns retain their current cadence. Only the new opt-in
-    # lane uses the sender's active/rest-day window at the Gmail boundary.
-    invitation_mode = Deal.objects.filter(
+    # Existing mixed post-acceptance campaigns retain their current cadence.
+    uses_sender_window = Deal.objects.filter(
         pk=(locked.payload or {}).get("deal_id"),
-        campaign__gmail_start_mode=Campaign.GmailStartMode.INVITATION_SENT,
+    ).filter(
+        Q(campaign__gmail_start_mode=Campaign.GmailStartMode.INVITATION_SENT)
+        | Q(campaign__enable_linkedin=False),
     ).exists()
-    if invitation_mode:
+    if uses_sender_window:
         due_at = _normalize_linkedin_due_at(due_at, current_time=now)
     if due_at <= now:
         return False

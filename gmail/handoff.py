@@ -14,7 +14,6 @@ from django.db import transaction
 from django.utils import timezone
 
 from gmail.submission import persisted_submission_evidence, submission_attempted
-from linkedin.conf import ENABLE_GMAIL_SEQUENCE
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ def _known_stop_reason(lead_id: int) -> str:
 
 
 def _current_deal_campaign_is_active(deal_id: int | None) -> bool:
-    """Return false only when an exact current-outbound Deal is inactive.
+    """Check that an exact current-outbound Deal's campaign permits Gmail.
 
     Current Gmail Tasks created by the post-accept handoff freeze ``deal_id``.
     Older manually queued Tasks may not have one, so absence cannot safely be
@@ -54,6 +53,7 @@ def _current_deal_campaign_is_active(deal_id: int | None) -> bool:
     return Deal.objects.filter(
         pk=deal_id,
         campaign__status=Campaign.Status.ACTIVE,
+        campaign__enable_gmail=True,
     ).exists()
 
 
@@ -176,8 +176,6 @@ def enqueue_gmail_follow_up(
     """Create a Gmail follow-up task unless the same step is already queued."""
     from linkedin.models import Task
 
-    if not ENABLE_GMAIL_SEQUENCE:
-        return None
     if not operator:
         raise ValueError("enqueue_gmail_follow_up requires a non-empty operator")
     if not _current_deal_campaign_is_active(deal_id):
@@ -341,8 +339,6 @@ def enqueue_email_enrichment(
     """Create an email-enrichment task unless one is already queued."""
     from linkedin.models import Task
 
-    if not ENABLE_GMAIL_SEQUENCE:
-        return None
     if not operator:
         raise ValueError("enqueue_email_enrichment requires a non-empty operator")
     if not _current_deal_campaign_is_active(deal_id):
@@ -481,11 +477,11 @@ def maybe_schedule_gmail_sequence(*, deal, operator: str):
 
 
 @transaction.atomic
-def _maybe_schedule_gmail_sequence(*, deal, operator: str):
+def _maybe_schedule_gmail_sequence(
+    *, deal, operator: str, email_only_start_at=None, audience_key: str | None = None,
+    expected_version_id: int | None = None,
+):
     """Materialize the first Gmail step once, under the Lead ownership lock."""
-    if not ENABLE_GMAIL_SEQUENCE:
-        logger.info("gmail cadence skipped for lead %s: Gmail sequence disabled", deal.lead_id)
-        return None
     from crm.models import Deal
     from drip.services.ownership import lock_lead_outbound_ownership
     from linkedin.enums import ProfileState
@@ -493,17 +489,32 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
     from linkedin.operators import resolve_operator
 
     lock_lead_outbound_ownership(deal.lead_id)
-    deal = Deal.objects.select_for_update(of=("self",)).select_related(
+    deal = Deal.objects.select_for_update(of=("self", "campaign")).select_related(
         "lead", "campaign__active_message_version__program",
     ).get(pk=deal.pk)
+    if not _current_deal_campaign_is_active(deal.pk):
+        return None
+    direct_start = not deal.campaign.enable_linkedin
+    if direct_start != (email_only_start_at is not None):
+        return None
     invitation_start = deal.campaign.gmail_start_mode == Campaign.GmailStartMode.INVITATION_SENT
-    if invitation_start:
+    if direct_start or invitation_start:
         owner_handle = LinkedInProfile.objects.filter(
             user_id=deal.campaign.user_id,
         ).values_list("linkedin_username", flat=True).first()
         if not owner_handle or resolve_operator(owner_handle) != operator:
-            logger.info("gmail cadence skipped for Deal %s: invitation sender ownership mismatch", deal.pk)
+            logger.info("gmail cadence skipped for Deal %s: sender ownership mismatch", deal.pk)
             return None
+    if direct_start:
+        if deal.campaign.active_message_version_id != expected_version_id:
+            raise ValueError("Email-only campaign message version changed")
+        if (
+            not deal.campaign.active_message_version_id
+            or deal.state not in {ProfileState.QUALIFIED, ProfileState.READY_TO_CONNECT}
+        ):
+            return None
+        reference_at = email_only_start_at
+    elif invitation_start:
         if (
             not deal.campaign.active_message_version_id
             or deal.invitation_sent_at is None
@@ -519,13 +530,6 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
             logger.info("gmail cadence skipped for Deal %s: waiting for acceptance", deal.pk)
             return None
         reference_at = deal.connected_at or timezone.now()
-    if not _current_deal_campaign_is_active(deal.pk):
-        logger.info(
-            "gmail cadence skipped for lead %s: campaign %s is not active",
-            deal.lead_id,
-            deal.campaign_id,
-        )
-        return None
     if not _operator_can_send_gmail(operator):
         logger.info("gmail cadence skipped for operator %s: no Gmail mapping", operator)
         return None
@@ -579,8 +583,13 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
                 raise ValueError(
                     "existing Gmail message enrollment belongs to another operator"
                 )
+            if direct_start and (
+                enrollment.message_version_id != expected_version_id
+                or enrollment.audience_key != audience_key
+            ):
+                raise ValueError("Existing Gmail enrollment does not match the launch plan")
         else:
-            audience_input = str(deal.lead.icp or "").strip()
+            audience_input = str(audience_key or deal.lead.icp or "").strip()
             if not audience_input:
                 logger.info(
                     "gmail cadence skipped for lead %s: no frozen audience input",
@@ -615,7 +624,7 @@ def _maybe_schedule_gmail_sequence(*, deal, operator: str):
             return None
         if delivery.task_id is not None:
             return delivery.task
-        if created and invitation_start:
+        if created and (direct_start or invitation_start):
             from linkedin.tasks.follow_up import _normalize_linkedin_due_at
 
             delivery.scheduled_at = _normalize_linkedin_due_at(
@@ -702,8 +711,6 @@ def recover_invitation_gmail_sequences(*, operator: str, campaign_ids, limit: in
     from linkedin.models import Campaign, OutboundDelivery, Task, WorkflowRun
     from linkedin.operators import CANONICAL_OPERATOR_HANDLES
 
-    if not ENABLE_GMAIL_SEQUENCE:
-        return 0
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
         raise ValueError("invitation Gmail recovery limit must be between 1 and 1000")
     if operator not in CANONICAL_OPERATOR_HANDLES:
@@ -729,6 +736,8 @@ def recover_invitation_gmail_sequences(*, operator: str, campaign_ids, limit: in
     deals = Deal.objects.filter(
         campaign_id__in=campaign_ids,
         campaign__status=Campaign.Status.ACTIVE,
+        campaign__enable_linkedin=True,
+        campaign__enable_gmail=True,
         campaign__gmail_start_mode=Campaign.GmailStartMode.INVITATION_SENT,
         campaign__active_message_version__isnull=False,
         state__in=(ProfileState.PENDING, ProfileState.CONNECTED, ProfileState.COMPLETED),

@@ -33,7 +33,6 @@ OPERATORS = ("Arian", "Chuka")
 def invitation_environment(monkeypatch):
     clock = SimpleNamespace(now=datetime(2026, 9, 10, 14, tzinfo=dt_timezone.utc))
     monkeypatch.setattr(timezone, "now", lambda: clock.now)
-    monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", True)
     monkeypatch.setattr("linkedin.tasks.follow_up.ENABLE_ACTIVE_HOURS", False)
     monkeypatch.setattr("linkedin.suppression.lead_suppression_match", lambda lead: None)
     return clock
@@ -352,7 +351,8 @@ def test_invitation_scheduler_safe_skip_reasons(monkeypatch, scenario):
         deal.lead.disqualified = True
         deal.lead.save(update_fields=["disqualified"])
     elif scenario == "disabled":
-        monkeypatch.setattr("gmail.handoff.ENABLE_GMAIL_SEQUENCE", False)
+        deal.campaign.enable_gmail = False
+        deal.campaign.save(update_fields=["enable_gmail"])
     elif scenario == "no_mapping":
         monkeypatch.setattr("gmail.handoff._operator_can_send_gmail", lambda operator: False)
     elif scenario == "drip_owned":
