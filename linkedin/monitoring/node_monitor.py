@@ -35,16 +35,18 @@ from linkedin.operators import resolve_operator
 logger = logging.getLogger(__name__)
 
 
-def write_heartbeat(sender: str) -> None:
+def write_heartbeat(sender: str, *, runtime_mode: str = "linkedin"):
     """Stamp this node's heartbeat. Clears `down_alerted_at` — a node that
     is beating is alive, so any prior down-claim is void and the next real
     outage should alert afresh."""
     from linkedin.models import DaemonHeartbeat
 
-    DaemonHeartbeat.objects.update_or_create(
+    row, _ = DaemonHeartbeat.objects.update_or_create(
         sender=sender,
-        defaults={"last_alive": timezone.now(), "down_alerted_at": None},
+        defaults={"last_alive": timezone.now(), "down_alerted_at": None,
+                  "runtime_mode": runtime_mode},
     )
+    return row.last_alive
 
 
 def clear_heartbeat(sender: str) -> None:
@@ -277,6 +279,10 @@ def check_expected_sender_activity(self_sender: str) -> None:
 
     for sender, profile in _expected_sender_profiles().items():
         heartbeat = heartbeats.get(sender)
+        if heartbeat is not None and heartbeat.runtime_mode == DaemonHeartbeat.RuntimeMode.EMAIL_ONLY:
+            # A host may intentionally pause LinkedIn even while its campaigns
+            # retain LinkedIn work. Peer liveness still monitors its heartbeat.
+            continue
         if heartbeat is None or heartbeat.last_alive is None:
             if _claim_activity_alert(sender, now):
                 notify_degraded(

@@ -166,6 +166,28 @@ class TestCheckExpectedSenderActivity:
         )
         return profile, campaign
 
+    @pytest.mark.parametrize('alive', [True, False])
+    def test_email_only_runtime_is_not_reported_as_missing_or_stuck_linkedin(
+        self, db, monkeypatch, patched_notify, alive,
+    ):
+        self._sender()
+        now = timezone.now()
+        DaemonHeartbeat.objects.create(sender='Chuka', runtime_mode='email_only',
+                                       last_alive=now if alive else None)
+        monkeypatch.setattr(nm.conf, 'EXPECTED_OUTBOUND_SENDERS', ('Chuka',))
+        monkeypatch.setattr(nm.conf, 'SENDER_ACTIVITY_GRACE_MINUTES', 0)
+        monkeypatch.setattr(nm, '_activity_check_window', lambda _now: now - timedelta(hours=3))
+        nm.check_expected_sender_activity('Arian')
+        patched_notify.assert_not_called()
+
+    def test_stale_email_only_runtime_still_gets_peer_liveness_alert(self, db, patched_notify):
+        self._sender()
+        DaemonHeartbeat.objects.create(sender='Chuka', runtime_mode='email_only',
+                                       last_alive=timezone.now() - timedelta(hours=2))
+        nm.check_peers('Arian')
+        patched_notify.assert_called_once()
+        assert "looks down" in patched_notify.call_args.kwargs['title']
+
     def test_alerts_when_expected_sender_has_fresh_heartbeat_but_no_activity(
         self, db, monkeypatch, patched_notify,
     ):

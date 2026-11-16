@@ -469,6 +469,17 @@ def _runtime_worker_label() -> str:
     return "Daemon" if _linkedin_daemon_enabled() else "Email enrichment worker"
 
 
+def _email_runtime_heartbeat():
+    if _linkedin_daemon_enabled():
+        return None
+    from linkedin import conf
+    from linkedin.monitoring.email_runtime import EmailRuntimeHeartbeat
+    from linkedin.operators import resolve_operator
+
+    sender = resolve_operator(os.getenv("LINKEDIN_USERNAME", "").strip())
+    return EmailRuntimeHeartbeat(sender) if conf.ENABLE_NODE_MONITOR and sender else None
+
+
 def _start_feed_collector(run_id: str) -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
@@ -818,6 +829,25 @@ def supervise(args: argparse.Namespace) -> int:
 
 
 def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> int:
+    cleanups = []
+    intentional_exit = False
+    try:
+        result = _run_workers(args, safety, cleanups)
+        intentional_exit = True
+        return result
+    except SupervisorStopped:
+        intentional_exit = True
+        raise
+    finally:
+        # A cancellation can escape from a stopped restart/launch before the
+        # loop's normal shutdown tail. Keep unexpected failures visible as a
+        # stale heartbeat instead of labelling them an intentional stop.
+        if intentional_exit:
+            for cleanup in reversed(cleanups):
+                cleanup()
+
+
+def _run_workers(args: argparse.Namespace, safety: SupervisorSafety, cleanups) -> int:
 
     stop = False
     child: subprocess.Popen | None = None
@@ -902,6 +932,11 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
         )
     else:
         gmail_child = _start_gmail_worker(gmail_account)
+    email_heartbeat = _email_runtime_heartbeat()
+    if email_heartbeat is not None:
+        # Capture the current child variables, including replacements, rather
+        # than the original PIDs. The helper clears only once both have exited.
+        cleanups.append(lambda: email_heartbeat.stopped(child, gmail_child))
     next_poll = time.monotonic() + args.poll_seconds
     next_feed_check = time.monotonic() + FEED_COLLECTOR_CHECK_SECONDS
     if reposts_enabled:
@@ -911,6 +946,8 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
 
     while not stop and not safety.stopped.is_set():
         safety.raise_if_failed()
+        if email_heartbeat is not None:
+            email_heartbeat.tick(child, gmail_child, stopped=safety.stopped.is_set())
         # Child exits must not keep resetting/starving the five-minute control
         # timer. --no-update only disables Git; DB restart requests still work.
         if time.monotonic() >= next_poll:

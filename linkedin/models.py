@@ -2002,7 +2002,15 @@ class DaemonHeartbeat(models.Model):
     Revival re-stamps `last_alive` and clears `down_alerted_at`.
     """
 
+    class RuntimeMode(models.TextChoices):
+        LINKEDIN = "linkedin", "LinkedIn and Gmail"
+        EMAIL_ONLY = "email_only", "Email only"
+
     sender = models.CharField(max_length=100, unique=True)
+    runtime_mode = models.CharField(
+        max_length=16, choices=RuntimeMode.choices,
+        default=RuntimeMode.LINKEDIN, db_default=RuntimeMode.LINKEDIN,
+    )
     last_alive = models.DateTimeField(null=True, blank=True)
     down_alerted_at = models.DateTimeField(null=True, blank=True)
     activity_alerted_at = models.DateTimeField(null=True, blank=True)

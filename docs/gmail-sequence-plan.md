@@ -20,6 +20,16 @@ This pauses LinkedIn reply listening, acceptance checks, feed sampling,
 and queued posts and reposts on that machine. Gmail steps waiting for a
 LinkedIn acceptance still require acceptance to be detected.
 
+After migration `0045_daemonheartbeat_runtime_mode`, the email-only supervisor
+refreshes the sender's existing heartbeat while both Gmail and email enrichment
+children are alive. It records `runtime_mode=email_only`, so peer monitoring
+does not flag intentionally paused LinkedIn activity as stuck. Refreshes stop
+if either child exits, and normal shutdown clears only that supervisor's last
+heartbeat after both children stop. The LinkedIn daemon remains the heartbeat
+owner in normal mode. Email-only supervisors also check peer liveness, so two
+email-only machines can watch each other. `ENABLE_NODE_MONITOR=false` disables either owner. This
+is process liveness, not proof that an individual email was sent.
+
 For a Gmail-only campaign, set `enable_linkedin=false`, keep
 `enable_gmail=true`, and bind a published message version. The campaign's
 pre/post LinkedIn acceptance setting applies only when LinkedIn is enabled.

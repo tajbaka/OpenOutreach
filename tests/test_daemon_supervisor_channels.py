@@ -71,6 +71,8 @@ def test_supervision_keeps_the_selected_mode_across_restarts(monkeypatch, runtim
     monkeypatch.setattr(supervisor, "_stop_process", lambda proc, **kwargs: None)
     monkeypatch.setattr(supervisor, "_notify", lambda title, detail: notices.append(title))
     monkeypatch.setattr(supervisor, "_feed_schedule", Mock(side_effect=AssertionError("No feed jobs")))
+    heartbeat = Mock() if runtime_args else None
+    monkeypatch.setattr(supervisor, "_email_runtime_heartbeat", lambda: heartbeat)
 
     def sleep(seconds):
         clock.now += seconds
@@ -101,6 +103,9 @@ def test_supervision_keeps_the_selected_mode_across_restarts(monkeypatch, runtim
     for worker, command in expected_commands.items():
         assert launches.count(command) == (4 if failed_worker == worker else 3)
     assert len(notices) == (1 if failed_worker else 0)
+    if heartbeat is not None:
+        assert heartbeat.tick.called
+        heartbeat.stopped.assert_called_once()
 
 
 def test_direct_daemon_exits_before_startup_when_disabled(monkeypatch):
@@ -116,3 +121,38 @@ def test_direct_daemon_exits_before_startup_when_disabled(monkeypatch):
         runpy.run_path(str(supervisor.ROOT_DIR / "manage.py"), run_name="__main__")
     assert exited.value.code == 0
     check.assert_not_called()
+
+
+@pytest.mark.parametrize('linkedin_enabled,monitor_enabled,expected', [
+    (True, True, False), (False, False, False), (False, True, True),
+])
+def test_only_monitored_email_only_supervisors_own_the_extra_heartbeat(
+    monkeypatch, linkedin_enabled, monitor_enabled, expected,
+):
+    monkeypatch.setenv('ENABLE_LINKEDIN_DAEMON', str(linkedin_enabled))
+    monkeypatch.setattr('linkedin.conf.ENABLE_NODE_MONITOR', monitor_enabled)
+    result = supervisor._email_runtime_heartbeat()
+    assert (result is not None) is expected
+    if result is not None:
+        assert result.sender == 'Chuka'
+
+
+@pytest.mark.parametrize('failure,cleared', [
+    (None, True), (supervisor.SupervisorStopped(), True), (RuntimeError('crash'), False),
+])
+def test_heartbeat_cleanup_distinguishes_intentional_stop_from_crash(monkeypatch, failure, cleared):
+    cleanup = Mock()
+
+    def run(args, safety, cleanups):
+        cleanups.append(cleanup)
+        if failure is not None:
+            raise failure
+        return 0
+
+    monkeypatch.setattr(supervisor, '_run_workers', run)
+    if failure is None:
+        assert supervisor._supervise_workers(None, None) == 0
+    else:
+        with pytest.raises(type(failure)):
+            supervisor._supervise_workers(None, None)
+    assert cleanup.call_count == int(cleared)
