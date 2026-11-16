@@ -79,6 +79,8 @@ ENV_VARS: tuple[EnvVar, ...] = (
            "API key for the LeadMagic phone-enrichment provider."),
     EnvVar("PROSPEO_API_KEY", False, True, None, "enrichment",
            "API key for the Prospeo phone-enrichment provider."),
+    EnvVar("ENABLE_LINKEDIN_DAEMON", False, False, "true", "feature_flags",
+           "Start LinkedIn browser workers. False runs the mapped Gmail worker and sender-scoped email enrichment. Restart the supervisor after changing."),
     EnvVar("ENABLE_CONNECT", False, False, "true", "feature_flags",
            "Enable the connect task lane."),
     EnvVar("ENABLE_SWEEP_CONNECTIONS", False, False, "true", "feature_flags",

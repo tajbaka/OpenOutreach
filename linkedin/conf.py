@@ -161,6 +161,11 @@ TASK_RUNNING_STALE_MINUTES = float(
 # ----------------------------------------------------------------------
 # Campaign config (timing + ML defaults — hardcoded, no YAML)
 # ----------------------------------------------------------------------
+# Supervisor email-only mode also suppresses direct daemon browser startup.
+ENABLE_LINKEDIN_DAEMON = os.getenv("ENABLE_LINKEDIN_DAEMON", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 # Master kill-switch for all follow-up messaging. When false, the daemon
 # stops at the connect step: connection invites still go out, but no
 # post-accept message and no follow-up agent ever runs. Existing pending

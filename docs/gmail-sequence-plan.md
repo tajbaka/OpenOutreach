@@ -9,10 +9,16 @@ and campaign JSON. Both default to `true`. The former controls automated
 connection requests and LinkedIn follow-ups for that campaign. Account-level
 listening and manual replies continue when the LinkedIn daemon is running.
 The latter controls campaign email scheduling, address enrichment, and sends.
-The retired `ENABLE_LINKEDIN_DAEMON` and `ENABLE_GMAIL_SEQUENCE` environment
-variables are ignored, even when set to `false`. The supervisor starts the
-LinkedIn daemon and mapped Gmail worker independently. Sender emergency stops,
-campaign status, hours, reply stops, and attachment checks still apply.
+The retired `ENABLE_GMAIL_SEQUENCE` environment variable is ignored.
+Sender emergency stops, campaign status, hours, reply stops, and attachment
+checks still apply.
+
+The sender machine's `ENABLE_LINKEDIN_DAEMON` feature flag defaults to
+`true`. Set it to `false` and restart the supervisor to run the mapped
+Gmail worker and sender-scoped email enrichment without opening LinkedIn.
+This pauses LinkedIn reply listening, acceptance checks, feed sampling,
+and queued posts and reposts on that machine. Gmail steps waiting for a
+LinkedIn acceptance still require acceptance to be detected.
 
 For a Gmail-only campaign, set `enable_linkedin=false`, keep
 `enable_gmail=true`, and bind a published message version. The campaign's

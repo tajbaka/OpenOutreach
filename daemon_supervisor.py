@@ -5,8 +5,8 @@ Runs the browser-backed LinkedIn daemon and the mapped browserless Gmail worker
 as independent child processes, optionally polls the current Git upstream for
 new commits, and restarts the children after applying updates. This is
 also where a sender's database restart request is consumed, independently of
-Git updates. Outreach channels are controlled by each campaign. Run it in a
-terminal on macOS, Windows, or Linux.
+Git updates. ENABLE_LINKEDIN_DAEMON=false replaces LinkedIn with browserless
+email enrichment. Run it in a terminal on macOS, Windows, or Linux.
 """
 from __future__ import annotations
 
@@ -445,6 +445,30 @@ def _start_daemon(*, restart_reason: str = "") -> subprocess.Popen:
     return _launch([sys.executable, "manage.py"], cwd=ROOT_DIR, env=env)
 
 
+def _start_runtime_worker(*, restart_reason: str = "") -> subprocess.Popen:
+    if _linkedin_daemon_enabled():
+        return _start_daemon(restart_reason=restart_reason)
+
+    from linkedin.operators import resolve_operator
+
+    operator = resolve_operator(os.getenv("LINKEDIN_USERNAME", "").strip())
+    if operator is None or _gmail_account_for_supervisor() is None:
+        raise ValueError("Email-only mode requires a configured sender with a Gmail account mapping")
+    env = os.environ.copy()
+    env["OPENOUTREACH_SUPERVISED"] = "1"
+    env.pop("OPENOUTREACH_RESTART_REASON", None)
+    logger.warning("LinkedIn daemon disabled; starting browserless email enrichment for %s", operator)
+    return _launch(
+        [sys.executable, "manage.py", "run_email_enrichment", "--operator", operator],
+        cwd=ROOT_DIR,
+        env=env,
+    )
+
+
+def _runtime_worker_label() -> str:
+    return "Daemon" if _linkedin_daemon_enabled() else "Email enrichment worker"
+
+
 def _start_feed_collector(run_id: str) -> subprocess.Popen:
     env = os.environ.copy()
     env["OPENOUTREACH_SUPERVISED"] = "1"
@@ -632,13 +656,13 @@ def _start_gmail_worker(account_key: str) -> subprocess.Popen:
 def _stop_daemon(proc: subprocess.Popen, timeout_seconds: int = 30) -> None:
     if proc.poll() is not None:
         return
-    logger.warning("Stopping daemon child pid=%s", proc.pid)
+    logger.warning("Stopping %s child pid=%s", _runtime_worker_label(), proc.pid)
     try:
         proc.terminate()
         proc.wait(timeout=timeout_seconds)
         return
     except subprocess.TimeoutExpired:
-        logger.warning("Daemon did not stop after %ss; killing", timeout_seconds)
+        logger.warning("%s did not stop after %ss; killing", _runtime_worker_label(), timeout_seconds)
     except ProcessLookupError:
         return
     proc.kill()
@@ -679,7 +703,7 @@ def _restart_managed_children(
     if should_stop():
         return None
 
-    replacement = _start_daemon(restart_reason=reason)
+    replacement = _start_runtime_worker(restart_reason=reason)
     replacement_gmail = None
     complete = False
     try:
@@ -709,8 +733,12 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _linkedin_daemon_enabled() -> bool:
+    return _env_bool("ENABLE_LINKEDIN_DAEMON", "true")
+
+
 def _feed_collector_enabled() -> bool:
-    return _env_bool("ENABLE_LINKEDIN_FEED_COLLECTOR", "false")
+    return _linkedin_daemon_enabled() and _env_bool("ENABLE_LINKEDIN_FEED_COLLECTOR", "false")
 
 
 # Tables found missing this run (logged once, not every check).
@@ -721,11 +749,11 @@ _MISSING_TABLES_LOGGED: set[str] = set()
 # exists only when Social Studio's dashboard queues one, so no extra setting
 # gates them (user decision, 2026-11-02).
 def _linkedin_reposts_enabled() -> bool:
-    return True
+    return _linkedin_daemon_enabled()
 
 
 def _linkedin_posts_enabled() -> bool:
-    return True
+    return _linkedin_daemon_enabled()
 
 
 def _feed_schedule() -> FeedSampleSchedule:
@@ -866,7 +894,7 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
     safety.raise_if_failed()
     if safety.stopped.is_set():
         return 0
-    child = _start_daemon(restart_reason="git_pull" if initial_updated else "")
+    child = _start_runtime_worker(restart_reason="git_pull" if initial_updated else "")
     if gmail_account is None:
         logger.warning(
             "No Gmail account mapping for LINKEDIN_USERNAME; "
@@ -913,11 +941,11 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
         code = child.poll()
         if code is not None:
             if code != 0:
-                logger.error("Daemon exited with status %s; restarting in %ss", code, args.restart_delay)
-                _notify("Daemon child exited unexpectedly", f"Exit status `{code}`. Restarting.")
+                logger.error("%s exited with status %s; restarting in %ss", _runtime_worker_label(), code, args.restart_delay)
+                _notify(f"{_runtime_worker_label()} child exited unexpectedly", f"Exit status `{code}`. Restarting.")
                 time.sleep(args.restart_delay)
             else:
-                logger.warning("Daemon exited cleanly; restarting in %ss", args.restart_delay)
+                logger.warning("%s exited cleanly; restarting in %ss", _runtime_worker_label(), args.restart_delay)
                 time.sleep(args.restart_delay)
             if stop or safety.stopped.is_set():
                 break
@@ -928,7 +956,7 @@ def _supervise_workers(args: argparse.Namespace, safety: SupervisorSafety) -> in
                 feed_started_at = None
             stop_repost_child()
             stop_post_child()
-            child = _start_daemon(restart_reason="process_exit")
+            child = _start_runtime_worker(restart_reason="process_exit")
             continue
 
         if feed_child is not None:

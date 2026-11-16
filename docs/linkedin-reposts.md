@@ -19,7 +19,8 @@ Empty commentary uses LinkedIn's plain **Repost**. Non-empty commentary uses
 ## Rollout
 
 There is no setting (user decision, 2026-11-02): the repost worker runs whenever
-the LinkedIn daemon does, and it acts only on rows Social Studio's dashboard
+the LinkedIn daemon does (`ENABLE_LINKEDIN_DAEMON=true`; email-only mode never
+starts a repost child), and it acts only on rows Social Studio's dashboard
 queues. On a worker computer:
 
 1. The supervisor runs `manage.py migrate` when it pulls updates, which applies
