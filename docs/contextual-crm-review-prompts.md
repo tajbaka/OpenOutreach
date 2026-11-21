@@ -22,9 +22,11 @@ If a required file is missing, safely update the checkout before recreating it.
 > every open item, every manual Active Account, and older relevant meeting
 > commitments regardless of age. If a prior receipt reports Gmail History 404s,
 > start with fresh discovery including Sent and use the Actions runbook's exact
-> message/thread recovery and aggregate skip report. Continue all three reviews
-> after isolating History-only references. Hold decisions with missing evidence
-> and advance the watermark only after full review and verification.
+> message/thread recovery and aggregate skip report. Fetch the required Gmail
+> threads for all three reviews through the runbook's paced `iter_review_threads`
+> helper and save completed reads as they arrive. Verify every required thread
+> before declaring Gmail coverage complete. Hold decisions with missing evidence
+> and advance the watermark only after completing all three reviews and verification.
 > Before creating or retaining rows, exclude
 > Closed Won and Closed Lost companies across all action types. Determine this
 > from explicit user direction, recorded stages and clear dated LinkedIn/email/
