@@ -67,6 +67,31 @@ Extend the discovery interval back to the last successful review if a
 run was missed for more than 14 days. Paginate results; do not claim full coverage
 after truncation. Read full relevant threads after header/snippet discovery.
 
+For full-thread reads, use `gmail.review_threads.iter_review_threads` with the
+existing authenticated service, the expected primary mailbox and the exact
+required thread IDs from discovery and linked evidence. Feed the three reviews
+from the same retrieval pass so overlapping threads are fetched once. This is
+the retrieval loop, where `save_private_thread` writes each result to the current
+run's private evidence files:
+
+```python
+from gmail.review_threads import iter_review_threads
+
+for thread in iter_review_threads(service, pending_thread_ids, expected_mailbox=expected_mailbox):
+    save_private_thread(thread)
+```
+
+Run one reader without parallel full-thread calls or ad hoc batches. A full
+thread costs 120 quota units. The helper spaces request starts by at least 1.5
+seconds, budgeting 4,800 of the documented 6,000 units per user per minute.
+Allow about 25 minutes of pacing for 1,000 threads, plus any retry delays, and
+use that time to review other sources. The iterator backs off on rate-limit
+responses and retries the exact thread before moving on. After an interruption,
+resume only required IDs without a verified full response from this run.
+Compare the full required ID set with the saved results before reporting Gmail
+retrieval complete. If a required thread still fails, report incomplete coverage
+and preserve decisions that depend on it. [Gmail API usage limits](https://developers.google.com/workspace/gmail/api/reference/quota)
+
 Start each run with fresh paginated discovery, including Sent, over the full
 recovery interval, even when a prior receipt flags missing Gmail messages.
 Complete the current searches for open items, manual Active Accounts and partner

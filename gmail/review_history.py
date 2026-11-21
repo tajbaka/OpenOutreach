@@ -4,6 +4,8 @@ from collections.abc import Collection, Iterable, Mapping
 
 from googleapiclient.errors import HttpError
 
+from gmail.review_threads import verified_review_users
+
 
 def recover_history_additions(
     service,
@@ -19,11 +21,7 @@ def recover_history_additions(
     searches and evidence linked to review items. Only a History-only reference
     whose exact message and thread both return 404 contributes to the skip count.
     """
-    users = service.users()
-    profile = users.getProfile(userId="me").execute()
-    actual_mailbox = profile.get("emailAddress", "")
-    if not expected_mailbox or actual_mailbox.casefold() != expected_mailbox.casefold():
-        raise ValueError("Gmail profile does not match the expected review mailbox")
+    users = verified_review_users(service, expected_mailbox)
 
     references = {}
     for addition in additions:
