@@ -67,6 +67,31 @@ Extend the discovery interval back to the last successful review if a
 run was missed for more than 14 days. Paginate results; do not claim full coverage
 after truncation. Read full relevant threads after header/snippet discovery.
 
+Start each run with fresh paginated discovery, including Sent, over the full
+recovery interval, even when a prior receipt flags missing Gmail messages.
+Complete the current searches for open items, manual Active Accounts and partner
+contacts. A prior blocked receipt is audit evidence and does not replace this scan.
+For unresolved `messagesAdded` entries from the verified mailbox's History, pass their exact
+`message` objects to `gmail.review_history.recover_history_additions`. Supply the
+expected primary mailbox and the sets of message and thread IDs from current
+search results and exact evidence linked to review items. Use the History thread
+ID as returned by Gmail. Never substitute a message ID for a thread ID or guess
+an identity from a missing reference.
+
+Include any recovered messages in the normal full-thread review. The helper
+sets aside an addition only when its exact message and thread both return 404
+and neither ID is required. Record its returned reason-to-count map as
+`gmail_history_skipped` in the receipt, without identifiers, and continue with
+the remaining sources and reviews. These references provide no evidence of a
+request, fulfillment, deletion or irrelevance. Hold any decision that depends on
+unavailable evidence and preserve the affected item. Resolve current or linked
+references through their exact conversation before using them. Gmail profile,
+search, pagination, other request failures and unexplained gaps in required
+coverage still require the normal incomplete-source handling. Advance the full
+review watermark only after actually completing discovery, contextual review
+and final verification. A successful review with these reported skips need not
+retry the same History-only references from older blocked receipts.
+
 Read Granola through the existing read-only API and the granola-read skill.
 Use `manage.py granola_notes --since-days 14 --no-gemini-fallback` for discovery
 (with adequate `--limit`/`--scan-limit` and pagination coverage), and
