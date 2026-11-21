@@ -20,7 +20,12 @@ If a required file is missing, safely update the checkout before recreating it.
 > with full transcripts; use relevant stored Gemini notes only as dated supporting
 > evidence. Discover the last 14 days, extend over a missed interval, and recheck
 > every open item, every manual Active Account, and older relevant meeting
-> commitments regardless of age. Before creating or retaining rows, exclude
+> commitments regardless of age. If a prior receipt reports Gmail History 404s,
+> start with fresh discovery including Sent and use the Actions runbook's exact
+> message/thread recovery and aggregate skip report. Continue all three reviews
+> after isolating History-only references. Hold decisions with missing evidence
+> and advance the watermark only after full review and verification.
+> Before creating or retaining rows, exclude
 > Closed Won and Closed Lost companies across all action types. Determine this
 > from explicit user direction, recorded stages and clear dated LinkedIn/email/
 > meeting context, including companies outside Active Accounts or with stale
