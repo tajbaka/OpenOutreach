@@ -103,6 +103,7 @@ class AccountScope:
     account_company: dict[str, str]
     main_contacts: dict[str, frozenset[str]]
     rows: int
+    skipped_company_account_id_mismatch: int
 
 
 def _fingerprint(values: list[list[Any]]) -> str:
@@ -144,11 +145,8 @@ def read_account_scope(values: list[list[Any]]) -> AccountScope:
         )
     indexes = {header: headers.index(header) for header in active_accounts.HEADERS}
 
-    parsed: list[tuple[int, str, str, frozenset[str]]] = []
+    parsed: list[tuple[int, str, str, str, frozenset[str]]] = []
     stable_ids: set[str] = set()
-    company_keys: set[str] = set()
-    company_display: dict[str, str] = {}
-    main_contacts: dict[str, set[str]] = defaultdict(set)
     for row_number, row in enumerate(rows[1:], start=2):
         cells = {
             header: str(row[index] if index < len(row) else "").strip()
@@ -174,13 +172,11 @@ def read_account_scope(values: list[list[Any]]) -> AccountScope:
             raise SheetsError(
                 f"Active Accounts row {row_number} needs Company or Account ID"
             )
-        if company_key:
-            company_keys.add(company_key)
-            company_display.setdefault(company_key, company)
         parsed.append((
             row_number,
             account_id,
             company_key,
+            company,
             _main_contact_names(cells[active_accounts.COL_MAIN_POINT_OF_CONTACT]),
         ))
 
@@ -189,32 +185,38 @@ def read_account_scope(values: list[list[Any]]) -> AccountScope:
         for account in Account.objects.filter(pk__in=stable_ids)
     }
     account_company: dict[str, str] = {}
-    for row_number, account_id, company_key, contact_names in parsed:
-        if not account_id:
-            main_contacts[company_key].update(contact_names)
-            continue
-        account = accounts.get(account_id)
-        if account is None:
-            raise SheetsError(
-                f"Active Accounts row {row_number} references an unknown Account ID"
-            )
-        if company_key and company_key != account.normalized_name:
-            raise SheetsError(
-                f"Active Accounts row {row_number} has a Company/Account ID mismatch"
-            )
-        company_key = account.normalized_name
-        account_company[account_id] = company_key
-        company_keys.add(company_key)
-        company_display.setdefault(account.normalized_name, account.name)
+    company_display: dict[str, str] = {}
+    main_contacts: dict[str, set[str]] = defaultdict(set)
+    skipped_mismatches = 0
+    for row_number, account_id, company_key, company, contact_names in parsed:
+        if account_id:
+            account = accounts.get(account_id)
+            if account is None:
+                raise SheetsError(
+                    f"Active Accounts row {row_number} references an unknown Account ID"
+                )
+            if company_key and company_key != account.normalized_name:
+                skipped_mismatches += 1
+                continue
+            account_company[account_id] = account.normalized_name
+        if company_key:
+            company_display.setdefault(company_key, company)
+        else:
+            company_key = account_company[account_id]
         main_contacts[company_key].update(contact_names)
 
+    # Explicit company labels take precedence over database display names.
+    for account_id, company_key in account_company.items():
+        company_display.setdefault(company_key, accounts[account_id].name)
+
     return AccountScope(
-        company_keys=frozenset(company_keys),
+        company_keys=frozenset(company_display),
         company_display=company_display,
-        account_ids=frozenset(stable_ids),
+        account_ids=frozenset(account_company),
         account_company=account_company,
         main_contacts={key: frozenset(names) for key, names in main_contacts.items()},
         rows=len(parsed),
+        skipped_company_account_id_mismatch=skipped_mismatches,
     )
 
 
@@ -794,6 +796,7 @@ def sync_people_from_active_accounts(
         "status": "planned" if dry_run else "published",
         "reset": reset,
         "active_account_rows": scope.rows,
+        "skipped_company_account_id_mismatch": scope.skipped_company_account_id_mismatch,
         "rows_before": max(0, len(before) - 1),
         "rows_after": len(people_rows),
         "changed": before != desired,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from io import StringIO
+from unittest.mock import Mock
 
 import pytest
 from django.core.management import call_command
@@ -133,6 +134,62 @@ def test_stable_account_contact_is_in_scope_without_company_name_match():
     row = dict(zip(people.HEADERS, rows[0], strict=True))
     assert row[people.COL_COMPANY] == "Canonical Co"
     assert row[people.COL_EMAILS] == "contact@example.com"
+
+
+@pytest.mark.django_db
+def test_command_skips_conflicting_active_account_row(monkeypatch):
+    from linkedin import conf
+    from linkedin.notifications import sheets
+
+    account = Account.objects.create(name="Bound Company")
+    opportunity = Opportunity.objects.create(account=account)
+    linked_contact = Lead.objects.create(
+        first_name="Linked", last_name="Contact", email="linked@example.com",
+    )
+    OpportunityContact.objects.create(
+        opportunity=opportunity, lead=linked_contact, is_primary=True,
+    )
+    disputed_contact = Lead.objects.create(
+        first_name="Disputed", last_name="Contact", email="disputed@example.com",
+        company_name="Disputed Company",
+    )
+    Message.objects.create(
+        lead=disputed_contact, source=Message.Source.GMAIL,
+        external_id="fixture-disputed-contact", direction=Message.Direction.INBOUND,
+        sent_at=timezone.now(),
+    )
+    Lead.objects.create(
+        first_name="Verified", last_name="Contact", email="verified@example.com",
+        company_name="Verified Company",
+    )
+    active_rows = _active_values(
+        _active_row(
+            company="Disputed Company", account_id=str(account.id),
+            main_contact="Disputed Contact",
+        ),
+        _active_row(company="Verified Company", main_contact="Verified Contact"),
+    )
+    worksheets = {
+        active.TAB_NAME: Mock(get_all_values=Mock(return_value=active_rows)),
+        people.TAB_NAME: Mock(get_all_values=Mock(return_value=[list(people.HEADERS)])),
+    }
+    spreadsheet = Mock(id="fixture-workbook")
+    spreadsheet.worksheet.side_effect = worksheets.__getitem__
+    monkeypatch.setattr(conf, "GOOGLE_SHEETS_ID", spreadsheet.id)
+    monkeypatch.setattr(sheets, "_gspread_client", lambda: spreadsheet)
+
+    stdout = StringIO()
+    call_command("sync_active_account_people", stdout=stdout)
+
+    report = json.loads(stdout.getvalue())
+    assert report["active_account_rows"] == 2
+    assert report["skipped_company_account_id_mismatch"] == 1
+    assert report["rows_after"] == 1
+    assert report["manual_main_contacts"] == 1
+    assert report["explicit_contact_links"] == 0
+    assert account.name not in stdout.getvalue()
+    assert "Disputed Company" not in stdout.getvalue()
+    assert str(account.id) not in stdout.getvalue()
 
 
 @pytest.mark.django_db
