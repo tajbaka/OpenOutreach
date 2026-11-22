@@ -5,6 +5,11 @@ Arian Gmail and Granola credentials. Use the checkout-relative virtualenv
 (`.venv/Scripts/python.exe` on Windows; `.venv/bin/python` elsewhere).
 Credentials, transcripts and private receipts never belong in Git.
 
+Apply `docs/review-completion-policy.md` to all three reviews. It supersedes
+blanket historical completion gates in older saved prompts: finish verified
+current work with advisory holds, preserve historical uncertainty and its
+watermark, and require a fresh receipt plus locked readback before success.
+
 Read the canonical skills directly from this checkout before these reviews:
 `skills/openoutreach-google-sheets/SKILL.md`, `skills/gmail-read/SKILL.md`,
 `skills/gmail-oauth/SKILL.md` and `skills/granola-read/SKILL.md`.

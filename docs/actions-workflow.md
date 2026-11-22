@@ -19,8 +19,10 @@ The receiving checkout needs its existing database connection, configured CRM
 workbook/service account, Arian Gmail OAuth token and Granola API key. Use its existing `.env`
 and authentication, never credentials copied into Git. Confirm that they resolve
 the intended workbook and mailbox before reading conversation data. If a source
-is unavailable, report the blocker and preserve affected rows; never call a
-partial review complete or advance its full-review watermark.
+is unavailable, preserve affected decisions and apply
+`docs/review-completion-policy.md`: historical uncertainty is an advisory hold,
+while failures preventing current safe work remain blockers. Never claim full
+historical coverage or advance its watermark while that scope is unresolved.
 
 Resolve the Python executable relative to this checkout: `.venv/Scripts/python.exe`
 on Windows, `.venv/bin/python` on macOS/Linux. All paths below are repository
