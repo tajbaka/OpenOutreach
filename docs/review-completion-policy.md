@@ -5,6 +5,37 @@ hold, not automatically a blocker for the entire Actions, Active Accounts and
 Partnerships/Referrals run. This policy supersedes older wording that makes any
 unresolved historical outcome prevent operational completion.
 
+## Unavailable exact references and recovery permissions (2026-11-23)
+
+An exact required Gmail History reference returning 404 is a source limitation
+for the decisions depending on that reference. After complete fresh discovery,
+call `recover_history_additions` with an explicit `unavailable_required=[]` list.
+The helper checks the exact thread too, returns its available full messages for
+review, and records each unavailable required reference in that private list.
+Preserve the affected item and existing decision; never infer fulfillment,
+deletion, irrelevance or identity. Keep these holds separate from optional
+`gmail_history_skipped`, with aggregate counts and reasons in the receipt.
+Review all returned available messages and finish independent work. Authentication,
+quota, service errors, invalid mailbox/ID matches and incomplete discovery remain
+real blockers. Required-reference holds do not advance the full-review watermark.
+For current completion, `actionable_pending=0` means no unheld eligible work is
+left; report unavailable held decisions separately, not as completed decisions.
+
+The recovery launcher's fresh automation-idle attestation plus its exclusive
+responder ownership and the canonical publisher lock are the concurrency gates.
+Do not require system-wide `Get-CimInstance Win32_Process` enumeration. A denied
+optional process query does not establish an active competing review; actual
+evidence of an active owner still stops duplicate execution. Final locked precheck,
+operator-edit reconciliation and readback remain mandatory.
+
+Do not open a previous sandbox session's temporary transcript cache. Fetch needed
+exact transcripts again through the existing authorized Granola helper into a new
+private temporary directory writable by this worker. Never copy a denied cache
+through host tools or another agent. Unavailable historical transcripts become
+explicit affected-item holds; unread available relevant transcripts must still be
+reviewed. An unchanged discovery index alone does not prove transcript review.
+Continue productive source review in checkpointed segments when needed.
+
 Perform fresh discovery, read every available required source, review current
 items and finish all independent authorized work. Preserve uncertain identities,
 unverified fulfillment, missing original recordings and historical provenance in

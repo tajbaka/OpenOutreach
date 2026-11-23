@@ -105,6 +105,13 @@ search results and exact evidence linked to review items. Use the History thread
 ID as returned by Gmail. Never substitute a message ID for a thread ID or guess
 an identity from a missing reference.
 
+Also pass an empty `unavailable_required` list for this contextual workflow.
+After the call, review all returned available messages and preserve decisions
+depending on entries in that private list as item-level holds under
+`docs/review-completion-policy.md`. Required references are never counted as
+optional History skips. Report their separate count/reasons and keep the full
+historical watermark unchanged; finish all independent eligible work.
+
 Include any recovered messages in the normal full-thread review. The helper
 sets aside an addition only when its exact message and thread both return 404
 and neither ID is required. Record its returned reason-to-count map as
