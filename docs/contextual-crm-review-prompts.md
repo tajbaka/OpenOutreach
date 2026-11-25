@@ -9,6 +9,11 @@ Apply `docs/review-completion-policy.md` to all three reviews. It supersedes
 blanket historical completion gates in older saved prompts: finish verified
 current work with advisory holds, preserve historical uncertainty and its
 watermark, and require a fresh receipt plus locked readback before success.
+Use `crm.review_receipt.review_checkpoint` at the start and at source phase
+checkpoints, including during paced full-thread reads. Use
+`crm.review_receipt.complete_with_holds` to build the terminal receipt after
+all current completion checks pass. Use the helpers from the receiving
+checkout on every run.
 
 Read the canonical skills directly from this checkout before these reviews:
 `skills/openoutreach-google-sheets/SKILL.md`, `skills/gmail-read/SKILL.md`,

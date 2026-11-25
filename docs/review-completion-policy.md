@@ -50,10 +50,37 @@ unread available required material, unprocessed actionable work, unsafe concurre
 edits, failed sheet verification, or an uncertain write. A missing historical
 recording with a recorded hold is distinct from skipping an available transcript.
 
+## Scheduled receipt lifecycle
+
+Save the new run's receipt at launch and throughout source review. Use
+`crm.review_receipt.review_checkpoint(receipt, phase=...)` at checkpoints.
+The receipt keeps `status="in_progress"` and `completed_at=null` during discovery,
+paced retrieval and other unfinished work. Put the milestone in
+`checkpoint_phase` and include the aggregate required and verified source
+counts as reads progress. Record actual failures with a blocked receipt.
+
 After current work is complete, acquire the existing publisher lock, reconcile
 all six tabs and verify protected data, IDs, sorting and row heights. Save a NEW
 receipt using actual timestamps. Never rewrite an old blocked receipt as success.
-For a completed run retaining uncertainty, record:
+For a completed run retaining uncertainty, use the shared builder:
+
+```python
+from crm.review_receipt import complete_with_holds
+
+receipt = complete_with_holds(
+    receipt,
+    checks=completion_checks,
+    verification=locked_readback_results,
+    historical_holds=advisory_ledger["holds_count"],
+    historical_outcomes=advisory_ledger["historical_outcomes_count"],
+    unavailable_required_references=len(unavailable_required),
+)
+# Save the returned receipt to this run's private receipt.json.
+```
+
+Supply the actual recorded results. The readback results must confirm
+`publisher_lock_held`, `passed` and `all_six_tabs_verified`. The generated
+fields include:
 
 ```json
 {
@@ -70,11 +97,19 @@ For a completed run retaining uncertainty, record:
     "uncertain_writes": 0,
     "blocking_failures": 0
   },
-  "advisories": { "retained": true, "holds": 9, "historical_outcomes": 28 }
+  "advisories": {
+    "retained": true,
+    "holds": 12,
+    "historical_holds": 9,
+    "historical_outcomes": 28,
+    "unavailable_required_references": 3
+  }
 }
 ```
 
-Counts above are illustrative; calculate them from this run's saved evidence.
+Calculate the counts from this run's saved evidence. The monitor requires
+`advisories.holds`, the sum of historical holds and unavailable required
+references. Historical outcomes and optional Gmail History skips are separate.
 Include started_at, completed_at, the private advisory evidence path, source
 coverage and normal write/readback evidence. Set current_review_complete only
 after the checks actually pass. Report operational completion and advisory counts

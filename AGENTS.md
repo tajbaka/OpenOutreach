@@ -1,5 +1,11 @@
 # AGENTS.md
 
+**Scheduled CRM review receipts:** Use `crm.review_receipt.review_checkpoint` for
+in-progress phases and `complete_with_holds` after the current source and locked
+six-tab readback checks pass. The writer computes `advisories.holds` from the
+historical and unavailable-reference hold counts and preserves the full-review
+watermark. Follow `docs/review-completion-policy.md` on every scheduled run.
+
 **CRM source recovery (2026-11-23):** Follow the unavailable-reference and recovery-permissions section of `docs/review-completion-policy.md`. The review explicitly opts into `gmail.review_history.recover_history_additions(..., unavailable_required=holds)` and preserves unavailable required references as affected-item holds, separate from optional History skips. Review all available evidence and complete independent work without inventing fulfillment. Shared discovery/auth/readback failures still block. Use launcher ownership and the canonical publisher lock rather than requiring system-wide process enumeration; refetch needed transcripts into the current worker's permitted private temporary directory instead of opening a denied previous-session cache. No sandbox bypass or sender/daemon changes are authorized.
 
 **Review uncertainty policy (2026-11-22, user authorized):** Follow `docs/review-completion-policy.md` for operational completion. Preserve uncertain historical decisions as advisory item holds while completing independent current work. A fresh, verified `completed_with_holds` receipt may complete the operational run without claiming full historical coverage or advancing its full-review watermark. Shared execution/readback failures and unprocessed actionable work still block. This supersedes older blanket completion wording below; sender/daemon restrictions remain unchanged.
