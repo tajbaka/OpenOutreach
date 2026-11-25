@@ -1,5 +1,12 @@
 # Architecture
 
+**Scheduled contextual CRM receipts** use `crm/review_receipt.py` to keep source
+checkpoints in progress and finalize current completion with the monitor's
+aggregate advisory hold count. The receipt builder requires current discovery,
+source review, independent work and locked six-tab readback results, with zero
+pending actions, uncertain writes and blocking failures. Historical completion
+and its watermark are tracked separately. See `docs/review-completion-policy.md`.
+
 **Contextual CRM reviews** use `gmail/review_history.py` for unresolved Gmail `messagesAdded` references after fresh paginated discovery, including Sent. The helper uses the verified mailbox and exact provider IDs, deduplicates references, and counts History-only additions whose message and thread both return 404 and are absent from current discovery and linked evidence. The contextual runner uses recovered messages and records aggregate skip reasons. Mailbox errors, required evidence and conflicting identities retain their existing hold rules. See `docs/actions-workflow.md`.
 
 **Contextual Gmail thread retrieval** uses the read-only `gmail/review_threads.py` iterator. It verifies the mailbox, deduplicates exact thread IDs, starts at most 40 full reads per minute, and retries explicit quota responses on the same thread with bounded backoff. The runner saves successful reads incrementally and checks required IDs against the private same-run results before completing coverage. The History skip criteria and the full-review verification gate still apply.
